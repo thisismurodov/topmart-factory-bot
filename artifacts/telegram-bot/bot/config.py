@@ -1,3 +1,5 @@
+import os
+
 WORKERS = {
     "Aziza": "AZ",
     "Gullola": "GL",
@@ -15,4 +17,5 @@ PRODUCTS = [
     "Shroki 3.5",
 ]
 
-DB_PATH = "data/topmart.db"
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DB_PATH = os.path.join(_BASE_DIR, "data", "topmart.db")

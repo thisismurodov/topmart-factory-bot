@@ -1,0 +1,1 @@
+- [Python bot setup on Replit](python-bot-setup.md) — Python not pre-installed; must use installProgrammingLanguage before installLanguagePackages; packages land in .pythonlibs via uv.

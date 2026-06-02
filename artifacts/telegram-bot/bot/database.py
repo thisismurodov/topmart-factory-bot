@@ -315,6 +315,17 @@ def delete_pending_user(chat_id: int) -> None:
         conn.commit()
 
 
+def clear_test_data() -> dict:
+    with get_connection() as conn:
+        batches = conn.execute("SELECT COUNT(*) FROM batches").fetchone()[0]
+        pending = conn.execute("SELECT COUNT(*) FROM pending_users").fetchone()[0]
+        conn.execute("DELETE FROM batches")
+        conn.execute("DELETE FROM pending_users")
+        conn.execute("DELETE FROM sqlite_sequence WHERE name IN ('batches')")
+        conn.commit()
+    return {"batches": batches, "pending": pending}
+
+
 # Legacy compat — used in old label handler
 def register_worker_chat(worker_name: str, chat_id: int) -> None:
     role_row = None

@@ -10,6 +10,7 @@ from ..database import (
     add_worker, add_product, get_all_workers_config,
     get_products, get_registered_packers,
     assign_packer_workers, get_packer_workers, get_workers,
+    clear_test_data,
 )
 
 (
@@ -326,6 +327,40 @@ async def adm_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 
+async def cmd_cleardata(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_chat.id != SUPERADMIN_CHAT_ID:
+        return
+    await update.message.reply_text(
+        "⚠️ *Hamma test ma'lumotlari o'chiriladi:*\n"
+        "• Barcha partiyalar (batches)\n"
+        "• Kutayotgan so'rovlar (pending)\n\n"
+        "Davom etasizmi?",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Ha, o'chir", callback_data="cleardata:confirm"),
+            InlineKeyboardButton("❌ Bekor",      callback_data="cleardata:cancel"),
+        ]]),
+    )
+
+
+async def cleardata_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    if query.from_user.id != SUPERADMIN_CHAT_ID:
+        return
+    action = query.data.split(":")[1]
+    if action == "confirm":
+        result = clear_test_data()
+        await query.edit_message_text(
+            f"✅ *Tozalandi!*\n\n"
+            f"🗑️ Partiyalar: {result['batches']} ta o'chirildi\n"
+            f"🗑️ Kutayotgan so'rovlar: {result['pending']} ta o'chirildi",
+            parse_mode="Markdown",
+        )
+    else:
+        await query.edit_message_text("❌ Bekor qilindi.")
+
+
 def build_admin_handler() -> ConversationHandler:
     return ConversationHandler(
         entry_points=[CommandHandler("admin", cmd_admin)],
@@ -363,7 +398,16 @@ def build_admin_handler() -> ConversationHandler:
                 CallbackQueryHandler(packer_save,          pattern=r"^pk_save$"),
             ],
         },
-        fallbacks=[MessageHandler(filters.COMMAND, adm_cancel)],
+        fallbacks=[
+            CommandHandler("cleardata", cmd_cleardata),
+            MessageHandler(filters.COMMAND, adm_cancel),
+        ],
         per_message=False,
         allow_reentry=True,
     )
+
+
+def register_cleardata(app) -> None:
+    from telegram.ext import CommandHandler as CH, CallbackQueryHandler as CQ
+    app.add_handler(CH("cleardata", cmd_cleardata))
+    app.add_handler(CQ(cleardata_callback, pattern=r"^cleardata:"))

@@ -19,6 +19,9 @@ SEED_PRODUCTS = [
     {"name": "Shroki 3.5",   "rate_type": "dona",  "rate": 100},
 ]
 
+# Yagona doimiy admin chat ID (o'zgartirilmaydi)
+SUPERADMIN_CHAT_ID = 1261052681
+
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(_BASE_DIR, "data", "topmart.db")
 

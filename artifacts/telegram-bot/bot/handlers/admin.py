@@ -4,6 +4,7 @@ from telegram.ext import (
     CallbackQueryHandler, MessageHandler, filters,
 )
 from ..keyboards import admin_main_keyboard, main_menu_keyboard
+from ..config import SUPERADMIN_CHAT_ID
 from ..database import (
     get_admin_count, get_user_role, set_user_role,
     add_worker, add_product, get_all_workers_config,
@@ -22,21 +23,18 @@ from ..database import (
 # ── Entry ────────────────────────────────────────────────────────────────────
 
 async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    chat_id = update.effective_chat.id
+    chat_id  = update.effective_chat.id
     user_row = get_user_role(chat_id)
-    admin_count = get_admin_count()
 
-    if user_row and user_row["role"] == "admin":
-        pass
-    elif admin_count == 0:
-        set_user_role(chat_id, "Admin", "admin")
-        await update.message.reply_text(
-            "👑 Siz birinchi *admin* sifatida qo'shildingiz!",
-            parse_mode="Markdown",
-        )
-    else:
+    is_superadmin = (chat_id == SUPERADMIN_CHAT_ID)
+    is_admin      = user_row and user_row["role"] == "admin"
+
+    if not is_superadmin and not is_admin:
         await update.message.reply_text("❌ Ruxsat yo'q.")
         return ConversationHandler.END
+
+    if is_superadmin and not is_admin:
+        set_user_role(chat_id, "Superadmin", "admin")
 
     await update.message.reply_text(
         "⚙️ *Admin paneli*\nNimani qilmoqchisiz?",

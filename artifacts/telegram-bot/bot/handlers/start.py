@@ -9,7 +9,7 @@ from ..database import (
     get_user_role, set_user_role, find_user_by_phone,
     get_packer_workers,
 )
-from ..config import normalize_phone
+from ..config import normalize_phone, SUPERADMIN_CHAT_ID
 
 MONTHS_UZ = {
     1: "Yanvar", 2: "Fevral", 3: "Mart", 4: "Aprel",
@@ -21,6 +21,11 @@ MONTHS_UZ = {
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id  = update.effective_chat.id
     user_row = get_user_role(chat_id)
+
+    if chat_id == SUPERADMIN_CHAT_ID and (not user_row or user_row["role"] != "admin"):
+        from ..database import set_user_role as _set
+        _set(chat_id, "Superadmin", "admin")
+        user_row = get_user_role(chat_id)
 
     if user_row:
         role = user_row["role"]

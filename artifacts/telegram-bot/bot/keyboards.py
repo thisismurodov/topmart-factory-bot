@@ -18,8 +18,8 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
 def packer_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [
-            ["📋 Bugungi partiyalar"],
-            ["🏷️ Etiketka"],
+            ["🏭 Tovar kiritish"],
+            ["📋 Bugungi partiyalar", "🏷️ Etiketka"],
             ["👷 Hodim qo'shish"],
         ],
         resize_keyboard=True,

@@ -3,7 +3,7 @@ from telegram.ext import ContextTypes, CallbackQueryHandler, MessageHandler, fil
 
 from ..database import get_today_batches
 from ..keyboards import main_menu_keyboard
-from ..label_generator import generate_label
+from ..label_generator import generate_label_pdf
 
 
 async def show_label_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -18,13 +18,13 @@ async def show_label_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     buttons = [
         [InlineKeyboardButton(
-            f"{r['batch_code']} | {r['product']}",
+            f"{r['batch_code']} | {r['product']} | {r['quantity']} dona",
             callback_data=f"label:{r['batch_code']}"
         )]
         for r in rows
     ]
     await update.message.reply_text(
-        "🏷️ *Qaysi partiyaning etiketkasini chiqarish kerak?*",
+        "🏷️ *Qaysi partiyaning stikerlarini chiqarish kerak?*",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(buttons),
     )
@@ -42,13 +42,27 @@ async def send_label_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text("❌ Partiya topilmadi.")
         return
 
-    await query.edit_message_text(f"🏷️ Etiketka tayyorlanmoqda: `{batch_code}`…",
-                                   parse_mode="Markdown")
+    qty = row["quantity"]
+    await query.edit_message_text(
+        f"🖨️ *{batch_code}* — {qty} ta stiker tayyorlanmoqda…",
+        parse_mode="Markdown",
+    )
 
-    buf = generate_label(row["batch_code"], row["worker"], row["product"], row["quantity"])
-    await query.message.reply_photo(
-        photo=buf,
-        caption=f"🏷️ *{row['batch_code']}* — {row['product']} | {row['quantity']} dona",
+    pdf_buf = generate_label_pdf(
+        row["batch_code"],
+        row["worker"],
+        row["product"],
+        qty,
+        row["weight_kg"] or 0.0,
+    )
+    await query.message.reply_document(
+        document=pdf_buf,
+        filename=f"{batch_code}.pdf",
+        caption=(
+            f"🏷️ *{batch_code}* — {row['product']}\n"
+            f"{qty} ta stiker"
+            + (f" | {row['weight_kg']:.1f} kg" if row["weight_kg"] else "")
+        ),
         parse_mode="Markdown",
         reply_markup=main_menu_keyboard(),
     )

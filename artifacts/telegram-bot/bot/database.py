@@ -28,8 +28,12 @@ def init_db() -> None:
             """
         )
         conn.execute(
-            "ALTER TABLE batches ADD COLUMN weight_kg REAL NOT NULL DEFAULT 0"
-            if False else ""
+            """
+            CREATE TABLE IF NOT EXISTS worker_chats (
+                worker_name TEXT PRIMARY KEY,
+                chat_id     INTEGER NOT NULL
+            )
+            """
         )
         _migrate(conn)
         conn.commit()
@@ -114,3 +118,21 @@ def get_worker_monthly(worker: str, year: int, month: int) -> list[sqlite3.Row]:
                ORDER  BY total_earnings DESC""",
             (worker, period),
         ).fetchall()
+
+
+def register_worker_chat(worker_name: str, chat_id: int) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO worker_chats (worker_name, chat_id) VALUES (?, ?)",
+            (worker_name, chat_id),
+        )
+        conn.commit()
+
+
+def get_worker_chat_id(worker_name: str) -> int | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT chat_id FROM worker_chats WHERE worker_name = ?",
+            (worker_name,),
+        ).fetchone()
+    return row["chat_id"] if row else None

@@ -1,13 +1,16 @@
 from datetime import date
-from telegram import Update, ReplyKeyboardRemove
+from telegram import Update, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    ContextTypes, CommandHandler, MessageHandler, filters,
+    ContextTypes, CommandHandler, MessageHandler,
+    CallbackQueryHandler, filters,
 )
 from ..keyboards import main_menu_keyboard, packer_menu_keyboard, contact_keyboard
 from ..database import (
     get_today_batches, get_worker_monthly,
     get_user_role, set_user_role, find_user_by_phone,
-    get_packer_workers,
+    get_packer_workers, save_pending_user, get_pending_user,
+    delete_pending_user, add_worker, assign_packer_workers,
+    get_workers,
 )
 from ..config import normalize_phone, SUPERADMIN_CHAT_ID
 
@@ -23,8 +26,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_row = get_user_role(chat_id)
 
     if chat_id == SUPERADMIN_CHAT_ID and (not user_row or user_row["role"] != "admin"):
-        from ..database import set_user_role as _set
-        _set(chat_id, "Superadmin", "admin")
+        set_user_role(chat_id, "Superadmin", "admin")
         user_row = get_user_role(chat_id)
 
     if user_row:
@@ -51,18 +53,46 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def contact_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    contact = update.message.contact
-    phone   = normalize_phone(contact.phone_number or "")
-    chat_id = update.effective_chat.id
+    contact    = update.message.contact
+    phone      = normalize_phone(contact.phone_number or "")
+    chat_id    = update.effective_chat.id
+    tg_name    = (
+        update.effective_user.full_name
+        or update.effective_user.username
+        or "Noma'lum"
+    )
 
     worker_config = find_user_by_phone(phone)
 
     if not worker_config:
+        save_pending_user(chat_id, tg_name, phone)
+
         await update.message.reply_text(
-            "❌ Bu raqam tizimda topilmadi.\n"
-            "Adminga murojaat qiling yoki /admin orqali qo'shing.",
+            "⏳ So'rovingiz adminga yuborildi.\nTasdiqlangach xabar olasiz.",
             reply_markup=ReplyKeyboardRemove(),
         )
+
+        try:
+            await context.bot.send_message(
+                chat_id=SUPERADMIN_CHAT_ID,
+                text=(
+                    f"👤 *Yangi foydalanuvchi so'rovi:*\n\n"
+                    f"Ism: *{tg_name}*\n"
+                    f"Tel: `+{phone}`\n"
+                    f"Chat ID: `{chat_id}`\n\n"
+                    f"Kim sifatida qo'shilsin?"
+                ),
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton("👷 Worker",   callback_data=f"appusr:{chat_id}:worker"),
+                        InlineKeyboardButton("📦 Packer",  callback_data=f"appusr:{chat_id}:packer"),
+                    ],
+                    [InlineKeyboardButton("❌ Rad etish", callback_data=f"rejusr:{chat_id}")],
+                ]),
+            )
+        except Exception:
+            pass
         return
 
     name = worker_config["name"]
@@ -71,8 +101,7 @@ async def contact_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     icon = "📦" if role == "packer" else "👷"
     await update.message.reply_text(
-        f"{icon} *{name}*, xush kelibsiz!\n"
-        f"Lavozim: *{role}*",
+        f"{icon} *{name}*, xush kelibsiz!\nLavozim: *{role}*",
         parse_mode="Markdown",
         reply_markup=ReplyKeyboardRemove(),
     )
@@ -81,6 +110,90 @@ async def contact_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await _show_packer_menu(update, chat_id, name)
     else:
         await _show_worker_earnings(update, name)
+
+
+async def approve_user_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    if query.from_user.id != SUPERADMIN_CHAT_ID:
+        await query.answer("Ruxsat yo'q.", show_alert=True)
+        return
+
+    _, pending_chat_id_s, role = query.data.split(":", 2)
+    pending_chat_id = int(pending_chat_id_s)
+
+    pending = get_pending_user(pending_chat_id)
+    if not pending:
+        await query.edit_message_text("⚠️ Bu so'rov allaqachon ko'rib chiqilgan.")
+        return
+
+    tg_name = pending["name"]
+    phone   = pending["phone"]
+    prefix  = _auto_prefix(tg_name)
+
+    add_worker(tg_name, prefix, phone, role)
+    set_user_role(pending_chat_id, tg_name, role)
+    delete_pending_user(pending_chat_id)
+
+    icon = "📦" if role == "packer" else "👷"
+    await query.edit_message_text(
+        f"{icon} *{tg_name}* — {role} sifatida qo'shildi\n"
+        f"Tel: `+{phone}` | Prefix: `{prefix}`",
+        parse_mode="Markdown",
+    )
+
+    try:
+        if role == "packer":
+            msg_text = (
+                f"✅ *Tasdiqlandi!*\n\n"
+                f"Siz *Upakovkachi* sifatida qo'shildingiz.\n"
+                f"Hodimlaringiz belgilanishi bilan /start orqali kirishingiz mumkin."
+            )
+        else:
+            msg_text = (
+                f"✅ *Tasdiqlandi!*\n\n"
+                f"Siz tizimga *Ishchi* sifatida qo'shildingiz.\n"
+                f"Davom etish uchun /start bosing."
+            )
+        await context.bot.send_message(
+            chat_id=pending_chat_id,
+            text=msg_text,
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass
+
+
+async def reject_user_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    if query.from_user.id != SUPERADMIN_CHAT_ID:
+        await query.answer("Ruxsat yo'q.", show_alert=True)
+        return
+
+    pending_chat_id = int(query.data.split(":", 1)[1])
+    pending = get_pending_user(pending_chat_id)
+    if not pending:
+        await query.edit_message_text("⚠️ Bu so'rov allaqachon ko'rib chiqilgan.")
+        return
+
+    delete_pending_user(pending_chat_id)
+    await query.edit_message_text(f"❌ *{pending['name']}* rad etildi.")
+
+    try:
+        await context.bot.send_message(
+            chat_id=pending_chat_id,
+            text="❌ Afsuski, so'rovingiz rad etildi.\nBatafsil ma'lumot uchun admin bilan bog'laning.",
+        )
+    except Exception:
+        pass
+
+
+def _auto_prefix(name: str) -> str:
+    clean = "".join(c for c in name if c.isalpha())
+    return clean[:2].upper() if len(clean) >= 2 else (clean + "X")[:2].upper()
 
 
 async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -117,7 +230,7 @@ async def _show_packer_menu(update: Update, chat_id: int, packer_name: str) -> N
         workers_txt = ", ".join(assigned)
         info = f"Mas'ul hodimlar: *{workers_txt}*"
     else:
-        info = "⚠️ Hech qanday hodim belgilanmagan. Admin bilan bog'laning."
+        info = "ℹ️ Hodimlar hali belgilanmagan."
 
     msg = update.message or update.callback_query.message
     await msg.reply_text(
@@ -169,10 +282,7 @@ async def today_batches_handler(update: Update, context: ContextTypes.DEFAULT_TY
 async def unknown_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id  = update.effective_chat.id
     user_row = get_user_role(chat_id)
-    if user_row and user_row["role"] == "packer":
-        kb = packer_menu_keyboard()
-    else:
-        kb = main_menu_keyboard()
+    kb = packer_menu_keyboard() if (user_row and user_row["role"] == "packer") else main_menu_keyboard()
     await update.message.reply_text("Iltimos, quyidagi tugmalardan foydalaning:", reply_markup=kb)
 
 
@@ -180,6 +290,8 @@ def register(app) -> None:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("menu",  cmd_menu))
     app.add_handler(MessageHandler(filters.CONTACT, contact_received))
+    app.add_handler(CallbackQueryHandler(approve_user_callback, pattern=r"^appusr:"))
+    app.add_handler(CallbackQueryHandler(reject_user_callback,  pattern=r"^rejusr:"))
     app.add_handler(
         MessageHandler(filters.Regex(r"^📋 Bugungi partiyalar$"), today_batches_handler)
     )

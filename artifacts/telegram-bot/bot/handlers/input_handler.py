@@ -143,6 +143,7 @@ async def _save_batch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     await gen_msg.delete()
 
     await _notify_worker(context, worker, batch_code, product, quantity, weight_kg, earnings)
+    await _notify_admin(context, worker, batch_code, product, quantity, weight_kg, earnings)
 
     context.user_data.clear()
     return ConversationHandler.END
@@ -173,6 +174,29 @@ async def _notify_worker(
                 f"📦 {product} — {detail}\n"
                 f"💰 Bu partiya: *{earnings:,.0f} so'm*\n"
                 f"📊 {month_name} jami: *{month_total:,.0f} so'm*"
+            ),
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass
+
+
+async def _notify_admin(
+    context: ContextTypes.DEFAULT_TYPE,
+    worker: str, batch_code: str, product: str,
+    quantity: int, weight_kg: float, earnings: float,
+) -> None:
+    from ..config import SUPERADMIN_CHAT_ID
+    detail = f"{weight_kg} kg" if weight_kg > 0 else f"{quantity} dona"
+    try:
+        await context.bot.send_message(
+            chat_id=SUPERADMIN_CHAT_ID,
+            text=(
+                f"🏭 *Yangi partiya kiritildi*\n\n"
+                f"👷 Ishchi: *{worker}*\n"
+                f"📦 {product} — {detail}\n"
+                f"💰 Haq: *{earnings:,.0f} so'm*\n"
+                f"📌 `{batch_code}`"
             ),
             parse_mode="Markdown",
         )

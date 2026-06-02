@@ -54,6 +54,14 @@ def init_db() -> None:
                 PRIMARY KEY (packer_chat_id, worker_name)
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS pending_users (
+                chat_id    INTEGER PRIMARY KEY,
+                name       TEXT    NOT NULL,
+                phone      TEXT    NOT NULL,
+                created_at TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
+            )
+        """)
         _migrate(conn)
         _seed(conn)
         conn.commit()
@@ -281,6 +289,30 @@ def get_worker_monthly(worker: str, year: int, month: int) -> list[sqlite3.Row]:
                GROUP BY product ORDER BY total_earnings DESC""",
             (worker, period),
         ).fetchall()
+
+
+# ── Pending users ─────────────────────────────────────────────────────────────
+
+def save_pending_user(chat_id: int, name: str, phone: str) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO pending_users (chat_id, name, phone) VALUES (?,?,?)",
+            (chat_id, name, phone),
+        )
+        conn.commit()
+
+
+def get_pending_user(chat_id: int) -> sqlite3.Row | None:
+    with get_connection() as conn:
+        return conn.execute(
+            "SELECT * FROM pending_users WHERE chat_id = ?", (chat_id,)
+        ).fetchone()
+
+
+def delete_pending_user(chat_id: int) -> None:
+    with get_connection() as conn:
+        conn.execute("DELETE FROM pending_users WHERE chat_id = ?", (chat_id,))
+        conn.commit()
 
 
 # Legacy compat — used in old label handler

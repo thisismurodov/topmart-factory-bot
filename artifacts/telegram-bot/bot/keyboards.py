@@ -20,6 +20,7 @@ def packer_menu_keyboard() -> ReplyKeyboardMarkup:
         [
             ["📋 Bugungi partiyalar"],
             ["🏷️ Etiketka"],
+            ["👷 Hodim qo'shish"],
         ],
         resize_keyboard=True,
     )
@@ -63,9 +64,9 @@ def cancel_keyboard() -> InlineKeyboardMarkup:
 
 def admin_main_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ Hodim qo'shish",      callback_data="adm:add_worker")],
-        [InlineKeyboardButton("➕ Mahsulot qo'shish",   callback_data="adm:add_product")],
+        [InlineKeyboardButton("➕ Hodim qo'shish",        callback_data="adm:add_worker")],
+        [InlineKeyboardButton("➕ Mahsulot qo'shish",     callback_data="adm:add_product")],
         [InlineKeyboardButton("👔 Upakovkachi belgilash", callback_data="adm:assign_packer")],
-        [InlineKeyboardButton("📋 Hodimlar ro'yxati",  callback_data="adm:list_workers")],
-        [InlineKeyboardButton("📦 Mahsulotlar ro'yxati", callback_data="adm:list_products")],
+        [InlineKeyboardButton("📋 Hodimlar ro'yxati",     callback_data="adm:list_workers")],
+        [InlineKeyboardButton("📦 Mahsulotlar ro'yxati",  callback_data="adm:list_products")],
     ])

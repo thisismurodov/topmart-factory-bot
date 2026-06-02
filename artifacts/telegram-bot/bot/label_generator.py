@@ -4,11 +4,10 @@ from datetime import datetime
 
 from PIL import Image, ImageDraw, ImageFont
 
-# 40mm x 80mm @ 203 dpi  →  320 x 640 px
-# 1 mm = 203/25.4 ≈ 8 px
+# 40mm x 40mm @ 203 dpi  →  320 x 320 px
 MM = 203 / 25.4
 LABEL_W = round(40 * MM)   # 320
-LABEL_H = round(80 * MM)   # 640
+LABEL_H = round(40 * MM)   # 320
 
 _FONT_BOLD = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -48,46 +47,38 @@ def _build_single(
     img  = Image.new("RGB", (LABEL_W, LABEL_H), "white")
     draw = ImageDraw.Draw(img)
 
-    # ── Outer border ──────────────────────────────────────────────
-    draw.rectangle([0, 0, LABEL_W - 1, LABEL_H - 1], outline="#111111", width=2)
-
     # ── Header strip ──────────────────────────────────────────────
-    HDR_H = 42
+    HDR_H = 36
     draw.rectangle([0, 0, LABEL_W, HDR_H], fill="#111111")
     draw.text(
         (LABEL_W // 2, HDR_H // 2),
         "TOPMART",
-        font=_font(24, bold=True),
+        font=_font(22, bold=True),
         fill="white",
         anchor="mm",
     )
 
-    # ── Unit number (large, centered) ─────────────────────────────
-    unit_text = f"{unit_num} / {total_units}"
+    # ── Unit number ───────────────────────────────────────────────
     draw.text(
-        (LABEL_W // 2, HDR_H + 28),
-        unit_text,
-        font=_font(34, bold=True),
+        (LABEL_W // 2, HDR_H + 22),
+        f"{unit_num} / {total_units}",
+        font=_font(28, bold=True),
         fill="#111111",
         anchor="mm",
     )
 
-    # ── Divider ───────────────────────────────────────────────────
-    DIV1_Y = HDR_H + 52
-    draw.line([8, DIV1_Y, LABEL_W - 8, DIV1_Y], fill="#cccccc", width=1)
-
-    # ── Batch code (large, centered, replaces QR) ─────────────────
+    # ── Batch code ────────────────────────────────────────────────
     draw.text(
-        (LABEL_W // 2, DIV1_Y + 80),
+        (LABEL_W // 2, HDR_H + 48),
         batch_code,
-        font=_font(30, bold=True),
-        fill="#111111",
+        font=_font(22, bold=True),
+        fill="#333333",
         anchor="mm",
     )
 
     # ── Divider ───────────────────────────────────────────────────
-    DIV2_Y = DIV1_Y + 160
-    draw.line([8, DIV2_Y, LABEL_W - 8, DIV2_Y], fill="#cccccc", width=1)
+    DIV_Y = HDR_H + 62
+    draw.line([6, DIV_Y, LABEL_W - 6, DIV_Y], fill="#cccccc", width=1)
 
     # ── Fields ────────────────────────────────────────────────────
     weight_txt = f"~{unit_weight:.2f} kg" if unit_weight > 0 else "—"
@@ -99,25 +90,14 @@ def _build_single(
         ("Soat:",     time_str),
     ]
 
-    f_key = _font(17)
-    f_val = _font(17, bold=True)
-    PAD   = 10
-    y     = DIV2_Y + 14
+    f_key = _font(16)
+    f_val = _font(16, bold=True)
+    PAD   = 8
+    y     = DIV_Y + 8
     for key, val in fields:
-        draw.text((PAD, y),      key, font=f_key, fill="#666666")
-        draw.text((PAD + 100, y), val, font=f_val, fill="#111111")
-        y += 30
-
-    # ── Footer ────────────────────────────────────────────────────
-    FOOT_Y = LABEL_H - 22
-    draw.line([8, FOOT_Y - 6, LABEL_W - 8, FOOT_Y - 6], fill="#dddddd", width=1)
-    draw.text(
-        (LABEL_W // 2, FOOT_Y + 4),
-        f"{batch_code}  •  {unit_num}/{total_units}",
-        font=_font(11),
-        fill="#aaaaaa",
-        anchor="mm",
-    )
+        draw.text((PAD,      y), key, font=f_key, fill="#666666")
+        draw.text((PAD + 90, y), val, font=f_val, fill="#111111")
+        y += 26
 
     return img
 

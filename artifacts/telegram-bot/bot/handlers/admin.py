@@ -10,7 +10,7 @@ from ..database import (
     add_worker, add_product, get_all_workers_config,
     get_products, get_registered_packers,
     assign_packer_workers, get_packer_workers, get_workers,
-    clear_test_data,
+    clear_test_data, delete_worker,
 )
 
 (
@@ -96,15 +96,29 @@ async def adm_home_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     elif action == "list_workers":
         rows = get_all_workers_config()
         if not rows:
-            text = "Hodimlar yo'q."
-        else:
-            lines = ["👷 *Hodimlar ro'yxati:*\n"]
-            for r in rows:
-                icon = "👔" if r["role"] == "packer" else "👷"
-                phone = r["phone"] or "—"
-                lines.append(f"{icon} *{r['name']}* ({r['prefix'] or '—'}) | {r['role']} | {phone}")
-            text = "\n".join(lines)
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=admin_main_keyboard())
+            await query.edit_message_text(
+                "Hodimlar yo'q.", reply_markup=admin_main_keyboard()
+            )
+            return ADM_HOME
+        buttons = []
+        for r in rows:
+            icon  = "👔" if r["role"] == "packer" else "👷"
+            phone = r["phone"] or "—"
+            label = f"{icon} {r['name']} | {r['role']} | {phone}"
+            buttons.append([
+                InlineKeyboardButton(label,        callback_data="adm:noop"),
+                InlineKeyboardButton("🗑️",          callback_data=f"del_w:{r['name']}"),
+            ])
+        buttons.append([InlineKeyboardButton("⬅️ Ortga", callback_data="adm:back")])
+        await query.edit_message_text(
+            "👷 *Hodimlar ro'yxati:*\n🗑️ — o'chirish",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(buttons),
+        )
+        return ADM_HOME
+
+    elif action == "noop":
+        pass
         return ADM_HOME
 
     elif action == "list_products":
@@ -369,12 +383,53 @@ async def cleardata_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.edit_message_text("❌ Bekor qilindi.")
 
 
+async def delete_worker_ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    name = query.data.split(":", 1)[1]
+    await query.edit_message_text(
+        f"🗑️ *{name}* ni o'chirishni tasdiqlaysizmi?\n\nUning barcha partiya tarixi saqlanib qoladi.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Ha, o'chir", callback_data=f"del_wc:{name}"),
+            InlineKeyboardButton("❌ Bekor",      callback_data="adm:list_workers"),
+        ]]),
+    )
+    return ADM_HOME
+
+
+async def delete_worker_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    name = query.data.split(":", 1)[1]
+    delete_worker(name)
+    rows    = get_all_workers_config()
+    buttons = []
+    for r in rows:
+        icon  = "👔" if r["role"] == "packer" else "👷"
+        phone = r["phone"] or "—"
+        label = f"{icon} {r['name']} | {r['role']} | {phone}"
+        buttons.append([
+            InlineKeyboardButton(label, callback_data="adm:noop"),
+            InlineKeyboardButton("🗑️",  callback_data=f"del_w:{r['name']}"),
+        ])
+    buttons.append([InlineKeyboardButton("⬅️ Ortga", callback_data="adm:back")])
+    await query.edit_message_text(
+        f"✅ *{name}* o'chirildi.\n\n👷 *Hodimlar ro'yxati:*",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(buttons) if rows else admin_main_keyboard(),
+    )
+    return ADM_HOME
+
+
 def build_admin_handler() -> ConversationHandler:
     return ConversationHandler(
         entry_points=[CommandHandler("admin", cmd_admin)],
         states={
             ADM_HOME: [
-                CallbackQueryHandler(adm_home_callback, pattern=r"^adm:"),
+                CallbackQueryHandler(adm_home_callback,    pattern=r"^adm:"),
+                CallbackQueryHandler(delete_worker_ask,    pattern=r"^del_w:"),
+                CallbackQueryHandler(delete_worker_confirm, pattern=r"^del_wc:"),
             ],
             WORKER_NAME: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, worker_name_received),

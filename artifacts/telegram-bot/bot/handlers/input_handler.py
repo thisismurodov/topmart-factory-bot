@@ -107,6 +107,12 @@ async def _save_batch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
     create_batch(batch_code, worker, product, quantity, weight_kg, earnings)
 
+    from ..database import get_user_role
+    from ..keyboards import packer_menu_keyboard
+    chat_id  = update.effective_chat.id
+    user_row = get_user_role(chat_id)
+    kb = packer_menu_keyboard() if (user_row and user_row["role"] == "packer") else main_menu_keyboard()
+
     today_str   = date.today().strftime("%d.%m.%Y")
     unit_weight = (weight_kg / quantity) if weight_kg and quantity > 0 else 0.0
     weight_line = (
@@ -124,7 +130,7 @@ async def _save_batch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         f"💰 Haq: *{earnings:,.0f} so'm*\n"
         f"📅 Sana: {today_str}",
         parse_mode="Markdown",
-        reply_markup=main_menu_keyboard(),
+        reply_markup=kb,
     )
 
     gen_msg = await update.message.reply_text(f"🖨️ {quantity} ta stiker tayyorlanmoqda…")

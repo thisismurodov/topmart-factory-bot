@@ -3,7 +3,6 @@ import os
 from datetime import datetime
 
 from PIL import Image, ImageDraw, ImageFont
-import qrcode
 
 # 40mm x 80mm @ 203 dpi  →  320 x 640 px
 # 1 mm = 203/25.4 ≈ 8 px
@@ -77,20 +76,17 @@ def _build_single(
     DIV1_Y = HDR_H + 52
     draw.line([8, DIV1_Y, LABEL_W - 8, DIV1_Y], fill="#cccccc", width=1)
 
-    # ── QR code (centered) ───────────────────────────────────────
-    qr = qrcode.QRCode(box_size=4, border=1,
-                       error_correction=qrcode.constants.ERROR_CORRECT_M)
-    qr.add_data(f"{batch_code} {unit_num}/{total_units}")
-    qr.make(fit=True)
-    qr_img  = qr.make_image(fill_color="black", back_color="white").convert("RGB")
-    QR_SIZE = 140
-    qr_img  = qr_img.resize((QR_SIZE, QR_SIZE), Image.LANCZOS)
-    qr_x    = (LABEL_W - QR_SIZE) // 2
-    QR_Y    = DIV1_Y + 10
-    img.paste(qr_img, (qr_x, QR_Y))
+    # ── Batch code (large, centered, replaces QR) ─────────────────
+    draw.text(
+        (LABEL_W // 2, DIV1_Y + 80),
+        batch_code,
+        font=_font(30, bold=True),
+        fill="#111111",
+        anchor="mm",
+    )
 
     # ── Divider ───────────────────────────────────────────────────
-    DIV2_Y = QR_Y + QR_SIZE + 10
+    DIV2_Y = DIV1_Y + 160
     draw.line([8, DIV2_Y, LABEL_W - 8, DIV2_Y], fill="#cccccc", width=1)
 
     # ── Fields ────────────────────────────────────────────────────

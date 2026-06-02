@@ -65,7 +65,6 @@ async def adm_home_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return PRODUCT_NAME
 
     elif action == "salary":
-        await query.answer()
         from datetime import date as _date
         from .salary import _send_month_report
         today = _date.today()
@@ -424,7 +423,10 @@ async def delete_worker_confirm(update: Update, context: ContextTypes.DEFAULT_TY
 
 def build_admin_handler() -> ConversationHandler:
     return ConversationHandler(
-        entry_points=[CommandHandler("admin", cmd_admin)],
+        entry_points=[
+            CommandHandler("admin", cmd_admin),
+            MessageHandler(filters.Regex(r"^⚙️ Admin panel$"), cmd_admin),
+        ],
         states={
             ADM_HOME: [
                 CallbackQueryHandler(adm_home_callback,    pattern=r"^adm:"),

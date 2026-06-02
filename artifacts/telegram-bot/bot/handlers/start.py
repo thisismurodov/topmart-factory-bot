@@ -209,11 +209,6 @@ async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("Menyu:", reply_markup=kb)
 
 
-async def admin_panel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    from .admin import cmd_admin
-    await cmd_admin(update, context)
-
-
 async def admin_maosh_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     from .salary import cmd_maosh
     await cmd_maosh(update, context)
@@ -320,6 +315,5 @@ def register(app) -> None:
     app.add_handler(CallbackQueryHandler(approve_user_callback, pattern=r"^appusr:"))
     app.add_handler(CallbackQueryHandler(reject_user_callback,  pattern=r"^rejusr:"))
     app.add_handler(MessageHandler(filters.Regex(r"^📋 Bugungi partiyalar$"), today_batches_handler))
-    app.add_handler(MessageHandler(filters.Regex(r"^⚙️ Admin panel$"),       admin_panel_handler))
-    app.add_handler(MessageHandler(filters.Regex(r"^💰 Maosh$"),             admin_maosh_handler))
+    app.add_handler(MessageHandler(filters.Regex(r"^💰 Maosh$"), admin_maosh_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unknown_handler))

@@ -1,12 +1,12 @@
 import io
 import os
-from datetime import date
+from datetime import datetime
 
 from PIL import Image, ImageDraw, ImageFont
 import qrcode
 
 LABEL_W = 420
-LABEL_H = 210
+LABEL_H = 220
 
 _FONT_BOLD = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -37,51 +37,61 @@ def _build_single(
     unit_num: int,
     total_units: int,
     unit_weight: float,
+    created_at: datetime | None = None,
 ) -> Image.Image:
-    img = Image.new("RGB", (LABEL_W, LABEL_H), "white")
+    now = created_at or datetime.now()
+    date_str = now.strftime("%d.%m.%Y")
+    time_str = now.strftime("%H:%M")
+
+    img  = Image.new("RGB", (LABEL_W, LABEL_H), "white")
     draw = ImageDraw.Draw(img)
 
-    f_hdr   = _font(22, bold=True)
-    f_num   = _font(28, bold=True)
-    f_key   = _font(13)
-    f_val   = _font(13, bold=True)
-    f_foot  = _font(11)
+    f_hdr  = _font(22, bold=True)
+    f_num  = _font(28, bold=True)
+    f_key  = _font(13)
+    f_val  = _font(13, bold=True)
+    f_foot = _font(11)
 
     draw.rectangle([0, 0, LABEL_W, 40], fill="#111111")
     draw.text((LABEL_W // 2, 20), "TOPMART", font=f_hdr, fill="white", anchor="mm")
 
     draw.rectangle([1, 1, LABEL_W - 1, LABEL_H - 1], outline="#111111", width=2)
 
-    qr = qrcode.QRCode(box_size=3, border=1,
-                        error_correction=qrcode.constants.ERROR_CORRECT_M)
+    qr = qrcode.QRCode(
+        box_size=3, border=1,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+    )
     qr.add_data(f"{batch_code} {unit_num}/{total_units}")
     qr.make(fit=True)
-    qr_img = qr.make_image(fill_color="black", back_color="white").convert("RGB")
+    qr_img  = qr.make_image(fill_color="black", back_color="white").convert("RGB")
     qr_size = 90
-    qr_img = qr_img.resize((qr_size, qr_size), Image.LANCZOS)
+    qr_img  = qr_img.resize((qr_size, qr_size), Image.LANCZOS)
     img.paste(qr_img, (LABEL_W - qr_size - 10, 45))
 
     unit_text = f"{unit_num} / {total_units}"
     draw.text((16, 48), unit_text, font=f_num, fill="#111111")
 
+    weight_txt = f"~{unit_weight:.2f} kg" if unit_weight > 0 else "—"
     fields = [
         ("Mahsulot:", product),
         ("Partiya:",  batch_code),
-        ("Og'irlik:", f"~{unit_weight:.2f} kg"),
+        ("Og'irlik:", weight_txt),
         ("Ishchi:",   worker),
-        ("Sana:",     date.today().strftime("%d.%m.%Y")),
+        ("Sana:",     f"{date_str}  {time_str}"),
     ]
 
-    y = 88
+    y = 90
     for key, val in fields:
-        draw.text((16, y), key, font=f_key, fill="#666666")
+        draw.text((16, y),  key, font=f_key, fill="#666666")
         draw.text((105, y), val, font=f_val, fill="#111111")
         y += 22
 
     draw.line([10, LABEL_H - 20, LABEL_W - 10, LABEL_H - 20], fill="#dddddd", width=1)
-    draw.text((LABEL_W // 2, LABEL_H - 10),
-              f"{batch_code}  •  {unit_num}/{total_units}",
-              font=f_foot, fill="#aaaaaa", anchor="mm")
+    draw.text(
+        (LABEL_W // 2, LABEL_H - 10),
+        f"{batch_code}  •  {unit_num}/{total_units}  •  {time_str}",
+        font=f_foot, fill="#aaaaaa", anchor="mm",
+    )
 
     return img
 
@@ -92,10 +102,12 @@ def generate_label_pdf(
     product: str,
     quantity: int,
     weight_kg: float,
+    created_at: datetime | None = None,
 ) -> io.BytesIO:
     unit_weight = (weight_kg / quantity) if quantity > 0 else 0.0
+    ts = created_at or datetime.now()
     images = [
-        _build_single(batch_code, worker, product, i, quantity, unit_weight)
+        _build_single(batch_code, worker, product, i, quantity, unit_weight, ts)
         for i in range(1, quantity + 1)
     ]
     buf = io.BytesIO()
@@ -116,9 +128,10 @@ def generate_label(
     product: str,
     quantity: int,
     weight_kg: float = 0.0,
+    created_at: datetime | None = None,
 ) -> io.BytesIO:
     unit_weight = (weight_kg / quantity) if weight_kg and quantity > 0 else 0.0
-    img = _build_single(batch_code, worker, product, 1, quantity, unit_weight)
+    img = _build_single(batch_code, worker, product, 1, quantity, unit_weight, created_at)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)

@@ -9,7 +9,7 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
         [
             ["🏭 Tovar kiritish"],
             ["📋 Bugungi partiyalar", "🏷️ Etiketka"],
-            ["📊 KPI Hisobot"],
+            ["📊 KPI Hisobot", "💰 To'lovlar tarixi"],
         ],
         resize_keyboard=True,
     )
@@ -69,4 +69,5 @@ def admin_main_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("👔 Upakovkachi belgilash", callback_data="adm:assign_packer")],
         [InlineKeyboardButton("📋 Hodimlar ro'yxati",     callback_data="adm:list_workers")],
         [InlineKeyboardButton("📦 Mahsulotlar ro'yxati",  callback_data="adm:list_products")],
+        [InlineKeyboardButton("💰 Maosh boshqaruvi",      callback_data="adm:salary")],
     ])

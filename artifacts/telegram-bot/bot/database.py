@@ -62,6 +62,18 @@ def init_db() -> None:
                 created_at TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS salary_payments (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                worker_name TEXT    NOT NULL,
+                year        INTEGER NOT NULL,
+                month       INTEGER NOT NULL,
+                amount      REAL    NOT NULL,
+                note        TEXT    NOT NULL DEFAULT '',
+                paid_at     TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+                UNIQUE (worker_name, year, month)
+            )
+        """)
         _migrate(conn)
         _seed(conn)
         conn.commit()
@@ -315,13 +327,76 @@ def delete_pending_user(chat_id: int) -> None:
         conn.commit()
 
 
+# ── Salary payments ───────────────────────────────────────────────────────────
+
+def get_monthly_salary_report(year: int, month: int) -> list[dict]:
+    period = f"{year}-{month:02d}"
+    with get_connection() as conn:
+        workers = conn.execute(
+            "SELECT name FROM workers_config WHERE role = 'worker' ORDER BY name"
+        ).fetchall()
+        result = []
+        for w in workers:
+            name = w["name"]
+            rows = conn.execute(
+                """SELECT product, SUM(quantity) AS qty, SUM(weight_kg) AS kg,
+                          SUM(earnings) AS earnings
+                   FROM batches
+                   WHERE worker = ? AND strftime('%Y-%m', created_at) = ?
+                   GROUP BY product""",
+                (name, period),
+            ).fetchall()
+            if not rows:
+                continue
+            total_earnings = sum(r["earnings"] for r in rows)
+            products = [
+                {"name": r["product"], "qty": r["qty"], "kg": r["kg"],
+                 "earnings": r["earnings"]}
+                for r in rows
+            ]
+            pay_row = conn.execute(
+                "SELECT paid_at FROM salary_payments WHERE worker_name=? AND year=? AND month=?",
+                (name, year, month),
+            ).fetchone()
+            result.append({
+                "worker": name,
+                "total_earnings": total_earnings,
+                "products": products,
+                "is_paid": pay_row is not None,
+                "paid_at": pay_row["paid_at"] if pay_row else None,
+            })
+    return result
+
+
+def mark_salary_paid(worker_name: str, year: int, month: int, amount: float) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            """INSERT OR REPLACE INTO salary_payments (worker_name, year, month, amount)
+               VALUES (?,?,?,?)""",
+            (worker_name, year, month, amount),
+        )
+        conn.commit()
+
+
+def get_worker_payment_history(worker_name: str, limit: int = 6) -> list[sqlite3.Row]:
+    with get_connection() as conn:
+        return conn.execute(
+            """SELECT year, month, amount, paid_at FROM salary_payments
+               WHERE worker_name = ?
+               ORDER BY year DESC, month DESC
+               LIMIT ?""",
+            (worker_name, limit),
+        ).fetchall()
+
+
 def clear_test_data() -> dict:
     with get_connection() as conn:
         batches = conn.execute("SELECT COUNT(*) FROM batches").fetchone()[0]
         pending = conn.execute("SELECT COUNT(*) FROM pending_users").fetchone()[0]
         conn.execute("DELETE FROM batches")
         conn.execute("DELETE FROM pending_users")
-        conn.execute("DELETE FROM sqlite_sequence WHERE name IN ('batches')")
+        conn.execute("DELETE FROM salary_payments")
+        conn.execute("DELETE FROM sqlite_sequence WHERE name IN ('batches', 'salary_payments')")
         conn.commit()
     return {"batches": batches, "pending": pending}
 

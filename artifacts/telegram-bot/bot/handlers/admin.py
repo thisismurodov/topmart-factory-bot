@@ -64,6 +64,14 @@ async def adm_home_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         )
         return PRODUCT_NAME
 
+    elif action == "salary":
+        await query.answer()
+        from datetime import date as _date
+        from .salary import _send_month_report
+        today = _date.today()
+        await _send_month_report(query.message, today.year, today.month, edit=True)
+        return ADM_HOME
+
     elif action == "assign_packer":
         packers = get_registered_packers()
         if not packers:

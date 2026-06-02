@@ -7,6 +7,7 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
         [
             ["🏭 Tovar kiritish"],
             ["📋 Bugungi partiyalar", "🏷️ Etiketka"],
+            ["📊 KPI Hisobot"],
         ],
         resize_keyboard=True,
         one_time_keyboard=False,

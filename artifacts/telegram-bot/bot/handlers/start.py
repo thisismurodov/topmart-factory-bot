@@ -1,7 +1,15 @@
+from datetime import date
 from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters
 from ..keyboards import main_menu_keyboard
 from ..database import get_today_batches
+
+
+MONTHS_UZ = {
+    1: "Yanvar", 2: "Fevral", 3: "Mart", 4: "Aprel",
+    5: "May", 6: "Iyun", 7: "Iyul", 8: "Avgust",
+    9: "Sentabr", 10: "Oktabr", 11: "Noyabr", 12: "Dekabr",
+}
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -24,11 +32,21 @@ async def today_batches_handler(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return
 
-    total_qty = sum(r["quantity"] for r in rows)
-    lines = [f"📋 *Bugungi partiyalar* — {len(rows)} ta\n"]
+    total_qty      = sum(r["quantity"] for r in rows)
+    total_kg       = sum(r["weight_kg"] for r in rows)
+    total_earnings = sum(r["earnings"]  for r in rows)
+
+    today_str = date.today().strftime("%d.%m.%Y")
+    lines = [f"📋 *Bugungi partiyalar* ({today_str}) — {len(rows)} ta\n"]
     for r in rows:
-        lines.append(f"• `{r['batch_code']}` | {r['product']} | *{r['quantity']} dona*")
+        kg_part = f" | {r['weight_kg']:.1f} kg" if r["weight_kg"] > 0 else ""
+        lines.append(
+            f"• `{r['batch_code']}` | {r['product']} | *{r['quantity']} dona*{kg_part}"
+        )
     lines.append(f"\n📦 Jami: *{total_qty} dona*")
+    if total_kg > 0:
+        lines.append(f"⚖️ Jami og'irlik: *{total_kg:.1f} kg*")
+    lines.append(f"💰 Jami haq: *{total_earnings:,.0f} so'm*")
 
     await update.message.reply_text(
         "\n".join(lines),

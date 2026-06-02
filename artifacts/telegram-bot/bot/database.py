@@ -21,11 +21,26 @@ def init_db() -> None:
                 worker      TEXT    NOT NULL,
                 product     TEXT    NOT NULL,
                 quantity    INTEGER NOT NULL,
+                weight_kg   REAL    NOT NULL DEFAULT 0,
+                earnings    REAL    NOT NULL DEFAULT 0,
                 created_at  TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
             )
             """
         )
+        conn.execute(
+            "ALTER TABLE batches ADD COLUMN weight_kg REAL NOT NULL DEFAULT 0"
+            if False else ""
+        )
+        _migrate(conn)
         conn.commit()
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(batches)")}
+    if "weight_kg" not in cols:
+        conn.execute("ALTER TABLE batches ADD COLUMN weight_kg REAL NOT NULL DEFAULT 0")
+    if "earnings" not in cols:
+        conn.execute("ALTER TABLE batches ADD COLUMN earnings REAL NOT NULL DEFAULT 0")
 
 
 def next_batch_code(worker_prefix: str) -> str:
@@ -40,23 +55,62 @@ def next_batch_code(worker_prefix: str) -> str:
     return f"{prefix}{seq:02d}"
 
 
-def create_batch(batch_code: str, worker: str, product: str, quantity: int) -> None:
+def create_batch(
+    batch_code: str,
+    worker: str,
+    product: str,
+    quantity: int,
+    weight_kg: float,
+    earnings: float,
+) -> None:
     with get_connection() as conn:
         conn.execute(
-            "INSERT INTO batches (batch_code, worker, product, quantity) VALUES (?, ?, ?, ?)",
-            (batch_code, worker, product, quantity),
+            """INSERT INTO batches
+               (batch_code, worker, product, quantity, weight_kg, earnings)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (batch_code, worker, product, quantity, weight_kg, earnings),
         )
         conn.commit()
 
 
 def get_today_batches() -> list[sqlite3.Row]:
     with get_connection() as conn:
-        rows = conn.execute(
-            """
-            SELECT batch_code, worker, product, quantity, created_at
-            FROM   batches
-            WHERE  date(created_at) = date('now', 'localtime')
-            ORDER  BY id
-            """,
+        return conn.execute(
+            """SELECT batch_code, worker, product, quantity, weight_kg, earnings, created_at
+               FROM   batches
+               WHERE  date(created_at) = date('now', 'localtime')
+               ORDER  BY id""",
         ).fetchall()
-    return rows
+
+
+def get_monthly_kpi(year: int, month: int) -> list[sqlite3.Row]:
+    period = f"{year}-{month:02d}"
+    with get_connection() as conn:
+        return conn.execute(
+            """SELECT worker,
+                      SUM(quantity)  AS total_qty,
+                      SUM(weight_kg) AS total_kg,
+                      SUM(earnings)  AS total_earnings,
+                      COUNT(*)       AS batch_count
+               FROM   batches
+               WHERE  strftime('%Y-%m', created_at) = ?
+               GROUP  BY worker
+               ORDER  BY total_earnings DESC""",
+            (period,),
+        ).fetchall()
+
+
+def get_worker_monthly(worker: str, year: int, month: int) -> list[sqlite3.Row]:
+    period = f"{year}-{month:02d}"
+    with get_connection() as conn:
+        return conn.execute(
+            """SELECT product,
+                      SUM(quantity)  AS total_qty,
+                      SUM(weight_kg) AS total_kg,
+                      SUM(earnings)  AS total_earnings
+               FROM   batches
+               WHERE  worker = ? AND strftime('%Y-%m', created_at) = ?
+               GROUP  BY product
+               ORDER  BY total_earnings DESC""",
+            (worker, period),
+        ).fetchall()

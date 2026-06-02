@@ -9,10 +9,10 @@ from telegram.ext import (
 )
 from ..keyboards import workers_keyboard, products_keyboard, cancel_keyboard, main_menu_keyboard
 from ..database import create_batch, next_batch_code
-from ..config import WORKERS
+from ..config import WORKERS, PRODUCT_RATES, calc_earnings
 from ..label_generator import generate_label
 
-CHOOSE_WORKER, CHOOSE_PRODUCT, ENTER_QUANTITY = range(3)
+CHOOSE_WORKER, CHOOSE_PRODUCT, ENTER_QUANTITY, ENTER_WEIGHT = range(4)
 
 
 async def start_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -27,10 +27,8 @@ async def start_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 async def choose_worker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
-
     worker = query.data.split(":", 1)[1]
     context.user_data["worker"] = worker
-
     await query.edit_message_text(
         f"👷 Ishlab chiqaruvchi: *{worker}*\n\n📦 *Mahsulotni tanlang:*",
         parse_mode="Markdown",
@@ -42,10 +40,8 @@ async def choose_worker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 async def choose_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
-
     product = query.data.split(":", 1)[1]
     context.user_data["product"] = product
-
     await query.edit_message_text(
         f"📦 Mahsulot: *{product}*\n\n🔢 *Necha dona ishlab chiqarildi?*\nRaqam kiriting:",
         parse_mode="Markdown",
@@ -56,7 +52,6 @@ async def choose_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def enter_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text.strip()
-
     if not text.isdigit() or int(text) <= 0:
         await update.message.reply_text(
             "⚠️ Iltimos, musbat butun son kiriting (masalan: 50):",
@@ -64,16 +59,57 @@ async def enter_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return ENTER_QUANTITY
 
-    quantity = int(text)
-    worker   = context.user_data["worker"]
-    product  = context.user_data["product"]
+    context.user_data["quantity"] = int(text)
+    product = context.user_data["product"]
+    rate_info = PRODUCT_RATES.get(product, {"type": "dona"})
 
+    if rate_info["type"] == "kg":
+        await update.message.reply_text(
+            f"⚖️ *Jami og'irlik qancha?*\n"
+            f"Tarozida o'lchab yozing (kg):\n"
+            f"_Masalan: 203.5_",
+            parse_mode="Markdown",
+            reply_markup=cancel_keyboard(),
+        )
+        return ENTER_WEIGHT
+    else:
+        context.user_data["weight_kg"] = 0.0
+        return await _save_batch(update, context)
+
+
+async def enter_weight(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text.strip().replace(",", ".")
+    try:
+        weight = float(text)
+        if weight <= 0:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text(
+            "⚠️ Iltimos, to'g'ri og'irlik kiriting (masalan: 203.5):",
+            reply_markup=cancel_keyboard(),
+        )
+        return ENTER_WEIGHT
+
+    context.user_data["weight_kg"] = weight
+    return await _save_batch(update, context)
+
+
+async def _save_batch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    worker    = context.user_data["worker"]
+    product   = context.user_data["product"]
+    quantity  = context.user_data["quantity"]
+    weight_kg = context.user_data.get("weight_kg", 0.0)
+
+    earnings      = calc_earnings(product, quantity, weight_kg)
     worker_prefix = WORKERS[worker]
     batch_code    = next_batch_code(worker_prefix)
 
-    create_batch(batch_code, worker, product, quantity)
+    create_batch(batch_code, worker, product, quantity, weight_kg, earnings)
 
     today_str = date.today().strftime("%d.%m.%Y")
+    rate_info = PRODUCT_RATES.get(product, {"type": "dona", "rate": 100})
+
+    weight_line = f"⚖️ Og'irlik: *{weight_kg} kg*\n" if rate_info["type"] == "kg" else ""
 
     await update.message.reply_text(
         f"✅ *Partiya yaratildi!*\n\n"
@@ -81,6 +117,8 @@ async def enter_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         f"👷 Ishlab chiqaruvchi: {worker}\n"
         f"📦 Mahsulot: {product}\n"
         f"🔢 Miqdor: *{quantity} dona*\n"
+        f"{weight_line}"
+        f"💰 Haq: *{earnings:,.0f} so'm*\n"
         f"📅 Sana: {today_str}",
         parse_mode="Markdown",
         reply_markup=main_menu_keyboard(),
@@ -131,6 +169,10 @@ def build_conversation_handler() -> ConversationHandler:
             ],
             ENTER_QUANTITY: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, enter_quantity),
+                CallbackQueryHandler(cancel_callback, pattern=r"^cancel$"),
+            ],
+            ENTER_WEIGHT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, enter_weight),
                 CallbackQueryHandler(cancel_callback, pattern=r"^cancel$"),
             ],
         },

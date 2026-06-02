@@ -93,10 +93,10 @@ def _build_single(
     weight_txt = f"~{unit_weight:.2f} kg" if unit_weight > 0 else "—"
     fields = [
         ("Mahsulot:", product),
-        ("Partiya:",  batch_code),
         ("Og'irlik:", weight_txt),
         ("Ishchi:",   worker),
-        ("Sana:",     f"{date_str}  {time_str}"),
+        ("Sana:",     date_str),
+        ("Soat:",     time_str),
     ]
 
     f_key = _font(14)

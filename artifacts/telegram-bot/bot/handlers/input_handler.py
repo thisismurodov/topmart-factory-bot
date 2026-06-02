@@ -10,6 +10,7 @@ from telegram.ext import (
 from ..keyboards import workers_keyboard, products_keyboard, cancel_keyboard, main_menu_keyboard
 from ..database import create_batch, next_batch_code
 from ..config import WORKERS
+from ..label_generator import generate_label
 
 CHOOSE_WORKER, CHOOSE_PRODUCT, ENTER_QUANTITY = range(3)
 
@@ -64,11 +65,11 @@ async def enter_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return ENTER_QUANTITY
 
     quantity = int(text)
-    worker = context.user_data["worker"]
-    product = context.user_data["product"]
+    worker   = context.user_data["worker"]
+    product  = context.user_data["product"]
 
     worker_prefix = WORKERS[worker]
-    batch_code = next_batch_code(worker_prefix)
+    batch_code    = next_batch_code(worker_prefix)
 
     create_batch(batch_code, worker, product, quantity)
 
@@ -83,6 +84,13 @@ async def enter_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         f"📅 Sana: {today_str}",
         parse_mode="Markdown",
         reply_markup=main_menu_keyboard(),
+    )
+
+    label_buf = generate_label(batch_code, worker, product, quantity)
+    await update.message.reply_photo(
+        photo=label_buf,
+        caption=f"🏷️ *{batch_code}* — {product} | {quantity} dona",
+        parse_mode="Markdown",
     )
 
     context.user_data.clear()

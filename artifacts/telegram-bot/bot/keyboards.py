@@ -4,7 +4,10 @@ from .config import WORKERS, PRODUCTS
 
 def main_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        [["🏭 Tovar kiritish"], ["📋 Bugungi partiyalar"]],
+        [
+            ["🏭 Tovar kiritish"],
+            ["📋 Bugungi partiyalar", "🏷️ Etiketka"],
+        ],
         resize_keyboard=True,
         one_time_keyboard=False,
     )

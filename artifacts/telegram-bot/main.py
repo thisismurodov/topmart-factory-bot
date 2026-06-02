@@ -13,6 +13,7 @@ warnings.filterwarnings(
 from bot.database import init_db
 from bot.handlers.input_handler import build_conversation_handler
 from bot.handlers.start import register as register_start_handlers
+from bot.handlers.labels import register as register_label_handlers
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -32,6 +33,7 @@ def main() -> None:
     app = ApplicationBuilder().token(token).build()
 
     app.add_handler(build_conversation_handler())
+    register_label_handlers(app)
     register_start_handlers(app)
 
     logger.info("TopMart Factory Bot started (polling) …")

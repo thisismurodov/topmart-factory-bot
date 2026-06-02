@@ -1,0 +1,198 @@
+import { 
+  useGetDashboardToday, getGetDashboardTodayQueryKey,
+  useGetDashboardMonthly, getGetDashboardMonthlyQueryKey,
+  useGetTopWorkers, getGetTopWorkersQueryKey,
+  useGetDailyChart, getGetDailyChartQueryKey
+} from "@workspace/api-client-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import { formatCurrency, formatNumber } from "@/lib/format";
+
+export default function Dashboard() {
+  const { data: today, isLoading: isLoadingToday } = useGetDashboardToday({
+    query: { queryKey: getGetDashboardTodayQueryKey() }
+  });
+
+  const { data: monthly, isLoading: isLoadingMonthly } = useGetDashboardMonthly(undefined, {
+    query: { queryKey: getGetDashboardMonthlyQueryKey() }
+  });
+
+  const { data: chartData, isLoading: isLoadingChart } = useGetDailyChart({
+    query: { queryKey: getGetDailyChartQueryKey() }
+  });
+
+  const { data: topWorkers, isLoading: isLoadingWorkers } = useGetTopWorkers({
+    query: { queryKey: getGetTopWorkersQueryKey() }
+  });
+
+  return (
+    <div className="space-y-8">
+      {/* Today Section */}
+      <div>
+        <h2 className="text-lg font-medium tracking-tight mb-4 flex items-center">
+          <span className="w-2 h-2 rounded-full bg-primary mr-2 animate-pulse" />
+          TODAY'S PRODUCTION
+        </h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <MetricCard 
+            title="Total Batches" 
+            value={today?.totalBatches} 
+            loading={isLoadingToday} 
+            formatter={formatNumber}
+            testId="today-batches"
+          />
+          <MetricCard 
+            title="Total Output (Qty)" 
+            value={today?.totalQty} 
+            loading={isLoadingToday} 
+            formatter={formatNumber}
+            testId="today-qty"
+          />
+          <MetricCard 
+            title="Total Weight (KG)" 
+            value={today?.totalKg} 
+            loading={isLoadingToday} 
+            formatter={(v) => `${formatNumber(v)} kg`}
+            testId="today-kg"
+          />
+          <MetricCard 
+            title="Active Workers" 
+            value={today?.workerCount} 
+            loading={isLoadingToday} 
+            formatter={formatNumber}
+            testId="today-workers"
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="lg:col-span-2 space-y-8">
+          {/* Chart */}
+          <Card className="border-border">
+            <CardHeader>
+              <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">30-Day Output</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {isLoadingChart ? (
+                <Skeleton className="w-full h-[300px]" />
+              ) : (
+                <div className="h-[300px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartData || []} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                      <XAxis 
+                        dataKey="date" 
+                        tickFormatter={(val) => val.split("-").slice(1).join("/")} 
+                        tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }}
+                        axisLine={false}
+                        tickLine={false}
+                        dy={10}
+                      />
+                      <YAxis 
+                        tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }}
+                        axisLine={false}
+                        tickLine={false}
+                        tickFormatter={(val) => `${val / 1000}k`}
+                      />
+                      <Tooltip 
+                        cursor={{ fill: 'hsl(var(--muted))' }}
+                        contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '4px' }}
+                      />
+                      <Bar dataKey="qty" fill="hsl(var(--primary))" radius={[2, 2, 0, 0]} name="Quantity" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Monthly Stats */}
+          <div>
+            <h2 className="text-lg font-medium tracking-tight mb-4 uppercase text-muted-foreground text-xs font-bold">Monthly Overview</h2>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <MetricCard 
+                title="Monthly Output" 
+                value={monthly?.totalQty} 
+                loading={isLoadingMonthly} 
+                formatter={formatNumber}
+                testId="monthly-qty"
+              />
+              <MetricCard 
+                title="Monthly Weight" 
+                value={monthly?.totalKg} 
+                loading={isLoadingMonthly} 
+                formatter={(v) => `${formatNumber(v)} kg`}
+                testId="monthly-kg"
+              />
+              <MetricCard 
+                title="Total Earnings" 
+                value={monthly?.totalEarnings} 
+                loading={isLoadingMonthly} 
+                formatter={formatCurrency}
+                testId="monthly-earnings"
+                highlight
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Top Workers */}
+        <Card className="border-border">
+          <CardHeader>
+            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Top Performers (This Month)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {isLoadingWorkers ? (
+              <div className="space-y-4">
+                {[1, 2, 3, 4, 5].map(i => <Skeleton key={i} className="h-12 w-full" />)}
+              </div>
+            ) : topWorkers?.length ? (
+              <div className="space-y-4">
+                {topWorkers.map((worker, idx) => (
+                  <div key={worker.worker} className="flex items-center justify-between group" data-testid={`top-worker-${idx}`}>
+                    <div className="flex items-center gap-3">
+                      <div className="w-6 h-6 rounded bg-muted flex items-center justify-center text-xs font-bold text-muted-foreground">
+                        {idx + 1}
+                      </div>
+                      <div>
+                        <div className="font-medium">{worker.worker}</div>
+                        <div className="text-xs text-muted-foreground">{formatNumber(worker.totalQty)} units</div>
+                      </div>
+                    </div>
+                    <div className="text-right font-mono text-sm">
+                      {formatCurrency(worker.totalEarnings)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-8 text-muted-foreground text-sm">
+                No production data this month
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function MetricCard({ title, value, loading, formatter = (v: any) => v, highlight = false, testId }: any) {
+  return (
+    <Card className={`border-border ${highlight ? 'bg-sidebar text-sidebar-foreground border-sidebar-border' : ''}`} data-testid={testId}>
+      <CardContent className="p-5">
+        <div className={`text-xs font-bold uppercase tracking-wider mb-2 ${highlight ? 'text-sidebar-foreground/70' : 'text-muted-foreground'}`}>
+          {title}
+        </div>
+        {loading ? (
+          <Skeleton className={`h-8 w-24 ${highlight ? 'bg-sidebar-accent' : ''}`} />
+        ) : (
+          <div className="text-2xl font-semibold tracking-tight">
+            {value !== undefined ? formatter(value) : "—"}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}

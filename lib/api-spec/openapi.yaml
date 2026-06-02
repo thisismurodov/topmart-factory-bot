@@ -3,27 +3,363 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: TopMart ERP API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
-    description: Health operations
+  - name: auth
+  - name: dashboard
+  - name: batches
+  - name: workers
+  - name: products
+  - name: salary
+
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
-          description: Healthy
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+          description: Healthy
+
+  # ── Auth ──────────────────────────────────────────────────────────────
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Admin login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginInput"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResult"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      summary: Current session user
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUser"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Logout
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  # ── Dashboard ─────────────────────────────────────────────────────────
+  /dashboard/today:
+    get:
+      operationId: getDashboardToday
+      tags: [dashboard]
+      summary: Today's summary
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardToday"
+
+  /dashboard/monthly:
+    get:
+      operationId: getDashboardMonthly
+      tags: [dashboard]
+      summary: Monthly summary
+      parameters:
+        - name: year
+          in: query
+          schema:
+            type: integer
+        - name: month
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardMonthly"
+
+  /dashboard/top-workers:
+    get:
+      operationId: getTopWorkers
+      tags: [dashboard]
+      summary: Top workers this month
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WorkerStat"
+
+  /dashboard/daily-chart:
+    get:
+      operationId: getDailyChart
+      tags: [dashboard]
+      summary: Daily production chart (last 30 days)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DailyChartPoint"
+
+  # ── Batches ───────────────────────────────────────────────────────────
+  /batches:
+    get:
+      operationId: getBatches
+      tags: [batches]
+      summary: List batches
+      parameters:
+        - name: date
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: worker
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: product
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatchList"
+
+  /batches/{id}:
+    delete:
+      operationId: deleteBatch
+      tags: [batches]
+      summary: Delete a batch
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  # ── Workers ───────────────────────────────────────────────────────────
+  /workers:
+    get:
+      operationId: getWorkers
+      tags: [workers]
+      summary: List all workers
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Worker"
+
+    post:
+      operationId: createWorker
+      tags: [workers]
+      summary: Add worker
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkerInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Worker"
+
+  /workers/{name}:
+    delete:
+      operationId: deleteWorker
+      tags: [workers]
+      summary: Delete worker
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  # ── Products ──────────────────────────────────────────────────────────
+  /products:
+    get:
+      operationId: getProducts
+      tags: [products]
+      summary: List products
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Product"
+
+    post:
+      operationId: createProduct
+      tags: [products]
+      summary: Add product
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+
+  /products/{name}:
+    delete:
+      operationId: deleteProduct
+      tags: [products]
+      summary: Delete product
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  # ── Salary ────────────────────────────────────────────────────────────
+  /salary/report:
+    get:
+      operationId: getSalaryReport
+      tags: [salary]
+      summary: Monthly salary report
+      parameters:
+        - name: year
+          in: query
+          schema:
+            type: integer
+        - name: month
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SalaryRow"
+
+  /salary/pay:
+    post:
+      operationId: markSalaryPaid
+      tags: [salary]
+      summary: Mark worker salary as paid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SalaryPayInput"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
 components:
   schemas:
     HealthStatus:
@@ -31,6 +367,212 @@ components:
       properties:
         status:
           type: string
-      required:
-        - status
+      required: [status]
 
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+
+    # ── Auth ────────────────────────────────────────────────────────
+    LoginInput:
+      type: object
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+      required: [username, password]
+
+    LoginResult:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        user:
+          $ref: "#/components/schemas/AdminUser"
+      required: [ok, user]
+
+    AdminUser:
+      type: object
+      properties:
+        id:
+          type: integer
+        username:
+          type: string
+        role:
+          type: string
+      required: [id, username, role]
+
+    # ── Dashboard ───────────────────────────────────────────────────
+    DashboardToday:
+      type: object
+      properties:
+        totalBatches:
+          type: integer
+        totalQty:
+          type: integer
+        totalKg:
+          type: number
+        totalEarnings:
+          type: number
+        workerCount:
+          type: integer
+      required: [totalBatches, totalQty, totalKg, totalEarnings, workerCount]
+
+    DashboardMonthly:
+      type: object
+      properties:
+        totalBatches:
+          type: integer
+        totalQty:
+          type: integer
+        totalKg:
+          type: number
+        totalEarnings:
+          type: number
+        paidCount:
+          type: integer
+        unpaidCount:
+          type: integer
+        unpaidAmount:
+          type: number
+      required: [totalBatches, totalQty, totalKg, totalEarnings, paidCount, unpaidCount, unpaidAmount]
+
+    WorkerStat:
+      type: object
+      properties:
+        worker:
+          type: string
+        totalQty:
+          type: integer
+        totalKg:
+          type: number
+        totalEarnings:
+          type: number
+      required: [worker, totalQty, totalKg, totalEarnings]
+
+    DailyChartPoint:
+      type: object
+      properties:
+        date:
+          type: string
+        qty:
+          type: integer
+        kg:
+          type: number
+        earnings:
+          type: number
+      required: [date, qty, kg, earnings]
+
+    # ── Batches ─────────────────────────────────────────────────────
+    Batch:
+      type: object
+      properties:
+        id:
+          type: integer
+        batchCode:
+          type: string
+        worker:
+          type: string
+        product:
+          type: string
+        quantity:
+          type: integer
+        weightKg:
+          type: number
+        earnings:
+          type: number
+        createdAt:
+          type: string
+      required: [id, batchCode, worker, product, quantity, weightKg, earnings, createdAt]
+
+    BatchList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Batch"
+        total:
+          type: integer
+      required: [items, total]
+
+    # ── Workers ─────────────────────────────────────────────────────
+    Worker:
+      type: object
+      properties:
+        name:
+          type: string
+        prefix:
+          type: string
+        phone:
+          type: string
+        role:
+          type: string
+      required: [name, prefix, phone, role]
+
+    WorkerInput:
+      type: object
+      properties:
+        name:
+          type: string
+        prefix:
+          type: string
+        phone:
+          type: string
+        role:
+          type: string
+      required: [name, prefix, phone, role]
+
+    # ── Products ─────────────────────────────────────────────────────
+    Product:
+      type: object
+      properties:
+        name:
+          type: string
+        rateType:
+          type: string
+        rate:
+          type: number
+      required: [name, rateType, rate]
+
+    ProductInput:
+      type: object
+      properties:
+        name:
+          type: string
+        rateType:
+          type: string
+        rate:
+          type: number
+      required: [name, rateType, rate]
+
+    # ── Salary ──────────────────────────────────────────────────────
+    SalaryRow:
+      type: object
+      properties:
+        worker:
+          type: string
+        totalEarnings:
+          type: number
+        isPaid:
+          type: boolean
+        paidAt:
+          type: ["string", "null"]
+      required: [worker, totalEarnings, isPaid, paidAt]
+
+    SalaryPayInput:
+      type: object
+      properties:
+        worker:
+          type: string
+        year:
+          type: integer
+        month:
+          type: integer
+        amount:
+          type: number
+      required: [worker, year, month, amount]

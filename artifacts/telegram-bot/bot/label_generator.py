@@ -5,8 +5,11 @@ from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
 import qrcode
 
-LABEL_W = 420
-LABEL_H = 220
+# 40mm x 80mm @ 203 dpi  →  320 x 640 px
+# 1 mm = 203/25.4 ≈ 8 px
+MM = 203 / 25.4
+LABEL_W = round(40 * MM)   # 320
+LABEL_H = round(80 * MM)   # 640
 
 _FONT_BOLD = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -39,38 +42,58 @@ def _build_single(
     unit_weight: float,
     created_at: datetime | None = None,
 ) -> Image.Image:
-    now = created_at or datetime.now()
+    now      = created_at or datetime.now()
     date_str = now.strftime("%d.%m.%Y")
     time_str = now.strftime("%H:%M")
 
     img  = Image.new("RGB", (LABEL_W, LABEL_H), "white")
     draw = ImageDraw.Draw(img)
 
-    f_hdr  = _font(22, bold=True)
-    f_num  = _font(28, bold=True)
-    f_key  = _font(13)
-    f_val  = _font(13, bold=True)
-    f_foot = _font(11)
+    # ── Outer border ──────────────────────────────────────────────
+    draw.rectangle([0, 0, LABEL_W - 1, LABEL_H - 1], outline="#111111", width=2)
 
-    draw.rectangle([0, 0, LABEL_W, 40], fill="#111111")
-    draw.text((LABEL_W // 2, 20), "TOPMART", font=f_hdr, fill="white", anchor="mm")
-
-    draw.rectangle([1, 1, LABEL_W - 1, LABEL_H - 1], outline="#111111", width=2)
-
-    qr = qrcode.QRCode(
-        box_size=3, border=1,
-        error_correction=qrcode.constants.ERROR_CORRECT_M,
+    # ── Header strip ──────────────────────────────────────────────
+    HDR_H = 42
+    draw.rectangle([0, 0, LABEL_W, HDR_H], fill="#111111")
+    draw.text(
+        (LABEL_W // 2, HDR_H // 2),
+        "TOPMART",
+        font=_font(24, bold=True),
+        fill="white",
+        anchor="mm",
     )
+
+    # ── Unit number (large, centered) ─────────────────────────────
+    unit_text = f"{unit_num} / {total_units}"
+    draw.text(
+        (LABEL_W // 2, HDR_H + 28),
+        unit_text,
+        font=_font(34, bold=True),
+        fill="#111111",
+        anchor="mm",
+    )
+
+    # ── Divider ───────────────────────────────────────────────────
+    DIV1_Y = HDR_H + 52
+    draw.line([8, DIV1_Y, LABEL_W - 8, DIV1_Y], fill="#cccccc", width=1)
+
+    # ── QR code (centered) ───────────────────────────────────────
+    qr = qrcode.QRCode(box_size=4, border=1,
+                       error_correction=qrcode.constants.ERROR_CORRECT_M)
     qr.add_data(f"{batch_code} {unit_num}/{total_units}")
     qr.make(fit=True)
     qr_img  = qr.make_image(fill_color="black", back_color="white").convert("RGB")
-    qr_size = 90
-    qr_img  = qr_img.resize((qr_size, qr_size), Image.LANCZOS)
-    img.paste(qr_img, (LABEL_W - qr_size - 10, 45))
+    QR_SIZE = 140
+    qr_img  = qr_img.resize((QR_SIZE, QR_SIZE), Image.LANCZOS)
+    qr_x    = (LABEL_W - QR_SIZE) // 2
+    QR_Y    = DIV1_Y + 10
+    img.paste(qr_img, (qr_x, QR_Y))
 
-    unit_text = f"{unit_num} / {total_units}"
-    draw.text((16, 48), unit_text, font=f_num, fill="#111111")
+    # ── Divider ───────────────────────────────────────────────────
+    DIV2_Y = QR_Y + QR_SIZE + 10
+    draw.line([8, DIV2_Y, LABEL_W - 8, DIV2_Y], fill="#cccccc", width=1)
 
+    # ── Fields ────────────────────────────────────────────────────
     weight_txt = f"~{unit_weight:.2f} kg" if unit_weight > 0 else "—"
     fields = [
         ("Mahsulot:", product),
@@ -80,17 +103,24 @@ def _build_single(
         ("Sana:",     f"{date_str}  {time_str}"),
     ]
 
-    y = 90
+    f_key = _font(14)
+    f_val = _font(14, bold=True)
+    PAD   = 10
+    y     = DIV2_Y + 10
     for key, val in fields:
-        draw.text((16, y),  key, font=f_key, fill="#666666")
-        draw.text((105, y), val, font=f_val, fill="#111111")
-        y += 22
+        draw.text((PAD, y),     key, font=f_key, fill="#666666")
+        draw.text((PAD + 85, y), val, font=f_val, fill="#111111")
+        y += 24
 
-    draw.line([10, LABEL_H - 20, LABEL_W - 10, LABEL_H - 20], fill="#dddddd", width=1)
+    # ── Footer ────────────────────────────────────────────────────
+    FOOT_Y = LABEL_H - 22
+    draw.line([8, FOOT_Y - 6, LABEL_W - 8, FOOT_Y - 6], fill="#dddddd", width=1)
     draw.text(
-        (LABEL_W // 2, LABEL_H - 10),
-        f"{batch_code}  •  {unit_num}/{total_units}  •  {time_str}",
-        font=f_foot, fill="#aaaaaa", anchor="mm",
+        (LABEL_W // 2, FOOT_Y + 4),
+        f"{batch_code}  •  {unit_num}/{total_units}",
+        font=_font(11),
+        fill="#aaaaaa",
+        anchor="mm",
     )
 
     return img

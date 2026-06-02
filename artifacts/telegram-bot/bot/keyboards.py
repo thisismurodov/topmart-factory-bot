@@ -15,6 +15,18 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
     )
 
 
+def admin_reply_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        [
+            ["🏭 Tovar kiritish"],
+            ["📋 Bugungi partiyalar", "🏷️ Etiketka"],
+            ["📊 KPI Hisobot", "💰 Maosh"],
+            ["⚙️ Admin panel"],
+        ],
+        resize_keyboard=True,
+    )
+
+
 def packer_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [

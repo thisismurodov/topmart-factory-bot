@@ -4,7 +4,7 @@ from telegram.ext import (
     ContextTypes, CommandHandler, MessageHandler,
     CallbackQueryHandler, filters,
 )
-from ..keyboards import main_menu_keyboard, packer_menu_keyboard, contact_keyboard
+from ..keyboards import main_menu_keyboard, packer_menu_keyboard, contact_keyboard, admin_reply_keyboard
 from ..database import (
     get_today_batches, get_worker_monthly,
     get_user_role, set_user_role, find_user_by_phone,
@@ -36,7 +36,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await update.message.reply_text(
                 f"👑 *Admin* — {name}\nAsosiy menyu:",
                 parse_mode="Markdown",
-                reply_markup=main_menu_keyboard(),
+                reply_markup=admin_reply_keyboard(),
             )
         elif role == "packer":
             await _show_packer_menu(update, chat_id, name)
@@ -199,10 +199,24 @@ def _auto_prefix(name: str) -> str:
 async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id  = update.effective_chat.id
     user_row = get_user_role(chat_id)
-    if user_row and user_row["role"] == "packer":
-        await update.message.reply_text("Menyu:", reply_markup=packer_menu_keyboard())
+    role     = user_row["role"] if user_row else None
+    if role == "packer":
+        kb = packer_menu_keyboard()
+    elif role == "admin":
+        kb = admin_reply_keyboard()
     else:
-        await update.message.reply_text("Menyu:", reply_markup=main_menu_keyboard())
+        kb = main_menu_keyboard()
+    await update.message.reply_text("Menyu:", reply_markup=kb)
+
+
+async def admin_panel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from .admin import cmd_admin
+    await cmd_admin(update, context)
+
+
+async def admin_maosh_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from .salary import cmd_maosh
+    await cmd_maosh(update, context)
 
 
 async def _show_worker_earnings(update: Update, worker_name: str) -> None:
@@ -279,11 +293,24 @@ async def today_batches_handler(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=kb)
 
 
+def _role_keyboard(user_row):
+    if not user_row:
+        return main_menu_keyboard()
+    role = user_row["role"]
+    if role == "packer":
+        return packer_menu_keyboard()
+    if role == "admin":
+        return admin_reply_keyboard()
+    return main_menu_keyboard()
+
+
 async def unknown_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id  = update.effective_chat.id
     user_row = get_user_role(chat_id)
-    kb = packer_menu_keyboard() if (user_row and user_row["role"] == "packer") else main_menu_keyboard()
-    await update.message.reply_text("Iltimos, quyidagi tugmalardan foydalaning:", reply_markup=kb)
+    await update.message.reply_text(
+        "Iltimos, quyidagi tugmalardan foydalaning:",
+        reply_markup=_role_keyboard(user_row),
+    )
 
 
 def register(app) -> None:
@@ -292,7 +319,7 @@ def register(app) -> None:
     app.add_handler(MessageHandler(filters.CONTACT, contact_received))
     app.add_handler(CallbackQueryHandler(approve_user_callback, pattern=r"^appusr:"))
     app.add_handler(CallbackQueryHandler(reject_user_callback,  pattern=r"^rejusr:"))
-    app.add_handler(
-        MessageHandler(filters.Regex(r"^📋 Bugungi partiyalar$"), today_batches_handler)
-    )
+    app.add_handler(MessageHandler(filters.Regex(r"^📋 Bugungi partiyalar$"), today_batches_handler))
+    app.add_handler(MessageHandler(filters.Regex(r"^⚙️ Admin panel$"),       admin_panel_handler))
+    app.add_handler(MessageHandler(filters.Regex(r"^💰 Maosh$"),             admin_maosh_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unknown_handler))

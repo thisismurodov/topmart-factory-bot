@@ -99,14 +99,14 @@ def _build_single(
         ("Soat:",     time_str),
     ]
 
-    f_key = _font(14)
-    f_val = _font(14, bold=True)
+    f_key = _font(17)
+    f_val = _font(17, bold=True)
     PAD   = 10
-    y     = DIV2_Y + 10
+    y     = DIV2_Y + 14
     for key, val in fields:
-        draw.text((PAD, y),     key, font=f_key, fill="#666666")
-        draw.text((PAD + 85, y), val, font=f_val, fill="#111111")
-        y += 24
+        draw.text((PAD, y),      key, font=f_key, fill="#666666")
+        draw.text((PAD + 100, y), val, font=f_val, fill="#111111")
+        y += 30
 
     # ── Footer ────────────────────────────────────────────────────
     FOOT_Y = LABEL_H - 22

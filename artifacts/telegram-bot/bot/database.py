@@ -557,3 +557,111 @@ def delete_sale_product(name: str) -> bool:
             (name,),
         )
         return cur.rowcount > 0
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# OMBOR (INVENTORY) FUNCTIONS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def get_warehouses() -> list[dict]:
+    with get_conn() as (conn, cur):
+        cur.execute("SELECT id, name FROM warehouses WHERE active=TRUE ORDER BY id")
+        return cur.fetchall()
+
+
+def get_warehouse_by_name(name: str) -> dict | None:
+    with get_conn() as (conn, cur):
+        cur.execute("SELECT id, name FROM warehouses WHERE name=%s AND active=TRUE", (name,))
+        return cur.fetchone()
+
+
+def get_stock_by_warehouse() -> list[dict]:
+    """Returns list of {warehouse_name, product, quantity}"""
+    with get_conn() as (conn, cur):
+        cur.execute(
+            """SELECT w.name AS warehouse_name, i.product, i.quantity
+               FROM inventory i
+               JOIN warehouses w ON w.id = i.warehouse_id
+               WHERE i.quantity > 0
+               ORDER BY w.id, i.product"""
+        )
+        return cur.fetchall()
+
+
+def get_stock_for_warehouse(warehouse_id: int) -> list[dict]:
+    with get_conn() as (conn, cur):
+        cur.execute(
+            "SELECT product, quantity FROM inventory WHERE warehouse_id=%s AND quantity>0 ORDER BY product",
+            (warehouse_id,),
+        )
+        return cur.fetchall()
+
+
+def record_movement(
+    product: str,
+    quantity: float,
+    movement_type: str,
+    from_warehouse_id: int | None,
+    to_warehouse_id: int | None,
+    note: str = "",
+    created_by: str = "",
+) -> bool:
+    """movement_type: IN | OUT | TRANSFER"""
+    try:
+        with get_conn() as (conn, cur):
+            cur.execute(
+                """INSERT INTO stock_movements
+                     (product, quantity, movement_type, from_warehouse_id, to_warehouse_id, note, created_by)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+                (product, quantity, movement_type, from_warehouse_id, to_warehouse_id, note, created_by),
+            )
+            # Update inventory
+            if movement_type == "IN" and to_warehouse_id:
+                cur.execute(
+                    """INSERT INTO inventory (warehouse_id, product, quantity, updated_at)
+                       VALUES (%s,%s,%s,NOW())
+                       ON CONFLICT (warehouse_id, product)
+                       DO UPDATE SET quantity=inventory.quantity+%s, updated_at=NOW()""",
+                    (to_warehouse_id, product, quantity, quantity),
+                )
+            elif movement_type == "OUT" and from_warehouse_id:
+                cur.execute(
+                    """INSERT INTO inventory (warehouse_id, product, quantity, updated_at)
+                       VALUES (%s,%s,0,NOW())
+                       ON CONFLICT (warehouse_id, product)
+                       DO UPDATE SET quantity=GREATEST(0,inventory.quantity-%s), updated_at=NOW()""",
+                    (from_warehouse_id, product, quantity),
+                )
+            elif movement_type == "TRANSFER" and from_warehouse_id and to_warehouse_id:
+                cur.execute(
+                    """INSERT INTO inventory (warehouse_id, product, quantity, updated_at)
+                       VALUES (%s,%s,0,NOW())
+                       ON CONFLICT (warehouse_id, product)
+                       DO UPDATE SET quantity=GREATEST(0,inventory.quantity-%s), updated_at=NOW()""",
+                    (from_warehouse_id, product, quantity),
+                )
+                cur.execute(
+                    """INSERT INTO inventory (warehouse_id, product, quantity, updated_at)
+                       VALUES (%s,%s,%s,NOW())
+                       ON CONFLICT (warehouse_id, product)
+                       DO UPDATE SET quantity=inventory.quantity+%s, updated_at=NOW()""",
+                    (to_warehouse_id, product, quantity, quantity),
+                )
+        return True
+    except Exception as e:
+        return False
+
+
+def get_recent_movements(limit: int = 10) -> list[dict]:
+    with get_conn() as (conn, cur):
+        cur.execute(
+            """SELECT m.product, m.quantity, m.movement_type,
+                      fw.name AS from_wh, tw.name AS to_wh,
+                      m.created_by, m.created_at
+               FROM stock_movements m
+               LEFT JOIN warehouses fw ON fw.id=m.from_warehouse_id
+               LEFT JOIN warehouses tw ON tw.id=m.to_warehouse_id
+               ORDER BY m.id DESC LIMIT %s""",
+            (limit,),
+        )
+        return cur.fetchall()

@@ -1,150 +1,246 @@
-import { useGetInventory, getGetInventoryQueryKey } from "@workspace/api-client-react";
-import { Card, CardContent } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Badge } from "@/components/ui/badge";
-import { Warehouse, TrendingUp, TrendingDown, Package } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { formatNumber } from "@/lib/format";
 
-function StockBadge({ qty, kg }: { qty: number; kg: number }) {
-  const value = kg > 0 ? kg : qty;
-  if (value <= 0) {
-    return <Badge variant="destructive" className="text-xs">Tugagan</Badge>;
-  }
-  if (value < 50) {
-    return <Badge variant="outline" className="text-amber-600 border-amber-300 text-xs">Kam qoldi</Badge>;
-  }
-  return <Badge className="bg-green-100 text-green-700 border-green-200 text-xs">Yetarli</Badge>;
+type StockWarehouse = {
+  id: number;
+  name: string;
+  items: { product: string; quantity: number }[];
+};
+
+type Summary = {
+  skuCount: number;
+  totalStock: number;
+  warehouseCount: number;
+  lowStock: { product: string; qty: number }[];
+};
+
+type Movement = {
+  id: number;
+  product: string;
+  quantity: number;
+  movementType: "IN" | "OUT" | "TRANSFER";
+  fromWarehouse: string | null;
+  toWarehouse: string | null;
+  note: string;
+  createdBy: string;
+  createdAt: string;
+};
+
+function useStock() {
+  return useQuery<StockWarehouse[]>({
+    queryKey: ["inventory-stock"],
+    queryFn: () => fetch("/api/inventory/stock").then((r) => r.json()),
+    refetchInterval: 30_000,
+  });
+}
+
+function useSummary() {
+  return useQuery<Summary>({
+    queryKey: ["inventory-summary"],
+    queryFn: () => fetch("/api/inventory/summary").then((r) => r.json()),
+    refetchInterval: 30_000,
+  });
+}
+
+function useMovements() {
+  return useQuery<Movement[]>({
+    queryKey: ["inventory-movements"],
+    queryFn: () => fetch("/api/inventory/movements?limit=30").then((r) => r.json()),
+    refetchInterval: 30_000,
+  });
 }
 
 export default function Inventory() {
-  const { data: items, isLoading } = useGetInventory({
-    query: { queryKey: getGetInventoryQueryKey() },
-  });
-
-  const totalProducedKg = items?.reduce((s, i) => s + i.producedKg, 0) ?? 0;
-  const totalSoldKg     = items?.reduce((s, i) => s + i.soldKg, 0) ?? 0;
-  const totalStockKg    = items?.reduce((s, i) => s + i.stockKg, 0) ?? 0;
-  const totalProducedQty = items?.reduce((s, i) => s + i.producedQty, 0) ?? 0;
-  const totalSoldQty     = items?.reduce((s, i) => s + i.soldQty, 0) ?? 0;
-  const totalStockQty    = items?.reduce((s, i) => s + i.stockQty, 0) ?? 0;
+  const { data: summary, isLoading: loadSummary } = useSummary();
+  const { data: stock, isLoading: loadStock } = useStock();
+  const { data: movements, isLoading: loadMovements } = useMovements();
 
   return (
     <div className="space-y-6">
+
+      {/* ── Header ── */}
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">Ombor holati</h1>
+        <h1 className="text-xl font-semibold tracking-tight">🏬 Ombor</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Ishlab chiqarilgan − Sotilgan = Qoldiq
+          Real vaqt qoldiqlari · Harakatlar tarixi
         </p>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
-        <Card className="border-border">
-          <CardContent className="p-4 flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-              <TrendingUp className="w-5 h-5 text-primary" />
-            </div>
-            <div>
-              <div className="text-xl font-bold">
-                {totalProducedKg > 0
-                  ? `${totalProducedKg.toFixed(1)} kg`
-                  : `${totalProducedQty} dona`}
-              </div>
-              <div className="text-xs text-muted-foreground">Jami ishlab chiqarilgan</div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border-border">
-          <CardContent className="p-4 flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-red-100 flex items-center justify-center">
-              <TrendingDown className="w-5 h-5 text-red-500" />
-            </div>
-            <div>
-              <div className="text-xl font-bold">
-                {totalSoldKg > 0
-                  ? `${totalSoldKg.toFixed(1)} kg`
-                  : `${totalSoldQty} dona`}
-              </div>
-              <div className="text-xs text-muted-foreground">Jami sotilgan</div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border-border">
-          <CardContent className="p-4 flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-amber-100 flex items-center justify-center">
-              <Warehouse className="w-5 h-5 text-amber-600" />
-            </div>
-            <div>
-              <div className="text-xl font-bold">
-                {totalStockKg > 0
-                  ? `${totalStockKg.toFixed(1)} kg`
-                  : `${totalStockQty} dona`}
-              </div>
-              <div className="text-xs text-muted-foreground">Omborda qolgan</div>
-            </div>
-          </CardContent>
-        </Card>
+      {/* ── KPI ── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <KpiCard icon="📦" label="Jami SKU" value={formatNumber(summary?.skuCount)} loading={loadSummary} />
+        <KpiCard icon="⚖️" label="Jami qoldiq (dona)" value={formatNumber(summary?.totalStock)} loading={loadSummary} />
+        <KpiCard icon="🏪" label="Skladlar soni" value={formatNumber(summary?.warehouseCount)} loading={loadSummary} />
+        <KpiCard
+          icon="⚠️"
+          label="Kam qolgan"
+          value={String(summary?.lowStock.length ?? 0)}
+          loading={loadSummary}
+          warn={!!summary?.lowStock.length}
+        />
       </div>
 
-      <Card className="border-border">
-        <CardContent className="p-0">
-          <Table>
-            <TableHeader className="bg-muted/50">
-              <TableRow>
-                <TableHead>Mahsulot</TableHead>
-                <TableHead className="text-right">Ishlab chiqarilgan</TableHead>
-                <TableHead className="text-right">Sotilgan</TableHead>
-                <TableHead className="text-right">Omborda</TableHead>
-                <TableHead>Holat</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {isLoading ? (
-                Array.from({ length: 5 }).map((_, i) => (
-                  <TableRow key={i}>
-                    {Array.from({ length: 5 }).map((_, j) => (
-                      <TableCell key={j}><Skeleton className="h-5 w-20" /></TableCell>
-                    ))}
-                  </TableRow>
-                ))
-              ) : items?.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={5} className="text-center py-12 text-muted-foreground">
-                    <Package className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                    Mahsulot yo'q. Avval mahsulot qo'shing.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                items?.map((item) => {
-                  const isKg = item.producedKg > 0 || item.soldKg > 0;
-                  return (
-                    <TableRow key={item.product}>
-                      <TableCell className="font-medium">{item.product}</TableCell>
-                      <TableCell className="text-right text-sm">
-                        {isKg
-                          ? `${item.producedKg.toFixed(1)} kg`
-                          : `${item.producedQty} dona`}
-                      </TableCell>
-                      <TableCell className="text-right text-sm text-red-500">
-                        {isKg
-                          ? `${item.soldKg.toFixed(1)} kg`
-                          : `${item.soldQty} dona`}
-                      </TableCell>
-                      <TableCell className="text-right font-semibold">
-                        {isKg
-                          ? `${item.stockKg.toFixed(1)} kg`
-                          : `${item.stockQty} dona`}
-                      </TableCell>
-                      <TableCell>
-                        <StockBadge qty={item.stockQty} kg={item.stockKg} />
-                      </TableCell>
-                    </TableRow>
-                  );
-                })
-              )}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+      {/* ── Low Stock Warning ── */}
+      {(summary?.lowStock.length ?? 0) > 0 && (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-4 space-y-2">
+          <div className="text-sm font-bold text-red-700 mb-3">⚠️ Kam Qolgan Mahsulotlar</div>
+          {summary!.lowStock.map((item) => (
+            <div key={item.product} className="flex items-center justify-between px-3 py-2 bg-white rounded-lg border border-red-100">
+              <span className="font-medium text-sm text-red-800">{item.product}</span>
+              <span className="text-xs font-bold text-red-600 bg-red-100 px-2 py-0.5 rounded-full border border-red-200">
+                {formatNumber(item.qty)} dona
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── Per-Warehouse Stock ── */}
+      <div>
+        <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3">
+          🏬 Sklad Bo'yicha Qoldiqlar
+        </h2>
+        {loadStock ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="rounded-xl border bg-white p-4 space-y-2">
+                <div className="h-4 w-32 rounded animate-pulse bg-muted" />
+                <div className="h-3 w-full rounded animate-pulse bg-muted" />
+                <div className="h-3 w-3/4 rounded animate-pulse bg-muted" />
+              </div>
+            ))}
+          </div>
+        ) : !stock?.length ? (
+          <div className="rounded-xl border bg-white p-8 text-center text-muted-foreground text-sm">
+            <div className="text-3xl mb-2">📭</div>
+            Ombor bo'sh — bot orqali kirim qiling
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {stock.map((wh) => (
+              <WarehouseCard key={wh.id} warehouse={wh} />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── Movements History ── */}
+      <div>
+        <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3">
+          📜 Harakatlar Tarixi
+        </h2>
+        <div className="rounded-xl border bg-white overflow-hidden">
+          {loadMovements ? (
+            <div className="p-4 space-y-3">
+              {[1, 2, 3, 4, 5].map((i) => (
+                <div key={i} className="h-10 rounded animate-pulse bg-muted" />
+              ))}
+            </div>
+          ) : !movements?.length ? (
+            <div className="text-center py-10 text-sm text-muted-foreground">
+              Hali harakat yo'q
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-muted/40">
+                    <th className="text-left px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-muted-foreground">Tur</th>
+                    <th className="text-left px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-muted-foreground">Mahsulot</th>
+                    <th className="text-right px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-muted-foreground">Miqdor</th>
+                    <th className="text-left px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-muted-foreground">Yo'nalish</th>
+                    <th className="text-left px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-muted-foreground">Kim</th>
+                    <th className="text-left px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-muted-foreground">Vaqt</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {movements.map((m) => (
+                    <MovementRow key={m.id} m={m} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
     </div>
+  );
+}
+
+/* ── Sub-components ── */
+
+function KpiCard({ icon, label, value, loading, warn }: {
+  icon: string; label: string; value?: string; loading?: boolean; warn?: boolean;
+}) {
+  return (
+    <div className={`rounded-xl border p-5 shadow-sm bg-white ${warn ? "border-red-200 bg-red-50" : "border-border"}`}>
+      <div className={`text-xs font-bold uppercase tracking-wider mb-2 flex items-center gap-1.5 ${warn ? "text-red-500" : "text-muted-foreground"}`}>
+        <span className="text-base">{icon}</span> {label}
+      </div>
+      {loading ? (
+        <div className="h-7 w-16 rounded animate-pulse bg-muted" />
+      ) : (
+        <div className={`text-2xl font-bold ${warn ? "text-red-600" : ""}`}>{value ?? "—"}</div>
+      )}
+    </div>
+  );
+}
+
+function WarehouseCard({ warehouse }: { warehouse: StockWarehouse }) {
+  const total = warehouse.items.reduce((s, i) => s + i.quantity, 0);
+  return (
+    <div className="rounded-xl border bg-white p-4 shadow-sm">
+      <div className="flex items-center justify-between mb-3">
+        <div className="font-semibold text-sm">{warehouse.name}</div>
+        <span className="text-xs bg-[#0B5D2A]/10 text-[#0B5D2A] px-2 py-0.5 rounded-full font-bold">
+          {formatNumber(Math.round(total))}
+        </span>
+      </div>
+      {warehouse.items.length === 0 ? (
+        <div className="text-xs text-muted-foreground">Bo'sh</div>
+      ) : (
+        <div className="space-y-1.5">
+          {warehouse.items.map((item) => (
+            <div key={item.product} className="flex justify-between items-center">
+              <span className="text-xs text-muted-foreground truncate mr-2">{item.product}</span>
+              <span className="text-xs font-mono font-semibold shrink-0">{formatNumber(Math.round(item.quantity))}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MovementRow({ m }: { m: Movement }) {
+  const cfg = {
+    IN:       { label: "Kirim",   bg: "bg-green-100 text-green-700",  icon: "➕" },
+    OUT:      { label: "Chiqim",  bg: "bg-red-100 text-red-700",      icon: "➖" },
+    TRANSFER: { label: "O'tkazma",bg: "bg-blue-100 text-blue-700",    icon: "🔄" },
+  }[m.movementType] ?? { label: m.movementType, bg: "bg-muted text-muted-foreground", icon: "•" };
+
+  const direction =
+    m.movementType === "IN"       ? `→ ${m.toWarehouse ?? "?"}`
+    : m.movementType === "OUT"    ? `← ${m.fromWarehouse ?? "?"}`
+    : `${m.fromWarehouse ?? "?"} → ${m.toWarehouse ?? "?"}`;
+
+  const date = new Date(m.createdAt);
+  const timeStr = date.toLocaleDateString("uz-UZ", { day: "2-digit", month: "2-digit" }) +
+    " " + date.toLocaleTimeString("uz-UZ", { hour: "2-digit", minute: "2-digit" });
+
+  return (
+    <tr className="hover:bg-muted/30 transition-colors">
+      <td className="px-4 py-2.5">
+        <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${cfg.bg}`}>
+          {cfg.icon} {cfg.label}
+        </span>
+      </td>
+      <td className="px-4 py-2.5 font-medium">{m.product}</td>
+      <td className="px-4 py-2.5 text-right font-mono font-semibold">{formatNumber(m.quantity)}</td>
+      <td className="px-4 py-2.5 text-muted-foreground text-xs">{direction}</td>
+      <td className="px-4 py-2.5 text-muted-foreground text-xs">{m.createdBy || "—"}</td>
+      <td className="px-4 py-2.5 text-muted-foreground text-xs font-mono">{timeStr}</td>
+    </tr>
   );
 }

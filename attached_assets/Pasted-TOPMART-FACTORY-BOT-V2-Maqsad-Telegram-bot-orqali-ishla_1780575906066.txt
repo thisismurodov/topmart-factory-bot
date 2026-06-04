@@ -1,0 +1,213 @@
+TOPMART FACTORY BOT V2
+
+Maqsad:
+
+Telegram bot orqali ishlab chiqarilgan mahsulotlarni bir nechta skladlarga qabul qilish va harakatlarini yuritish.
+
+Tizim BoxHero logikasiga yaqin bo'lsin.
+
+Bizda 40+ sklad mavjud.
+
+Har bir mahsulot qaysi skladga tushganligi aniq saqlanishi kerak.
+
+==================================================
+
+ROLLAR
+
+1. Admin
+2. Omborchi
+3. Ishlab chiqarish
+
+==================================================
+
+ASOSIY MENU
+
+🏭 Ishlab chiqarish
+📦 Ombor
+📊 Hisobot
+⚙️ Sozlamalar
+
+==================================================
+
+ISHLAB CHIQARISH LOGIKASI
+
+1. Tovar kiritish
+
+Kim ishlab chiqardi?
+
+* Aziza
+* Gullola
+* Shohida
+
+2. Mahsulot tanlash
+
+Masalan:
+
+* Tulpor
+* Shakar
+* Strupa Oq
+* Strupa Sariq
+
+3. Miqdor
+
+Necha dona yoki kg?
+
+4. Sklad tanlash
+
+Qaysi skladga topshiriladi?
+
+Misollar:
+
+* Namangan Markaziy Ombor
+* Namangan-1
+* Namangan-2
+* Andijon Ombori
+* Farg'ona Ombori
+
+5. Yakunlash
+
+Partiya yaratiladi.
+
+Partiya kodi:
+
+AZ-260604-01
+
+Databasega yoziladi.
+
+==================================================
+
+OMBOR LOGIKASI
+
+📦 Ombor
+
+Menyu:
+
+➕ Kirim
+➖ Chiqim
+🔄 Skladlararo o'tkazish
+📋 Qoldiqlar
+📜 Harakatlar tarixi
+
+==================================================
+
+KIRIM
+
+Mahsulot
+
+Miqdor
+
+Sklad
+
+Partiya
+
+Saqlash
+
+==================================================
+
+CHIQIM
+
+Mahsulot
+
+Miqdor
+
+Qaysi sklad?
+
+Kimga berildi?
+
+Saqlash
+
+==================================================
+
+SKLADLARARO O'TKAZISH
+
+Mahsulot
+
+Miqdor
+
+Qayerdan?
+
+Qayerga?
+
+Tasdiqlash
+
+==================================================
+
+QOLDIQLAR
+
+Sklad bo'yicha ko'rsatilsin.
+
+Masalan:
+
+Namangan Markaziy
+
+Tulpor - 450 kg
+Shakar - 200 kg
+
+Andijon
+
+Tulpor - 80 kg
+Strupa - 40 kg
+
+==================================================
+
+DATABASE
+
+warehouses
+
+id
+name
+
+inventory
+
+id
+warehouse_id
+product_id
+quantity
+
+stock_movements
+
+id
+product_id
+quantity
+movement_type
+
+IN
+OUT
+TRANSFER
+
+from_warehouse
+to_warehouse
+
+created_at
+
+created_by
+
+==================================================
+
+DASHBOARD KPI
+
+📦 Jami SKU
+
+⚖️ Jami qoldiq
+
+🏭 Bugungi ishlab chiqarish
+
+🏪 Skladlar soni
+
+⚠ Kam qoldiq mahsulotlar
+
+==================================================
+
+MUHIM
+
+Tizim 40+ sklad bilan ishlay olishi kerak.
+
+Har bir mahsulotning qaysi skladda ekanligi real vaqt rejimida bilinishi kerak.
+
+Kelajakda QR kod va etiketka printer qo'shish oson bo'lsin.
+
+PostgreSQL optimallashtirilgan bo'lsin.
+
+Harakatlar auditi saqlansin.
+
+Kim qachon nima qilgani logda qolsin.

@@ -340,12 +340,15 @@ def build_sales_handler() -> ConversationHandler:
             ],
             SALE_QTY: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, qty_input),
+                CallbackQueryHandler(confirm_callback, pattern=r"^sv_cancel$"),
             ],
             SALE_WEIGHT: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, weight_input),
+                CallbackQueryHandler(confirm_callback, pattern=r"^sv_cancel$"),
             ],
             SALE_PRICE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, price_input),
+                CallbackQueryHandler(confirm_callback, pattern=r"^sv_cancel$"),
             ],
             SALE_CONFIRM: [
                 CallbackQueryHandler(confirm_callback, pattern=r"^sv_confirm$"),

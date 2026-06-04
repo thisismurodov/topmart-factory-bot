@@ -35,12 +35,18 @@ def _customer_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(buttons)
 
 
+def _currency_sym(currency: str) -> str:
+    return "$" if currency == "usd" else "so'm"
+
+
 def _product_keyboard() -> InlineKeyboardMarkup:
     products = get_sale_products()
     buttons = []
     for p in products:
-        label = f"📦 {p['name']} ({p['unit']})"
-        buttons.append([InlineKeyboardButton(label, callback_data=f"sv_p:{p['name']}:{p['unit']}")])
+        sym = _currency_sym(p["currency"])
+        label = f"[{p['code']}] {p['name']} — {p['unit']}/{sym}"
+        # callback: sv_p:{id}:{unit}:{currency}
+        buttons.append([InlineKeyboardButton(label, callback_data=f"sv_p:{p['id']}:{p['unit']}:{p['currency']}")])
     if not products:
         buttons.append([InlineKeyboardButton("⚠️ Tovar yo'q — /tovar_qosh", callback_data="sv_cancel")])
     buttons.append([InlineKeyboardButton("❌ Bekor", callback_data="sv_cancel")])
@@ -145,15 +151,22 @@ async def product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await query.edit_message_text("❌ Savdo bekor qilindi.")
         return ConversationHandler.END
 
-    # format: sv_p:{name}:{unit}
-    parts = query.data.split(":", 2)
-    product = parts[1]
-    unit = parts[2] if len(parts) > 2 else get_sale_product_unit(product)
-    context.user_data["sale"]["product"] = product
+    # format: sv_p:{id}:{unit}:{currency}
+    parts = query.data.split(":")
+    prod_id = int(parts[1])
+    unit = parts[2] if len(parts) > 2 else "dona"
+    currency = parts[3] if len(parts) > 3 else "uzs"
+
+    # nomi uchun ro'yxatdan topamiz
+    products = get_sale_products()
+    prod_name = next((p["name"] for p in products if p["id"] == prod_id), f"#{prod_id}")
+
+    context.user_data["sale"]["product"] = prod_name
     context.user_data["sale"]["rate_type"] = unit
+    context.user_data["sale"]["currency"] = currency
 
     await query.edit_message_text(
-        f"📦 *{product}*\n\nMiqdor (dona) kiriting:",
+        f"📦 *{prod_name}*\n\nMiqdor (dona) kiriting:",
         parse_mode="Markdown",
         reply_markup=_cancel_kb(),
     )
@@ -230,8 +243,9 @@ async def price_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     else:
         total = qty * price
     sale["total_amount"] = total
-
-    unit_label = "so'm/kg" if rate_type == "kg" else "so'm/dona"
+    currency = sale.get("currency", "uzs")
+    sym = _currency_sym(currency)
+    unit_label = f"{sym}/kg" if rate_type == "kg" else f"{sym}/dona"
     qty_line = f"📦 Miqdor: *{qty} dona*"
     if weight_kg > 0:
         qty_line += f" | *{weight_kg:.1f} kg*"
@@ -241,8 +255,8 @@ async def price_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         f"👤 Mijoz: *{sale['customer_name']}*\n"
         f"🧵 Mahsulot: *{sale['product']}*\n"
         f"{qty_line}\n"
-        f"💵 Narx: *{price:,.0f} {unit_label}*\n"
-        f"💰 Jami: *{total:,.0f} so'm*\n\n"
+        f"💵 Narx: *{price:,.2f} {unit_label}*\n"
+        f"💰 Jami: *{total:,.2f} {sym}*\n\n"
         f"Tasdiqlaysizmi?"
     )
     await update.message.reply_text(text, parse_mode="Markdown", reply_markup=_confirm_kb())
@@ -261,6 +275,7 @@ async def confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return ConversationHandler.END
 
     sale = context.user_data.get("sale", {})
+    currency = sale.get("currency", "uzs")
     sale_id = create_sale(
         customer_id=sale["customer_id"],
         customer_name=sale["customer_name"],
@@ -269,13 +284,14 @@ async def confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         weight_kg=sale.get("weight_kg", 0.0),
         unit_price=sale["unit_price"],
         total_amount=sale["total_amount"],
+        currency=currency,
     )
     context.user_data.pop("sale", None)
-
+    sym = _currency_sym(currency)
     await query.edit_message_text(
         f"✅ *Savdo #{sale_id} saqlandi!*\n\n"
         f"👤 {sale['customer_name']} | {sale['product']}\n"
-        f"💰 *{sale['total_amount']:,.0f} so'm*",
+        f"💰 *{sale['total_amount']:,.2f} {sym}*",
         parse_mode="Markdown",
     )
     return ConversationHandler.END
@@ -292,16 +308,17 @@ async def cmd_tovarlar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not products:
         await update.message.reply_text(
             "📭 Sotuv tovarlari yo'q.\n\n"
-            "Qo'shish: `/tovar_qosh Tovar nomi kg`\n"
-            "(yoki `dona` birligi uchun: `/tovar_qosh Tovar nomi dona`)",
+            "Qo'shish:\n`/tovar_qosh Nom Kod kg uzs`\n"
+            "Misol: `/tovar_qosh Qop ip QI kg uzs`",
             parse_mode="Markdown",
         )
         return
     lines = ["📦 *Sotuv tovarlari:*\n"]
     for p in products:
-        lines.append(f"• {p['name']} — {p['unit']}")
-    lines.append("\n➕ Qo'shish: `/tovar_qosh Nomi kg`")
-    lines.append("🗑 O'chirish: `/tovar_ochir Nomi`")
+        sym = _currency_sym(p["currency"])
+        lines.append(f"• `[{p['code']}]` {p['name']} — {p['unit']}/{sym}")
+    lines.append("\n➕ `/tovar_qosh Nom Kod kg uzs`")
+    lines.append("🗑 `/tovar_ochir Nom`")
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
@@ -311,25 +328,41 @@ async def cmd_tovar_qosh(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("❌ Faqat admin uchun.")
         return
     args = context.args
-    if not args or len(args) < 1:
+    # Format: /tovar_qosh Nom Kod kg|dona uzs|$|usd
+    # Oxirgi 3 ta argument: unit, currency, code; qolganlari nom
+    if not args or len(args) < 4:
         await update.message.reply_text(
-            "❗ Ishlatish: `/tovar_qosh Tovar nomi kg`\n"
-            "Misol: `/tovar_qosh Polipropilen ip kg`",
+            "❗ Format: `/tovar_qosh Nom Kod kg uzs`\n\n"
+            "Misol:\n"
+            "`/tovar_qosh Qop ip QI kg uzs`\n"
+            "`/tovar_qosh Mato ip MI kg $`\n\n"
+            "• *Nom* — tovar nomi (bir necha so'z bo'lishi mumkin)\n"
+            "• *Kod* — qisqa kod (2-4 harf, masalan: QI)\n"
+            "• *Birlik* — `kg` yoki `dona`\n"
+            "• *Valyuta* — `uzs` yoki `$`",
             parse_mode="Markdown",
         )
         return
-    unit = "dona"
-    if args[-1].lower() in ("kg", "dona", "metr", "litr"):
-        unit = args[-1].lower()
-        name = " ".join(args[:-1]).strip()
-    else:
-        name = " ".join(args).strip()
+
+    currency_raw = args[-1].lower()
+    currency = "usd" if currency_raw in ("$", "usd", "dollar") else "uzs"
+    unit_raw = args[-2].lower()
+    unit = unit_raw if unit_raw in ("kg", "dona", "metr", "litr") else "dona"
+    code = args[-3].upper()
+    name = " ".join(args[:-3]).strip()
+
     if not name:
         await update.message.reply_text("❗ Tovar nomi bo'sh bo'lmasin.")
         return
-    ok = add_sale_product(name, unit)
+
+    ok = add_sale_product(name, code, unit, currency)
+    sym = _currency_sym(currency)
     if ok:
-        await update.message.reply_text(f"✅ *{name}* ({unit}) qo'shildi.", parse_mode="Markdown")
+        await update.message.reply_text(
+            f"✅ *{name}* qo'shildi!\n"
+            f"Kod: `{code}` | Birlik: {unit} | Valyuta: {sym}",
+            parse_mode="Markdown",
+        )
     else:
         await update.message.reply_text("❌ Qo'shib bo'lmadi.")
 
@@ -371,10 +404,11 @@ async def cmd_savdolar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         qty_info = f"{s['quantity']} dona"
         if s["weight_kg"] and float(s["weight_kg"]) > 0:
             qty_info += f" | {float(s['weight_kg']):.1f} kg"
+        sym = _currency_sym(s.get("currency", "uzs"))
         lines.append(
             f"#{s['id']} | {date_str}\n"
             f"  👤 {s['customer_name']} — {s['product']}\n"
-            f"  📦 {qty_info} | 💰 *{float(s['total_amount']):,.0f} so'm*"
+            f"  📦 {qty_info} | 💰 *{float(s['total_amount']):,.2f} {sym}*"
         )
 
     await update.message.reply_text("\n\n".join(lines), parse_mode="Markdown")

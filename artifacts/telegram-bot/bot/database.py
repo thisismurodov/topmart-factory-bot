@@ -112,10 +112,12 @@ def init_db() -> None:
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS sale_products (
-                id      SERIAL PRIMARY KEY,
-                name    TEXT NOT NULL UNIQUE,
-                unit    TEXT NOT NULL DEFAULT 'dona',
-                active  BOOLEAN NOT NULL DEFAULT true,
+                id       SERIAL PRIMARY KEY,
+                name     TEXT NOT NULL UNIQUE,
+                code     TEXT NOT NULL DEFAULT '',
+                unit     TEXT NOT NULL DEFAULT 'dona',
+                currency TEXT NOT NULL DEFAULT 'uzs',
+                active   BOOLEAN NOT NULL DEFAULT true,
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
             )
         """)
@@ -480,17 +482,18 @@ def create_sale(
     weight_kg: float,
     unit_price: float,
     total_amount: float,
+    currency: str = "uzs",
     note: str = "",
 ) -> int:
     with get_conn() as (conn, cur):
         cur.execute(
             """INSERT INTO sales
                (customer_id, customer_name, product, quantity, weight_kg,
-                unit_price, total_amount, status, note)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,'pending',%s)
+                unit_price, total_amount, currency, status, note)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s)
                RETURNING id""",
             (customer_id, customer_name, product, quantity,
-             weight_kg, unit_price, total_amount, note),
+             weight_kg, unit_price, total_amount, currency, note),
         )
         return cur.fetchone()["id"]
 
@@ -499,7 +502,7 @@ def get_recent_sales(limit: int = 10) -> list[dict]:
     with get_conn() as (conn, cur):
         cur.execute(
             """SELECT s.id, s.customer_name, s.product, s.quantity, s.weight_kg,
-                      s.unit_price, s.total_amount, s.status, s.created_at
+                      s.unit_price, s.total_amount, s.currency, s.status, s.created_at
                FROM sales s
                ORDER BY s.id DESC
                LIMIT %s""",
@@ -520,7 +523,7 @@ def get_product_rate_type(product_name: str) -> str:
 def get_sale_products() -> list[dict]:
     with get_conn() as (conn, cur):
         cur.execute(
-            "SELECT id, name, unit FROM sale_products WHERE active = true ORDER BY name"
+            "SELECT id, name, code, unit, currency FROM sale_products WHERE active = true ORDER BY name"
         )
         return cur.fetchall()
 
@@ -532,12 +535,15 @@ def get_sale_product_unit(name: str) -> str:
     return row["unit"] if row else "dona"
 
 
-def add_sale_product(name: str, unit: str = "dona") -> bool:
+def add_sale_product(name: str, code: str = "", unit: str = "dona", currency: str = "uzs") -> bool:
     try:
         with get_conn() as (conn, cur):
             cur.execute(
-                "INSERT INTO sale_products (name, unit) VALUES (%s, %s) ON CONFLICT (name) DO UPDATE SET active=true, unit=%s",
-                (name, unit, unit),
+                """INSERT INTO sale_products (name, code, unit, currency)
+                   VALUES (%s, %s, %s, %s)
+                   ON CONFLICT (name) DO UPDATE
+                   SET active=true, code=%s, unit=%s, currency=%s""",
+                (name, code, unit, currency, code, unit, currency),
             )
             return True
     except Exception:

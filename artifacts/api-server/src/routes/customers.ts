@@ -21,7 +21,7 @@ router.get("/customers", async (_req, res): Promise<void> => {
         phone: r.phone,
         company: r.company,
         address: r.address,
-        createdAt: r.created_at,
+        createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
       }))
     )
   );

@@ -1,0 +1,182 @@
+TOPMART ERP DASHBOARD V2
+
+Maqsad:
+
+Mavjud dashboardni oddiy statistik sahifadan TopMart ERP Command Center darajasiga olib chiqish.
+
+Muhim:
+
+Barcha ma'lumotlar Railway PostgreSQL bazasidan olinadi.
+
+Yangi jadval yaratmang.
+
+Mavjud ma'lumotlardan foydalaning.
+
+Dashboard tez ishlashi kerak.
+
+Mobil va desktop uchun responsive bo'lsin.
+
+TOP SECTION (CEO KPI)
+
+4 ta katta KPI kartasi:
+
+💰 Bugungi savdo
+
+* Bugungi jami savdo summasi
+* So'mda
+
+🏪 Jami mijozlar
+
+* Barcha aktiv do'konlar soni
+
+📦 Ombordagi SKU
+
+* Mahsulot turlari soni
+
+🏭 Bugungi ishlab chiqarish
+
+* Bugun yaratilgan partiyalar
+* Jami dona yoki kg
+
+SECOND SECTION
+
+Savdo KPI
+
+* Bugungi savdo
+* Oylik savdo
+* Cheklar soni
+* O'rtacha chek
+
+Mijozlar KPI
+
+* Jami do'konlar
+* Bugun qo'shilgan do'konlar
+* Shu oy qo'shilgan do'konlar
+
+THIRD SECTION
+
+Ishlab chiqarish
+
+Kartalar:
+
+* Bugungi partiyalar
+* Bugungi miqdor
+* Faol ishchilar
+* Bugungi maosh
+
+Top ishchilar
+
+Reyting:
+
+1. Ishchi
+2. Ishchi
+3. Ishchi
+4. Ishchi
+5. Ishchi
+
+Ishchi nomi
+Ishlab chiqargan miqdori
+Hisoblangan maoshi
+
+FOURTH SECTION
+
+Ombor holati
+
+Ko'rsatish:
+
+* Jami SKU
+* Jami qoldiq
+* Kam qolgan mahsulotlar
+
+Alohida ogohlantirish kartasi:
+
+⚠ Kam qolgan mahsulotlar
+
+Masalan:
+
+Tulpor 25 mm
+Shakar
+Strupa Oq
+
+Qoldiq limitdan past bo'lsa qizil rangda chiqsin.
+
+FIFTH SECTION
+
+Top mahsulotlar
+
+Eng ko'p sotilgan 5 ta mahsulot
+
+Grafik:
+
+Mahsulot nomi
+Sotilgan miqdor
+
+SIXTH SECTION
+
+TopMart Live Feed
+
+Oxirgi harakatlar timeline ko'rinishida:
+
+Masalan:
+
+16:42
+Aziza
+Oq 4 kg
+20 dona partiya yaratdi
+
+16:35
+Agent
+Yangi do'kon qo'shdi
+
+16:20
+Savdo
+58 000 so'm
+
+16:05
+Ombor
+Tulpor qabul qilindi
+
+Timeline real ma'lumotlardan shakllansin.
+
+DESIGN
+
+TopMart ranglari:
+
+Primary:
+#0B5D2A
+
+Secondary:
+#FFD54A
+
+Background:
+#F8FAF8
+
+Card:
+#FFFFFF
+
+Style:
+
+* Zamonaviy ERP
+* Minimalistik
+* Katta KPI kartalar
+* Yumaloq burchaklar
+* Soft shadow
+* Professional dashboard
+
+Grafiklar Chart.js orqali.
+
+Katta yashil to'rtburchak grafiklarni olib tashlang.
+
+Foydali va tushunarli grafiklar ishlating.
+
+Dashboard ochilishi bilan CEO 5 soniyada quyidagilarni tushunishi kerak:
+
+1. Bugun qancha sotildi?
+2. Bugun qancha ishlab chiqarildi?
+3. Nechta mijoz bor?
+4. Omborda muammo yo'qmi?
+5. Kim eng yaxshi ishlayapti?
+
+Kod clean architecture bo'lsin.
+
+Barcha ma'lumotlar Railway PostgreSQL bazasidan olinsin.

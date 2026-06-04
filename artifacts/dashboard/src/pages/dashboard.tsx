@@ -28,36 +28,36 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-8">
-      {/* Today Section */}
+      {/* Bugungi */}
       <div>
         <h2 className="text-lg font-medium tracking-tight mb-4 flex items-center">
           <span className="w-2 h-2 rounded-full bg-primary mr-2 animate-pulse" />
-          TODAY'S PRODUCTION
+          BUGUNGI ISHLAB CHIQARISH
         </h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <MetricCard 
-            title="Total Batches" 
+            title="Jami partiyalar" 
             value={today?.totalBatches} 
             loading={isLoadingToday} 
             formatter={formatNumber}
             testId="today-batches"
           />
           <MetricCard 
-            title="Total Output (Qty)" 
+            title="Jami miqdor (dona)" 
             value={today?.totalQty} 
             loading={isLoadingToday} 
             formatter={formatNumber}
             testId="today-qty"
           />
           <MetricCard 
-            title="Total Weight (KG)" 
+            title="Jami og'irlik (kg)" 
             value={today?.totalKg} 
             loading={isLoadingToday} 
             formatter={(v) => `${formatNumber(v)} kg`}
             testId="today-kg"
           />
           <MetricCard 
-            title="Active Workers" 
+            title="Faol ishchilar" 
             value={today?.workerCount} 
             loading={isLoadingToday} 
             formatter={formatNumber}
@@ -68,10 +68,10 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-8">
-          {/* Chart */}
+          {/* Grafik */}
           <Card className="border-border">
             <CardHeader>
-              <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">30-Day Output</CardTitle>
+              <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">30 Kunlik grafik</CardTitle>
             </CardHeader>
             <CardContent>
               {isLoadingChart ? (
@@ -98,8 +98,10 @@ export default function Dashboard() {
                       <Tooltip 
                         cursor={{ fill: 'hsl(var(--muted))' }}
                         contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '4px' }}
+                        formatter={(val: number) => [formatNumber(val), "Miqdor"]}
+                        labelFormatter={(label) => `Sana: ${label}`}
                       />
-                      <Bar dataKey="qty" fill="hsl(var(--primary))" radius={[2, 2, 0, 0]} name="Quantity" />
+                      <Bar dataKey="qty" fill="hsl(var(--primary))" radius={[2, 2, 0, 0]} name="Miqdor" />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -107,26 +109,26 @@ export default function Dashboard() {
             </CardContent>
           </Card>
 
-          {/* Monthly Stats */}
+          {/* Oylik */}
           <div>
-            <h2 className="text-lg font-medium tracking-tight mb-4 uppercase text-muted-foreground text-xs font-bold">Monthly Overview</h2>
+            <h2 className="text-xs font-bold uppercase tracking-wider mb-4 text-muted-foreground">Oylik Ko'rsatkichlar</h2>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <MetricCard 
-                title="Monthly Output" 
+                title="Oylik miqdor" 
                 value={monthly?.totalQty} 
                 loading={isLoadingMonthly} 
                 formatter={formatNumber}
                 testId="monthly-qty"
               />
               <MetricCard 
-                title="Monthly Weight" 
+                title="Oylik og'irlik" 
                 value={monthly?.totalKg} 
                 loading={isLoadingMonthly} 
                 formatter={(v) => `${formatNumber(v)} kg`}
                 testId="monthly-kg"
               />
               <MetricCard 
-                title="Total Earnings" 
+                title="Jami maosh" 
                 value={monthly?.totalEarnings} 
                 loading={isLoadingMonthly} 
                 formatter={formatCurrency}
@@ -137,10 +139,10 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Top Workers */}
+        {/* Top ishchilar */}
         <Card className="border-border">
           <CardHeader>
-            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Top Performers (This Month)</CardTitle>
+            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Eng Yaxshi Ishchilar (bu oy)</CardTitle>
           </CardHeader>
           <CardContent>
             {isLoadingWorkers ? (
@@ -157,7 +159,7 @@ export default function Dashboard() {
                       </div>
                       <div>
                         <div className="font-medium">{worker.worker}</div>
-                        <div className="text-xs text-muted-foreground">{formatNumber(worker.totalQty)} units</div>
+                        <div className="text-xs text-muted-foreground">{formatNumber(worker.totalQty)} dona</div>
                       </div>
                     </div>
                     <div className="text-right font-mono text-sm">
@@ -168,7 +170,7 @@ export default function Dashboard() {
               </div>
             ) : (
               <div className="text-center py-8 text-muted-foreground text-sm">
-                No production data this month
+                Bu oyda ma'lumot yo'q
               </div>
             )}
           </CardContent>

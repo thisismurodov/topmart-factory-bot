@@ -25,17 +25,8 @@ export default function Batches() {
   const [page, setPage] = useState(0);
   const limit = 50;
   
-  const [filters, setFilters] = useState({
-    date: "",
-    worker: "",
-    product: ""
-  });
-  
-  const [activeFilters, setActiveFilters] = useState({
-    date: "",
-    worker: "",
-    product: ""
-  });
+  const [filters, setFilters] = useState({ date: "", worker: "", product: "" });
+  const [activeFilters, setActiveFilters] = useState({ date: "", worker: "", product: "" });
 
   const { data, isLoading } = useGetBatches(
     { 
@@ -71,32 +62,32 @@ export default function Batches() {
     <div className="space-y-6">
       <Card className="border-border">
         <CardHeader className="pb-4">
-          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Filter Batches</CardTitle>
+          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Partiyalarni Qidirish</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap gap-4 items-end">
             <div className="space-y-2 flex-1 min-w-[200px]">
-              <label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Date (YYYY-MM-DD)</label>
+              <label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Sana (YYYY-MM-DD)</label>
               <Input 
-                placeholder="e.g. 2024-01-15" 
+                placeholder="masalan: 2024-06-01" 
                 value={filters.date} 
                 onChange={e => setFilters(f => ({...f, date: e.target.value}))}
                 data-testid="filter-date"
               />
             </div>
             <div className="space-y-2 flex-1 min-w-[200px]">
-              <label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Worker Name</label>
+              <label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Ishchi nomi</label>
               <Input 
-                placeholder="e.g. Alisher" 
+                placeholder="masalan: Aziz" 
                 value={filters.worker} 
                 onChange={e => setFilters(f => ({...f, worker: e.target.value}))}
                 data-testid="filter-worker"
               />
             </div>
             <div className="space-y-2 flex-1 min-w-[200px]">
-              <label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Product</label>
+              <label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Mahsulot</label>
               <Input 
-                placeholder="e.g. Rope 10mm" 
+                placeholder="masalan: Arqon 6mm" 
                 value={filters.product} 
                 onChange={e => setFilters(f => ({...f, product: e.target.value}))}
                 data-testid="filter-product"
@@ -104,10 +95,10 @@ export default function Batches() {
             </div>
             <div className="flex gap-2">
               <Button onClick={applyFilters} data-testid="btn-apply-filters">
-                <Search className="w-4 h-4 mr-2" /> Search
+                <Search className="w-4 h-4 mr-2" /> Qidirish
               </Button>
               <Button variant="outline" onClick={clearFilters} data-testid="btn-clear-filters">
-                <X className="w-4 h-4 mr-2" /> Clear
+                <X className="w-4 h-4 mr-2" /> Tozalash
               </Button>
             </div>
           </div>
@@ -119,13 +110,13 @@ export default function Batches() {
           <Table>
             <TableHeader className="bg-muted/50">
               <TableRow>
-                <TableHead className="w-[180px]">Batch Code</TableHead>
-                <TableHead>Date & Time</TableHead>
-                <TableHead>Worker</TableHead>
-                <TableHead>Product</TableHead>
-                <TableHead className="text-right">Qty</TableHead>
-                <TableHead className="text-right">Weight</TableHead>
-                <TableHead className="text-right">Earnings</TableHead>
+                <TableHead className="w-[180px]">Partiya kodi</TableHead>
+                <TableHead>Sana va vaqt</TableHead>
+                <TableHead>Ishchi</TableHead>
+                <TableHead>Mahsulot</TableHead>
+                <TableHead className="text-right">Miqdor</TableHead>
+                <TableHead className="text-right">Og'irlik</TableHead>
+                <TableHead className="text-right">Maosh</TableHead>
                 <TableHead className="text-right w-[80px]"></TableHead>
               </TableRow>
             </TableHeader>
@@ -146,7 +137,7 @@ export default function Batches() {
               ) : data?.items?.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
-                    No batches found.
+                    Partiyalar topilmadi.
                   </TableCell>
                 </TableRow>
               ) : (
@@ -168,19 +159,19 @@ export default function Batches() {
                         </AlertDialogTrigger>
                         <AlertDialogContent>
                           <AlertDialogHeader>
-                            <AlertDialogTitle>Delete Batch?</AlertDialogTitle>
+                            <AlertDialogTitle>Partiyani o'chirish?</AlertDialogTitle>
                             <AlertDialogDescription>
-                              This action cannot be undone. This will permanently delete batch {batch.batchCode} and remove it from the worker's earnings.
+                              Bu amalni qaytarib bo'lmaydi. {batch.batchCode} partiyasi va unga tegishli maosh ma'lumotlari o'chiriladi.
                             </AlertDialogDescription>
                           </AlertDialogHeader>
                           <AlertDialogFooter>
-                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogCancel>Bekor qilish</AlertDialogCancel>
                             <AlertDialogAction 
                               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                               onClick={() => deleteBatch.mutate({ id: batch.id })}
                               data-testid="btn-confirm-delete"
                             >
-                              {deleteBatch.isPending ? "Deleting..." : "Delete Batch"}
+                              {deleteBatch.isPending ? "O'chirilmoqda..." : "O'chirish"}
                             </AlertDialogAction>
                           </AlertDialogFooter>
                         </AlertDialogContent>
@@ -196,7 +187,7 @@ export default function Batches() {
       
       <div className="flex items-center justify-between">
         <div className="text-sm text-muted-foreground">
-          Showing {data?.items.length || 0} of {data?.total || 0} records
+          {data?.items.length || 0} ta / {data?.total || 0} ta yozuv
         </div>
         <div className="flex gap-2">
           <Button 
@@ -206,7 +197,7 @@ export default function Batches() {
             onClick={() => setPage(p => Math.max(0, p - 1))}
             data-testid="btn-prev-page"
           >
-            Previous
+            Oldingi
           </Button>
           <Button 
             variant="outline" 
@@ -215,7 +206,7 @@ export default function Batches() {
             onClick={() => setPage(p => p + 1)}
             data-testid="btn-next-page"
           >
-            Next
+            Keyingi
           </Button>
         </div>
       </div>

@@ -15,12 +15,12 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Factory, AlertCircle } from "lucide-react";
+import { ShoppingCart, AlertCircle } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
 const formSchema = z.object({
-  username: z.string().min(1, "Username is required"),
-  password: z.string().min(1, "Password is required"),
+  username: z.string().min(1, "Foydalanuvchi nomi kiritilishi shart"),
+  password: z.string().min(1, "Parol kiritilishi shart"),
 });
 
 export default function Login() {
@@ -40,8 +40,8 @@ export default function Login() {
       onSuccess: () => {
         setLocation("/dashboard");
       },
-      onError: (err: any) => {
-        setError(err?.error || "Invalid credentials");
+      onError: () => {
+        setError("Foydalanuvchi nomi yoki parol noto'g'ri");
       }
     }
   });
@@ -56,17 +56,17 @@ export default function Login() {
       <div className="w-full max-w-md">
         <div className="flex flex-col items-center mb-8">
           <div className="w-16 h-16 bg-primary rounded-xl flex items-center justify-center mb-4 shadow-lg">
-            <Factory className="w-8 h-8 text-primary-foreground" />
+            <ShoppingCart className="w-8 h-8 text-primary-foreground" />
           </div>
           <h1 className="text-3xl font-bold tracking-tight text-foreground uppercase">TopMart ERP</h1>
-          <p className="text-muted-foreground mt-2 font-mono text-sm">CONTROL ROOM ACCESS</p>
+          <p className="text-muted-foreground mt-2 font-mono text-sm">BOSHQARUV TIZIMI</p>
         </div>
 
         <Card className="border-border shadow-xl">
           <CardHeader className="space-y-1">
-            <CardTitle className="text-2xl">Sign In</CardTitle>
+            <CardTitle className="text-2xl">Kirish</CardTitle>
             <CardDescription>
-              Enter your admin credentials to continue
+              Admin ma'lumotlaringizni kiriting
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -83,7 +83,7 @@ export default function Login() {
                   name="username"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Username</FormLabel>
+                      <FormLabel>Foydalanuvchi nomi</FormLabel>
                       <FormControl>
                         <Input 
                           placeholder="admin" 
@@ -101,7 +101,7 @@ export default function Login() {
                   name="password"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Password</FormLabel>
+                      <FormLabel>Parol</FormLabel>
                       <FormControl>
                         <Input 
                           type="password" 
@@ -109,6 +109,7 @@ export default function Login() {
                           {...field} 
                           className="bg-muted/50"
                           data-testid="input-password"
+                          autoComplete="current-password"
                         />
                       </FormControl>
                       <FormMessage />
@@ -117,11 +118,11 @@ export default function Login() {
                 />
                 <Button 
                   type="submit" 
-                  className="w-full mt-6 text-primary-foreground font-medium" 
+                  className="w-full mt-6 font-medium" 
                   disabled={login.isPending}
                   data-testid="btn-login"
                 >
-                  {login.isPending ? "Authenticating..." : "Access Control Room"}
+                  {login.isPending ? "Tekshirilmoqda..." : "Tizimga kirish"}
                 </Button>
               </form>
             </Form>

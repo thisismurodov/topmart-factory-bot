@@ -27,9 +27,9 @@ import {
 } from "@/components/ui/alert-dialog";
 
 const formSchema = z.object({
-  name: z.string().min(1, "Name is required"),
+  name: z.string().min(1, "Mahsulot nomi kiritilishi shart"),
   rateType: z.enum(["per_kg", "per_piece"]),
-  rate: z.coerce.number().min(0, "Rate must be positive"),
+  rate: z.coerce.number().min(0, "Narx musbat bo'lishi shart"),
 });
 
 export default function Products() {
@@ -60,11 +60,7 @@ export default function Products() {
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
-    defaultValues: {
-      name: "",
-      rateType: "per_kg",
-      rate: 0,
-    },
+    defaultValues: { name: "", rateType: "per_kg", rate: 0 },
   });
 
   function onSubmit(values: z.infer<typeof formSchema>) {
@@ -75,19 +71,19 @@ export default function Products() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold tracking-tight flex items-center">
-          <Package className="w-5 h-5 mr-2" /> Products & Rates
+          <Package className="w-5 h-5 mr-2" /> Mahsulotlar va narxlar
         </h1>
         <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
           <DialogTrigger asChild>
             <Button data-testid="btn-add-product">
-              <Plus className="w-4 h-4 mr-2" /> Add Product
+              <Plus className="w-4 h-4 mr-2" /> Mahsulot qo'shish
             </Button>
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Add New Product</DialogTitle>
+              <DialogTitle>Yangi mahsulot qo'shish</DialogTitle>
               <DialogDescription>
-                Define a new product type and its payment rate for workers.
+                Yangi mahsulot turi va ishchiga to'lanadigan narxni belgilang.
               </DialogDescription>
             </DialogHeader>
             <Form {...form}>
@@ -97,9 +93,9 @@ export default function Products() {
                   name="name"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Product Name</FormLabel>
+                      <FormLabel>Mahsulot nomi</FormLabel>
                       <FormControl>
-                        <Input placeholder="e.g. Rope 12mm Blue" {...field} data-testid="input-product-name" />
+                        <Input placeholder="masalan: Arqon 12mm Ko'k" {...field} data-testid="input-product-name" />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -111,16 +107,16 @@ export default function Products() {
                     name="rateType"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Rate Basis</FormLabel>
+                        <FormLabel>Hisoblash usuli</FormLabel>
                         <Select onValueChange={field.onChange} defaultValue={field.value}>
                           <FormControl>
                             <SelectTrigger data-testid="select-product-ratetype">
-                              <SelectValue placeholder="Select type" />
+                              <SelectValue placeholder="Tanlang" />
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent>
-                            <SelectItem value="per_kg">Per KG</SelectItem>
-                            <SelectItem value="per_piece">Per Piece</SelectItem>
+                            <SelectItem value="per_kg">Kilogramm bo'yicha</SelectItem>
+                            <SelectItem value="per_piece">Dona bo'yicha</SelectItem>
                           </SelectContent>
                         </Select>
                         <FormMessage />
@@ -132,7 +128,7 @@ export default function Products() {
                     name="rate"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Rate (UZS)</FormLabel>
+                        <FormLabel>Narx (so'm)</FormLabel>
                         <FormControl>
                           <Input type="number" placeholder="0" {...field} data-testid="input-product-rate" />
                         </FormControl>
@@ -143,7 +139,7 @@ export default function Products() {
                 </div>
                 <DialogFooter className="pt-4">
                   <Button type="submit" disabled={createProduct.isPending} data-testid="btn-submit-product">
-                    {createProduct.isPending ? "Saving..." : "Save Product"}
+                    {createProduct.isPending ? "Saqlanmoqda..." : "Saqlash"}
                   </Button>
                 </DialogFooter>
               </form>
@@ -157,9 +153,9 @@ export default function Products() {
           <Table>
             <TableHeader className="bg-muted/50">
               <TableRow>
-                <TableHead>Product Name</TableHead>
-                <TableHead>Rate Basis</TableHead>
-                <TableHead className="text-right">Rate</TableHead>
+                <TableHead>Mahsulot nomi</TableHead>
+                <TableHead>Hisoblash usuli</TableHead>
+                <TableHead className="text-right">Narx</TableHead>
                 <TableHead className="text-right w-[80px]"></TableHead>
               </TableRow>
             </TableHeader>
@@ -176,7 +172,7 @@ export default function Products() {
               ) : products?.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
-                    No products defined.
+                    Mahsulotlar kiritilmagan.
                   </TableCell>
                 </TableRow>
               ) : (
@@ -185,7 +181,7 @@ export default function Products() {
                     <TableCell className="font-medium">{product.name}</TableCell>
                     <TableCell>
                       <span className="text-xs uppercase tracking-wider text-muted-foreground bg-muted px-2 py-1 rounded">
-                        {product.rateType.replace('_', ' ')}
+                        {product.rateType === 'per_kg' ? 'kg bo\'yicha' : 'dona bo\'yicha'}
                       </span>
                     </TableCell>
                     <TableCell className="text-right font-mono font-medium">
@@ -200,19 +196,19 @@ export default function Products() {
                         </AlertDialogTrigger>
                         <AlertDialogContent>
                           <AlertDialogHeader>
-                            <AlertDialogTitle>Delete Product?</AlertDialogTitle>
+                            <AlertDialogTitle>Mahsulotni o'chirish?</AlertDialogTitle>
                             <AlertDialogDescription>
-                              This will remove {product.name} from the catalog. Workers will no longer be able to select it.
+                              {product.name} katalogdan o'chiriladi. Ishchilar bundan keyin uni tanlay olmaydi.
                             </AlertDialogDescription>
                           </AlertDialogHeader>
                           <AlertDialogFooter>
-                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogCancel>Bekor qilish</AlertDialogCancel>
                             <AlertDialogAction 
                               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                               onClick={() => deleteProduct.mutate({ name: product.name })}
                               data-testid="btn-confirm-delete"
                             >
-                              {deleteProduct.isPending ? "Deleting..." : "Delete"}
+                              {deleteProduct.isPending ? "O'chirilmoqda..." : "O'chirish"}
                             </AlertDialogAction>
                           </AlertDialogFooter>
                         </AlertDialogContent>

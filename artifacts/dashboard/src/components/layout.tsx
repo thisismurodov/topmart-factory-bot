@@ -9,16 +9,16 @@ import {
   FileBox, 
   Banknote, 
   LogOut,
-  Factory
+  ShoppingCart
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 
 const NAV_ITEMS = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/batches", label: "Batches", icon: Package },
-  { href: "/workers", label: "Workers", icon: Users },
-  { href: "/products", label: "Products", icon: FileBox },
-  { href: "/salary", label: "Salary", icon: Banknote },
+  { href: "/dashboard", label: "Bosh sahifa", icon: LayoutDashboard },
+  { href: "/batches", label: "Partiyalar", icon: Package },
+  { href: "/workers", label: "Ishchilar", icon: Users },
+  { href: "/products", label: "Mahsulotlar", icon: FileBox },
+  { href: "/salary", label: "Maosh", icon: Banknote },
 ];
 
 export function Layout({ children }: { children: ReactNode }) {
@@ -59,8 +59,8 @@ export function Layout({ children }: { children: ReactNode }) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-muted/20">
         <div className="animate-pulse flex flex-col items-center">
-          <Factory className="w-12 h-12 text-muted-foreground mb-4" />
-          <div className="text-muted-foreground">Initializing Control Room...</div>
+          <ShoppingCart className="w-12 h-12 text-muted-foreground mb-4" />
+          <div className="text-muted-foreground">Tizim yuklanmoqda...</div>
         </div>
       </div>
     );
@@ -70,7 +70,7 @@ export function Layout({ children }: { children: ReactNode }) {
     <div className="flex h-screen bg-muted/20 overflow-hidden">
       <aside className="w-64 bg-sidebar border-r border-sidebar-border flex flex-col shrink-0">
         <div className="h-16 flex items-center px-6 border-b border-sidebar-border bg-sidebar-accent/50">
-          <Factory className="w-6 h-6 text-primary mr-3" />
+          <ShoppingCart className="w-6 h-6 text-sidebar-foreground mr-3" />
           <span className="font-bold text-lg tracking-tight text-sidebar-foreground uppercase">TopMart ERP</span>
         </div>
         <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
@@ -81,12 +81,12 @@ export function Layout({ children }: { children: ReactNode }) {
                 <div 
                   className={`flex items-center px-3 py-2.5 rounded-md cursor-pointer transition-colors ${
                     active 
-                      ? "bg-primary text-primary-foreground font-medium shadow-sm" 
+                      ? "bg-sidebar-primary text-sidebar-primary-foreground font-medium shadow-sm" 
                       : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground"
                   }`}
-                  data-testid={`nav-${item.label.toLowerCase()}`}
+                  data-testid={`nav-${item.href.slice(1)}`}
                 >
-                  <item.icon className={`w-5 h-5 mr-3 ${active ? "text-primary-foreground" : "text-sidebar-foreground/50"}`} />
+                  <item.icon className={`w-5 h-5 mr-3 ${active ? "text-sidebar-primary-foreground" : "text-sidebar-foreground/50"}`} />
                   {item.label}
                 </div>
               </Link>
@@ -100,9 +100,9 @@ export function Layout({ children }: { children: ReactNode }) {
                 {user.username}
               </div>
               <div className="flex items-center mt-1">
-                <span className={`w-2 h-2 rounded-full mr-2 ${health?.status === 'ok' ? 'bg-green-500' : 'bg-red-500'}`} />
+                <span className={`w-2 h-2 rounded-full mr-2 ${health?.status === 'ok' ? 'bg-green-400' : 'bg-red-500'}`} />
                 <span className="text-[10px] uppercase tracking-wider text-sidebar-foreground/50">
-                  {health?.status === 'ok' ? 'System Online' : 'System Offline'}
+                  {health?.status === 'ok' ? 'Tizim faol' : 'Tizim o\'chiq'}
                 </span>
               </div>
             </div>
@@ -117,14 +117,14 @@ export function Layout({ children }: { children: ReactNode }) {
             data-testid="btn-logout"
           >
             <LogOut className="w-4 h-4 mr-2" />
-            Sign Out
+            Chiqish
           </Button>
         </div>
       </aside>
       <main className="flex-1 flex flex-col overflow-hidden relative">
         <div className="h-16 border-b border-border bg-card flex items-center px-8 shrink-0">
           <h1 className="text-xl font-semibold text-foreground tracking-tight">
-            {NAV_ITEMS.find(i => location.startsWith(i.href))?.label || "Dashboard"}
+            {NAV_ITEMS.find(i => location.startsWith(i.href))?.label || "Bosh sahifa"}
           </h1>
         </div>
         <div className="flex-1 overflow-y-auto p-8">

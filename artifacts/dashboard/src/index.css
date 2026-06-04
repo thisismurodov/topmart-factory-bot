@@ -73,50 +73,51 @@
   --elevate-1: rgba(0,0,0, .03);
   --elevate-2: rgba(0,0,0, .08);
 
-  /* Slate & Factory Yellow */
-  --background: 210 20% 98%;
-  --foreground: 222 47% 11%;
-  --border: 214 32% 91%;
-  --input: 214 32% 91%;
-  --ring: 45 93% 47%;
+  /* TopMart Green */
+  --background: 120 10% 97%;
+  --foreground: 139 40% 10%;
+  --border: 139 20% 88%;
+  --input: 139 20% 88%;
+  --ring: 139 45% 28%;
 
   --card: 0 0% 100%;
-  --card-foreground: 222 47% 11%;
-  --card-border: 214 32% 91%;
+  --card-foreground: 139 40% 10%;
+  --card-border: 139 20% 88%;
 
   --popover: 0 0% 100%;
-  --popover-foreground: 222 47% 11%;
-  --popover-border: 214 32% 91%;
+  --popover-foreground: 139 40% 10%;
+  --popover-border: 139 20% 88%;
 
-  --primary: 45 93% 47%;
-  --primary-foreground: 222 47% 11%;
+  --primary: 139 45% 28%;
+  --primary-foreground: 0 0% 100%;
 
-  --secondary: 214 32% 91%;
-  --secondary-foreground: 222 47% 11%;
+  --secondary: 139 15% 92%;
+  --secondary-foreground: 139 40% 15%;
 
-  --muted: 210 40% 96%;
-  --muted-foreground: 215 16% 47%;
+  --muted: 120 15% 94%;
+  --muted-foreground: 139 15% 45%;
 
-  --accent: 210 40% 96%;
-  --accent-foreground: 222 47% 11%;
+  --accent: 139 20% 92%;
+  --accent-foreground: 139 40% 15%;
 
   --destructive: 0 84% 60%;
-  --destructive-foreground: 210 40% 98%;
+  --destructive-foreground: 0 0% 100%;
 
-  --chart-1: 45 93% 47%;
-  --chart-2: 222 47% 11%;
-  --chart-3: 214 32% 50%;
+  --chart-1: 139 45% 28%;
+  --chart-2: 139 35% 45%;
+  --chart-3: 139 25% 60%;
   --chart-4: 0 84% 60%;
   --chart-5: 200 80% 50%;
 
-  --sidebar: 222 47% 11%;
-  --sidebar-foreground: 210 40% 98%;
-  --sidebar-border: 217 33% 17%;
-  --sidebar-primary: 45 93% 47%;
-  --sidebar-primary-foreground: 222 47% 11%;
-  --sidebar-accent: 217 33% 17%;
-  --sidebar-accent-foreground: 210 40% 98%;
-  --sidebar-ring: 45 93% 47%;
+  /* Sidebar — dark green like TopMart logo */
+  --sidebar: 139 47% 14%;
+  --sidebar-foreground: 0 0% 98%;
+  --sidebar-border: 139 40% 18%;
+  --sidebar-primary: 139 45% 28%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 139 40% 19%;
+  --sidebar-accent-foreground: 0 0% 98%;
+  --sidebar-ring: 139 45% 35%;
 
   --app-font-sans: 'Inter', system-ui, sans-serif;
   --app-font-serif: Georgia, serif;
@@ -126,58 +127,15 @@
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
   --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
   --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-}
 
-.dark {
-  --button-outline: rgba(255,255,255, .10);
-  --badge-outline: rgba(255,255,255, .05);
-  --opaque-button-border-intensity: 9;
-  --elevate-1: rgba(255,255,255, .04);
-  --elevate-2: rgba(255,255,255, .09);
-
-  --background: 222 47% 11%;
-  --foreground: 210 40% 98%;
-  --border: 217 33% 17%;
-  --input: 217 33% 17%;
-  --ring: 45 93% 47%;
-
-  --card: 222 47% 11%;
-  --card-foreground: 210 40% 98%;
-  --card-border: 217 33% 17%;
-
-  --popover: 222 47% 11%;
-  --popover-foreground: 210 40% 98%;
-  --popover-border: 217 33% 17%;
-
-  --primary: 45 93% 47%;
-  --primary-foreground: 222 47% 11%;
-
-  --secondary: 217 33% 17%;
-  --secondary-foreground: 210 40% 98%;
-
-  --muted: 217 33% 17%;
-  --muted-foreground: 215 20.2% 65.1%;
-
-  --accent: 217 33% 17%;
-  --accent-foreground: 210 40% 98%;
-
-  --destructive: 0 62.8% 30.6%;
-  --destructive-foreground: 210 40% 98%;
-
-  --chart-1: 45 93% 47%;
-  --chart-2: 210 40% 98%;
-  --chart-3: 215 20.2% 65.1%;
-  --chart-4: 0 62.8% 30.6%;
-  --chart-5: 200 80% 50%;
-
-  --sidebar: 222 47% 11%;
-  --sidebar-foreground: 210 40% 98%;
-  --sidebar-border: 217 33% 17%;
-  --sidebar-primary: 45 93% 47%;
-  --sidebar-primary-foreground: 222 47% 11%;
-  --sidebar-accent: 217 33% 17%;
-  --sidebar-accent-foreground: 210 40% 98%;
-  --sidebar-ring: 45 93% 47%;
+  /* Borders */
+  --primary-border: hsl(139 45% 22%);
+  --secondary-border: hsl(139 15% 85%);
+  --muted-border: hsl(120 15% 88%);
+  --accent-border: hsl(139 20% 86%);
+  --destructive-border: hsl(0 84% 50%);
+  --sidebar-primary-border: hsl(139 45% 22%);
+  --sidebar-accent-border: hsl(139 40% 22%);
 }
 
 @layer base {

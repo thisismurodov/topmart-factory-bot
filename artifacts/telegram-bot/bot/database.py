@@ -111,6 +111,15 @@ def init_db() -> None:
             )
         """)
         cur.execute("""
+            CREATE TABLE IF NOT EXISTS sale_products (
+                id      SERIAL PRIMARY KEY,
+                name    TEXT NOT NULL UNIQUE,
+                unit    TEXT NOT NULL DEFAULT 'dona',
+                active  BOOLEAN NOT NULL DEFAULT true,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS db_meta (
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL
@@ -504,3 +513,41 @@ def get_product_rate_type(product_name: str) -> str:
         cur.execute("SELECT rate_type FROM products WHERE name = %s", (product_name,))
         row = cur.fetchone()
     return row["rate_type"] if row else "dona"
+
+
+# ── Sale products (sotuv uchun alohida tovar ro'yxati) ────────────────────────
+
+def get_sale_products() -> list[dict]:
+    with get_conn() as (conn, cur):
+        cur.execute(
+            "SELECT id, name, unit FROM sale_products WHERE active = true ORDER BY name"
+        )
+        return cur.fetchall()
+
+
+def get_sale_product_unit(name: str) -> str:
+    with get_conn() as (conn, cur):
+        cur.execute("SELECT unit FROM sale_products WHERE name = %s", (name,))
+        row = cur.fetchone()
+    return row["unit"] if row else "dona"
+
+
+def add_sale_product(name: str, unit: str = "dona") -> bool:
+    try:
+        with get_conn() as (conn, cur):
+            cur.execute(
+                "INSERT INTO sale_products (name, unit) VALUES (%s, %s) ON CONFLICT (name) DO UPDATE SET active=true, unit=%s",
+                (name, unit, unit),
+            )
+            return True
+    except Exception:
+        return False
+
+
+def delete_sale_product(name: str) -> bool:
+    with get_conn() as (conn, cur):
+        cur.execute(
+            "UPDATE sale_products SET active = false WHERE name = %s",
+            (name,),
+        )
+        return cur.rowcount > 0

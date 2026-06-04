@@ -6,7 +6,8 @@ from telegram.ext import (
 from ..config import SUPERADMIN_CHAT_ID
 from ..database import (
     get_user_role, get_customers, add_customer,
-    get_product_names, get_product_rate_type,
+    get_sale_products, get_sale_product_unit,
+    add_sale_product, delete_sale_product,
     create_sale, get_recent_sales,
 )
 
@@ -35,13 +36,13 @@ def _customer_keyboard() -> InlineKeyboardMarkup:
 
 
 def _product_keyboard() -> InlineKeyboardMarkup:
-    products = get_product_names()
+    products = get_sale_products()
     buttons = []
-    for i in range(0, len(products), 2):
-        row = [InlineKeyboardButton(products[i], callback_data=f"sv_p:{products[i]}")]
-        if i + 1 < len(products):
-            row.append(InlineKeyboardButton(products[i + 1], callback_data=f"sv_p:{products[i + 1]}"))
-        buttons.append(row)
+    for p in products:
+        label = f"📦 {p['name']} ({p['unit']})"
+        buttons.append([InlineKeyboardButton(label, callback_data=f"sv_p:{p['name']}:{p['unit']}")])
+    if not products:
+        buttons.append([InlineKeyboardButton("⚠️ Tovar yo'q — /tovar_qosh", callback_data="sv_cancel")])
     buttons.append([InlineKeyboardButton("❌ Bekor", callback_data="sv_cancel")])
     return InlineKeyboardMarkup(buttons)
 
@@ -144,10 +145,12 @@ async def product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await query.edit_message_text("❌ Savdo bekor qilindi.")
         return ConversationHandler.END
 
-    product = query.data.split(":", 1)[1]
+    # format: sv_p:{name}:{unit}
+    parts = query.data.split(":", 2)
+    product = parts[1]
+    unit = parts[2] if len(parts) > 2 else get_sale_product_unit(product)
     context.user_data["sale"]["product"] = product
-    rate_type = get_product_rate_type(product)
-    context.user_data["sale"]["rate_type"] = rate_type
+    context.user_data["sale"]["rate_type"] = unit
 
     await query.edit_message_text(
         f"📦 *{product}*\n\nMiqdor (dona) kiriting:",
@@ -278,6 +281,77 @@ async def confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     return ConversationHandler.END
 
 
+# ── Sale products management (admin only) ─────────────────────────────────────
+
+async def cmd_tovarlar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    if not _is_admin(chat_id):
+        await update.message.reply_text("❌ Faqat admin uchun.")
+        return
+    products = get_sale_products()
+    if not products:
+        await update.message.reply_text(
+            "📭 Sotuv tovarlari yo'q.\n\n"
+            "Qo'shish: `/tovar_qosh Tovar nomi kg`\n"
+            "(yoki `dona` birligi uchun: `/tovar_qosh Tovar nomi dona`)",
+            parse_mode="Markdown",
+        )
+        return
+    lines = ["📦 *Sotuv tovarlari:*\n"]
+    for p in products:
+        lines.append(f"• {p['name']} — {p['unit']}")
+    lines.append("\n➕ Qo'shish: `/tovar_qosh Nomi kg`")
+    lines.append("🗑 O'chirish: `/tovar_ochir Nomi`")
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+async def cmd_tovar_qosh(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    if not _is_admin(chat_id):
+        await update.message.reply_text("❌ Faqat admin uchun.")
+        return
+    args = context.args
+    if not args or len(args) < 1:
+        await update.message.reply_text(
+            "❗ Ishlatish: `/tovar_qosh Tovar nomi kg`\n"
+            "Misol: `/tovar_qosh Polipropilen ip kg`",
+            parse_mode="Markdown",
+        )
+        return
+    unit = "dona"
+    if args[-1].lower() in ("kg", "dona", "metr", "litr"):
+        unit = args[-1].lower()
+        name = " ".join(args[:-1]).strip()
+    else:
+        name = " ".join(args).strip()
+    if not name:
+        await update.message.reply_text("❗ Tovar nomi bo'sh bo'lmasin.")
+        return
+    ok = add_sale_product(name, unit)
+    if ok:
+        await update.message.reply_text(f"✅ *{name}* ({unit}) qo'shildi.", parse_mode="Markdown")
+    else:
+        await update.message.reply_text("❌ Qo'shib bo'lmadi.")
+
+
+async def cmd_tovar_ochir(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    if not _is_admin(chat_id):
+        await update.message.reply_text("❌ Faqat admin uchun.")
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "❗ Ishlatish: `/tovar_ochir Tovar nomi`", parse_mode="Markdown"
+        )
+        return
+    name = " ".join(context.args).strip()
+    ok = delete_sale_product(name)
+    if ok:
+        await update.message.reply_text(f"🗑 *{name}* o'chirildi.", parse_mode="Markdown")
+    else:
+        await update.message.reply_text(f"❌ *{name}* topilmadi.", parse_mode="Markdown")
+
+
 # ── Recent sales list ─────────────────────────────────────────────────────────
 
 async def cmd_savdolar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -369,3 +443,6 @@ def register(app) -> None:
     app.add_handler(build_sales_handler())
     app.add_handler(CommandHandler("savdolar", cmd_savdolar))
     app.add_handler(MessageHandler(filters.Regex(r"^📊 Savdolar$"), cmd_savdolar))
+    app.add_handler(CommandHandler("tovarlar", cmd_tovarlar))
+    app.add_handler(CommandHandler("tovar_qosh", cmd_tovar_qosh))
+    app.add_handler(CommandHandler("tovar_ochir", cmd_tovar_ochir))

@@ -64,8 +64,8 @@ router.get("/sales", async (req, res): Promise<void> => {
         unitPrice: Number(s.unit_price),
         totalAmount: Number(s.total_amount),
         status: s.status,
-        note: s.note,
-        createdAt: s.created_at,
+        note: s.note ?? "",
+        createdAt: s.created_at instanceof Date ? s.created_at.toISOString() : String(s.created_at),
       })),
       total: Number(countResult.rows[0].cnt),
     })

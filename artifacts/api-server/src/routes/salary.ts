@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { getDb } from "../lib/sqlite";
+import { pool } from "@workspace/db";
 import {
   GetSalaryReportQueryParams,
   GetSalaryReportResponse,
@@ -9,7 +9,7 @@ import {
 
 const router: IRouter = Router();
 
-router.get("/salary/report", (req, res): void => {
+router.get("/salary/report", async (req, res): Promise<void> => {
   const now = new Date();
   const parsed = GetSalaryReportQueryParams.safeParse(req.query);
   if (!parsed.success) {
@@ -21,29 +21,24 @@ router.get("/salary/report", (req, res): void => {
   const month = parsed.data.month ?? now.getMonth() + 1;
   const period = `${year}-${String(month).padStart(2, "0")}`;
 
-  const db = getDb();
-
-  // Earnings per worker this month from batches
-  const earnings = db
-    .prepare(
-      `SELECT worker, COALESCE(SUM(earnings), 0.0) AS totalEarnings
+  const [earningsResult, paymentsResult] = await Promise.all([
+    pool.query(
+      `SELECT worker, COALESCE(SUM(earnings), 0.0) AS "totalEarnings"
        FROM batches
-       WHERE strftime('%Y-%m', created_at) = ?
+       WHERE TO_CHAR(created_at, 'YYYY-MM') = $1
        GROUP BY worker
-       ORDER BY worker`
-    )
-    .all(period) as any[];
+       ORDER BY worker`,
+      [period]
+    ),
+    pool.query(
+      `SELECT worker, paid_at FROM salary_payments WHERE year = $1 AND month = $2`,
+      [year, month]
+    ),
+  ]);
 
-  // Payment records for this month
-  const payments = db
-    .prepare(
-      `SELECT worker_name, paid_at FROM salary_payments WHERE year = ? AND month = ?`
-    )
-    .all(year, month) as any[];
+  const paidMap = new Map(paymentsResult.rows.map((p) => [p.worker, p.paid_at]));
 
-  const paidMap = new Map(payments.map((p: any) => [p.worker_name, p.paid_at]));
-
-  const rows = earnings.map((e) => ({
+  const rows = earningsResult.rows.map((e) => ({
     worker: e.worker,
     totalEarnings: Number(e.totalEarnings),
     isPaid: paidMap.has(e.worker),
@@ -53,7 +48,7 @@ router.get("/salary/report", (req, res): void => {
   res.json(GetSalaryReportResponse.parse(rows));
 });
 
-router.post("/salary/pay", (req, res): void => {
+router.post("/salary/pay", async (req, res): Promise<void> => {
   const parsed = MarkSalaryPaidBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
@@ -61,12 +56,13 @@ router.post("/salary/pay", (req, res): void => {
   }
 
   const { worker, year, month, amount } = parsed.data;
-  const db = getDb();
 
-  db.prepare(
-    `INSERT OR REPLACE INTO salary_payments (worker_name, year, month, amount)
-     VALUES (?, ?, ?, ?)`
-  ).run(worker, year, month, amount);
+  await pool.query(
+    `INSERT INTO salary_payments (worker, year, month, amount)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (worker, year, month) DO UPDATE SET amount = $4, paid_at = NOW()`,
+    [worker, year, month, amount]
+  );
 
   res.json(HealthCheckResponse.parse({ status: "ok" }));
 });

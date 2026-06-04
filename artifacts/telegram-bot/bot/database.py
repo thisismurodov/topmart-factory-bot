@@ -1,273 +1,258 @@
-import sqlite3
 import os
 from datetime import date
-from .config import DB_PATH, SEED_WORKERS, SEED_PRODUCTS
+from contextlib import contextmanager
+
+import psycopg2
+import psycopg2.extras
+
+from .config import DATABASE_URL, SEED_WORKERS, SEED_PRODUCTS
 
 
-def get_connection() -> sqlite3.Connection:
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+@contextmanager
+def get_conn():
+    conn = psycopg2.connect(DATABASE_URL)
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        yield conn, cur
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
 
 
 def init_db() -> None:
-    with get_connection() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS batches (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                batch_code TEXT    NOT NULL UNIQUE,
-                worker     TEXT    NOT NULL,
-                product    TEXT    NOT NULL,
-                quantity   INTEGER NOT NULL,
-                weight_kg  REAL    NOT NULL DEFAULT 0,
-                earnings   REAL    NOT NULL DEFAULT 0,
-                created_at TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS workers_config (
+    with get_conn() as (conn, cur):
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS workers (
                 name   TEXT PRIMARY KEY,
                 prefix TEXT NOT NULL DEFAULT '',
                 phone  TEXT NOT NULL DEFAULT '',
                 role   TEXT NOT NULL DEFAULT 'worker'
             )
         """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS products_config (
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS products (
                 name      TEXT PRIMARY KEY,
                 rate_type TEXT NOT NULL DEFAULT 'dona',
-                rate      REAL NOT NULL DEFAULT 100
+                rate      NUMERIC(12,2) NOT NULL DEFAULT 100
             )
         """)
-        conn.execute("""
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS batches (
+                id         SERIAL PRIMARY KEY,
+                batch_code TEXT NOT NULL UNIQUE,
+                worker     TEXT NOT NULL,
+                product    TEXT NOT NULL,
+                quantity   INTEGER NOT NULL,
+                weight_kg  NUMERIC(10,3) NOT NULL DEFAULT 0,
+                earnings   NUMERIC(12,2) NOT NULL DEFAULT 0,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS user_roles (
-                chat_id     INTEGER PRIMARY KEY,
+                chat_id     BIGINT PRIMARY KEY,
                 worker_name TEXT NOT NULL,
                 role        TEXT NOT NULL DEFAULT 'worker'
             )
         """)
-        conn.execute("""
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS packer_assignments (
-                packer_chat_id INTEGER NOT NULL,
-                worker_name    TEXT    NOT NULL,
+                packer_chat_id BIGINT NOT NULL,
+                worker_name    TEXT   NOT NULL,
                 PRIMARY KEY (packer_chat_id, worker_name)
             )
         """)
-        conn.execute("""
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS pending_users (
-                chat_id    INTEGER PRIMARY KEY,
-                name       TEXT    NOT NULL,
-                phone      TEXT    NOT NULL,
-                created_at TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
+                chat_id    BIGINT PRIMARY KEY,
+                name       TEXT NOT NULL,
+                phone      TEXT NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
             )
         """)
-        conn.execute("""
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS salary_payments (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                worker_name TEXT    NOT NULL,
-                year        INTEGER NOT NULL,
-                month       INTEGER NOT NULL,
-                amount      REAL    NOT NULL,
-                note        TEXT    NOT NULL DEFAULT '',
-                paid_at     TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
-                UNIQUE (worker_name, year, month)
+                id      SERIAL PRIMARY KEY,
+                worker  TEXT NOT NULL,
+                year    INTEGER NOT NULL,
+                month   INTEGER NOT NULL,
+                amount  NUMERIC(12,2) NOT NULL,
+                paid_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                UNIQUE (worker, year, month)
             )
         """)
-        conn.execute("""
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS customers (
+                id         SERIAL PRIMARY KEY,
+                name       TEXT NOT NULL,
+                phone      TEXT NOT NULL DEFAULT '',
+                company    TEXT NOT NULL DEFAULT '',
+                address    TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS sales (
+                id            SERIAL PRIMARY KEY,
+                customer_id   INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+                customer_name TEXT NOT NULL DEFAULT '',
+                product       TEXT NOT NULL,
+                quantity      INTEGER NOT NULL DEFAULT 0,
+                weight_kg     NUMERIC(10,3) NOT NULL DEFAULT 0,
+                unit_price    NUMERIC(12,2) NOT NULL DEFAULT 0,
+                total_amount  NUMERIC(12,2) NOT NULL DEFAULT 0,
+                status        TEXT NOT NULL DEFAULT 'pending',
+                note          TEXT NOT NULL DEFAULT '',
+                created_at    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS db_meta (
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             )
         """)
-        _migrate(conn)
-        _seed(conn)
-        conn.commit()
+        _seed(cur)
 
 
-def _migrate(conn: sqlite3.Connection) -> None:
-    cols = {row[1] for row in conn.execute("PRAGMA table_info(batches)")}
-    if "weight_kg" not in cols:
-        conn.execute("ALTER TABLE batches ADD COLUMN weight_kg REAL NOT NULL DEFAULT 0")
-    if "earnings" not in cols:
-        conn.execute("ALTER TABLE batches ADD COLUMN earnings REAL NOT NULL DEFAULT 0")
-    w_cols = {row[1] for row in conn.execute("PRAGMA table_info(workers_config)")}
-    if "role" not in w_cols:
-        conn.execute("ALTER TABLE workers_config ADD COLUMN role TEXT NOT NULL DEFAULT 'worker'")
-    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    if "customers" not in tables:
-        conn.execute("""
-            CREATE TABLE customers (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                name       TEXT NOT NULL,
-                phone      TEXT NOT NULL DEFAULT '',
-                company    TEXT NOT NULL DEFAULT '',
-                address    TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
-            )
-        """)
-    if "sales" not in tables:
-        conn.execute("""
-            CREATE TABLE sales (
-                id            INTEGER PRIMARY KEY AUTOINCREMENT,
-                customer_id   INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
-                customer_name TEXT NOT NULL DEFAULT '',
-                product       TEXT NOT NULL,
-                quantity      INTEGER NOT NULL DEFAULT 0,
-                weight_kg     REAL NOT NULL DEFAULT 0,
-                unit_price    REAL NOT NULL DEFAULT 0,
-                total_amount  REAL NOT NULL DEFAULT 0,
-                status        TEXT NOT NULL DEFAULT 'pending',
-                note          TEXT NOT NULL DEFAULT '',
-                created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime'))
-            )
-        """)
-
-
-def _seed(conn: sqlite3.Connection) -> None:
-    already = conn.execute(
-        "SELECT value FROM db_meta WHERE key = 'seeded'"
-    ).fetchone()
+def _seed(cur) -> None:
+    cur.execute("SELECT value FROM db_meta WHERE key = 'seeded'")
+    already = cur.fetchone()
     if already:
         return
     for w in SEED_WORKERS:
-        conn.execute(
-            "INSERT OR IGNORE INTO workers_config (name, prefix, phone, role) VALUES (?,?,?,?)",
+        cur.execute(
+            "INSERT INTO workers (name, prefix, phone, role) VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING",
             (w["name"], w["prefix"], w.get("phone", ""), w.get("role", "worker")),
         )
     for p in SEED_PRODUCTS:
-        conn.execute(
-            "INSERT OR IGNORE INTO products_config (name, rate_type, rate) VALUES (?,?,?)",
+        cur.execute(
+            "INSERT INTO products (name, rate_type, rate) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
             (p["name"], p["rate_type"], p["rate"]),
         )
-    conn.execute("INSERT INTO db_meta (key, value) VALUES ('seeded', '1')")
+    cur.execute("INSERT INTO db_meta (key, value) VALUES ('seeded', '1') ON CONFLICT DO NOTHING")
 
 
 # ── Workers & Products ────────────────────────────────────────────────────────
 
 def get_workers() -> dict[str, str]:
-    with get_connection() as conn:
-        rows = conn.execute(
-            "SELECT name, prefix FROM workers_config WHERE role = 'worker' ORDER BY name"
-        ).fetchall()
+    with get_conn() as (conn, cur):
+        cur.execute("SELECT name, prefix FROM workers WHERE role = 'worker' ORDER BY name")
+        rows = cur.fetchall()
     return {r["name"]: r["prefix"] for r in rows}
 
 
-def get_all_workers_config() -> list[sqlite3.Row]:
-    with get_connection() as conn:
-        return conn.execute("SELECT * FROM workers_config ORDER BY role, name").fetchall()
+def get_all_workers_config() -> list[dict]:
+    with get_conn() as (conn, cur):
+        cur.execute("SELECT * FROM workers ORDER BY role, name")
+        return cur.fetchall()
 
 
 def get_products() -> list[tuple[str, str, float]]:
-    with get_connection() as conn:
-        rows = conn.execute("SELECT name, rate_type, rate FROM products_config ORDER BY name").fetchall()
-    return [(r["name"], r["rate_type"], r["rate"]) for r in rows]
+    with get_conn() as (conn, cur):
+        cur.execute("SELECT name, rate_type, rate FROM products ORDER BY name")
+        rows = cur.fetchall()
+    return [(r["name"], r["rate_type"], float(r["rate"])) for r in rows]
 
 
 def get_product_names() -> list[str]:
-    with get_connection() as conn:
-        return [r[0] for r in conn.execute("SELECT name FROM products_config ORDER BY name")]
+    with get_conn() as (conn, cur):
+        cur.execute("SELECT name FROM products ORDER BY name")
+        return [r["name"] for r in cur.fetchall()]
 
 
 def add_worker(name: str, prefix: str, phone: str, role: str = "worker") -> bool:
     try:
-        with get_connection() as conn:
-            conn.execute(
-                "INSERT INTO workers_config (name, prefix, phone, role) VALUES (?,?,?,?)",
+        with get_conn() as (conn, cur):
+            cur.execute(
+                "INSERT INTO workers (name, prefix, phone, role) VALUES (%s,%s,%s,%s)",
                 (name, prefix, phone, role),
             )
-            conn.commit()
-        return True
-    except sqlite3.IntegrityError:
+            return cur.rowcount > 0
+    except psycopg2.IntegrityError:
         return False
 
 
 def add_product(name: str, rate_type: str, rate: float) -> bool:
     try:
-        with get_connection() as conn:
-            conn.execute(
-                "INSERT INTO products_config (name, rate_type, rate) VALUES (?,?,?)",
+        with get_conn() as (conn, cur):
+            cur.execute(
+                "INSERT INTO products (name, rate_type, rate) VALUES (%s,%s,%s)",
                 (name, rate_type, rate),
             )
-            conn.commit()
-        return True
-    except sqlite3.IntegrityError:
+            return cur.rowcount > 0
+    except psycopg2.IntegrityError:
         return False
 
 
 def delete_worker(name: str) -> None:
-    with get_connection() as conn:
-        conn.execute("DELETE FROM workers_config WHERE name = ?", (name,))
-        conn.commit()
+    with get_conn() as (conn, cur):
+        cur.execute("DELETE FROM workers WHERE name = %s", (name,))
 
 
 def delete_product(name: str) -> None:
-    with get_connection() as conn:
-        conn.execute("DELETE FROM products_config WHERE name = ?", (name,))
-        conn.commit()
+    with get_conn() as (conn, cur):
+        cur.execute("DELETE FROM products WHERE name = %s", (name,))
 
 
 # ── User roles ────────────────────────────────────────────────────────────────
 
-def get_user_role(chat_id: int) -> sqlite3.Row | None:
-    with get_connection() as conn:
-        return conn.execute(
-            "SELECT * FROM user_roles WHERE chat_id = ?", (chat_id,)
-        ).fetchone()
+def get_user_role(chat_id: int) -> dict | None:
+    with get_conn() as (conn, cur):
+        cur.execute("SELECT * FROM user_roles WHERE chat_id = %s", (chat_id,))
+        return cur.fetchone()
 
 
 def set_user_role(chat_id: int, worker_name: str, role: str) -> None:
-    with get_connection() as conn:
-        conn.execute(
-            "INSERT OR REPLACE INTO user_roles (chat_id, worker_name, role) VALUES (?,?,?)",
+    with get_conn() as (conn, cur):
+        cur.execute(
+            """INSERT INTO user_roles (chat_id, worker_name, role) VALUES (%s,%s,%s)
+               ON CONFLICT (chat_id) DO UPDATE SET worker_name = EXCLUDED.worker_name, role = EXCLUDED.role""",
             (chat_id, worker_name, role),
         )
-        conn.commit()
 
 
 def get_admin_count() -> int:
-    with get_connection() as conn:
-        return conn.execute(
-            "SELECT COUNT(*) FROM user_roles WHERE role = 'admin'"
-        ).fetchone()[0]
+    with get_conn() as (conn, cur):
+        cur.execute("SELECT COUNT(*) AS cnt FROM user_roles WHERE role = 'admin'")
+        return cur.fetchone()["cnt"]
 
 
-def find_user_by_phone(phone: str) -> sqlite3.Row | None:
-    with get_connection() as conn:
-        return conn.execute(
-            "SELECT * FROM workers_config WHERE phone = ?", (phone,)
-        ).fetchone()
+def find_user_by_phone(phone: str) -> dict | None:
+    with get_conn() as (conn, cur):
+        cur.execute("SELECT * FROM workers WHERE phone = %s", (phone,))
+        return cur.fetchone()
 
 
 # ── Packer assignments ────────────────────────────────────────────────────────
 
 def assign_packer_workers(packer_chat_id: int, worker_names: list[str]) -> None:
-    with get_connection() as conn:
-        conn.execute(
-            "DELETE FROM packer_assignments WHERE packer_chat_id = ?", (packer_chat_id,)
-        )
+    with get_conn() as (conn, cur):
+        cur.execute("DELETE FROM packer_assignments WHERE packer_chat_id = %s", (packer_chat_id,))
         for w in worker_names:
-            conn.execute(
-                "INSERT INTO packer_assignments (packer_chat_id, worker_name) VALUES (?,?)",
+            cur.execute(
+                "INSERT INTO packer_assignments (packer_chat_id, worker_name) VALUES (%s,%s)",
                 (packer_chat_id, w),
             )
-        conn.commit()
 
 
 def get_packer_workers(packer_chat_id: int) -> list[str]:
-    with get_connection() as conn:
-        rows = conn.execute(
-            "SELECT worker_name FROM packer_assignments WHERE packer_chat_id = ?",
+    with get_conn() as (conn, cur):
+        cur.execute(
+            "SELECT worker_name FROM packer_assignments WHERE packer_chat_id = %s",
             (packer_chat_id,),
-        ).fetchall()
-    return [r["worker_name"] for r in rows]
+        )
+        return [r["worker_name"] for r in cur.fetchall()]
 
 
-def get_registered_packers() -> list[sqlite3.Row]:
-    with get_connection() as conn:
-        return conn.execute(
-            "SELECT * FROM user_roles WHERE role = 'packer'"
-        ).fetchall()
+def get_registered_packers() -> list[dict]:
+    with get_conn() as (conn, cur):
+        cur.execute("SELECT * FROM user_roles WHERE role = 'packer'")
+        return cur.fetchall()
 
 
 # ── Batches ───────────────────────────────────────────────────────────────────
@@ -275,12 +260,12 @@ def get_registered_packers() -> list[sqlite3.Row]:
 def next_batch_code(worker_prefix: str) -> str:
     today = date.today().strftime("%y%m%d")
     prefix = f"{worker_prefix}-{today}-"
-    with get_connection() as conn:
-        row = conn.execute(
-            "SELECT COUNT(*) AS cnt FROM batches WHERE batch_code LIKE ?",
+    with get_conn() as (conn, cur):
+        cur.execute(
+            "SELECT COUNT(*) AS cnt FROM batches WHERE batch_code LIKE %s",
             (f"{prefix}%",),
-        ).fetchone()
-        seq = (row["cnt"] or 0) + 1
+        )
+        seq = (cur.fetchone()["cnt"] or 0) + 1
     return f"{prefix}{seq:02d}"
 
 
@@ -288,114 +273,116 @@ def create_batch(
     batch_code: str, worker: str, product: str,
     quantity: int, weight_kg: float, earnings: float,
 ) -> None:
-    with get_connection() as conn:
-        conn.execute(
+    with get_conn() as (conn, cur):
+        cur.execute(
             """INSERT INTO batches (batch_code, worker, product, quantity, weight_kg, earnings)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+               VALUES (%s,%s,%s,%s,%s,%s)""",
             (batch_code, worker, product, quantity, weight_kg, earnings),
         )
-        conn.commit()
 
 
-def get_today_batches(worker_filter: list[str] | None = None) -> list[sqlite3.Row]:
-    with get_connection() as conn:
+def get_today_batches(worker_filter: list[str] | None = None) -> list[dict]:
+    with get_conn() as (conn, cur):
         if worker_filter:
-            placeholders = ",".join("?" * len(worker_filter))
-            return conn.execute(
+            placeholders = ",".join(["%s"] * len(worker_filter))
+            cur.execute(
                 f"""SELECT batch_code, worker, product, quantity, weight_kg, earnings, created_at
                     FROM batches
-                    WHERE date(created_at) = date('now', 'localtime')
+                    WHERE created_at::date = CURRENT_DATE
                       AND worker IN ({placeholders})
                     ORDER BY id""",
                 worker_filter,
-            ).fetchall()
-        return conn.execute(
-            """SELECT batch_code, worker, product, quantity, weight_kg, earnings, created_at
-               FROM batches
-               WHERE date(created_at) = date('now', 'localtime')
-               ORDER BY id""",
-        ).fetchall()
+            )
+        else:
+            cur.execute(
+                """SELECT batch_code, worker, product, quantity, weight_kg, earnings, created_at
+                   FROM batches
+                   WHERE created_at::date = CURRENT_DATE
+                   ORDER BY id"""
+            )
+        return cur.fetchall()
 
 
-def get_monthly_kpi(year: int, month: int) -> list[sqlite3.Row]:
+def get_monthly_kpi(year: int, month: int) -> list[dict]:
     period = f"{year}-{month:02d}"
-    with get_connection() as conn:
-        return conn.execute(
+    with get_conn() as (conn, cur):
+        cur.execute(
             """SELECT worker, SUM(quantity) AS total_qty, SUM(weight_kg) AS total_kg,
                       SUM(earnings) AS total_earnings, COUNT(*) AS batch_count
-               FROM batches WHERE strftime('%Y-%m', created_at) = ?
+               FROM batches WHERE TO_CHAR(created_at, 'YYYY-MM') = %s
                GROUP BY worker ORDER BY total_earnings DESC""",
             (period,),
-        ).fetchall()
+        )
+        return cur.fetchall()
 
 
-def get_worker_monthly(worker: str, year: int, month: int) -> list[sqlite3.Row]:
+def get_worker_monthly(worker: str, year: int, month: int) -> list[dict]:
     period = f"{year}-{month:02d}"
-    with get_connection() as conn:
-        return conn.execute(
+    with get_conn() as (conn, cur):
+        cur.execute(
             """SELECT product, SUM(quantity) AS total_qty, SUM(weight_kg) AS total_kg,
                       SUM(earnings) AS total_earnings
-               FROM batches WHERE worker = ? AND strftime('%Y-%m', created_at) = ?
+               FROM batches WHERE worker = %s AND TO_CHAR(created_at, 'YYYY-MM') = %s
                GROUP BY product ORDER BY total_earnings DESC""",
             (worker, period),
-        ).fetchall()
+        )
+        return cur.fetchall()
 
 
 # ── Pending users ─────────────────────────────────────────────────────────────
 
 def save_pending_user(chat_id: int, name: str, phone: str) -> None:
-    with get_connection() as conn:
-        conn.execute(
-            "INSERT OR REPLACE INTO pending_users (chat_id, name, phone) VALUES (?,?,?)",
+    with get_conn() as (conn, cur):
+        cur.execute(
+            """INSERT INTO pending_users (chat_id, name, phone) VALUES (%s,%s,%s)
+               ON CONFLICT (chat_id) DO UPDATE SET name = EXCLUDED.name, phone = EXCLUDED.phone""",
             (chat_id, name, phone),
         )
-        conn.commit()
 
 
-def get_pending_user(chat_id: int) -> sqlite3.Row | None:
-    with get_connection() as conn:
-        return conn.execute(
-            "SELECT * FROM pending_users WHERE chat_id = ?", (chat_id,)
-        ).fetchone()
+def get_pending_user(chat_id: int) -> dict | None:
+    with get_conn() as (conn, cur):
+        cur.execute("SELECT * FROM pending_users WHERE chat_id = %s", (chat_id,))
+        return cur.fetchone()
 
 
 def delete_pending_user(chat_id: int) -> None:
-    with get_connection() as conn:
-        conn.execute("DELETE FROM pending_users WHERE chat_id = ?", (chat_id,))
-        conn.commit()
+    with get_conn() as (conn, cur):
+        cur.execute("DELETE FROM pending_users WHERE chat_id = %s", (chat_id,))
 
 
 # ── Salary payments ───────────────────────────────────────────────────────────
 
 def get_monthly_salary_report(year: int, month: int) -> list[dict]:
     period = f"{year}-{month:02d}"
-    with get_connection() as conn:
-        workers = conn.execute(
-            "SELECT name FROM workers_config WHERE role = 'worker' ORDER BY name"
-        ).fetchall()
+    with get_conn() as (conn, cur):
+        cur.execute("SELECT name FROM workers WHERE role = 'worker' ORDER BY name")
+        workers = cur.fetchall()
         result = []
         for w in workers:
             name = w["name"]
-            rows = conn.execute(
+            cur.execute(
                 """SELECT product, SUM(quantity) AS qty, SUM(weight_kg) AS kg,
                           SUM(earnings) AS earnings
                    FROM batches
-                   WHERE worker = ? AND strftime('%Y-%m', created_at) = ?
+                   WHERE worker = %s AND TO_CHAR(created_at, 'YYYY-MM') = %s
                    GROUP BY product""",
                 (name, period),
-            ).fetchall()
+            )
+            rows = cur.fetchall()
             if not rows:
                 continue
-            total_earnings = sum(r["earnings"] for r in rows)
+            total_earnings = sum(float(r["earnings"]) for r in rows)
             products = [
-                {"name": r["product"], "qty": r["qty"], "kg": r["kg"],
-                 "earnings": r["earnings"]}
+                {"name": r["product"], "qty": r["qty"], "kg": float(r["kg"]),
+                 "earnings": float(r["earnings"])}
                 for r in rows
             ]
-            pay_row = conn.execute(
-                "SELECT paid_at FROM salary_payments WHERE worker_name=? AND year=? AND month=?",
+            cur.execute(
+                "SELECT paid_at FROM salary_payments WHERE worker = %s AND year = %s AND month = %s",
                 (name, year, month),
-            ).fetchone()
+            )
+            pay_row = cur.fetchone()
             result.append({
                 "worker": name,
                 "total_earnings": total_earnings,
@@ -407,55 +394,51 @@ def get_monthly_salary_report(year: int, month: int) -> list[dict]:
 
 
 def mark_salary_paid(worker_name: str, year: int, month: int, amount: float) -> None:
-    with get_connection() as conn:
-        conn.execute(
-            """INSERT OR REPLACE INTO salary_payments (worker_name, year, month, amount)
-               VALUES (?,?,?,?)""",
+    with get_conn() as (conn, cur):
+        cur.execute(
+            """INSERT INTO salary_payments (worker, year, month, amount) VALUES (%s,%s,%s,%s)
+               ON CONFLICT (worker, year, month) DO UPDATE SET amount = EXCLUDED.amount, paid_at = NOW()""",
             (worker_name, year, month, amount),
         )
-        conn.commit()
 
 
-def get_worker_payment_history(worker_name: str, limit: int = 6) -> list[sqlite3.Row]:
-    with get_connection() as conn:
-        return conn.execute(
+def get_worker_payment_history(worker_name: str, limit: int = 6) -> list[dict]:
+    with get_conn() as (conn, cur):
+        cur.execute(
             """SELECT year, month, amount, paid_at FROM salary_payments
-               WHERE worker_name = ?
+               WHERE worker = %s
                ORDER BY year DESC, month DESC
-               LIMIT ?""",
+               LIMIT %s""",
             (worker_name, limit),
-        ).fetchall()
+        )
+        return cur.fetchall()
 
 
 def clear_test_data() -> dict:
-    with get_connection() as conn:
-        batches = conn.execute("SELECT COUNT(*) FROM batches").fetchone()[0]
-        pending = conn.execute("SELECT COUNT(*) FROM pending_users").fetchone()[0]
-        conn.execute("DELETE FROM batches")
-        conn.execute("DELETE FROM pending_users")
-        conn.execute("DELETE FROM salary_payments")
-        conn.execute("DELETE FROM sqlite_sequence WHERE name IN ('batches', 'salary_payments')")
-        conn.commit()
+    with get_conn() as (conn, cur):
+        cur.execute("SELECT COUNT(*) AS cnt FROM batches")
+        batches = cur.fetchone()["cnt"]
+        cur.execute("SELECT COUNT(*) AS cnt FROM pending_users")
+        pending = cur.fetchone()["cnt"]
+        cur.execute("DELETE FROM batches")
+        cur.execute("DELETE FROM pending_users")
+        cur.execute("DELETE FROM salary_payments")
     return {"batches": batches, "pending": pending}
 
 
-# Legacy compat — used in old label handler
+# Legacy compat
 def register_worker_chat(worker_name: str, chat_id: int) -> None:
-    role_row = None
-    with get_connection() as conn:
-        wc = conn.execute(
-            "SELECT role FROM workers_config WHERE name = ?", (worker_name,)
-        ).fetchone()
-        if wc:
-            role = wc["role"]
-        else:
-            role = "worker"
+    with get_conn() as (conn, cur):
+        cur.execute("SELECT role FROM workers WHERE name = %s", (worker_name,))
+        wc = cur.fetchone()
+        role = wc["role"] if wc else "worker"
     set_user_role(chat_id, worker_name, role)
 
 
 def get_worker_chat_id(worker_name: str) -> int | None:
-    with get_connection() as conn:
-        row = conn.execute(
-            "SELECT chat_id FROM user_roles WHERE worker_name = ?", (worker_name,)
-        ).fetchone()
+    with get_conn() as (conn, cur):
+        cur.execute(
+            "SELECT chat_id FROM user_roles WHERE worker_name = %s", (worker_name,)
+        )
+        row = cur.fetchone()
     return row["chat_id"] if row else None

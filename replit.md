@@ -10,34 +10,37 @@ Arqon ishlab chiqarish zavodi uchun Telegram bot — partiyalarni kiritish, nazo
 
 ## Stack
 
-- Python 3.11
-- python-telegram-bot 20.7 (polling rejimi)
-- SQLite (ma'lumotlar bazasi: `artifacts/telegram-bot/data/topmart.db`)
-- pnpm workspaces, Node.js 24, TypeScript 5.9 (API server uchun)
+- Python 3.11 + python-telegram-bot 20.7 + psycopg2-binary (bot)
+- PostgreSQL (shared database — both bot and API use same DB)
+- Node.js 24, TypeScript 5.9, Express 5, Drizzle ORM (API server)
+- React + Vite + TanStack Query (dashboard)
+- pnpm workspaces monorepo
 
 ## Where things live
 
 - `artifacts/telegram-bot/main.py` — bot entry point
-- `artifacts/telegram-bot/bot/config.py` — ishlab chiqaruvchilar va mahsulotlar ro'yxati
-- `artifacts/telegram-bot/bot/database.py` — SQLite operatsiyalari
+- `artifacts/telegram-bot/bot/config.py` — seed data, DATABASE_URL
+- `artifacts/telegram-bot/bot/database.py` — psycopg2 PostgreSQL operatsiyalari
 - `artifacts/telegram-bot/bot/keyboards.py` — Telegram tugmalari
-- `artifacts/telegram-bot/bot/handlers/start.py` — /start va asosiy menu
-- `artifacts/telegram-bot/bot/handlers/input_handler.py` — Tovar kiritish oqimi (ConversationHandler)
-- `artifacts/telegram-bot/bot/handlers/batches.py` — (start.py ichiga ko'chirilgan)
+- `artifacts/telegram-bot/bot/handlers/` — bot handlers
+- `artifacts/api-server/src/routes/` — REST API (workers, products, batches, dashboard, salary, customers, sales, inventory)
+- `lib/db/src/schema/` — Drizzle ORM schema (PostgreSQL)
+- `artifacts/dashboard/src/pages/` — React sahifalar
 
 ## Architecture decisions
 
-- Polling rejimi ishlatilgan (webhook emas) — Replit'da soddaroq va ishonchli.
-- ConversationHandler faqat "Tovar kiritish" oqimini boshqaradi; boshqa tugmalar oddiy MessageHandler'da.
-- Batch kodi formati: `XX-YYMMDD-NN` (har bir ishlab chiqaruvchi uchun kunlik ketma-ket).
-- SQLite fayl `data/` papkasida saqlangan — keyingi modullar uchun kengaytirish oson.
-- Kod modulli tuzilgan: config, database, keyboards, handlers alohida fayllar — etiketka printer va KPI modul qo'shish oson.
+- PostgreSQL shared between bot (psycopg2) and API server (pg pool + Drizzle)
+- Bot uses `init_db()` to create tables with IF NOT EXISTS — idempotent, safe to run alongside Drizzle
+- Polling rejimi ishlatilgan (webhook emas) — Replit'da soddaroq
+- Batch kodi: `XX-YYMMDD-NN` formatida
+- `db_meta` table bot tomonidan yaratiladi (Drizzle sxemasida yo'q)
+- Railway deploy: `artifacts/telegram-bot/Dockerfile` (bot), `artifacts/api-server/Dockerfile` (API)
 
-## Product
+## Required env vars
 
-- Telegram bot orqali arqon partiyalarini kiritish (ishlab chiqaruvchi + mahsulot + miqdor)
-- Avtomatik partiya kodi generatsiyasi (AZ/GL/SH-YYMMDD-NN formatida)
-- Bugungi partiyalar ro'yxatini ko'rish
+- `DATABASE_URL` — PostgreSQL connection string
+- `TELEGRAM_BOT_TOKEN` — Telegram bot tokeni (@BotFather)
+- `SESSION_SECRET` — Express session secret
 
 ## User preferences
 
@@ -45,9 +48,11 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-- `python-telegram-bot` paketi `.pythonlibs/` papkasida (uv virtual env).
-- Bot ma'lumotlari `artifacts/telegram-bot/data/topmart.db` da saqlanadi (git ignore kerak).
-- Ishlab chiqaruvchi yoki mahsulot qo'shish uchun `bot/config.py` faylini tahrirlang.
+- `psycopg2-binary` paketi `.pythonlibs/` papkasida (uv virtual env)
+- Bot `workers_config`/`products_config` (SQLite eski nom) o'rniga `workers`/`products` (PostgreSQL) ishlatadi
+- `salary_payments` jadvalida `worker` ustuni (SQLite'dagi `worker_name` emas)
+- `db_meta` jadvalini Drizzle boshqarmaydi — bot yaratadi; Railway uchun ham kerak
+- Ishlab chiqaruvchi yoki mahsulot qo'shish: dashboard yoki `bot/config.py` `SEED_WORKERS`/`SEED_PRODUCTS`
 
 ## Pointers
 

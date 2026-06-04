@@ -1,0 +1,23 @@
+[build]
+builder = "nixpacks"
+
+[[services]]
+name = "topmart-api"
+source = "artifacts/api-server"
+
+[services.build]
+buildCommand = "cd /workspace && npm install -g pnpm@9 && pnpm install --frozen-lockfile && pnpm --filter @workspace/api-server run build"
+dockerfilePath = "artifacts/api-server/Dockerfile"
+
+[services.deploy]
+startCommand = "node --enable-source-maps /workspace/artifacts/api-server/dist/index.mjs"
+healthcheckPath = "/api/health"
+restartPolicyType = "on_failure"
+
+[[services]]
+name = "topmart-bot"
+source = "artifacts/telegram-bot"
+
+[services.deploy]
+startCommand = "python3 main.py"
+restartPolicyType = "on_failure"

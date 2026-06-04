@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { getDb } from "../lib/sqlite";
+import { pool } from "@workspace/db";
 import {
   GetSalesQueryParams,
   GetSalesResponse,
@@ -12,7 +12,7 @@ import {
 
 const router: IRouter = Router();
 
-router.get("/sales", (req, res): void => {
+router.get("/sales", async (req, res): Promise<void> => {
   const parsed = GetSalesQueryParams.safeParse(req.query);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
@@ -20,38 +20,41 @@ router.get("/sales", (req, res): void => {
   }
 
   const { customerId, status, limit = 50, offset = 0 } = parsed.data;
-  const db = getDb();
 
   const conditions: string[] = [];
   const params: unknown[] = [];
 
   if (customerId != null) {
-    conditions.push("customer_id = ?");
     params.push(customerId);
+    conditions.push(`customer_id = $${params.length}`);
   }
   if (status) {
-    conditions.push("status = ?");
     params.push(status);
+    conditions.push(`status = $${params.length}`);
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const filterParams = [...params];
 
-  const items = db
-    .prepare(
+  params.push(limit);
+  const limitIdx = params.length;
+  params.push(offset);
+  const offsetIdx = params.length;
+
+  const [itemsResult, countResult] = await Promise.all([
+    pool.query(
       `SELECT id, customer_id, customer_name, product, quantity, weight_kg,
               unit_price, total_amount, status, note, created_at
        FROM sales ${where}
-       ORDER BY id DESC LIMIT ? OFFSET ?`
-    )
-    .all(...params, limit, offset) as any[];
-
-  const total = (
-    db.prepare(`SELECT COUNT(*) AS cnt FROM sales ${where}`).get(...params) as any
-  ).cnt;
+       ORDER BY id DESC LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+      params
+    ),
+    pool.query(`SELECT COUNT(*) AS cnt FROM sales ${where}`, filterParams),
+  ]);
 
   res.json(
     GetSalesResponse.parse({
-      items: items.map((s) => ({
+      items: itemsResult.rows.map((s) => ({
         id: s.id,
         customerId: s.customer_id,
         customerName: s.customer_name,
@@ -64,69 +67,53 @@ router.get("/sales", (req, res): void => {
         note: s.note,
         createdAt: s.created_at,
       })),
-      total,
+      total: Number(countResult.rows[0].cnt),
     })
   );
 });
 
-router.post("/sales", (req, res): void => {
+router.post("/sales", async (req, res): Promise<void> => {
   const parsed = CreateSaleBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
 
-  const { customerId, product, quantity, weightKg, unitPrice, totalAmount, status, note } =
+  const { customerId, product, quantity, weightKg = 0, unitPrice, totalAmount, status = "pending", note = "" } =
     parsed.data;
-  const db = getDb();
 
-  const customer = db
-    .prepare("SELECT name FROM customers WHERE id = ?")
-    .get(customerId) as any;
-
-  if (!customer) {
+  const customerResult = await pool.query("SELECT name FROM customers WHERE id = $1", [customerId]);
+  if (customerResult.rows.length === 0) {
     res.status(404).json({ error: "Customer not found" });
     return;
   }
 
-  const result = db
-    .prepare(
-      `INSERT INTO sales (customer_id, customer_name, product, quantity, weight_kg,
-                          unit_price, total_amount, status, note)
-       VALUES (?,?,?,?,?,?,?,?,?)`
-    )
-    .run(
-      customerId,
-      customer.name,
-      product,
-      quantity,
-      weightKg,
-      unitPrice,
-      totalAmount,
-      status,
-      note
-    );
+  const customerName = customerResult.rows[0].name;
+  const result = await pool.query(
+    `INSERT INTO sales (customer_id, customer_name, product, quantity, weight_kg,
+                        unit_price, total_amount, status, note)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     RETURNING *`,
+    [customerId, customerName, product, quantity, weightKg, unitPrice, totalAmount ?? unitPrice * quantity, status, note]
+  );
 
-  const row = db
-    .prepare("SELECT * FROM sales WHERE id = ?")
-    .get(result.lastInsertRowid) as any;
-
+  const r = result.rows[0];
   res.status(201).json({
-    id: row.id,
-    customerId: row.customer_id,
-    customerName: row.customer_name,
-    product: row.product,
-    quantity: row.quantity,
-    weightKg: Number(row.weight_kg),
-    unitPrice: Number(row.unit_price),
-    totalAmount: Number(row.total_amount),
-    status: row.status,
-    note: row.note,
-    createdAt: row.created_at,
+    id: r.id,
+    customerId: r.customer_id,
+    customerName: r.customer_name,
+    product: r.product,
+    quantity: r.quantity,
+    weightKg: Number(r.weight_kg),
+    unitPrice: Number(r.unit_price),
+    totalAmount: Number(r.total_amount),
+    status: r.status,
+    note: r.note,
+    createdAt: r.created_at,
   });
 });
 
-router.delete("/sales/:id", (req, res): void => {
+router.delete("/sales/:id", async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const parsed = DeleteSaleParams.safeParse({ id: parseInt(raw, 10) });
   if (!parsed.success) {
@@ -134,10 +121,9 @@ router.delete("/sales/:id", (req, res): void => {
     return;
   }
 
-  const db = getDb();
-  const result = db.prepare("DELETE FROM sales WHERE id = ?").run(parsed.data.id);
+  const result = await pool.query("DELETE FROM sales WHERE id = $1", [parsed.data.id]);
 
-  if (result.changes === 0) {
+  if ((result.rowCount ?? 0) === 0) {
     res.status(404).json({ error: "Sale not found" });
     return;
   }
@@ -145,7 +131,7 @@ router.delete("/sales/:id", (req, res): void => {
   res.json(HealthCheckResponse.parse({ status: "ok" }));
 });
 
-router.patch("/sales/:id/status", (req, res): void => {
+router.patch("/sales/:id/status", async (req, res): Promise<void> => {
   const rawId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const paramsParsed = UpdateSaleStatusParams.safeParse({ id: parseInt(rawId, 10) });
   const bodyParsed = UpdateSaleStatusBody.safeParse(req.body);
@@ -155,12 +141,12 @@ router.patch("/sales/:id/status", (req, res): void => {
     return;
   }
 
-  const db = getDb();
-  const result = db
-    .prepare("UPDATE sales SET status = ? WHERE id = ?")
-    .run(bodyParsed.data.status, paramsParsed.data.id);
+  const result = await pool.query(
+    "UPDATE sales SET status = $1 WHERE id = $2",
+    [bodyParsed.data.status, paramsParsed.data.id]
+  );
 
-  if (result.changes === 0) {
+  if ((result.rowCount ?? 0) === 0) {
     res.status(404).json({ error: "Sale not found" });
     return;
   }

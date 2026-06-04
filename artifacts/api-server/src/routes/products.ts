@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { getDb, toApiRateType, toBotRateType } from "../lib/sqlite";
+import { pool } from "@workspace/db";
 import {
   GetProductsResponse,
   CreateProductBody,
@@ -9,15 +9,19 @@ import {
 
 const router: IRouter = Router();
 
-router.get("/products", (_req, res): void => {
-  const db = getDb();
-  const rows = db
-    .prepare("SELECT name, rate_type, rate FROM products_config ORDER BY name")
-    .all() as any[];
+function toApiRateType(rt: string): string {
+  return rt === "kg" ? "per_kg" : "per_piece";
+}
 
+function toBotRateType(rt: string): string {
+  return rt === "per_kg" ? "kg" : "dona";
+}
+
+router.get("/products", async (_req, res): Promise<void> => {
+  const result = await pool.query("SELECT name, rate_type, rate FROM products ORDER BY name");
   res.json(
     GetProductsResponse.parse(
-      rows.map((p) => ({
+      result.rows.map((p) => ({
         name: p.name,
         rateType: toApiRateType(p.rate_type),
         rate: Number(p.rate),
@@ -26,7 +30,7 @@ router.get("/products", (_req, res): void => {
   );
 });
 
-router.post("/products", (req, res): void => {
+router.post("/products", async (req, res): Promise<void> => {
   const parsed = CreateProductBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
@@ -35,20 +39,21 @@ router.post("/products", (req, res): void => {
 
   const { name, rateType, rate } = parsed.data;
   const botRateType = toBotRateType(rateType);
-  const db = getDb();
 
   try {
-    db.prepare(
-      "INSERT OR REPLACE INTO products_config (name, rate_type, rate) VALUES (?,?,?)"
-    ).run(name, botRateType, rate);
-
+    await pool.query(
+      `INSERT INTO products (name, rate_type, rate)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (name) DO UPDATE SET rate_type = $2, rate = $3`,
+      [name, botRateType, rate]
+    );
     res.status(201).json({ name, rateType, rate });
   } catch (err: any) {
     res.status(409).json({ error: err.message });
   }
 });
 
-router.delete("/products/:name", (req, res): void => {
+router.delete("/products/:name", async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.name) ? req.params.name[0] : req.params.name;
   const params = DeleteProductParams.safeParse({ name: raw });
   if (!params.success) {
@@ -56,12 +61,9 @@ router.delete("/products/:name", (req, res): void => {
     return;
   }
 
-  const db = getDb();
-  const result = db
-    .prepare("DELETE FROM products_config WHERE name = ?")
-    .run(params.data.name);
+  const result = await pool.query("DELETE FROM products WHERE name = $1", [params.data.name]);
 
-  if (result.changes === 0) {
+  if ((result.rowCount ?? 0) === 0) {
     res.status(404).json({ error: "Product not found" });
     return;
   }

@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { getDb } from "../lib/sqlite";
+import { pool } from "@workspace/db";
 import {
   GetCustomersResponse,
   CreateCustomerBody,
@@ -9,15 +9,13 @@ import {
 
 const router: IRouter = Router();
 
-router.get("/customers", (_req, res): void => {
-  const db = getDb();
-  const rows = db
-    .prepare("SELECT id, name, phone, company, address, created_at FROM customers ORDER BY id DESC")
-    .all() as any[];
-
+router.get("/customers", async (_req, res): Promise<void> => {
+  const result = await pool.query(
+    "SELECT id, name, phone, company, address, created_at FROM customers ORDER BY id DESC"
+  );
   res.json(
     GetCustomersResponse.parse(
-      rows.map((r) => ({
+      result.rows.map((r) => ({
         id: r.id,
         name: r.name,
         phone: r.phone,
@@ -29,35 +27,33 @@ router.get("/customers", (_req, res): void => {
   );
 });
 
-router.post("/customers", (req, res): void => {
+router.post("/customers", async (req, res): Promise<void> => {
   const parsed = CreateCustomerBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
 
-  const { name, phone, company, address } = parsed.data;
-  const db = getDb();
+  const { name, phone = "", company = "", address = "" } = parsed.data;
+  const result = await pool.query(
+    `INSERT INTO customers (name, phone, company, address)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id, name, phone, company, address, created_at`,
+    [name, phone, company, address]
+  );
 
-  const result = db
-    .prepare("INSERT INTO customers (name, phone, company, address) VALUES (?,?,?,?)")
-    .run(name, phone, company, address);
-
-  const row = db
-    .prepare("SELECT id, name, phone, company, address, created_at FROM customers WHERE id = ?")
-    .get(result.lastInsertRowid) as any;
-
+  const r = result.rows[0];
   res.status(201).json({
-    id: row.id,
-    name: row.name,
-    phone: row.phone,
-    company: row.company,
-    address: row.address,
-    createdAt: row.created_at,
+    id: r.id,
+    name: r.name,
+    phone: r.phone,
+    company: r.company,
+    address: r.address,
+    createdAt: r.created_at,
   });
 });
 
-router.delete("/customers/:id", (req, res): void => {
+router.delete("/customers/:id", async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const parsed = DeleteCustomerParams.safeParse({ id: parseInt(raw, 10) });
   if (!parsed.success) {
@@ -65,10 +61,9 @@ router.delete("/customers/:id", (req, res): void => {
     return;
   }
 
-  const db = getDb();
-  const result = db.prepare("DELETE FROM customers WHERE id = ?").run(parsed.data.id);
+  const result = await pool.query("DELETE FROM customers WHERE id = $1", [parsed.data.id]);
 
-  if (result.changes === 0) {
+  if ((result.rowCount ?? 0) === 0) {
     res.status(404).json({ error: "Customer not found" });
     return;
   }

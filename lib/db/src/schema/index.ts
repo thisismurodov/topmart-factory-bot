@@ -3,3 +3,8 @@ export * from "./workers";
 export * from "./products";
 export * from "./salary_payments";
 export * from "./admin_users";
+export * from "./customers";
+export * from "./sales";
+export * from "./user_roles";
+export * from "./packer_assignments";
+export * from "./pending_users";

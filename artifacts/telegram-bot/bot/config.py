@@ -22,8 +22,7 @@ SEED_PRODUCTS = [
 # Yagona doimiy admin chat ID (o'zgartirilmaydi)
 SUPERADMIN_CHAT_ID = 1261052681
 
-_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB_PATH = os.path.join(_BASE_DIR, "data", "topmart.db")
+DATABASE_URL = os.environ["DATABASE_URL"]
 
 
 def normalize_phone(raw: str) -> str:

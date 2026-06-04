@@ -1,6 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, batchesTable, salaryPaymentsTable } from "@workspace/db";
-import { and, sql, desc } from "drizzle-orm";
+import { getDb } from "../lib/sqlite";
 import {
   GetDashboardTodayResponse,
   GetDashboardMonthlyQueryParams,
@@ -11,19 +10,22 @@ import {
 
 const router: IRouter = Router();
 
-router.get("/dashboard/today", async (_req, res): Promise<void> => {
+router.get("/dashboard/today", (_req, res): void => {
+  const db = getDb();
   const today = new Date().toISOString().slice(0, 10);
 
-  const [result] = await db
-    .select({
-      totalBatches: sql<number>`COUNT(*)::int`,
-      totalQty: sql<number>`COALESCE(SUM(${batchesTable.quantity}), 0)::int`,
-      totalKg: sql<number>`COALESCE(SUM(${batchesTable.weightKg}::numeric), 0)::float`,
-      totalEarnings: sql<number>`COALESCE(SUM(${batchesTable.earnings}::numeric), 0)::float`,
-      workerCount: sql<number>`COUNT(DISTINCT ${batchesTable.worker})::int`,
-    })
-    .from(batchesTable)
-    .where(sql`DATE(${batchesTable.createdAt}) = ${today}`);
+  const result = db
+    .prepare(
+      `SELECT
+         COUNT(*) AS totalBatches,
+         COALESCE(SUM(quantity), 0) AS totalQty,
+         COALESCE(SUM(weight_kg), 0.0) AS totalKg,
+         COALESCE(SUM(earnings), 0.0) AS totalEarnings,
+         COUNT(DISTINCT worker) AS workerCount
+       FROM batches
+       WHERE DATE(created_at) = ?`
+    )
+    .get(today) as any;
 
   res.json(
     GetDashboardTodayResponse.parse({
@@ -36,7 +38,7 @@ router.get("/dashboard/today", async (_req, res): Promise<void> => {
   );
 });
 
-router.get("/dashboard/monthly", async (req, res): Promise<void> => {
+router.get("/dashboard/monthly", (req, res): void => {
   const now = new Date();
   const parsed = GetDashboardMonthlyQueryParams.safeParse(req.query);
   if (!parsed.success) {
@@ -46,46 +48,47 @@ router.get("/dashboard/monthly", async (req, res): Promise<void> => {
 
   const year = parsed.data.year ?? now.getFullYear();
   const month = parsed.data.month ?? now.getMonth() + 1;
+  const period = `${year}-${String(month).padStart(2, "0")}`;
 
-  const [production] = await db
-    .select({
-      totalBatches: sql<number>`COUNT(*)::int`,
-      totalQty: sql<number>`COALESCE(SUM(${batchesTable.quantity}), 0)::int`,
-      totalKg: sql<number>`COALESCE(SUM(${batchesTable.weightKg}::numeric), 0)::float`,
-      totalEarnings: sql<number>`COALESCE(SUM(${batchesTable.earnings}::numeric), 0)::float`,
-    })
-    .from(batchesTable)
-    .where(
-      and(
-        sql`EXTRACT(YEAR FROM ${batchesTable.createdAt}) = ${year}`,
-        sql`EXTRACT(MONTH FROM ${batchesTable.createdAt}) = ${month}`
-      )
-    );
+  const db = getDb();
 
-  const workers = await db
-    .select({ worker: batchesTable.worker })
-    .from(batchesTable)
-    .where(
-      and(
-        sql`EXTRACT(YEAR FROM ${batchesTable.createdAt}) = ${year}`,
-        sql`EXTRACT(MONTH FROM ${batchesTable.createdAt}) = ${month}`
-      )
+  const production = db
+    .prepare(
+      `SELECT
+         COUNT(*) AS totalBatches,
+         COALESCE(SUM(quantity), 0) AS totalQty,
+         COALESCE(SUM(weight_kg), 0.0) AS totalKg,
+         COALESCE(SUM(earnings), 0.0) AS totalEarnings
+       FROM batches
+       WHERE strftime('%Y-%m', created_at) = ?`
     )
-    .groupBy(batchesTable.worker);
+    .get(period) as any;
 
-  const payments = await db
-    .select()
-    .from(salaryPaymentsTable)
-    .where(
-      and(
-        sql`${salaryPaymentsTable.year} = ${year}`,
-        sql`${salaryPaymentsTable.month} = ${month}`
-      )
-    );
+  const workers = db
+    .prepare(
+      `SELECT DISTINCT worker FROM batches WHERE strftime('%Y-%m', created_at) = ?`
+    )
+    .all(period) as any[];
 
-  const paidWorkers = new Set(payments.map((p) => p.worker));
-  const unpaidWorkers = workers.filter((w) => !paidWorkers.has(w.worker));
-  const unpaidAmount = 0; // Will be computed from earnings in a full impl
+  const payments = db
+    .prepare(
+      `SELECT worker_name FROM salary_payments WHERE year = ? AND month = ?`
+    )
+    .all(year, month) as any[];
+
+  const paidSet = new Set(payments.map((p: any) => p.worker_name));
+  const unpaidWorkers = workers.filter((w) => !paidSet.has(w.worker));
+
+  const unpaidEarnings = db
+    .prepare(
+      `SELECT COALESCE(SUM(earnings), 0.0) AS total
+       FROM batches
+       WHERE strftime('%Y-%m', created_at) = ?
+         AND worker NOT IN (
+           SELECT worker_name FROM salary_payments WHERE year = ? AND month = ?
+         )`
+    )
+    .get(period, year, month) as any;
 
   res.json(
     GetDashboardMonthlyResponse.parse({
@@ -93,35 +96,34 @@ router.get("/dashboard/monthly", async (req, res): Promise<void> => {
       totalQty: production?.totalQty ?? 0,
       totalKg: Number(production?.totalKg ?? 0),
       totalEarnings: Number(production?.totalEarnings ?? 0),
-      paidCount: paidWorkers.size,
+      paidCount: paidSet.size,
       unpaidCount: unpaidWorkers.length,
-      unpaidAmount,
+      unpaidAmount: Number(unpaidEarnings?.total ?? 0),
     })
   );
 });
 
-router.get("/dashboard/top-workers", async (_req, res): Promise<void> => {
+router.get("/dashboard/top-workers", (_req, res): void => {
   const now = new Date();
   const year = now.getFullYear();
   const month = now.getMonth() + 1;
+  const period = `${year}-${String(month).padStart(2, "0")}`;
 
-  const results = await db
-    .select({
-      worker: batchesTable.worker,
-      totalQty: sql<number>`COALESCE(SUM(${batchesTable.quantity}), 0)::int`,
-      totalKg: sql<number>`COALESCE(SUM(${batchesTable.weightKg}::numeric), 0)::float`,
-      totalEarnings: sql<number>`COALESCE(SUM(${batchesTable.earnings}::numeric), 0)::float`,
-    })
-    .from(batchesTable)
-    .where(
-      and(
-        sql`EXTRACT(YEAR FROM ${batchesTable.createdAt}) = ${year}`,
-        sql`EXTRACT(MONTH FROM ${batchesTable.createdAt}) = ${month}`
-      )
+  const db = getDb();
+  const results = db
+    .prepare(
+      `SELECT
+         worker,
+         COALESCE(SUM(quantity), 0) AS totalQty,
+         COALESCE(SUM(weight_kg), 0.0) AS totalKg,
+         COALESCE(SUM(earnings), 0.0) AS totalEarnings
+       FROM batches
+       WHERE strftime('%Y-%m', created_at) = ?
+       GROUP BY worker
+       ORDER BY SUM(earnings) DESC
+       LIMIT 10`
     )
-    .groupBy(batchesTable.worker)
-    .orderBy(desc(sql`SUM(${batchesTable.earnings}::numeric)`))
-    .limit(10);
+    .all(period) as any[];
 
   res.json(
     GetTopWorkersResponse.parse(
@@ -135,18 +137,21 @@ router.get("/dashboard/top-workers", async (_req, res): Promise<void> => {
   );
 });
 
-router.get("/dashboard/daily-chart", async (_req, res): Promise<void> => {
-  const results = await db
-    .select({
-      date: sql<string>`DATE(${batchesTable.createdAt})::text`,
-      qty: sql<number>`COALESCE(SUM(${batchesTable.quantity}), 0)::int`,
-      kg: sql<number>`COALESCE(SUM(${batchesTable.weightKg}::numeric), 0)::float`,
-      earnings: sql<number>`COALESCE(SUM(${batchesTable.earnings}::numeric), 0)::float`,
-    })
-    .from(batchesTable)
-    .where(sql`${batchesTable.createdAt} >= NOW() - INTERVAL '30 days'`)
-    .groupBy(sql`DATE(${batchesTable.createdAt})`)
-    .orderBy(sql`DATE(${batchesTable.createdAt})`);
+router.get("/dashboard/daily-chart", (_req, res): void => {
+  const db = getDb();
+  const results = db
+    .prepare(
+      `SELECT
+         DATE(created_at) AS date,
+         COALESCE(SUM(quantity), 0) AS qty,
+         COALESCE(SUM(weight_kg), 0.0) AS kg,
+         COALESCE(SUM(earnings), 0.0) AS earnings
+       FROM batches
+       WHERE created_at >= datetime('now', '-30 days')
+       GROUP BY DATE(created_at)
+       ORDER BY DATE(created_at) ASC`
+    )
+    .all() as any[];
 
   res.json(
     GetDailyChartResponse.parse(

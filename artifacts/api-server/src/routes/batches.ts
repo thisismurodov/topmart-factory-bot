@@ -1,6 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, batchesTable } from "@workspace/db";
-import { eq, desc, and, sql } from "drizzle-orm";
+import { getDb } from "../lib/sqlite";
 import {
   GetBatchesQueryParams,
   GetBatchesResponse,
@@ -10,7 +9,7 @@ import {
 
 const router: IRouter = Router();
 
-router.get("/batches", async (req, res): Promise<void> => {
+router.get("/batches", (req, res): void => {
   const parsed = GetBatchesQueryParams.safeParse(req.query);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
@@ -18,50 +17,59 @@ router.get("/batches", async (req, res): Promise<void> => {
   }
 
   const { date, worker, product, limit = 50, offset = 0 } = parsed.data;
+  const db = getDb();
 
-  const conditions = [];
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+
   if (date) {
-    conditions.push(sql`DATE(${batchesTable.createdAt}) = ${date}`);
+    conditions.push("DATE(created_at) = ?");
+    params.push(date);
   }
   if (worker) {
-    conditions.push(eq(batchesTable.worker, worker));
+    conditions.push("worker = ?");
+    params.push(worker);
   }
   if (product) {
-    conditions.push(eq(batchesTable.product, product));
+    conditions.push("product = ?");
+    params.push(product);
   }
 
-  const where = conditions.length > 0 ? and(...conditions) : undefined;
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
-  const [items, countResult] = await Promise.all([
-    db
-      .select()
-      .from(batchesTable)
-      .where(where)
-      .orderBy(desc(batchesTable.createdAt))
-      .limit(limit ?? 50)
-      .offset(offset ?? 0),
-    db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(batchesTable)
-      .where(where),
-  ]);
+  const items = db
+    .prepare(
+      `SELECT id, batch_code, worker, product, quantity, weight_kg, earnings, created_at
+       FROM batches ${where}
+       ORDER BY id DESC
+       LIMIT ? OFFSET ?`
+    )
+    .all(...params, limit, offset) as any[];
 
-  const total = countResult[0]?.count ?? 0;
+  const total = (
+    db
+      .prepare(`SELECT COUNT(*) AS cnt FROM batches ${where}`)
+      .get(...params) as any
+  ).cnt;
 
   res.json(
     GetBatchesResponse.parse({
       items: items.map((b) => ({
-        ...b,
-        weightKg: Number(b.weightKg),
+        id: b.id,
+        batchCode: b.batch_code,
+        worker: b.worker,
+        product: b.product,
+        quantity: b.quantity,
+        weightKg: Number(b.weight_kg),
         earnings: Number(b.earnings),
-        createdAt: b.createdAt.toISOString(),
+        createdAt: b.created_at,
       })),
       total,
     })
   );
 });
 
-router.delete("/batches/:id", async (req, res): Promise<void> => {
+router.delete("/batches/:id", (req, res): void => {
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const params = DeleteBatchParams.safeParse({ id: parseInt(raw, 10) });
   if (!params.success) {
@@ -69,12 +77,10 @@ router.delete("/batches/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  const [deleted] = await db
-    .delete(batchesTable)
-    .where(eq(batchesTable.id, params.data.id))
-    .returning();
+  const db = getDb();
+  const result = db.prepare("DELETE FROM batches WHERE id = ?").run(params.data.id);
 
-  if (!deleted) {
+  if (result.changes === 0) {
     res.status(404).json({ error: "Batch not found" });
     return;
   }

@@ -1,6 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, batchesTable, salaryPaymentsTable } from "@workspace/db";
-import { eq, and, sql } from "drizzle-orm";
+import { getDb } from "../lib/sqlite";
 import {
   GetSalaryReportQueryParams,
   GetSalaryReportResponse,
@@ -10,7 +9,7 @@ import {
 
 const router: IRouter = Router();
 
-router.get("/salary/report", async (req, res): Promise<void> => {
+router.get("/salary/report", (req, res): void => {
   const now = new Date();
   const parsed = GetSalaryReportQueryParams.safeParse(req.query);
   if (!parsed.success) {
@@ -20,49 +19,41 @@ router.get("/salary/report", async (req, res): Promise<void> => {
 
   const year = parsed.data.year ?? now.getFullYear();
   const month = parsed.data.month ?? now.getMonth() + 1;
+  const period = `${year}-${String(month).padStart(2, "0")}`;
 
-  // Earnings per worker this month
-  const earnings = await db
-    .select({
-      worker: batchesTable.worker,
-      totalEarnings: sql<number>`COALESCE(SUM(${batchesTable.earnings}::numeric), 0)::float`,
-    })
-    .from(batchesTable)
-    .where(
-      and(
-        sql`EXTRACT(YEAR FROM ${batchesTable.createdAt}) = ${year}`,
-        sql`EXTRACT(MONTH FROM ${batchesTable.createdAt}) = ${month}`
-      )
+  const db = getDb();
+
+  // Earnings per worker this month from batches
+  const earnings = db
+    .prepare(
+      `SELECT worker, COALESCE(SUM(earnings), 0.0) AS totalEarnings
+       FROM batches
+       WHERE strftime('%Y-%m', created_at) = ?
+       GROUP BY worker
+       ORDER BY worker`
     )
-    .groupBy(batchesTable.worker);
+    .all(period) as any[];
 
-  // Which workers are paid this month
-  const payments = await db
-    .select()
-    .from(salaryPaymentsTable)
-    .where(
-      and(
-        eq(salaryPaymentsTable.year, year),
-        eq(salaryPaymentsTable.month, month)
-      )
-    );
+  // Payment records for this month
+  const payments = db
+    .prepare(
+      `SELECT worker_name, paid_at FROM salary_payments WHERE year = ? AND month = ?`
+    )
+    .all(year, month) as any[];
 
-  const paidMap = new Map(payments.map((p) => [p.worker, p]));
+  const paidMap = new Map(payments.map((p: any) => [p.worker_name, p.paid_at]));
 
-  const rows = earnings.map((e) => {
-    const payment = paidMap.get(e.worker);
-    return {
-      worker: e.worker,
-      totalEarnings: Number(e.totalEarnings),
-      isPaid: !!payment,
-      paidAt: payment?.paidAt?.toISOString() ?? null,
-    };
-  });
+  const rows = earnings.map((e) => ({
+    worker: e.worker,
+    totalEarnings: Number(e.totalEarnings),
+    isPaid: paidMap.has(e.worker),
+    paidAt: paidMap.get(e.worker) ?? null,
+  }));
 
   res.json(GetSalaryReportResponse.parse(rows));
 });
 
-router.post("/salary/pay", async (req, res): Promise<void> => {
+router.post("/salary/pay", (req, res): void => {
   const parsed = MarkSalaryPaidBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
@@ -70,24 +61,12 @@ router.post("/salary/pay", async (req, res): Promise<void> => {
   }
 
   const { worker, year, month, amount } = parsed.data;
+  const db = getDb();
 
-  // Upsert — delete existing then insert
-  await db
-    .delete(salaryPaymentsTable)
-    .where(
-      and(
-        eq(salaryPaymentsTable.worker, worker),
-        eq(salaryPaymentsTable.year, year),
-        eq(salaryPaymentsTable.month, month)
-      )
-    );
-
-  await db.insert(salaryPaymentsTable).values({
-    worker,
-    year,
-    month,
-    amount: String(amount),
-  });
+  db.prepare(
+    `INSERT OR REPLACE INTO salary_payments (worker_name, year, month, amount)
+     VALUES (?, ?, ?, ?)`
+  ).run(worker, year, month, amount);
 
   res.json(HealthCheckResponse.parse({ status: "ok" }));
 });

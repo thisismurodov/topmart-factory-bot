@@ -1,6 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, productsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { getDb, toApiRateType, toBotRateType } from "../lib/sqlite";
 import {
   GetProductsResponse,
   CreateProductBody,
@@ -10,35 +9,46 @@ import {
 
 const router: IRouter = Router();
 
-router.get("/products", async (_req, res): Promise<void> => {
-  const products = await db.select().from(productsTable);
+router.get("/products", (_req, res): void => {
+  const db = getDb();
+  const rows = db
+    .prepare("SELECT name, rate_type, rate FROM products_config ORDER BY name")
+    .all() as any[];
+
   res.json(
     GetProductsResponse.parse(
-      products.map((p) => ({ ...p, rate: Number(p.rate) }))
+      rows.map((p) => ({
+        name: p.name,
+        rateType: toApiRateType(p.rate_type),
+        rate: Number(p.rate),
+      }))
     )
   );
 });
 
-router.post("/products", async (req, res): Promise<void> => {
+router.post("/products", (req, res): void => {
   const parsed = CreateProductBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
 
-  const [product] = await db
-    .insert(productsTable)
-    .values({ ...parsed.data, rate: String(parsed.data.rate) })
-    .onConflictDoUpdate({
-      target: productsTable.name,
-      set: { rateType: parsed.data.rateType, rate: String(parsed.data.rate) },
-    })
-    .returning();
+  const { name, rateType, rate } = parsed.data;
+  const botRateType = toBotRateType(rateType);
+  const db = getDb();
 
-  res.status(201).json({ ...product, rate: Number(product.rate) });
+  try {
+    db.prepare(
+      "INSERT OR REPLACE INTO products_config (name, rate_type, rate) VALUES (?,?,?)"
+    ).run(name, botRateType, rate);
+
+    res.status(201).json({ name, rateType, rate });
+  } catch (err: any) {
+    res.status(409).json({ error: err.message });
+  }
 });
 
-router.delete("/products/:name", async (req, res): Promise<void> => {
+router.delete("/products/:name", (req, res): void => {
   const raw = Array.isArray(req.params.name) ? req.params.name[0] : req.params.name;
   const params = DeleteProductParams.safeParse({ name: raw });
   if (!params.success) {
@@ -46,12 +56,12 @@ router.delete("/products/:name", async (req, res): Promise<void> => {
     return;
   }
 
-  const [deleted] = await db
-    .delete(productsTable)
-    .where(eq(productsTable.name, params.data.name))
-    .returning();
+  const db = getDb();
+  const result = db
+    .prepare("DELETE FROM products_config WHERE name = ?")
+    .run(params.data.name);
 
-  if (!deleted) {
+  if (result.changes === 0) {
     res.status(404).json({ error: "Product not found" });
     return;
   }

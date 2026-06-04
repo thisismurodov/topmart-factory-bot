@@ -63,7 +63,7 @@ router.get("/batches", async (req, res): Promise<void> => {
         quantity: b.quantity,
         weightKg: Number(b.weight_kg),
         earnings: Number(b.earnings),
-        createdAt: b.created_at,
+        createdAt: b.created_at instanceof Date ? b.created_at.toISOString() : b.created_at,
       })),
       total: Number(countResult.rows[0].cnt),
     })

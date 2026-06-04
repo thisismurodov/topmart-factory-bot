@@ -442,3 +442,65 @@ def get_worker_chat_id(worker_name: str) -> int | None:
         )
         row = cur.fetchone()
     return row["chat_id"] if row else None
+
+
+# ── Customers ─────────────────────────────────────────────────────────────────
+
+def get_customers() -> list[dict]:
+    with get_conn() as (conn, cur):
+        cur.execute("SELECT id, name, phone, company FROM customers ORDER BY name")
+        return cur.fetchall()
+
+
+def add_customer(name: str, phone: str = "", company: str = "") -> int:
+    with get_conn() as (conn, cur):
+        cur.execute(
+            "INSERT INTO customers (name, phone, company) VALUES (%s,%s,%s) RETURNING id",
+            (name, phone, company),
+        )
+        return cur.fetchone()["id"]
+
+
+# ── Sales ─────────────────────────────────────────────────────────────────────
+
+def create_sale(
+    customer_id: int,
+    customer_name: str,
+    product: str,
+    quantity: int,
+    weight_kg: float,
+    unit_price: float,
+    total_amount: float,
+    note: str = "",
+) -> int:
+    with get_conn() as (conn, cur):
+        cur.execute(
+            """INSERT INTO sales
+               (customer_id, customer_name, product, quantity, weight_kg,
+                unit_price, total_amount, status, note)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,'pending',%s)
+               RETURNING id""",
+            (customer_id, customer_name, product, quantity,
+             weight_kg, unit_price, total_amount, note),
+        )
+        return cur.fetchone()["id"]
+
+
+def get_recent_sales(limit: int = 10) -> list[dict]:
+    with get_conn() as (conn, cur):
+        cur.execute(
+            """SELECT s.id, s.customer_name, s.product, s.quantity, s.weight_kg,
+                      s.unit_price, s.total_amount, s.status, s.created_at
+               FROM sales s
+               ORDER BY s.id DESC
+               LIMIT %s""",
+            (limit,),
+        )
+        return cur.fetchall()
+
+
+def get_product_rate_type(product_name: str) -> str:
+    with get_conn() as (conn, cur):
+        cur.execute("SELECT rate_type FROM products WHERE name = %s", (product_name,))
+        row = cur.fetchone()
+    return row["rate_type"] if row else "dona"

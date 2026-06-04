@@ -60,7 +60,7 @@ export default function Workers() {
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
-    defaultValues: { name: "", prefix: "", phone: "", role: "ishchi" },
+    defaultValues: { name: "", prefix: "", phone: "", role: "worker" },
   });
 
   function onSubmit(values: z.infer<typeof formSchema>) {
@@ -126,10 +126,9 @@ export default function Workers() {
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent>
-                            <SelectItem value="ishchi">Ishchi</SelectItem>
-                            <SelectItem value="qadoqlovchi">Qadoqlovchi</SelectItem>
-                            <SelectItem value="brigadir">Brigadir</SelectItem>
-                            <SelectItem value="operator">Operator</SelectItem>
+                            <SelectItem value="worker">Ishchi</SelectItem>
+                            <SelectItem value="packer">Qadoqlovchi</SelectItem>
+                            <SelectItem value="admin">Admin</SelectItem>
                           </SelectContent>
                         </Select>
                         <FormMessage />
@@ -199,7 +198,9 @@ export default function Workers() {
                         {worker.prefix}
                       </span>
                     </TableCell>
-                    <TableCell className="capitalize text-sm">{worker.role}</TableCell>
+                    <TableCell className="text-sm">
+                      {worker.role === "worker" ? "Ishchi" : worker.role === "packer" ? "Qadoqlovchi" : worker.role === "admin" ? "Admin" : worker.role}
+                    </TableCell>
                     <TableCell className="font-mono text-sm text-muted-foreground">{worker.phone}</TableCell>
                     <TableCell className="text-right">
                       <AlertDialog>

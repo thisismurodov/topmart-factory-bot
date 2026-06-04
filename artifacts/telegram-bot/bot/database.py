@@ -74,6 +74,12 @@ def init_db() -> None:
                 UNIQUE (worker_name, year, month)
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS db_meta (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        """)
         _migrate(conn)
         _seed(conn)
         conn.commit()
@@ -91,18 +97,22 @@ def _migrate(conn: sqlite3.Connection) -> None:
 
 
 def _seed(conn: sqlite3.Connection) -> None:
-    if conn.execute("SELECT COUNT(*) FROM workers_config").fetchone()[0] == 0:
-        for w in SEED_WORKERS:
-            conn.execute(
-                "INSERT OR IGNORE INTO workers_config (name, prefix, phone, role) VALUES (?,?,?,?)",
-                (w["name"], w["prefix"], w.get("phone", ""), w.get("role", "worker")),
-            )
-    if conn.execute("SELECT COUNT(*) FROM products_config").fetchone()[0] == 0:
-        for p in SEED_PRODUCTS:
-            conn.execute(
-                "INSERT OR IGNORE INTO products_config (name, rate_type, rate) VALUES (?,?,?)",
-                (p["name"], p["rate_type"], p["rate"]),
-            )
+    already = conn.execute(
+        "SELECT value FROM db_meta WHERE key = 'seeded'"
+    ).fetchone()
+    if already:
+        return
+    for w in SEED_WORKERS:
+        conn.execute(
+            "INSERT OR IGNORE INTO workers_config (name, prefix, phone, role) VALUES (?,?,?,?)",
+            (w["name"], w["prefix"], w.get("phone", ""), w.get("role", "worker")),
+        )
+    for p in SEED_PRODUCTS:
+        conn.execute(
+            "INSERT OR IGNORE INTO products_config (name, rate_type, rate) VALUES (?,?,?)",
+            (p["name"], p["rate_type"], p["rate"]),
+        )
+    conn.execute("INSERT INTO db_meta (key, value) VALUES ('seeded', '1')")
 
 
 # ── Workers & Products ────────────────────────────────────────────────────────

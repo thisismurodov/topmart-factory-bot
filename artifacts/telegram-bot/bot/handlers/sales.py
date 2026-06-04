@@ -14,6 +14,8 @@ from ..database import (
 SALE_CUSTOMER, SALE_NEW_NAME, SALE_NEW_PHONE, SALE_PRODUCT, \
     SALE_QTY, SALE_WEIGHT, SALE_PRICE, SALE_CONFIRM = range(8)
 
+AP_NAME, AP_CODE, AP_UNIT, AP_CURRENCY = range(10, 14)
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -414,6 +416,140 @@ async def cmd_savdolar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text("\n\n".join(lines), parse_mode="Markdown")
 
 
+# ── Add product conversation ───────────────────────────────────────────────────
+
+def _unit_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⚖️ kg", callback_data="ap_unit:kg"),
+         InlineKeyboardButton("📦 dona", callback_data="ap_unit:dona")],
+        [InlineKeyboardButton("❌ Bekor", callback_data="ap_cancel")],
+    ])
+
+
+def _currency_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🇺🇿 so'm", callback_data="ap_cur:uzs"),
+         InlineKeyboardButton("💵 dollar ($)", callback_data="ap_cur:usd")],
+        [InlineKeyboardButton("❌ Bekor", callback_data="ap_cancel")],
+    ])
+
+
+async def ap_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    chat_id = update.effective_chat.id
+    if not _is_admin(chat_id):
+        await update.message.reply_text("❌ Faqat admin uchun.")
+        return ConversationHandler.END
+    context.user_data["ap"] = {}
+    await update.message.reply_text(
+        "📦 *Yangi sotuv tovari*\n\nTovar nomini kiriting:\n_(masalan: Qop ip)_",
+        parse_mode="Markdown",
+    )
+    return AP_NAME
+
+
+async def ap_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    name = update.message.text.strip()
+    if not name:
+        await update.message.reply_text("❗ Nom bo'sh bo'lmasin. Qayta kiriting:")
+        return AP_NAME
+    context.user_data["ap"]["name"] = name
+    await update.message.reply_text(
+        f"✅ Nom: *{name}*\n\nQisqa *kod* kiriting:\n_(masalan: QI, PP, MI — 2-4 harf)_",
+        parse_mode="Markdown",
+    )
+    return AP_CODE
+
+
+async def ap_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    code = update.message.text.strip().upper()
+    if not code or len(code) > 6:
+        await update.message.reply_text("❗ Kod 1-6 ta harf bo'lsin. Qayta kiriting:")
+        return AP_CODE
+    context.user_data["ap"]["code"] = code
+    await update.message.reply_text(
+        f"✅ Kod: `{code}`\n\nSotuv turini tanlang:",
+        parse_mode="Markdown",
+        reply_markup=_unit_kb(),
+    )
+    return AP_UNIT
+
+
+async def ap_unit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    if query.data == "ap_cancel":
+        context.user_data.pop("ap", None)
+        await query.edit_message_text("❌ Bekor qilindi.")
+        return ConversationHandler.END
+    unit = query.data.split(":")[1]
+    context.user_data["ap"]["unit"] = unit
+    unit_label = "kg" if unit == "kg" else "dona"
+    await query.edit_message_text(
+        f"✅ Sotuv turi: *{unit_label}*\n\nNarx valyutasini tanlang:",
+        parse_mode="Markdown",
+        reply_markup=_currency_kb(),
+    )
+    return AP_CURRENCY
+
+
+async def ap_currency(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    if query.data == "ap_cancel":
+        context.user_data.pop("ap", None)
+        await query.edit_message_text("❌ Bekor qilindi.")
+        return ConversationHandler.END
+
+    currency = query.data.split(":")[1]
+    ap = context.user_data.pop("ap", {})
+    name = ap.get("name", "")
+    code = ap.get("code", "")
+    unit = ap.get("unit", "dona")
+    sym = _currency_sym(currency)
+
+    ok = add_sale_product(name, code, unit, currency)
+    if ok:
+        await query.edit_message_text(
+            f"✅ *Tovar saqlandi!*\n\n"
+            f"📦 Nom: *{name}*\n"
+            f"🔖 Kod: `{code}`\n"
+            f"⚖️ Birlik: *{unit}*\n"
+            f"💰 Valyuta: *{sym}*",
+            parse_mode="Markdown",
+        )
+    else:
+        await query.edit_message_text("❌ Saqlashda xatolik. Qayta urinib ko'ring.")
+    return ConversationHandler.END
+
+
+async def ap_cancel_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data.pop("ap", None)
+    await update.message.reply_text("❌ Bekor qilindi.")
+    return ConversationHandler.END
+
+
+def build_add_product_handler() -> ConversationHandler:
+    return ConversationHandler(
+        entry_points=[
+            MessageHandler(filters.Regex(r"^➕ Sotuv Tovar$"), ap_start),
+            CommandHandler("tovar_qosh", ap_start),
+        ],
+        states={
+            AP_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, ap_name)],
+            AP_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ap_code)],
+            AP_UNIT: [CallbackQueryHandler(ap_unit, pattern=r"^ap_unit:|^ap_cancel$")],
+            AP_CURRENCY: [CallbackQueryHandler(ap_currency, pattern=r"^ap_cur:|^ap_cancel$")],
+        },
+        fallbacks=[
+            MessageHandler(filters.Regex(r"^❌ Bekor$"), ap_cancel_text),
+            CommandHandler("cancel", ap_cancel_text),
+        ],
+        allow_reentry=True,
+        name="add_product_conv",
+        persistent=True,
+    )
+
+
 # ── Cancel handler ────────────────────────────────────────────────────────────
 
 async def cancel_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -474,9 +610,10 @@ def build_sales_handler() -> ConversationHandler:
 
 
 def register(app) -> None:
+    app.add_handler(build_add_product_handler())
     app.add_handler(build_sales_handler())
     app.add_handler(CommandHandler("savdolar", cmd_savdolar))
     app.add_handler(MessageHandler(filters.Regex(r"^📊 Savdolar$"), cmd_savdolar))
     app.add_handler(CommandHandler("tovarlar", cmd_tovarlar))
-    app.add_handler(CommandHandler("tovar_qosh", cmd_tovar_qosh))
+    app.add_handler(MessageHandler(filters.Regex(r"^📦 Tovarlar$"), cmd_tovarlar))
     app.add_handler(CommandHandler("tovar_ochir", cmd_tovar_ochir))

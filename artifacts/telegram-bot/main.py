@@ -5,7 +5,7 @@ from telegram.warnings import PTBUserWarning
 
 warnings.filterwarnings("ignore", message="If 'per_message=False'", category=PTBUserWarning)
 
-from telegram.ext import ApplicationBuilder
+from telegram.ext import ApplicationBuilder, PicklePersistence
 
 from bot.database import init_db
 from bot.handlers.input_handler import build_conversation_handler
@@ -31,7 +31,15 @@ def main() -> None:
     logger.info("Initialising database …")
     init_db()
 
-    app = ApplicationBuilder().token(token).build()
+    persistence = PicklePersistence(filepath="data/bot_state.pkl")
+    app = (
+        ApplicationBuilder()
+        .token(token)
+        .persistence(persistence)
+        .connect_timeout(30)
+        .read_timeout(30)
+        .build()
+    )
 
     register_cleardata(app)
     register_salary_handlers(app)

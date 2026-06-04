@@ -249,6 +249,8 @@ def build_conversation_handler() -> ConversationHandler:
             ],
         },
         fallbacks=[MessageHandler(filters.COMMAND, cancel_command)],
+        name="tovar_kiritish",
+        persistent=True,
         per_message=False,
         allow_reentry=True,
     )

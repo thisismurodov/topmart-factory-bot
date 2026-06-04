@@ -1,0 +1,131 @@
+
+
+sunny-expression
+
+production
+
+
+
+Agent
+
+
+topmart-factory-bot
+Deployments
+Backups
+Variables
+Metrics
+Console
+Settings
+Unexposed service
+US East
+1 Replica
+
+HISTORY
+Hide Skipped
+topmart-factory-bot
+/
+401ccb2b
+Active
+
+Jun 4, 2026 at 2:29 PM GMT+5
+Details
+Build Logs
+Deploy Logs
+Network Flow Logs
+Search build logs
+
+You reached the start of the range
+Jun 4, 2026 at 2:24 PM
+unpacking archive
+16.8 MB
+102ms
+using build driver nixpacks-v1.41.0
+ 
+╔══════════════════════════════ Nixpacks v1.41.0 ══════════════════════════════╗
+║ setup      │ python3, gcc, fonts-dejavu-core, libfreetype6-dev               ║
+║──────────────────────────────────────────────────────────────────────────────║
+║ install    │ python -m venv --copies /opt/venv && . /opt/venv/bin/activate   ║
+║            │ && pip install -r requirements.txt                              ║
+║──────────────────────────────────────────────────────────────────────────────║
+║ start      │ python3 main.py                                                 ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+ 
+ 
+Saved output to:
+  snapshot-target-unpack/artifacts/telegram-bot
+scheduling build on Metal builder "builder-grdijm"
+uploading snapshot
+15 MB
+479ms
+
+internal
+load build definition from Dockerfile
+0ms
+
+internal
+load metadata for ghcr.io/railwayapp/nixpacks:ubuntu-1745885067
+205ms
+
+internal
+load .dockerignore
+0ms
+SecretsUsedInArgOrEnv: Do not use ARG or ENV instructions for sensitive data (ARG "TELEGRAM_BOT_TOKEN") (line 11)(https://docs.docker.com/go/dockerfile/rule/secrets-used-in-arg-or-env/)
+ details: Sensitive data should not be used in the ARG or ENV commands
+SecretsUsedInArgOrEnv: Do not use ARG or ENV instructions for sensitive data (ENV "TELEGRAM_BOT_TOKEN") (line 12)(https://docs.docker.com/go/dockerfile/rule/secrets-used-in-arg-or-env/)
+ details: Sensitive data should not be used in the ARG or ENV commands
+UndefinedVar: Usage of undefined variable '$NIXPACKS_PATH' (line 18)(https://docs.docker.com/go/dockerfile/rule/undefined-var/)
+ details: Variables should be defined before their use
+
+stage-0
+FROM ghcr.io/railwayapp/nixpacks:ubuntu-1745885067@sha256:d45c89d80e13d7ad0fd555b5130f22a866d9dd10e861f589932303ef2314c7de
+20ms
+
+internal
+load build context
+0ms
+
+stage-0
+RUN sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-dejavu-core libfreetype6-dev cached
+0ms
+
+stage-0
+RUN nix-env -if .nixpacks/nixpkgs-bc8f8d1be58e8c8383e683a06e1e1e57893fff87.nix && nix-collect-garbage -d cached
+0ms
+
+stage-0
+COPY .nixpacks/nixpkgs-bc8f8d1be58e8c8383e683a06e1e1e57893fff87.nix .nixpacks/nixpkgs-bc8f8d1be58e8c8383e683a06e1e1e57893fff87.nix cached
+0ms
+
+stage-0
+WORKDIR /app/ cached
+0ms
+
+stage-0
+COPY . /app/.
+239ms
+
+stage-0
+RUN python -m venv --copies /opt/venv && . /opt/venv/bin/activate && pip install -r requirements.txt
+5s
+Successfully installed Pillow-10.4.0 anyio-4.13.0 certifi-2026.5.20 h11-0.16.0 httpcore-1.0.9 httpx-0.25.2 idna-3.18 pypng-0.20220715.0 python-telegram-bot-20.7 qrcode-7.4.2 sniffio-1.3.1 typing-extensions-4.15.0
+
+stage-0
+RUN printf '\nPATH=/opt/venv/bin:$PATH' >> /root/.profile
+241ms
+
+stage-0
+COPY . /app
+126ms
+
+exporting to docker image format
+4s
+containerimage.digest: sha256:5a9fe475fb8d2f8b0634a616ade78964ac158c4a9663f272ad05335e6236588a
+containerimage.descriptor: eyJtZWRpYVR5cGUiOiJhcHBsaWNhdGlvbi92bmQub2NpLmltYWdlLm1hbmlmZXN0LnYxK2pzb24iLCJkaWdlc3QiOiJzaGEyNTY6NWE5ZmU0NzVmYjhkMmY4YjA2MzRhNjE2YWRlNzg5NjRhYzE1OGM0YTk2NjNmMjcyYWQwNTMzNWU2MjM2NTg4YSIsInNpemUiOjI1NzcsImFubm90YXRpb25zIjp7Im9yZy5vcGVuY29udGFpbmVycy5pbWFnZS5jcmVhdGVkIjoiMjAyNi0wNi0wNFQwOToyOTo0M1oifSwicGxhdGZvcm0iOnsiYXJjaGl0ZWN0dXJlIjoiYW1kNjQiLCJvcyI6ImxpbnV4In19
+containerimage.config.digest: sha256:7a4dfda8d44ab52c249ddd0a5b162a082b9cd9b2806bb6d0feb3e350cc72a6e4
+image push
+455.6 MB
+4.7s
+You reached the end of the range
+Jun 4, 2026 at 2:35 PM
+
+

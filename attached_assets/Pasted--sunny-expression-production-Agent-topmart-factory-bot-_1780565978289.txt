@@ -1,0 +1,99 @@
+
+
+sunny-expression
+
+production
+
+
+
+Agent
+
+
+topmart-factory-bot
+Deployments
+Backups
+Variables
+Metrics
+Console
+Settings
+Unexposed service
+US East
+1 Replica
+
+HISTORY
+Hide Skipped
+topmart-factory-bot
+/
+dcf21f43
+Active
+
+Jun 4, 2026 at 2:33 PM GMT+5
+Details
+Build Logs
+Deploy Logs
+Network Flow Logs
+Filter and search logs
+
+You reached the start of the range
+Jun 4, 2026 at 2:33 PM
+Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/111355b9-b230-4104-96ae-ba034c2ee015/vol_e9estv8v2orsbefn
+Starting Container
+2026-06-04 09:34:15,974 | INFO | __main__ | Initialising database …
+Traceback (most recent call last):
+  File "/app/main.py", line 58, in <module>
+    main()
+  File "/app/main.py", line 32, in main
+    init_db()
+  File "/app/bot/database.py", line 27, in init_db
+    with get_conn() as (conn, cur):
+  File "/usr/local/lib/python3.11/contextlib.py", line 137, in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+  File "/app/bot/database.py", line 13, in get_conn
+    conn = psycopg2.connect(DATABASE_URL)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/psycopg2/__init__.py", line 122, in connect
+    conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+psycopg2.OperationalError: could not translate host name "helium" to address: Name or service not known
+Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/111355b9-b230-4104-96ae-ba034c2ee015/vol_e9estv8v2orsbefn
+Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/111355b9-b230-4104-96ae-ba034c2ee015/vol_e9estv8v2orsbefn
+2026-06-04 09:38:06,195 | INFO | __main__ | Initialising database …
+Traceback (most recent call last):
+  File "/app/main.py", line 58, in <module>
+    main()
+  File "/app/main.py", line 32, in main
+    init_db()
+  File "/app/bot/database.py", line 27, in init_db
+    with get_conn() as (conn, cur):
+  File "/usr/local/lib/python3.11/contextlib.py", line 137, in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+  File "/app/bot/database.py", line 13, in get_conn
+    conn = psycopg2.connect(DATABASE_URL)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/psycopg2/__init__.py", line 122, in connect
+    conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+psycopg2.OperationalError: could not translate host name "helium" to address: Name or service not known
+Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/111355b9-b230-4104-96ae-ba034c2ee015/vol_e9estv8v2orsbefn
+2026-06-04 09:38:55,539 | INFO | __main__ | Initialising database …
+Traceback (most recent call last):
+  File "/app/main.py", line 58, in <module>
+    main()
+  File "/app/main.py", line 32, in main
+    init_db()
+  File "/app/bot/database.py", line 27, in init_db
+    with get_conn() as (conn, cur):
+  File "/usr/local/lib/python3.11/contextlib.py", line 137, in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+  File "/app/bot/database.py", line 13, in get_conn
+    conn = psycopg2.connect(DATABASE_URL)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/psycopg2/__init__.py", line 122, in connect
+    conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+psycopg2.OperationalError: could not translate host name "helium" to address: Name or service not known
+
+

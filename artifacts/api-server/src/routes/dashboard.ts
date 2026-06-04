@@ -145,4 +145,65 @@ router.get("/dashboard/daily-chart", async (_req, res): Promise<void> => {
   );
 });
 
+router.get("/dashboard/today-extended", async (_req, res): Promise<void> => {
+  const [salesResult, batchesResult] = await Promise.all([
+    pool.query(
+      `SELECT id, customer_name, product, quantity, weight_kg,
+              total_amount, currency, status, created_at
+       FROM sales
+       WHERE created_at::date = CURRENT_DATE
+       ORDER BY id DESC
+       LIMIT 10`
+    ),
+    pool.query(
+      `SELECT
+         worker,
+         COALESCE(SUM(quantity), 0)::int   AS qty,
+         COALESCE(SUM(weight_kg), 0.0)     AS kg,
+         COALESCE(SUM(earnings), 0.0)      AS earnings,
+         COUNT(*)::int                     AS batches
+       FROM batches
+       WHERE created_at::date = CURRENT_DATE
+       GROUP BY worker
+       ORDER BY SUM(earnings) DESC`
+    ),
+  ]);
+
+  const salesItems = salesResult.rows;
+  const totalUzs = salesItems
+    .filter((s) => s.currency === "uzs" || !s.currency)
+    .reduce((acc, s) => acc + Number(s.total_amount), 0);
+  const totalUsd = salesItems
+    .filter((s) => s.currency === "usd")
+    .reduce((acc, s) => acc + Number(s.total_amount), 0);
+
+  res.json({
+    todaySales: {
+      count: salesItems.length,
+      totalUzs,
+      totalUsd,
+      items: salesItems.map((s) => ({
+        id: s.id,
+        customerName: s.customer_name,
+        product: s.product,
+        quantity: s.quantity,
+        weightKg: Number(s.weight_kg),
+        totalAmount: Number(s.total_amount),
+        currency: s.currency ?? "uzs",
+        status: s.status,
+        createdAt: s.created_at instanceof Date ? s.created_at.toISOString() : String(s.created_at),
+      })),
+    },
+    todayBatches: {
+      items: batchesResult.rows.map((r) => ({
+        worker: r.worker,
+        qty: Number(r.qty),
+        kg: Number(r.kg),
+        earnings: Number(r.earnings),
+        batches: Number(r.batches),
+      })),
+    },
+  });
+});
+
 export default router;

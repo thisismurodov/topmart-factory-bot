@@ -7,15 +7,15 @@ async function seed() {
   logger.info("Seeding database...");
 
   // Admin user
-  const existing = await db.select().from(adminUsersTable).where(eq(adminUsersTable.username, "admin"));
+  const existing = await db.select().from(adminUsersTable).where(eq(adminUsersTable.username, "thisismurodov"));
   if (existing.length === 0) {
-    const passwordHash = await bcrypt.hash("admin123", 10);
+    const passwordHash = await bcrypt.hash("topmart2026", 10);
     await db.insert(adminUsersTable).values({
-      username: "admin",
+      username: "thisismurodov",
       passwordHash,
       role: "admin",
     });
-    logger.info("Created admin user (admin / admin123)");
+    logger.info("Created admin user (thisismurodov / topmart2026)");
   }
 
   // Sample workers

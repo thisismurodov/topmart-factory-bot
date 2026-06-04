@@ -15,6 +15,9 @@ tags:
   - name: workers
   - name: products
   - name: salary
+  - name: customers
+  - name: sales
+  - name: inventory
 
 paths:
   /healthz:
@@ -360,6 +363,170 @@ paths:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
 
+  # ── Customers ─────────────────────────────────────────────────────────
+  /customers:
+    get:
+      operationId: getCustomers
+      tags: [customers]
+      summary: List customers
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Customer"
+
+    post:
+      operationId: createCustomer
+      tags: [customers]
+      summary: Add customer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomerInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Customer"
+
+  /customers/{id}:
+    delete:
+      operationId: deleteCustomer
+      tags: [customers]
+      summary: Delete customer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  # ── Sales ─────────────────────────────────────────────────────────────
+  /sales:
+    get:
+      operationId: getSales
+      tags: [sales]
+      summary: List sales
+      parameters:
+        - name: customerId
+          in: query
+          schema:
+            type: ["integer", "null"]
+        - name: status
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaleList"
+
+    post:
+      operationId: createSale
+      tags: [sales]
+      summary: Create sale
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaleInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Sale"
+
+  /sales/{id}:
+    delete:
+      operationId: deleteSale
+      tags: [sales]
+      summary: Delete sale
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /sales/{id}/status:
+    patch:
+      operationId: updateSaleStatus
+      tags: [sales]
+      summary: Update sale payment status
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaleStatusInput"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  # ── Inventory ─────────────────────────────────────────────────────────
+  /inventory:
+    get:
+      operationId: getInventory
+      tags: [inventory]
+      summary: Current inventory (produced minus sold)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/InventoryItem"
+
 components:
   schemas:
     HealthStatus:
@@ -576,3 +743,121 @@ components:
         amount:
           type: number
       required: [worker, year, month, amount]
+
+    # ── Customers ───────────────────────────────────────────────────
+    Customer:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        phone:
+          type: string
+        company:
+          type: string
+        address:
+          type: string
+        createdAt:
+          type: string
+      required: [id, name, phone, company, address, createdAt]
+
+    CustomerInput:
+      type: object
+      properties:
+        name:
+          type: string
+        phone:
+          type: string
+        company:
+          type: string
+        address:
+          type: string
+      required: [name, phone, company, address]
+
+    # ── Sales ────────────────────────────────────────────────────────
+    Sale:
+      type: object
+      properties:
+        id:
+          type: integer
+        customerId:
+          type: integer
+        customerName:
+          type: string
+        product:
+          type: string
+        quantity:
+          type: integer
+        weightKg:
+          type: number
+        unitPrice:
+          type: number
+        totalAmount:
+          type: number
+        status:
+          type: string
+        note:
+          type: string
+        createdAt:
+          type: string
+      required: [id, customerId, customerName, product, quantity, weightKg, unitPrice, totalAmount, status, note, createdAt]
+
+    SaleInput:
+      type: object
+      properties:
+        customerId:
+          type: integer
+        product:
+          type: string
+        quantity:
+          type: integer
+        weightKg:
+          type: number
+        unitPrice:
+          type: number
+        totalAmount:
+          type: number
+        status:
+          type: string
+        note:
+          type: string
+      required: [customerId, product, quantity, weightKg, unitPrice, totalAmount, status, note]
+
+    SaleStatusInput:
+      type: object
+      properties:
+        status:
+          type: string
+      required: [status]
+
+    SaleList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Sale"
+        total:
+          type: integer
+      required: [items, total]
+
+    # ── Inventory ────────────────────────────────────────────────────
+    InventoryItem:
+      type: object
+      properties:
+        product:
+          type: string
+        producedQty:
+          type: integer
+        producedKg:
+          type: number
+        soldQty:
+          type: integer
+        soldKg:
+          type: number
+        stockQty:
+          type: integer
+        stockKg:
+          type: number
+      required: [product, producedQty, producedKg, soldQty, soldKg, stockQty, stockKg]

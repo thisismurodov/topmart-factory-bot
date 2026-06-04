@@ -118,6 +118,66 @@ export interface SalaryPayInput {
   amount: number;
 }
 
+export interface Customer {
+  id: number;
+  name: string;
+  phone: string;
+  company: string;
+  address: string;
+  createdAt: string;
+}
+
+export interface CustomerInput {
+  name: string;
+  phone: string;
+  company: string;
+  address: string;
+}
+
+export interface Sale {
+  id: number;
+  customerId: number;
+  customerName: string;
+  product: string;
+  quantity: number;
+  weightKg: number;
+  unitPrice: number;
+  totalAmount: number;
+  status: string;
+  note: string;
+  createdAt: string;
+}
+
+export interface SaleInput {
+  customerId: number;
+  product: string;
+  quantity: number;
+  weightKg: number;
+  unitPrice: number;
+  totalAmount: number;
+  status: string;
+  note: string;
+}
+
+export interface SaleStatusInput {
+  status: string;
+}
+
+export interface SaleList {
+  items: Sale[];
+  total: number;
+}
+
+export interface InventoryItem {
+  product: string;
+  producedQty: number;
+  producedKg: number;
+  soldQty: number;
+  soldKg: number;
+  stockQty: number;
+  stockKg: number;
+}
+
 export type GetDashboardMonthlyParams = {
 year?: number;
 month?: number;
@@ -143,5 +203,18 @@ offset?: number;
 export type GetSalaryReportParams = {
 year?: number;
 month?: number;
+};
+
+export type GetSalesParams = {
+/**
+ * @nullable
+ */
+customerId?: number | null;
+/**
+ * @nullable
+ */
+status?: string | null;
+limit?: number;
+offset?: number;
 };
 

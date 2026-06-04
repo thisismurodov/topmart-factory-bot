@@ -94,6 +94,34 @@ def _migrate(conn: sqlite3.Connection) -> None:
     w_cols = {row[1] for row in conn.execute("PRAGMA table_info(workers_config)")}
     if "role" not in w_cols:
         conn.execute("ALTER TABLE workers_config ADD COLUMN role TEXT NOT NULL DEFAULT 'worker'")
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "customers" not in tables:
+        conn.execute("""
+            CREATE TABLE customers (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                name       TEXT NOT NULL,
+                phone      TEXT NOT NULL DEFAULT '',
+                company    TEXT NOT NULL DEFAULT '',
+                address    TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+            )
+        """)
+    if "sales" not in tables:
+        conn.execute("""
+            CREATE TABLE sales (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_id   INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+                customer_name TEXT NOT NULL DEFAULT '',
+                product       TEXT NOT NULL,
+                quantity      INTEGER NOT NULL DEFAULT 0,
+                weight_kg     REAL NOT NULL DEFAULT 0,
+                unit_price    REAL NOT NULL DEFAULT 0,
+                total_amount  REAL NOT NULL DEFAULT 0,
+                status        TEXT NOT NULL DEFAULT 'pending',
+                note          TEXT NOT NULL DEFAULT '',
+                created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+            )
+        """)
 
 
 def _seed(conn: sqlite3.Connection) -> None:

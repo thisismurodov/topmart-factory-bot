@@ -6,6 +6,9 @@ import batchesRouter from "./batches";
 import workersRouter from "./workers";
 import productsRouter from "./products";
 import salaryRouter from "./salary";
+import customersRouter from "./customers";
+import salesRouter from "./sales";
+import inventoryRouter from "./inventory";
 
 const router: IRouter = Router();
 
@@ -16,5 +19,8 @@ router.use(batchesRouter);
 router.use(workersRouter);
 router.use(productsRouter);
 router.use(salaryRouter);
+router.use(customersRouter);
+router.use(salesRouter);
+router.use(inventoryRouter);
 
 export default router;

@@ -248,3 +248,129 @@ export const MarkSalaryPaidResponse = zod.object({
 })
 
 
+/**
+ * @summary List customers
+ */
+export const GetCustomersResponseItem = zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "phone": zod.string(),
+  "company": zod.string(),
+  "address": zod.string(),
+  "createdAt": zod.string()
+})
+export const GetCustomersResponse = zod.array(GetCustomersResponseItem)
+
+
+/**
+ * @summary Add customer
+ */
+export const CreateCustomerBody = zod.object({
+  "name": zod.string(),
+  "phone": zod.string(),
+  "company": zod.string(),
+  "address": zod.string()
+})
+
+
+/**
+ * @summary Delete customer
+ */
+export const DeleteCustomerParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const DeleteCustomerResponse = zod.object({
+  "status": zod.string()
+})
+
+
+/**
+ * @summary List sales
+ */
+export const getSalesQueryLimitDefault = 50;
+export const getSalesQueryOffsetDefault = 0;
+
+export const GetSalesQueryParams = zod.object({
+  "customerId": zod.coerce.number().nullish(),
+  "status": zod.coerce.string().nullish(),
+  "limit": zod.coerce.number().default(getSalesQueryLimitDefault),
+  "offset": zod.coerce.number().default(getSalesQueryOffsetDefault)
+})
+
+export const GetSalesResponse = zod.object({
+  "items": zod.array(zod.object({
+  "id": zod.number(),
+  "customerId": zod.number(),
+  "customerName": zod.string(),
+  "product": zod.string(),
+  "quantity": zod.number(),
+  "weightKg": zod.number(),
+  "unitPrice": zod.number(),
+  "totalAmount": zod.number(),
+  "status": zod.string(),
+  "note": zod.string(),
+  "createdAt": zod.string()
+})),
+  "total": zod.number()
+})
+
+
+/**
+ * @summary Create sale
+ */
+export const CreateSaleBody = zod.object({
+  "customerId": zod.number(),
+  "product": zod.string(),
+  "quantity": zod.number(),
+  "weightKg": zod.number(),
+  "unitPrice": zod.number(),
+  "totalAmount": zod.number(),
+  "status": zod.string(),
+  "note": zod.string()
+})
+
+
+/**
+ * @summary Delete sale
+ */
+export const DeleteSaleParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const DeleteSaleResponse = zod.object({
+  "status": zod.string()
+})
+
+
+/**
+ * @summary Update sale payment status
+ */
+export const UpdateSaleStatusParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const UpdateSaleStatusBody = zod.object({
+  "status": zod.string()
+})
+
+export const UpdateSaleStatusResponse = zod.object({
+  "status": zod.string()
+})
+
+
+/**
+ * @summary Current inventory (produced minus sold)
+ */
+export const GetInventoryResponseItem = zod.object({
+  "product": zod.string(),
+  "producedQty": zod.number(),
+  "producedKg": zod.number(),
+  "soldQty": zod.number(),
+  "soldKg": zod.number(),
+  "stockQty": zod.number(),
+  "stockKg": zod.number()
+})
+export const GetInventoryResponse = zod.array(GetInventoryResponseItem)
+
+

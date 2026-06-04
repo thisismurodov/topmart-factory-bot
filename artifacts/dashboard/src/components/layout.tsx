@@ -9,16 +9,22 @@ import {
   FileBox, 
   Banknote, 
   LogOut,
-  ShoppingCart
+  ShoppingCart,
+  Building2,
+  ShoppingBag,
+  Warehouse,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 
 const NAV_ITEMS = [
-  { href: "/dashboard", label: "Bosh sahifa", icon: LayoutDashboard },
-  { href: "/batches", label: "Partiyalar", icon: Package },
-  { href: "/workers", label: "Ishchilar", icon: Users },
-  { href: "/products", label: "Mahsulotlar", icon: FileBox },
-  { href: "/salary", label: "Maosh", icon: Banknote },
+  { href: "/dashboard",  label: "Bosh sahifa", icon: LayoutDashboard },
+  { href: "/batches",    label: "Partiyalar",  icon: Package },
+  { href: "/workers",    label: "Ishchilar",   icon: Users },
+  { href: "/products",   label: "Mahsulotlar", icon: FileBox },
+  { href: "/salary",     label: "Maosh",       icon: Banknote },
+  { href: "/customers",  label: "Mijozlar",    icon: Building2 },
+  { href: "/sales",      label: "Savdolar",    icon: ShoppingBag },
+  { href: "/inventory",  label: "Ombor",       icon: Warehouse },
 ];
 
 export function Layout({ children }: { children: ReactNode }) {

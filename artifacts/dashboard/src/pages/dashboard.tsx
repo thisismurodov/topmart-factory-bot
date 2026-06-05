@@ -59,7 +59,7 @@ export default function Dashboard() {
     );
   }
 
-  const topProductsData = d?.topProducts.map((p) => ({ name: p.product.length > 12 ? p.product.slice(0, 12) + "…" : p.product, qty: p.soldQty })) ?? [];
+  const topProductsData = d?.topProducts.map((p) => { const name = p.product ?? "Noma'lum"; return { name: name.length > 12 ? name.slice(0, 12) + "…" : name, qty: p.soldQty }; }) ?? [];
 
   return (
     <div className="space-y-6">

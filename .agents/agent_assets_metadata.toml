@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "g8FFL3Dh6rnUfYPEu_K-U"
+uri = "file://artifacts/dashboard/public/label_test.png"
+type = "image"
+title = "58×40mm Label Dizayni (Test)"

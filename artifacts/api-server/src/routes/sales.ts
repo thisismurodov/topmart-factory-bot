@@ -97,10 +97,11 @@ router.post("/sales", async (req, res): Promise<void> => {
   if (!customerRes.rows.length) { res.status(404).json({ error: "Customer not found" }); return; }
   const customerName = customerRes.rows[0].name;
 
-  // Compute totals per currency, then a combined total for the field
+  // Determine primary currency and compute total
+  const allCurrencies = items.map((it: any) => (it.currency ?? "UZS").toUpperCase());
+  const primaryCurrency = allCurrencies.every((c: string) => c === "USD") ? "usd" : "uzs";
   const totalAmount = items.reduce((sum: number, it: any) => {
-    const lt = Number(it.quantity) * Number(it.unitPrice);
-    return sum + lt;
+    return sum + Number(it.quantity) * Number(it.unitPrice);
   }, 0);
 
   const client = await pool.connect();
@@ -108,9 +109,9 @@ router.post("/sales", async (req, res): Promise<void> => {
     await client.query("BEGIN");
 
     const saleRes = await client.query(
-      `INSERT INTO sales (customer_id, customer_name, status, note, total_amount)
-       VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-      [customerId, customerName, status, note, totalAmount]
+      `INSERT INTO sales (customer_id, customer_name, status, note, total_amount, currency)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+      [customerId, customerName, status, note, totalAmount, primaryCurrency]
     );
     const saleId = saleRes.rows[0].id;
 

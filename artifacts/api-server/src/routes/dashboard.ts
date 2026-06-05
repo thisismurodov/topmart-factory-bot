@@ -163,17 +163,21 @@ router.get("/dashboard/v2", async (_req, res): Promise<void> => {
   ] = await Promise.all([
     pool.query(
       `SELECT
-         COUNT(*)::int                                                   AS count,
-         COALESCE(SUM(CASE WHEN currency='uzs' OR currency IS NULL THEN total_amount ELSE 0 END),0) AS total_uzs,
-         COALESCE(SUM(CASE WHEN currency='usd' THEN total_amount ELSE 0 END),0)                     AS total_usd
-       FROM sales WHERE created_at::date = CURRENT_DATE`
+         COUNT(DISTINCT s.id)::int AS count,
+         COALESCE(SUM(CASE WHEN LOWER(si.currency)='uzs' THEN si.line_total ELSE 0 END),0) AS total_uzs,
+         COALESCE(SUM(CASE WHEN LOWER(si.currency)='usd' THEN si.line_total ELSE 0 END),0) AS total_usd
+       FROM sales s
+       LEFT JOIN sale_items si ON si.sale_id = s.id
+       WHERE s.created_at::date = CURRENT_DATE`
     ),
     pool.query(
       `SELECT
-         COALESCE(SUM(CASE WHEN currency='uzs' OR currency IS NULL THEN total_amount ELSE 0 END),0) AS total_uzs,
-         COALESCE(SUM(CASE WHEN currency='usd' THEN total_amount ELSE 0 END),0)                     AS total_usd,
-         COUNT(*)::int AS count
-       FROM sales WHERE TO_CHAR(created_at,'YYYY-MM') = $1`,
+         COALESCE(SUM(CASE WHEN LOWER(si.currency)='uzs' THEN si.line_total ELSE 0 END),0) AS total_uzs,
+         COALESCE(SUM(CASE WHEN LOWER(si.currency)='usd' THEN si.line_total ELSE 0 END),0) AS total_usd,
+         COUNT(DISTINCT s.id)::int AS count
+       FROM sales s
+       LEFT JOIN sale_items si ON si.sale_id = s.id
+       WHERE TO_CHAR(s.created_at,'YYYY-MM') = $1`,
       [period]
     ),
     pool.query(
@@ -313,11 +317,14 @@ router.get("/dashboard/v2", async (_req, res): Promise<void> => {
 router.get("/dashboard/today-extended", async (_req, res): Promise<void> => {
   const [salesResult, batchesResult] = await Promise.all([
     pool.query(
-      `SELECT id, customer_name, product, quantity, weight_kg,
-              total_amount, currency, status, created_at
-       FROM sales
-       WHERE created_at::date = CURRENT_DATE
-       ORDER BY id DESC
+      `SELECT s.id, s.customer_name, s.status, s.created_at,
+              COALESCE(SUM(CASE WHEN LOWER(si.currency)='uzs' THEN si.line_total ELSE 0 END),0) AS total_uzs,
+              COALESCE(SUM(CASE WHEN LOWER(si.currency)='usd' THEN si.line_total ELSE 0 END),0) AS total_usd
+       FROM sales s
+       LEFT JOIN sale_items si ON si.sale_id = s.id
+       WHERE s.created_at::date = CURRENT_DATE
+       GROUP BY s.id, s.customer_name, s.status, s.created_at
+       ORDER BY s.id DESC
        LIMIT 10`
     ),
     pool.query(
@@ -335,12 +342,8 @@ router.get("/dashboard/today-extended", async (_req, res): Promise<void> => {
   ]);
 
   const salesItems = salesResult.rows;
-  const totalUzs = salesItems
-    .filter((s) => s.currency === "uzs" || !s.currency)
-    .reduce((acc, s) => acc + Number(s.total_amount), 0);
-  const totalUsd = salesItems
-    .filter((s) => s.currency === "usd")
-    .reduce((acc, s) => acc + Number(s.total_amount), 0);
+  const totalUzs = salesItems.reduce((acc, s) => acc + Number(s.total_uzs), 0);
+  const totalUsd = salesItems.reduce((acc, s) => acc + Number(s.total_usd), 0);
 
   res.json({
     todaySales: {
@@ -350,11 +353,8 @@ router.get("/dashboard/today-extended", async (_req, res): Promise<void> => {
       items: salesItems.map((s) => ({
         id: s.id,
         customerName: s.customer_name,
-        product: s.product,
-        quantity: s.quantity,
-        weightKg: Number(s.weight_kg),
-        totalAmount: Number(s.total_amount),
-        currency: s.currency ?? "uzs",
+        totalUzs: Number(s.total_uzs),
+        totalUsd: Number(s.total_usd),
         status: s.status,
         createdAt: s.created_at instanceof Date ? s.created_at.toISOString() : String(s.created_at),
       })),

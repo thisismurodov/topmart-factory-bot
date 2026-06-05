@@ -17,6 +17,16 @@ const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
 
 let _baseUrl: string | null = null;
 let _authTokenGetter: AuthTokenGetter | null = null;
+let _authStorageKey: string | null = null;
+
+/**
+ * Set a localStorage key whose value is used as bearer token.
+ * More reliable than setAuthTokenGetter in Vite HMR environments because
+ * this key is read at request time directly from localStorage.
+ */
+export function setAuthStorageKey(key: string | null): void {
+  _authStorageKey = key;
+}
 
 /**
  * Set a base URL that is prepended to every relative request URL
@@ -349,10 +359,16 @@ export async function customFetch<T = unknown>(
     headers.set("accept", DEFAULT_JSON_ACCEPT);
   }
 
-  // Attach bearer token when an auth getter is configured and no
-  // Authorization header has been explicitly provided.
-  if (_authTokenGetter && !headers.has("authorization")) {
-    const token = await _authTokenGetter();
+  // Attach bearer token when no Authorization header has been explicitly provided.
+  if (!headers.has("authorization")) {
+    let token: string | null = null;
+    if (_authTokenGetter) {
+      token = await _authTokenGetter();
+    }
+    // Fallback: read directly from localStorage (reliable across Vite HMR reloads)
+    if (!token && _authStorageKey && typeof localStorage !== "undefined") {
+      token = localStorage.getItem(_authStorageKey);
+    }
     if (token) {
       headers.set("authorization", `Bearer ${token}`);
     }

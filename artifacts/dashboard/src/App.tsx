@@ -14,7 +14,7 @@ import Sales from "@/pages/sales";
 import Inventory from "@/pages/inventory";
 import Login from "@/pages/login";
 import { Layout } from "@/components/layout";
-import { setAuthTokenGetter } from "@workspace/api-client-react";
+import { setAuthTokenGetter, setAuthStorageKey } from "@workspace/api-client-react";
 
 const AUTH_TOKEN_KEY = "topmart_auth_token";
 
@@ -29,6 +29,7 @@ export function clearToken(): void {
 }
 
 setAuthTokenGetter(() => getStoredToken());
+setAuthStorageKey(AUTH_TOKEN_KEY);
 
 const queryClient = new QueryClient();
 

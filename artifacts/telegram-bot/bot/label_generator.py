@@ -4,10 +4,10 @@ from datetime import datetime
 
 from PIL import Image, ImageDraw, ImageFont
 
-# 40mm x 40mm @ 203 dpi  →  320 x 320 px
+# 58mm x 40mm @ 203 dpi
 MM = 203 / 25.4
-LABEL_W = round(40 * MM)   # 320
-LABEL_H = round(40 * MM)   # 320
+LABEL_W = round(58 * MM)   # ≈ 464 px
+LABEL_H = round(40 * MM)   # ≈ 320 px
 
 _FONT_BOLD = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -48,56 +48,74 @@ def _build_single(
     draw = ImageDraw.Draw(img)
 
     # ── Header strip ──────────────────────────────────────────────
-    HDR_H = 36
+    HDR_H = 38
     draw.rectangle([0, 0, LABEL_W, HDR_H], fill="#111111")
+    # TOPMART text centered in left 60% of header
     draw.text(
-        (LABEL_W // 2, HDR_H // 2),
+        (LABEL_W // 2 - 30, HDR_H // 2),
         "TOPMART",
-        font=_font(22, bold=True),
+        font=_font(24, bold=True),
         fill="white",
         anchor="mm",
     )
-
-    # ── Unit number ───────────────────────────────────────────────
+    # Unit counter on the right side of header
     draw.text(
-        (LABEL_W // 2, HDR_H + 22),
-        f"{unit_num} / {total_units}",
-        font=_font(28, bold=True),
-        fill="#111111",
-        anchor="mm",
+        (LABEL_W - 10, HDR_H // 2),
+        f"{unit_num}/{total_units}",
+        font=_font(18, bold=True),
+        fill="#aaaaaa",
+        anchor="rm",
     )
 
     # ── Batch code ────────────────────────────────────────────────
     draw.text(
-        (LABEL_W // 2, HDR_H + 48),
+        (LABEL_W // 2, HDR_H + 20),
         batch_code,
-        font=_font(22, bold=True),
-        fill="#333333",
+        font=_font(24, bold=True),
+        fill="#111111",
         anchor="mm",
     )
 
     # ── Divider ───────────────────────────────────────────────────
-    DIV_Y = HDR_H + 62
+    DIV_Y = HDR_H + 36
     draw.line([6, DIV_Y, LABEL_W - 6, DIV_Y], fill="#cccccc", width=1)
 
-    # ── Fields ────────────────────────────────────────────────────
+    # ── Two-column fields ─────────────────────────────────────────
     weight_txt = f"~{unit_weight:.2f} kg" if unit_weight > 0 else "—"
-    fields = [
-        ("Mahsulot:", product),
+
+    # Truncate long product name
+    prod_display = product if len(product) <= 22 else product[:20] + "…"
+
+    left_fields = [
+        ("Mahsulot:", prod_display),
         ("Og'irlik:", weight_txt),
         ("Ishchi:",   worker),
-        ("Sana:",     date_str),
-        ("Soat:",     time_str),
+    ]
+    right_fields = [
+        ("Sana:", date_str),
+        ("Soat:", time_str),
     ]
 
-    f_key = _font(16)
-    f_val = _font(16, bold=True)
+    f_key = _font(15)
+    f_val = _font(15, bold=True)
     PAD   = 8
-    y     = DIV_Y + 8
-    for key, val in fields:
+    COL2  = LABEL_W // 2 + 4
+    y     = DIV_Y + 9
+
+    for key, val in left_fields:
         draw.text((PAD,      y), key, font=f_key, fill="#666666")
-        draw.text((PAD + 90, y), val, font=f_val, fill="#111111")
-        y += 26
+        draw.text((PAD + 80, y), val, font=f_val, fill="#111111")
+        y += 24
+
+    # Right column starts aligned to top
+    y2 = DIV_Y + 9
+    for key, val in right_fields:
+        draw.text((COL2,      y2), key, font=f_key, fill="#666666")
+        draw.text((COL2 + 62, y2), val, font=f_val, fill="#111111")
+        y2 += 24
+
+    # ── Bottom border ─────────────────────────────────────────────
+    draw.line([0, LABEL_H - 1, LABEL_W, LABEL_H - 1], fill="#eeeeee", width=1)
 
     return img
 

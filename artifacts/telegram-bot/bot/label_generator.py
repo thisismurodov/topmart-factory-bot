@@ -147,8 +147,10 @@ def _build_single(
     # ── Satır 6: Sana (chap) + Soat (o'ng) — og'irlik ostida ─────
     draw.text((PAD_L, y), date_str, font=F_DT, fill="#444444")
     draw.text((LABEL_W - PAD_R, y), time_str, font=F_DT, fill="#444444", anchor="ra")
+    y += _text_h(draw, date_str, F_DT) + 6   # 6px pastki bo'shliq
 
-    return img
+    # Quyi bo'sh qismni kesib tashlash — faqat mazmun balandligi qoladi
+    return img.crop((0, 0, LABEL_W, y))
 
 
 def generate_label_pdf(

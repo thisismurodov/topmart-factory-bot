@@ -2,6 +2,7 @@ import io
 import os
 from datetime import datetime
 
+import img2pdf
 from PIL import Image, ImageDraw, ImageFont
 
 # 58mm x 40mm @ 203 dpi
@@ -183,18 +184,22 @@ def generate_label_pdf(
 ) -> io.BytesIO:
     unit_weight = (weight_kg / quantity) if quantity > 0 else 0.0
     ts = created_at or datetime.now()
-    images = [
-        _build_single(batch_code, worker, product, i, quantity, unit_weight, ts)
-        for i in range(1, quantity + 1)
-    ]
-    buf = io.BytesIO()
-    images[0].save(
-        buf,
-        format="PDF",
-        save_all=True,
-        append_images=images[1:],
-        resolution=203.0,
-    )
+
+    # Har bir label uchun PNG bytes tayyorlaymiz (203 DPI metadata bilan)
+    png_pages: list[bytes] = []
+    for i in range(1, quantity + 1):
+        img = _build_single(batch_code, worker, product, i, quantity, unit_weight, ts)
+        img_buf = io.BytesIO()
+        # DPI metadata ni PNG ichiga yozamiz — img2pdf shu orqali page size hisoblaydi
+        img.save(img_buf, format="PNG", dpi=(203, 203))
+        png_pages.append(img_buf.getvalue())
+
+    # img2pdf: DPI ga qarab sahifa o'lchamini ANIQ 58x40mm qilib beradi
+    # Foxit yoki boshqa viewer 100% da chiqaradi, o'z-o'zidan kichaytirmaydi
+    layout_fn = img2pdf.get_fixed_dpi_layout_fun((203, 203))
+    pdf_bytes = img2pdf.convert(png_pages, layout_fun=layout_fn)
+
+    buf = io.BytesIO(pdf_bytes)
     buf.seek(0)
     return buf
 

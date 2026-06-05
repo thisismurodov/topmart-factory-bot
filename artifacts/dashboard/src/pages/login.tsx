@@ -3,20 +3,15 @@ import { useLocation } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { useLogin } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
+  Form, FormControl, FormField, FormItem, FormLabel, FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ShoppingCart, AlertCircle } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { storeToken } from "@/App";
 
 const formSchema = z.object({
   username: z.string().min(1, "Foydalanuvchi nomi kiritilishi shart"),
@@ -26,29 +21,38 @@ const formSchema = z.object({
 export default function Login() {
   const [, setLocation] = useLocation();
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
-    defaultValues: {
-      username: "",
-      password: "",
-    },
+    defaultValues: { username: "", password: "" },
   });
 
-  const login = useLogin({
-    mutation: {
-      onSuccess: () => {
-        setLocation("/dashboard");
-      },
-      onError: () => {
-        setError("Foydalanuvchi nomi yoki parol noto'g'ri");
-      }
-    }
-  });
-
-  function onSubmit(values: z.infer<typeof formSchema>) {
+  async function onSubmit(values: z.infer<typeof formSchema>) {
     setError(null);
-    login.mutate({ data: values });
+    setLoading(true);
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(values),
+      });
+      if (!res.ok) {
+        setError("Foydalanuvchi nomi yoki parol noto'g'ri");
+        return;
+      }
+      const data = await res.json();
+      if (data.token) {
+        storeToken(data.token);
+        setLocation("/dashboard");
+      } else {
+        setError("Server xatosi. Qayta urinib ko'ring.");
+      }
+    } catch {
+      setError("Tarmoq xatosi. Qayta urinib ko'ring.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -65,9 +69,7 @@ export default function Login() {
         <Card className="border-border shadow-xl">
           <CardHeader className="space-y-1">
             <CardTitle className="text-2xl">Kirish</CardTitle>
-            <CardDescription>
-              Admin ma'lumotlaringizni kiriting
-            </CardDescription>
+            <CardDescription>Admin ma'lumotlaringizni kiriting</CardDescription>
           </CardHeader>
           <CardContent>
             <Form {...form}>
@@ -78,51 +80,28 @@ export default function Login() {
                     <AlertDescription>{error}</AlertDescription>
                   </Alert>
                 )}
-                <FormField
-                  control={form.control}
-                  name="username"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Foydalanuvchi nomi</FormLabel>
-                      <FormControl>
-                        <Input 
-                          placeholder="admin" 
-                          {...field} 
-                          className="bg-muted/50 font-mono" 
-                          data-testid="input-username"
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="password"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Parol</FormLabel>
-                      <FormControl>
-                        <Input 
-                          type="password" 
-                          placeholder="••••••••" 
-                          {...field} 
-                          className="bg-muted/50"
-                          data-testid="input-password"
-                          autoComplete="current-password"
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <Button 
-                  type="submit" 
-                  className="w-full mt-6 font-medium" 
-                  disabled={login.isPending}
-                  data-testid="btn-login"
-                >
-                  {login.isPending ? "Tekshirilmoqda..." : "Tizimga kirish"}
+                <FormField control={form.control} name="username" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Foydalanuvchi nomi</FormLabel>
+                    <FormControl>
+                      <Input placeholder="admin" {...field} className="bg-muted/50 font-mono"
+                        autoComplete="username" data-testid="input-username" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+                <FormField control={form.control} name="password" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Parol</FormLabel>
+                    <FormControl>
+                      <Input type="password" placeholder="••••••••" {...field} className="bg-muted/50"
+                        autoComplete="current-password" data-testid="input-password" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+                <Button type="submit" className="w-full mt-6 font-medium" disabled={loading} data-testid="btn-login">
+                  {loading ? "Tekshirilmoqda..." : "Tizimga kirish"}
                 </Button>
               </form>
             </Form>

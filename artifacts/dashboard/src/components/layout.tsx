@@ -55,6 +55,7 @@ export function Layout({ children }: { children: ReactNode }) {
   const logout = useLogout({
     mutation: {
       onSuccess: () => {
+        import("@/App").then(({ clearToken }) => clearToken());
         queryClient.clear();
         setLocation("/login");
       }

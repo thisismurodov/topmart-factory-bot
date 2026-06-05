@@ -14,14 +14,27 @@ import Sales from "@/pages/sales";
 import Inventory from "@/pages/inventory";
 import Login from "@/pages/login";
 import { Layout } from "@/components/layout";
+import { setAuthTokenGetter } from "@workspace/api-client-react";
+
+const AUTH_TOKEN_KEY = "topmart_auth_token";
+
+export function getStoredToken(): string | null {
+  return localStorage.getItem(AUTH_TOKEN_KEY);
+}
+export function storeToken(token: string): void {
+  localStorage.setItem(AUTH_TOKEN_KEY, token);
+}
+export function clearToken(): void {
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+}
+
+setAuthTokenGetter(() => getStoredToken());
 
 const queryClient = new QueryClient();
 
 function RedirectToDashboard() {
   const [, setLocation] = useLocation();
-  useEffect(() => {
-    setLocation("/dashboard");
-  }, [setLocation]);
+  useEffect(() => { setLocation("/dashboard"); }, [setLocation]);
   return null;
 }
 

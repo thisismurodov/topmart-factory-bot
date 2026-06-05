@@ -59,9 +59,14 @@ def workers_inline_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(buttons)
 
 
-def products_inline_keyboard() -> InlineKeyboardMarkup:
-    from .database import get_product_names
-    products = get_product_names()
+def products_inline_keyboard(worker_name: str | None = None) -> InlineKeyboardMarkup:
+    from .database import get_product_names, get_worker_allowed_products
+    all_products = get_product_names()
+    if worker_name:
+        allowed = get_worker_allowed_products(worker_name)
+        products = allowed if allowed else all_products  # fallback: all if none set
+    else:
+        products = all_products
     buttons = []
     for i in range(0, len(products), 2):
         row = [InlineKeyboardButton(products[i], callback_data=f"product:{products[i]}")]
@@ -82,6 +87,7 @@ def admin_main_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("➕ Hodim qo'shish",        callback_data="adm:add_worker")],
         [InlineKeyboardButton("➕ Mahsulot qo'shish",     callback_data="adm:add_product")],
         [InlineKeyboardButton("👔 Upakovkachi belgilash", callback_data="adm:assign_packer")],
+        [InlineKeyboardButton("🔐 Mahsulot ruxsatlari",  callback_data="adm:ruxsatlar")],
         [InlineKeyboardButton("📋 Hodimlar ro'yxati",     callback_data="adm:list_workers")],
         [InlineKeyboardButton("📦 Mahsulotlar ro'yxati",  callback_data="adm:list_products")],
         [InlineKeyboardButton("💰 Maosh boshqaruvi",      callback_data="adm:salary")],

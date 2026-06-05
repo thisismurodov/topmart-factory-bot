@@ -11,6 +11,7 @@ from ..database import (
     get_products, get_registered_packers,
     assign_packer_workers, get_packer_workers, get_workers,
     clear_test_data, delete_worker,
+    get_worker_allowed_products, set_worker_allowed_products, get_product_names,
 )
 
 (
@@ -18,7 +19,8 @@ from ..database import (
     WORKER_NAME, WORKER_PREFIX, WORKER_PHONE, WORKER_ROLE,
     PRODUCT_NAME, PRODUCT_TYPE, PRODUCT_RATE,
     PACKER_SELECT, PACKER_WORKERS,
-) = range(10)
+    PERM_WORKER, PERM_PRODUCTS,
+) = range(12)
 
 
 # ── Entry ────────────────────────────────────────────────────────────────────
@@ -132,6 +134,26 @@ async def adm_home_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=admin_main_keyboard())
         return ADM_HOME
 
+    elif action == "ruxsatlar":
+        workers = get_all_workers_config()
+        if not workers:
+            await query.edit_message_text("Hodimlar yo'q.", reply_markup=admin_main_keyboard())
+            return ADM_HOME
+        buttons = [
+            [InlineKeyboardButton(
+                f"{'👔' if w['role']=='packer' else '👷'} {w['name']}",
+                callback_data=f"pw_sel:{w['name']}"
+            )]
+            for w in workers
+        ]
+        buttons.append([InlineKeyboardButton("⬅️ Ortga", callback_data="adm:back")])
+        await query.edit_message_text(
+            "🔐 *Mahsulot ruxsatlari*\n\nQaysi hodimni sozlamoqchisiz?",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(buttons),
+        )
+        return PERM_WORKER
+
     elif action == "back":
         await query.edit_message_text(
             "⚙️ *Admin paneli*", parse_mode="Markdown",
@@ -139,6 +161,69 @@ async def adm_home_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         )
         return ADM_HOME
 
+    return ADM_HOME
+
+
+# ── Permissions flow ──────────────────────────────────────────────────────────
+
+def _perm_keyboard(worker_name: str, selected: list[str]) -> InlineKeyboardMarkup:
+    all_products = get_product_names()
+    buttons = []
+    for p in all_products:
+        icon = "✅" if p in selected else "☐"
+        buttons.append([InlineKeyboardButton(f"{icon} {p}", callback_data=f"pp_tog:{p}")])
+    buttons.append([
+        InlineKeyboardButton("💾 Saqlash", callback_data=f"pp_save:{worker_name}"),
+        InlineKeyboardButton("⬅️ Ortga",  callback_data="adm:ruxsatlar"),
+    ])
+    return InlineKeyboardMarkup(buttons)
+
+
+async def perm_worker_selected(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    worker_name = query.data.split(":", 1)[1]
+    allowed = get_worker_allowed_products(worker_name)
+    ctx.user_data["perm_worker"] = worker_name
+    ctx.user_data["perm_selected"] = list(allowed)  # copy
+    await query.edit_message_text(
+        f"🔐 *{worker_name}* uchun mahsulotlar:\n\n"
+        "✅ = ruxsat berilgan  ·  ☐ = ruxsat yo'q\n"
+        "_Ruxsat berilmaganlarda hammasi ko'rinadi_",
+        parse_mode="Markdown",
+        reply_markup=_perm_keyboard(worker_name, ctx.user_data["perm_selected"]),
+    )
+    return PERM_PRODUCTS
+
+
+async def perm_product_toggle(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    product = query.data.split(":", 1)[1]
+    selected: list = ctx.user_data.get("perm_selected", [])
+    if product in selected:
+        selected.remove(product)
+    else:
+        selected.append(product)
+    ctx.user_data["perm_selected"] = selected
+    worker_name = ctx.user_data.get("perm_worker", "")
+    await query.edit_message_reply_markup(
+        reply_markup=_perm_keyboard(worker_name, selected)
+    )
+    return PERM_PRODUCTS
+
+
+async def perm_save(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    worker_name = query.data.split(":", 1)[1]
+    selected = ctx.user_data.get("perm_selected", [])
+    set_worker_allowed_products(worker_name, selected)
+    if selected:
+        text = f"✅ *{worker_name}* uchun ruxsatlar saqlandi:\n" + "\n".join(f"• {p}" for p in selected)
+    else:
+        text = f"✅ *{worker_name}* — barcha mahsulotlar ko'rinadi (cheklov yo'q)"
+    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=admin_main_keyboard())
     return ADM_HOME
 
 
@@ -461,6 +546,15 @@ def build_admin_handler() -> ConversationHandler:
             PACKER_WORKERS: [
                 CallbackQueryHandler(packer_worker_toggle, pattern=r"^pk_tog:"),
                 CallbackQueryHandler(packer_save,          pattern=r"^pk_save$"),
+            ],
+            PERM_WORKER: [
+                CallbackQueryHandler(perm_worker_selected, pattern=r"^pw_sel:"),
+                CallbackQueryHandler(adm_home_callback,    pattern=r"^adm:"),
+            ],
+            PERM_PRODUCTS: [
+                CallbackQueryHandler(perm_product_toggle,  pattern=r"^pp_tog:"),
+                CallbackQueryHandler(perm_save,            pattern=r"^pp_save:"),
+                CallbackQueryHandler(adm_home_callback,    pattern=r"^adm:"),
             ],
         },
         fallbacks=[

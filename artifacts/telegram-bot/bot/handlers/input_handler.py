@@ -35,7 +35,7 @@ async def choose_worker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     await query.edit_message_text(
         f"👷 *{worker}*\n\n📦 *Mahsulotni tanlang:*",
         parse_mode="Markdown",
-        reply_markup=products_inline_keyboard(),
+        reply_markup=products_inline_keyboard(worker_name=worker),
     )
     return CHOOSE_PRODUCT
 

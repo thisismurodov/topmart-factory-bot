@@ -1,0 +1,146 @@
+TOPMART ERP - SAVDOLAR MODULINI QAYTA ISHLASH
+
+Maqsad:
+Savdo qo'shish jarayonini maksimal darajada soddalashtirish va operator xatolarini kamaytirish.
+
+1. MAHSULOT MODELINI KENGAYTIRISH
+
+products_config jadvaliga quyidagi maydonlarni qo'sh:
+
+* sale_type (kg | dona)
+* default_price
+* currency (UZS | USD)
+* active
+
+Misol:
+
+{
+"id": 1,
+"name": "Polyamide shlanka",
+"sale_type": "dona",
+"default_price": 180000,
+"currency": "UZS"
+}
+
+{
+"id": 2,
+"name": "Ikki qavat arqon",
+"sale_type": "kg",
+"default_price": 2.6,
+"currency": "USD"
+}
+
+2. YANGI SAVDO OYNASI LOGIKASI
+
+Hozirgi forma:
+
+* Mijoz
+* Mahsulot
+* Miqdor (dona)
+* Og'irlik (kg)
+* Narx
+
+ko'rinishini o'zgartir.
+
+Yangi forma:
+
+* Mijoz
+* Mahsulot
+* Miqdor
+* Narx (readonly)
+* Valyuta (readonly)
+* Jami summa (readonly)
+* To'lov holati
+* Izoh
+
+3. MAHSULOT TANLANGANDA
+
+Mahsulot tanlangach avtomatik ravishda:
+
+* sale_type yuklansin
+* default_price yuklansin
+* currency yuklansin
+
+Agar mahsulot sale_type = "kg" bo'lsa:
+
+Label:
+"Miqdor (kg)"
+
+Agar mahsulot sale_type = "dona" bo'lsa:
+
+Label:
+"Miqdor (dona)"
+
+4. JAMI HISOBLASH
+
+Jami summa:
+
+quantity × default_price
+
+real time hisoblanishi kerak.
+
+Masalan:
+
+154.8 × 2.6 = 402.48 USD
+
+80 × 180000 = 14 400 000 UZS
+
+5. SAVDO SAQLANGANDA
+
+sales jadvaliga quyidagilar saqlansin:
+
+* product_id
+* quantity
+* unit_price
+* currency
+* total_amount
+* payment_status
+* note
+* created_at
+
+Muhim:
+
+unit_price savdo vaqtida alohida saqlansin.
+
+Keyinchalik mahsulot narxi o'zgarsa eski savdolar buzilmasin.
+
+6. MAHSULOTNI EDIT QILISH
+
+Mahsulot edit oynasiga:
+
+* sale_type
+* default_price
+* currency
+
+qo'shilsin.
+
+Agar mahsulot bo'yicha savdolar mavjud bo'lsa va sale_type o'zgartirilayotgan bo'lsa:
+
+Warning modal chiqsin:
+
+"Bu mahsulot bo'yicha avvalgi savdolar mavjud. Sotish turini o'zgartirish hisobotlarga ta'sir qilishi mumkin. Davom etilsinmi?"
+
+7. UX TALABI
+
+Operator yangi savdo yaratishda faqat:
+
+1. Mijoz tanlaydi
+2. Mahsulot tanlaydi
+3. Miqdor kiritadi
+
+Qolgan barcha ma'lumotlar mahsulot konfiguratsiyasidan avtomatik olinadi.
+
+Maqsad:
+Savdo qo'shish jarayonini 3 ta harakatgacha qisqartirish va noto'g'ri narx yoki valyuta kiritilishining oldini olish.
+
+8. MIGRATSIYA
+
+Mavjud mahsulotlar uchun:
+
+sale_type = "kg"
+currency = "UZS"
+default_price = 0
+
+default qiymatlar bilan migration yoz.
+
+Mavjud ma'lumotlarni yo'qotmaslik shart.

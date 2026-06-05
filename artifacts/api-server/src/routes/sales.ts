@@ -44,7 +44,7 @@ router.get("/sales", async (req, res): Promise<void> => {
   const [itemsResult, countResult] = await Promise.all([
     pool.query(
       `SELECT id, customer_id, customer_name, product, quantity, weight_kg,
-              unit_price, total_amount, status, note, created_at
+              unit_price, total_amount, currency, status, note, created_at
        FROM sales ${where}
        ORDER BY id DESC LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
       params
@@ -66,6 +66,7 @@ router.get("/sales", async (req, res): Promise<void> => {
         status: s.status,
         note: s.note ?? "",
         createdAt: s.created_at instanceof Date ? s.created_at.toISOString() : String(s.created_at),
+        currency: s.currency ?? "UZS",
       })),
       total: Number(countResult.rows[0].cnt),
     })
@@ -81,6 +82,7 @@ router.post("/sales", async (req, res): Promise<void> => {
 
   const { customerId, product, quantity, weightKg = 0, unitPrice, totalAmount, status = "pending", note = "" } =
     parsed.data;
+  const currency: string = (req.body as any).currency ?? "UZS";
 
   const customerResult = await pool.query("SELECT name FROM customers WHERE id = $1", [customerId]);
   if (customerResult.rows.length === 0) {
@@ -91,10 +93,10 @@ router.post("/sales", async (req, res): Promise<void> => {
   const customerName = customerResult.rows[0].name;
   const result = await pool.query(
     `INSERT INTO sales (customer_id, customer_name, product, quantity, weight_kg,
-                        unit_price, total_amount, status, note)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+                        unit_price, total_amount, currency, status, note)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
      RETURNING *`,
-    [customerId, customerName, product, quantity, weightKg, unitPrice, totalAmount ?? unitPrice * quantity, status, note]
+    [customerId, customerName, product, quantity, weightKg, unitPrice, totalAmount ?? unitPrice * quantity, currency, status, note]
   );
 
   const r = result.rows[0];

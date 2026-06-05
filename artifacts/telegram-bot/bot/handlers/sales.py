@@ -9,6 +9,7 @@ from ..database import (
     get_sale_products, get_sale_product_by_id,
     add_sale_product, delete_sale_product,
     create_sale_multi, get_recent_sales,
+    get_price_for_qty,
 )
 
 # ── States ────────────────────────────────────────────────────────────────────
@@ -247,9 +248,9 @@ async def qty_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     sale     = context.user_data["sale"]
     cur_prod = sale["cur_prod"]
-    price    = cur_prod["default_price"]
-    currency = cur_prod["currency"]
     unit     = cur_prod["unit"]
+    # Miqdorga qarab tier narxini topamiz
+    price, currency = get_price_for_qty(cur_prod["id"], qty)
     line_total = qty * price
 
     # Qo'shilgan mahsulotlar ro'yxatiga qo'shamiz

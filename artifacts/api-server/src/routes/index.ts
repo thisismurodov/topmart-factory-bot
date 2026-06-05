@@ -11,6 +11,7 @@ import salesRouter from "./sales";
 import inventoryRouter from "./inventory";
 import inventoryV2Router from "./inventory-v2";
 import warehousesRouter from "./warehouses";
+import salesProductsRouter from "./sales-products";
 
 const router: IRouter = Router();
 
@@ -26,5 +27,6 @@ router.use(salesRouter);
 router.use(inventoryRouter);
 router.use(inventoryV2Router);
 router.use(warehousesRouter);
+router.use(salesProductsRouter);
 
 export default router;

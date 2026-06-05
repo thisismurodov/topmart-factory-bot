@@ -5,9 +5,8 @@ import {
   useDeleteSale,
   useUpdateSaleStatus,
   useGetCustomers, getGetCustomersQueryKey,
-  useGetProducts, getGetProductsQueryKey,
 } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -69,8 +68,13 @@ export default function Sales() {
     query: { queryKey: getGetCustomersQueryKey() },
   });
 
-  const { data: products } = useGetProducts({
-    query: { queryKey: getGetProductsQueryKey() },
+  const { data: products } = useQuery<{ id: number; name: string; unit: string; price: number }[]>({
+    queryKey: ["sales-products"],
+    queryFn: async () => {
+      const res = await fetch("/api/sales-products");
+      if (!res.ok) throw new Error("Fetch failed");
+      return res.json();
+    },
   });
 
   const createSale = useCreateSale({
@@ -115,7 +119,7 @@ export default function Sales() {
   function calcTotal() {
     const prod = products?.find(p => p.name === watchProduct);
     if (!prod) return 0;
-    if (prod.rateType === "per_kg") return Number(watchWeight) * Number(watchPrice);
+    if (prod.unit === "kg") return Number(watchWeight) * Number(watchPrice);
     return Number(watchQty) * Number(watchPrice);
   }
 

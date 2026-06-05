@@ -539,6 +539,34 @@ def get_sale_product_by_id(prod_id: int) -> dict | None:
         return cur.fetchone()
 
 
+def get_price_for_qty(product_id: int, qty: float) -> tuple[float, str]:
+    """
+    Miqdorga qarab narxni qaytaradi.
+    sales_product_tiers'dan min_qty <= qty shartiga to'g'ri keladigan
+    eng katta min_qty'li tier tanlanadi.
+    Agar tier yo'q bo'lsa, sales_products.default_price qaytariladi.
+    Return: (price, currency)
+    """
+    with get_conn() as (conn, cur):
+        cur.execute(
+            """SELECT price, currency FROM sales_product_tiers
+               WHERE product_id = %s AND min_qty <= %s
+               ORDER BY min_qty DESC LIMIT 1""",
+            (product_id, qty),
+        )
+        tier = cur.fetchone()
+        if tier:
+            return float(tier["price"]), tier["currency"]
+        cur.execute(
+            "SELECT default_price, currency FROM sales_products WHERE id = %s",
+            (product_id,),
+        )
+        prod = cur.fetchone()
+        if prod:
+            return float(prod["default_price"] or 0), prod["currency"] or "UZS"
+        return 0.0, "UZS"
+
+
 def get_sale_product_unit(name: str) -> str:
     with get_conn() as (conn, cur):
         cur.execute("SELECT sale_type FROM sales_products WHERE name = %s", (name,))

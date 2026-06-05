@@ -600,3 +600,8 @@ def build_add_product_handler() -> ConversationHandler:
         name="add_product_conv",
         persistent=True,
     )
+
+
+def register(app) -> None:
+    app.add_handler(build_sales_handler())
+    app.add_handler(build_add_product_handler())

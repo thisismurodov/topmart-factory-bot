@@ -142,11 +142,11 @@ def _build_single(
 
     # ── Satır 5: Og'irlik ─────────────────────────────────────────
     draw.text((PAD_L, y), weight_txt, font=F_INFO, fill="black")
+    y += _text_h(draw, weight_txt, F_INFO) + 6
 
-    # ── Satır 6: Sana (chap) + Soat (o'ng) — pastki qisim ────────
-    DT_Y = LABEL_H - 5 - _text_h(draw, date_str, F_DT)
-    draw.text((PAD_L, DT_Y), date_str, font=F_DT, fill="#444444")
-    draw.text((LABEL_W - PAD_R, DT_Y), time_str, font=F_DT, fill="#444444", anchor="ra")
+    # ── Satır 6: Sana (chap) + Soat (o'ng) — og'irlik ostida ─────
+    draw.text((PAD_L, y), date_str, font=F_DT, fill="#444444")
+    draw.text((LABEL_W - PAD_R, y), time_str, font=F_DT, fill="#444444", anchor="ra")
 
     return img
 

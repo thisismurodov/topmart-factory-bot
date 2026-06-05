@@ -1,3 +1,7 @@
+"""
+58mm × 40mm thermal label generator (XPrinter XP-365B, 203 DPI).
+Landscape layout — uses 95% of sticker area, readable from 1 metre.
+"""
 import io
 import os
 from datetime import datetime
@@ -5,70 +9,78 @@ from datetime import datetime
 import img2pdf
 from PIL import Image, ImageDraw, ImageFont
 
-# 58mm x 40mm @ 203 dpi
-MM      = 203 / 25.4
-LABEL_W = round(58 * MM)   # 464 px
-LABEL_H = round(40 * MM)   # 320 px
+# 58mm × 40mm @ 203 DPI
+_DPI    = 203
+LABEL_W = round(58 * _DPI / 25.4)   # 464 px
+LABEL_H = round(40 * _DPI / 25.4)   # 320 px
 
-_FONT_BOLD = [
+_BOLD_PATHS = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
     "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
 ]
-_FONT_REG = [
+_REG_PATHS = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
     "/usr/share/fonts/dejavu/DejaVuSans.ttf",
 ]
 
 
-def _font(size: int, bold: bool = False) -> ImageFont.ImageFont:
-    for path in (_FONT_BOLD if bold else _FONT_REG):
+def _font(px: int, bold: bool = False) -> ImageFont.FreeTypeFont:
+    for path in (_BOLD_PATHS if bold else _REG_PATHS):
         if os.path.exists(path):
-            return ImageFont.truetype(path, size)
+            return ImageFont.truetype(path, px)
     try:
-        return ImageFont.load_default(size=size)
+        return ImageFont.load_default(size=px)
     except TypeError:
         return ImageFont.load_default()
 
 
-def _text_width(draw: ImageDraw.ImageDraw, text: str, font) -> int:
+def _text_w(draw: ImageDraw.ImageDraw, text: str, font) -> int:
     try:
-        bbox = draw.textbbox((0, 0), text, font=font)
-        return bbox[2] - bbox[0]
+        b = draw.textbbox((0, 0), text, font=font)
+        return b[2] - b[0]
     except AttributeError:
         return len(text) * font.size // 2
 
 
-def _fit_font(draw: ImageDraw.ImageDraw, text: str, max_width: int,
-              start_size: int, min_size: int = 28, bold: bool = True):
-    """Matn max_width ichiga sig'guncha font o'lchamini kamaytiradi."""
-    size = start_size
-    while size >= min_size:
-        f = _font(size, bold)
-        if _text_width(draw, text, f) <= max_width:
-            return f, size
-        size -= 2
-    return _font(min_size, bold), min_size
+def _text_h(draw: ImageDraw.ImageDraw, text: str, font) -> int:
+    try:
+        b = draw.textbbox((0, 0), text, font=font)
+        return b[3] - b[1]
+    except AttributeError:
+        return font.size
 
 
-def _wrap_text(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) -> list[str]:
-    """Uzun matnni max 2 qatorga bo'ladi."""
+def _fit_font(draw, text: str, max_w: int, start: int, minimum: int = 28,
+              bold: bool = True):
+    """Matnni max_w ichiga sig'adigan eng katta fontni qaytaradi."""
+    sz = start
+    while sz >= minimum:
+        f = _font(sz, bold)
+        if _text_w(draw, text, f) <= max_w:
+            return f, sz
+        sz -= 2
+    return _font(minimum, bold), minimum
+
+
+def _wrap(draw, text: str, font, max_w: int) -> list[str]:
+    """So'zlarni max 2 qatorga bo'ladi."""
     words = text.split()
     lines: list[str] = []
-    current = ""
-    for word in words:
-        test = f"{current} {word}".strip()
-        if _text_width(draw, test, font) > max_width and current:
-            lines.append(current)
-            current = word
-            if len(lines) >= 2:
+    cur = ""
+    for w in words:
+        test = f"{cur} {w}".strip()
+        if _text_w(draw, test, font) > max_w and cur:
+            lines.append(cur)
+            cur = w
+            if len(lines) == 2:
                 break
         else:
-            current = test
-    if current and len(lines) < 2:
-        lines.append(current)
-    return lines if lines else [text[:20]]
+            cur = test
+    if cur and len(lines) < 2:
+        lines.append(cur)
+    return lines or [text]
 
 
 def _build_single(
@@ -78,98 +90,64 @@ def _build_single(
     unit_num: int,
     total_units: int,
     unit_weight: float,
-    created_at: datetime | None = None,
+    ts: datetime,
 ) -> Image.Image:
-    now      = created_at or datetime.now()
-    date_str = now.strftime("%d.%m.%Y")
-    time_str = now.strftime("%H:%M")
+    date_str   = ts.strftime("%d.%m.%Y")
+    time_str   = ts.strftime("%H:%M")
+    weight_txt = f"{unit_weight:.2f} kg" if unit_weight > 0 else "—"
 
     img  = Image.new("RGB", (LABEL_W, LABEL_H), "white")
     draw = ImageDraw.Draw(img)
 
-    PAD = 8   # horizontal padding
+    PAD = 8       # chap/o'ng chekkadan masofa
 
-    # ── 1. HEADER: TOPMART ───────────────────────────────────────
-    HDR_H = 38
-    draw.rectangle([0, 0, LABEL_W, HDR_H], fill="#111111")
-    draw.text(
-        (LABEL_W // 2, HDR_H // 2),
-        "TOPMART",
-        font=_font(24, bold=True),
-        fill="white",
-        anchor="mm",
-    )
+    # ── Fontlar (203 DPI, 1pt ≈ 2.82px) ──────────────────────────
+    # TOPMART / page:  11pt → 31px
+    # Batch code:      auto-fit 26–28pt → 73–79px
+    # Product:         13pt → 37px
+    # Worker/Weight:   12pt → 34px
+    # Date/Time:       10pt → 28px
+    F_HDR  = _font(31, bold=True)
+    F_PROD = _font(37, bold=True)
+    F_INFO = _font(34, bold=True)
+    F_DT   = _font(28, bold=False)
 
-    # ── 2. BATCH CODE — eng katta element (~30% balandlik) ───────
-    # Available zone: HDR_H..~HDR_H+100
-    BC_MAX_W = LABEL_W - 2 * PAD
-    bc_font, _ = _fit_font(draw, batch_code, BC_MAX_W, start_size=66, min_size=36, bold=True)
-    BC_CENTER_Y = HDR_H + 54          # batch code markaziy nuqtasi
-    draw.text(
-        (LABEL_W // 2, BC_CENTER_Y),
-        batch_code,
-        font=bc_font,
-        fill="#111111",
-        anchor="mm",
-    )
+    # ── Satır 1: TOPMART (chap) + N/M (o'ng) ─────────────────────
+    y = 5
+    draw.text((PAD, y), "TOPMART", font=F_HDR, fill="black")
+    page_txt = f"{unit_num}/{total_units}"
+    draw.text((LABEL_W - PAD, y), page_txt, font=F_HDR, fill="black", anchor="ra")
+    y += _text_h(draw, "TOPMART", F_HDR) + 5
 
-    # ── 3. DIVIDER ────────────────────────────────────────────────
-    DIV_Y = HDR_H + 108
-    draw.line([PAD, DIV_Y, LABEL_W - PAD, DIV_Y], fill="#999999", width=2)
+    # ingichka gorizontal chiziq
+    draw.line([PAD, y, LABEL_W - PAD, y], fill="black", width=1)
+    y += 5
 
-    # ── 4. BODY — ikki ustun ─────────────────────────────────────
-    # Sol ustun: Mahsulot nomi, Og'irlik, Ishchi
-    # O'ng ustun: Sana, Soat, Dona
-    BODY_TOP  = DIV_Y + 10
-    COL_MID   = LABEL_W // 2 + 10    # ikki ustun orasidagi chegara
-    LEFT_W    = COL_MID - PAD - 12   # chap ustun kengligi
-    RIGHT_W   = LABEL_W - COL_MID - PAD
+    # ── Satır 2: Partiya kodi — ENG KATTA ────────────────────────
+    bc_font, _ = _fit_font(draw, batch_code,
+                           max_w=LABEL_W - 2 * PAD,
+                           start=74, minimum=34, bold=True)
+    draw.text((PAD, y), batch_code, font=bc_font, fill="black")
+    y += _text_h(draw, batch_code, bc_font) + 7
 
-    f_val  = _font(24, bold=True)    # qiymat shrifti — katta, qalin
-    f_lbl  = _font(15, bold=False)   # kalit so'z shrifti — kichik, kulrang
-    ROW_H  = 42                      # bir qator balandligi
-
-    weight_txt = f"{unit_weight:.2f} kg" if unit_weight > 0 else "—"
-    page_txt   = f"{unit_num} / {total_units}"
-
-    # Mahsulot nomini 2 qatorga bo'lish
-    prod_lines = _wrap_text(draw, product, f_val, LEFT_W)
-
-    # Chap ustun y boshlanishi
-    y_l = BODY_TOP
-
-    # Mahsulot nomi (1 yoki 2 qator)
-    draw.text((PAD, y_l), "Mahsulot", font=f_lbl, fill="#888888")
-    y_l += 16
+    # ── Satır 3: Mahsulot nomi (wrap → max 2 qator) ───────────────
+    prod_lines = _wrap(draw, product, F_PROD, LABEL_W - 2 * PAD)
     for line in prod_lines:
-        draw.text((PAD, y_l), line, font=f_val, fill="#111111")
-        y_l += 27
+        draw.text((PAD, y), line, font=F_PROD, fill="black")
+        y += _text_h(draw, line, F_PROD) + 3
+    y += 2
 
-    # Og'irlik
-    y_l = BODY_TOP + ROW_H + 8
-    draw.text((PAD, y_l), "Og'irlik", font=f_lbl, fill="#888888")
-    draw.text((PAD, y_l + 16), weight_txt, font=f_val, fill="#111111")
+    # ── Satır 4: Ishchi ───────────────────────────────────────────
+    draw.text((PAD, y), f"Ishchi: {worker}", font=F_INFO, fill="black")
+    y += _text_h(draw, worker, F_INFO) + 6
 
-    # Ishchi
-    y_l = BODY_TOP + ROW_H * 2 + 2
-    draw.text((PAD, y_l), "Ishchi", font=f_lbl, fill="#888888")
-    draw.text((PAD, y_l + 16), worker, font=f_val, fill="#222222")
+    # ── Satır 5: Og'irlik ─────────────────────────────────────────
+    draw.text((PAD, y), weight_txt, font=F_INFO, fill="black")
 
-    # O'ng ustun
-    y_r = BODY_TOP
-    draw.text((COL_MID, y_r), "Sana", font=f_lbl, fill="#888888")
-    draw.text((COL_MID, y_r + 16), date_str, font=f_val, fill="#111111")
-
-    y_r = BODY_TOP + ROW_H + 8
-    draw.text((COL_MID, y_r), "Soat", font=f_lbl, fill="#888888")
-    draw.text((COL_MID, y_r + 16), time_str, font=f_val, fill="#111111")
-
-    y_r = BODY_TOP + ROW_H * 2 + 2
-    draw.text((COL_MID, y_r), "Dona", font=f_lbl, fill="#888888")
-    draw.text((COL_MID, y_r + 16), page_txt, font=_font(26, bold=True), fill="#555555")
-
-    # ── Vertikal ajratgich (ikki ustun orasida) ───────────────────
-    draw.line([COL_MID - 6, DIV_Y + 4, COL_MID - 6, LABEL_H - 4], fill="#e0e0e0", width=1)
+    # ── Satır 6: Sana (chap) + Soat (o'ng) — pastki qisim ────────
+    DT_Y = LABEL_H - 5 - _text_h(draw, date_str, F_DT)
+    draw.text((PAD, DT_Y), date_str, font=F_DT, fill="#444444")
+    draw.text((LABEL_W - PAD, DT_Y), time_str, font=F_DT, fill="#444444", anchor="ra")
 
     return img
 
@@ -185,23 +163,21 @@ def generate_label_pdf(
     unit_weight = (weight_kg / quantity) if quantity > 0 else 0.0
     ts = created_at or datetime.now()
 
-    # Har bir label uchun PNG bytes tayyorlaymiz (203 DPI metadata bilan)
     png_pages: list[bytes] = []
     for i in range(1, quantity + 1):
         img = _build_single(batch_code, worker, product, i, quantity, unit_weight, ts)
-        img_buf = io.BytesIO()
-        # DPI metadata ni PNG ichiga yozamiz — img2pdf shu orqali page size hisoblaydi
-        img.save(img_buf, format="PNG", dpi=(203, 203))
-        png_pages.append(img_buf.getvalue())
+        buf = io.BytesIO()
+        img.save(buf, format="PNG", dpi=(_DPI, _DPI))
+        png_pages.append(buf.getvalue())
 
-    # img2pdf: DPI ga qarab sahifa o'lchamini ANIQ 58x40mm qilib beradi
-    # Foxit yoki boshqa viewer 100% da chiqaradi, o'z-o'zidan kichaytirmaydi
-    layout_fn = img2pdf.get_fixed_dpi_layout_fun((203, 203))
-    pdf_bytes = img2pdf.convert(png_pages, layout_fun=layout_fn)
-
-    buf = io.BytesIO(pdf_bytes)
-    buf.seek(0)
-    return buf
+    # img2pdf — PDF/MediaBox sahifasini aniq 58×40mm qiladi (Foxit 100% da chiqaradi)
+    pdf_bytes = img2pdf.convert(
+        png_pages,
+        layout_fun=img2pdf.get_fixed_dpi_layout_fun((_DPI, _DPI)),
+    )
+    out = io.BytesIO(pdf_bytes)
+    out.seek(0)
+    return out
 
 
 def generate_label(
@@ -213,7 +189,8 @@ def generate_label(
     created_at: datetime | None = None,
 ) -> io.BytesIO:
     unit_weight = (weight_kg / quantity) if weight_kg and quantity > 0 else 0.0
-    img = _build_single(batch_code, worker, product, 1, quantity, unit_weight, created_at)
+    img = _build_single(batch_code, worker, product, 1, quantity, unit_weight,
+                        created_at or datetime.now())
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)

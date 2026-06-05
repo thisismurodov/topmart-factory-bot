@@ -99,55 +99,54 @@ def _build_single(
     img  = Image.new("RGB", (LABEL_W, LABEL_H), "white")
     draw = ImageDraw.Draw(img)
 
-    PAD = 8       # chap/o'ng chekkadan masofa
+    PAD_L = 32    # chap xavfsiz zona: ~4mm (printer chap chekkasi uchun)
+    PAD_R = 10    # o'ng chegara
 
     # ── Fontlar (203 DPI, 1pt ≈ 2.82px) ──────────────────────────
-    # TOPMART / page:  11pt → 31px
-    # Batch code:      auto-fit 26–28pt → 73–79px
-    # Product:         13pt → 37px
-    # Worker/Weight:   12pt → 34px
-    # Date/Time:       10pt → 28px
     F_HDR  = _font(31, bold=True)
     F_PROD = _font(37, bold=True)
     F_INFO = _font(34, bold=True)
     F_DT   = _font(28, bold=False)
 
+    # Batch code uchun mavjud kenglik (chap offset hisobga olingan)
+    BC_MAX_W = LABEL_W - PAD_L - PAD_R
+
     # ── Satır 1: TOPMART (chap) + N/M (o'ng) ─────────────────────
     y = 5
-    draw.text((PAD, y), "TOPMART", font=F_HDR, fill="black")
+    draw.text((PAD_L, y), "TOPMART", font=F_HDR, fill="black")
     page_txt = f"{unit_num}/{total_units}"
-    draw.text((LABEL_W - PAD, y), page_txt, font=F_HDR, fill="black", anchor="ra")
+    draw.text((LABEL_W - PAD_R, y), page_txt, font=F_HDR, fill="black", anchor="ra")
     y += _text_h(draw, "TOPMART", F_HDR) + 5
 
     # ingichka gorizontal chiziq
-    draw.line([PAD, y, LABEL_W - PAD, y], fill="black", width=1)
+    draw.line([PAD_L, y, LABEL_W - PAD_R, y], fill="black", width=1)
     y += 5
 
     # ── Satır 2: Partiya kodi — ENG KATTA ────────────────────────
     bc_font, _ = _fit_font(draw, batch_code,
-                           max_w=LABEL_W - 2 * PAD,
+                           max_w=BC_MAX_W,
                            start=74, minimum=34, bold=True)
-    draw.text((PAD, y), batch_code, font=bc_font, fill="black")
+    draw.text((PAD_L, y), batch_code, font=bc_font, fill="black")
     y += _text_h(draw, batch_code, bc_font) + 7
 
     # ── Satır 3: Mahsulot nomi (wrap → max 2 qator) ───────────────
-    prod_lines = _wrap(draw, product, F_PROD, LABEL_W - 2 * PAD)
+    prod_lines = _wrap(draw, product, F_PROD, BC_MAX_W)
     for line in prod_lines:
-        draw.text((PAD, y), line, font=F_PROD, fill="black")
+        draw.text((PAD_L, y), line, font=F_PROD, fill="black")
         y += _text_h(draw, line, F_PROD) + 3
     y += 2
 
     # ── Satır 4: Ishchi ───────────────────────────────────────────
-    draw.text((PAD, y), f"Ishchi: {worker}", font=F_INFO, fill="black")
+    draw.text((PAD_L, y), f"Ishchi: {worker}", font=F_INFO, fill="black")
     y += _text_h(draw, worker, F_INFO) + 6
 
     # ── Satır 5: Og'irlik ─────────────────────────────────────────
-    draw.text((PAD, y), weight_txt, font=F_INFO, fill="black")
+    draw.text((PAD_L, y), weight_txt, font=F_INFO, fill="black")
 
     # ── Satır 6: Sana (chap) + Soat (o'ng) — pastki qisim ────────
     DT_Y = LABEL_H - 5 - _text_h(draw, date_str, F_DT)
-    draw.text((PAD, DT_Y), date_str, font=F_DT, fill="#444444")
-    draw.text((LABEL_W - PAD, DT_Y), time_str, font=F_DT, fill="#444444", anchor="ra")
+    draw.text((PAD_L, DT_Y), date_str, font=F_DT, fill="#444444")
+    draw.text((LABEL_W - PAD_R, DT_Y), time_str, font=F_DT, fill="#444444", anchor="ra")
 
     return img
 

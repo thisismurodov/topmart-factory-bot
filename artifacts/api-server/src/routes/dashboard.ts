@@ -226,16 +226,18 @@ router.get("/dashboard/v2", async (_req, res): Promise<void> => {
       [period]
     ),
     pool.query(
-      `SELECT product, COALESCE(SUM(quantity),0)::int AS sold_qty
-       FROM sales GROUP BY product ORDER BY SUM(quantity) DESC LIMIT 5`
+      `SELECT product_name AS product, COALESCE(SUM(quantity),0)::int AS sold_qty
+       FROM sale_items GROUP BY product_name ORDER BY SUM(quantity) DESC LIMIT 5`
     ),
     pool.query(
       `SELECT worker AS actor, product, quantity, created_at
        FROM batches ORDER BY id DESC LIMIT 6`
     ),
     pool.query(
-      `SELECT customer_name AS actor, product, total_amount, currency, created_at
-       FROM sales ORDER BY id DESC LIMIT 6`
+      `SELECT s.customer_name AS actor,
+              COALESCE((SELECT string_agg(si.product_name,', ') FROM sale_items si WHERE si.sale_id=s.id LIMIT 3), s.product, 'Savdo') AS product,
+              s.total_amount, s.currency, s.created_at
+       FROM sales s ORDER BY s.id DESC LIMIT 6`
     ),
     pool.query(
       `SELECT name AS actor, created_at

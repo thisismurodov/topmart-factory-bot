@@ -521,29 +521,79 @@ def get_product_rate_type(product_name: str) -> str:
 # ── Sale products (sotuv uchun alohida tovar ro'yxati) ────────────────────────
 
 def get_sale_products() -> list[dict]:
+    """sales_products jadvalidan o'qiydi (narx, tur, valyuta bilan)."""
     with get_conn() as (conn, cur):
         cur.execute(
-            "SELECT id, name, code, unit, currency FROM sale_products WHERE active = true ORDER BY name"
+            """SELECT id, name, sale_type AS unit, default_price, currency
+               FROM sales_products WHERE active = TRUE ORDER BY name"""
         )
         return cur.fetchall()
 
 
+def get_sale_product_by_id(prod_id: int) -> dict | None:
+    with get_conn() as (conn, cur):
+        cur.execute(
+            "SELECT id, name, sale_type AS unit, default_price, currency FROM sales_products WHERE id = %s",
+            (prod_id,),
+        )
+        return cur.fetchone()
+
+
 def get_sale_product_unit(name: str) -> str:
     with get_conn() as (conn, cur):
-        cur.execute("SELECT unit FROM sale_products WHERE name = %s", (name,))
+        cur.execute("SELECT sale_type FROM sales_products WHERE name = %s", (name,))
         row = cur.fetchone()
-    return row["unit"] if row else "dona"
+    return row["sale_type"] if row else "dona"
+
+
+def create_sale_multi(
+    customer_id: int,
+    customer_name: str,
+    status: str,
+    note: str,
+    items: list[dict],
+) -> int:
+    """
+    Transaction ichida sales + sale_items yaratadi.
+    items: [{"product_name", "sale_type", "quantity", "unit_price", "currency", "line_total"}, ...]
+    """
+    total = sum(float(it["line_total"]) for it in items)
+    with get_conn() as (conn, cur):
+        cur.execute(
+            """INSERT INTO sales (customer_id, customer_name, status, note, total_amount)
+               VALUES (%s, %s, %s, %s, %s) RETURNING id""",
+            (customer_id, customer_name, status, note, total),
+        )
+        sale_id = cur.fetchone()["id"]
+        for it in items:
+            cur.execute(
+                """INSERT INTO sale_items
+                   (sale_id, product_name, sale_type, quantity, unit_price, currency, line_total)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                (
+                    sale_id,
+                    it["product_name"],
+                    it.get("sale_type", "dona"),
+                    float(it["quantity"]),
+                    float(it["unit_price"]),
+                    it.get("currency", "UZS"),
+                    float(it["line_total"]),
+                ),
+            )
+        return sale_id
 
 
 def add_sale_product(name: str, code: str = "", unit: str = "dona", currency: str = "uzs") -> bool:
+    cur_norm = currency.upper() if currency.upper() in ("UZS", "USD") else "UZS"
+    unit_norm = unit if unit in ("kg", "dona") else "dona"
     try:
         with get_conn() as (conn, cur):
             cur.execute(
-                """INSERT INTO sale_products (name, code, unit, currency)
-                   VALUES (%s, %s, %s, %s)
+                """INSERT INTO sales_products (name, sale_type, currency, default_price)
+                   VALUES (%s, %s, %s, 0)
                    ON CONFLICT (name) DO UPDATE
-                   SET active=true, code=%s, unit=%s, currency=%s""",
-                (name, code, unit, currency, code, unit, currency),
+                   SET active=true, sale_type=%s, currency=%s""",
+                (name, unit_norm, cur_norm, unit_norm, cur_norm),
             )
             return True
     except Exception:
@@ -553,7 +603,7 @@ def add_sale_product(name: str, code: str = "", unit: str = "dona", currency: st
 def delete_sale_product(name: str) -> bool:
     with get_conn() as (conn, cur):
         cur.execute(
-            "UPDATE sale_products SET active = false WHERE name = %s",
+            "UPDATE sales_products SET active = false WHERE name = %s",
             (name,),
         )
         return cur.rowcount > 0

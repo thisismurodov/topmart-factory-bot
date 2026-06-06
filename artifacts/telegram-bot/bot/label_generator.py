@@ -103,10 +103,10 @@ def _build_single(
     PAD_R = 10    # o'ng chegara
 
     # ── Fontlar (203 DPI, 1pt ≈ 2.82px) ──────────────────────────
-    F_HDR  = _font(31, bold=True)
-    F_PROD = _font(37, bold=True)
-    F_INFO = _font(34, bold=True)
-    F_DT   = _font(28, bold=False)
+    F_HDR  = _font(26, bold=True)
+    F_PROD = _font(31, bold=True)
+    F_INFO = _font(28, bold=True)
+    F_DT   = _font(24, bold=True)
 
     # Batch code uchun mavjud kenglik (chap offset hisobga olingan)
     BC_MAX_W = LABEL_W - PAD_L - PAD_R
@@ -116,16 +116,12 @@ def _build_single(
     draw.text((PAD_L, y), "TOPMART", font=F_HDR, fill="black")
     page_txt = f"{unit_num}/{total_units}"
     draw.text((LABEL_W - PAD_R, y), page_txt, font=F_HDR, fill="black", anchor="ra")
-    y += _text_h(draw, "TOPMART", F_HDR) + 5
-
-    # ingichka gorizontal chiziq
-    draw.line([PAD_L, y, LABEL_W - PAD_R, y], fill="black", width=1)
-    y += 5
+    y += _text_h(draw, "TOPMART", F_HDR) + 6
 
     # ── Satır 2: Partiya kodi — ENG KATTA ────────────────────────
     bc_font, _ = _fit_font(draw, batch_code,
                            max_w=BC_MAX_W,
-                           start=74, minimum=34, bold=True)
+                           start=64, minimum=30, bold=True)
     draw.text((PAD_L, y), batch_code, font=bc_font, fill="black")
     y += _text_h(draw, batch_code, bc_font) + 7
 

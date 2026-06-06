@@ -99,14 +99,14 @@ def _build_single(
     img  = Image.new("RGB", (LABEL_W, LABEL_H), "white")
     draw = ImageDraw.Draw(img)
 
-    PAD_L = 32    # chap xavfsiz zona: ~4mm (printer chap chekkasi uchun)
-    PAD_R = 10    # o'ng chegara
+    PAD_L = 42    # chap xavfsiz zona: ~5.2mm
+    PAD_R = 18    # o'ng chegara
 
     # ── Fontlar (203 DPI, 1pt ≈ 2.82px) ──────────────────────────
-    F_HDR  = _font(26, bold=True)
-    F_PROD = _font(31, bold=True)
-    F_INFO = _font(28, bold=True)
-    F_DT   = _font(24, bold=True)
+    F_HDR  = _font(22, bold=True)
+    F_PROD = _font(27, bold=True)
+    F_INFO = _font(24, bold=True)
+    F_DT   = _font(21, bold=True)
 
     # Batch code uchun mavjud kenglik (chap offset hisobga olingan)
     BC_MAX_W = LABEL_W - PAD_L - PAD_R
@@ -121,7 +121,7 @@ def _build_single(
     # ── Satır 2: Partiya kodi — ENG KATTA ────────────────────────
     bc_font, _ = _fit_font(draw, batch_code,
                            max_w=BC_MAX_W,
-                           start=64, minimum=30, bold=True)
+                           start=58, minimum=28, bold=True)
     draw.text((PAD_L, y), batch_code, font=bc_font, fill="black")
     y += _text_h(draw, batch_code, bc_font) + 7
 

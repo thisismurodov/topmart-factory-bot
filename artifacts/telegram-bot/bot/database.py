@@ -122,10 +122,28 @@ def init_db() -> None:
             )
         """)
         cur.execute("""
+            CREATE TABLE IF NOT EXISTS raw_materials (
+                id         SERIAL PRIMARY KEY,
+                name       TEXT NOT NULL UNIQUE,
+                unit       TEXT NOT NULL DEFAULT 'kg',
+                active     BOOLEAN NOT NULL DEFAULT true,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS db_meta (
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             )
+        """)
+        # product_type ustunini mavjud jadvallarga qo'shamiz (agar yo'q bo'lsa)
+        cur.execute("""
+            ALTER TABLE stock_movements
+            ADD COLUMN IF NOT EXISTS product_type TEXT NOT NULL DEFAULT 'finished'
+        """)
+        cur.execute("""
+            ALTER TABLE inventory
+            ADD COLUMN IF NOT EXISTS product_type TEXT NOT NULL DEFAULT 'finished'
         """)
         _seed(cur)
 
@@ -290,6 +308,25 @@ def create_batch(
                VALUES (%s,%s,%s,%s,%s,%s)""",
             (batch_code, worker, product, quantity, weight_kg, earnings),
         )
+        # Tayyor mahsulotni avtomatik birinchi omborga "Kirim" qilib yozamiz
+        cur.execute("SELECT id FROM warehouses WHERE active=TRUE ORDER BY id LIMIT 1")
+        wh = cur.fetchone()
+        if wh:
+            wh_id = wh["id"]
+            cur.execute(
+                """INSERT INTO stock_movements
+                     (product, quantity, movement_type, from_warehouse_id, to_warehouse_id,
+                      note, created_by, product_type)
+                   VALUES (%s,%s,'IN',NULL,%s,%s,%s,'finished')""",
+                (product, quantity, wh_id, f"Partiya: {batch_code}", worker),
+            )
+            cur.execute(
+                """INSERT INTO inventory (warehouse_id, product, quantity, product_type, updated_at)
+                   VALUES (%s,%s,%s,'finished',NOW())
+                   ON CONFLICT (warehouse_id, product)
+                   DO UPDATE SET quantity=inventory.quantity+%s, updated_at=NOW()""",
+                (wh_id, product, quantity, quantity),
+            )
 
 
 def get_today_batches(worker_filter: list[str] | None = None) -> list[dict]:
@@ -683,47 +720,49 @@ def record_movement(
     to_warehouse_id: int | None,
     note: str = "",
     created_by: str = "",
+    product_type: str = "finished",
 ) -> bool:
-    """movement_type: IN | OUT | TRANSFER"""
+    """movement_type: IN | OUT | TRANSFER; product_type: finished | raw"""
     try:
         with get_conn() as (conn, cur):
             cur.execute(
                 """INSERT INTO stock_movements
-                     (product, quantity, movement_type, from_warehouse_id, to_warehouse_id, note, created_by)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s)""",
-                (product, quantity, movement_type, from_warehouse_id, to_warehouse_id, note, created_by),
+                     (product, quantity, movement_type, from_warehouse_id, to_warehouse_id,
+                      note, created_by, product_type)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (product, quantity, movement_type, from_warehouse_id,
+                 to_warehouse_id, note, created_by, product_type),
             )
-            # Update inventory
             if movement_type == "IN" and to_warehouse_id:
                 cur.execute(
-                    """INSERT INTO inventory (warehouse_id, product, quantity, updated_at)
-                       VALUES (%s,%s,%s,NOW())
+                    """INSERT INTO inventory (warehouse_id, product, quantity, product_type, updated_at)
+                       VALUES (%s,%s,%s,%s,NOW())
                        ON CONFLICT (warehouse_id, product)
                        DO UPDATE SET quantity=inventory.quantity+%s, updated_at=NOW()""",
-                    (to_warehouse_id, product, quantity, quantity),
+                    (to_warehouse_id, product, quantity, product_type, quantity),
                 )
             elif movement_type == "OUT" and from_warehouse_id:
                 cur.execute(
-                    """INSERT INTO inventory (warehouse_id, product, quantity, updated_at)
-                       VALUES (%s,%s,0,NOW())
+                    """INSERT INTO inventory (warehouse_id, product, quantity, product_type, updated_at)
+                       VALUES (%s,%s,0,%s,NOW())
                        ON CONFLICT (warehouse_id, product)
                        DO UPDATE SET quantity=GREATEST(0,inventory.quantity-%s), updated_at=NOW()""",
-                    (from_warehouse_id, product, quantity),
+                    (from_warehouse_id, product, product_type, quantity),
                 )
             elif movement_type == "TRANSFER" and from_warehouse_id and to_warehouse_id:
                 cur.execute(
-                    """INSERT INTO inventory (warehouse_id, product, quantity, updated_at)
-                       VALUES (%s,%s,0,NOW())
+                    """INSERT INTO inventory (warehouse_id, product, quantity, product_type, updated_at)
+                       VALUES (%s,%s,0,%s,NOW())
                        ON CONFLICT (warehouse_id, product)
                        DO UPDATE SET quantity=GREATEST(0,inventory.quantity-%s), updated_at=NOW()""",
-                    (from_warehouse_id, product, quantity),
+                    (from_warehouse_id, product, product_type, quantity),
                 )
                 cur.execute(
-                    """INSERT INTO inventory (warehouse_id, product, quantity, updated_at)
-                       VALUES (%s,%s,%s,NOW())
+                    """INSERT INTO inventory (warehouse_id, product, quantity, product_type, updated_at)
+                       VALUES (%s,%s,%s,%s,NOW())
                        ON CONFLICT (warehouse_id, product)
                        DO UPDATE SET quantity=inventory.quantity+%s, updated_at=NOW()""",
-                    (to_warehouse_id, product, quantity, quantity),
+                    (to_warehouse_id, product, quantity, product_type, quantity),
                 )
         return True
     except Exception as e:
@@ -782,4 +821,62 @@ def get_all_worker_permissions() -> dict[str, list[str]]:
     result: dict[str, list[str]] = {}
     for r in rows:
         result.setdefault(r["worker_name"], []).append(r["product_name"])
+    return result
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# XOM ASHYO (RAW MATERIALS)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def get_raw_materials() -> list[dict]:
+    """Barcha faol xom ashyolar ro'yxati."""
+    with get_conn() as (conn, cur):
+        cur.execute(
+            "SELECT id, name, unit FROM raw_materials WHERE active=TRUE ORDER BY name"
+        )
+        return cur.fetchall()
+
+
+def get_raw_material_names() -> list[str]:
+    with get_conn() as (conn, cur):
+        cur.execute("SELECT name FROM raw_materials WHERE active=TRUE ORDER BY name")
+        return [r["name"] for r in cur.fetchall()]
+
+
+def add_raw_material(name: str, unit: str = "kg") -> bool:
+    try:
+        with get_conn() as (conn, cur):
+            cur.execute(
+                "INSERT INTO raw_materials (name, unit) VALUES (%s,%s) ON CONFLICT (name) DO UPDATE SET active=TRUE, unit=%s",
+                (name, unit, unit),
+            )
+        return True
+    except Exception:
+        return False
+
+
+def delete_raw_material(name: str) -> bool:
+    try:
+        with get_conn() as (conn, cur):
+            cur.execute("UPDATE raw_materials SET active=FALSE WHERE name=%s", (name,))
+        return True
+    except Exception:
+        return False
+
+
+def get_stock_by_warehouse_typed() -> dict:
+    """Returns {'finished': [...], 'raw': [...]} grouped by product_type."""
+    with get_conn() as (conn, cur):
+        cur.execute(
+            """SELECT w.name AS warehouse_name, i.product, i.quantity, i.product_type
+               FROM inventory i
+               JOIN warehouses w ON w.id = i.warehouse_id
+               WHERE i.quantity > 0
+               ORDER BY i.product_type, w.id, i.product"""
+        )
+        rows = cur.fetchall()
+    result: dict = {"finished": [], "raw": []}
+    for r in rows:
+        pt = r["product_type"] if r["product_type"] in ("finished", "raw") else "finished"
+        result[pt].append(r)
     return result

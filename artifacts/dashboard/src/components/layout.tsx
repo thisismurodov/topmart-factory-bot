@@ -13,6 +13,7 @@ import {
   Building2,
   ShoppingBag,
   Warehouse,
+  CreditCard,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -24,6 +25,7 @@ const NAV_ITEMS = [
   { href: "/salary",     label: "Maosh",       icon: Banknote },
   { href: "/customers",  label: "Mijozlar",    icon: Building2 },
   { href: "/sales",      label: "Savdolar",    icon: ShoppingBag },
+  { href: "/debts",      label: "Nasiya",      icon: CreditCard },
   { href: "/inventory",  label: "Ombor",       icon: Warehouse },
 ];
 

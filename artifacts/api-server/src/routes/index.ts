@@ -13,6 +13,7 @@ import inventoryRouter from "./inventory";
 import inventoryV2Router from "./inventory-v2";
 import warehousesRouter from "./warehouses";
 import salesProductsRouter from "./sales-products";
+import debtsRouter from "./debts";
 
 const router: IRouter = Router();
 
@@ -34,5 +35,6 @@ router.use(inventoryRouter);
 router.use(inventoryV2Router);
 router.use(warehousesRouter);
 router.use(salesProductsRouter);
+router.use(debtsRouter);
 
 export default router;

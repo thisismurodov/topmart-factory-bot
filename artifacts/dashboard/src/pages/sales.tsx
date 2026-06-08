@@ -27,8 +27,32 @@ import {
 import { Plus, Trash2, ShoppingBag, CheckCircle2, Clock, ChevronDown, ChevronRight, Pencil, PackagePlus } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type SalesProd = { id: number; name: string; saleType: string; defaultPrice: number; currency: string };
+type Tier = { id: number; minQty: number; price: number; currency: string };
+type SalesProd = { id: number; name: string; saleType: string; defaultPrice: number; currency: string; tiers: Tier[] };
 type DraftItem = { key: string; productName: string; saleType: string; quantity: number; unitPrice: number; currency: string; lineTotal: number };
+
+// ── Tier price calculator ─────────────────────────────────────────────────────
+function getTierPrice(prod: SalesProd, qty: number): number {
+  if (!prod.tiers || prod.tiers.length === 0) return prod.defaultPrice;
+  // Sort descending by minQty — pick first tier where qty >= minQty
+  const sorted = [...prod.tiers].sort((a, b) => b.minQty - a.minQty);
+  const match = sorted.find(t => qty >= t.minQty);
+  return match ? match.price : prod.defaultPrice;
+}
+
+function getTierLabel(prod: SalesProd, qty: number): string | null {
+  if (!prod.tiers || prod.tiers.length === 0) return null;
+  const sorted = [...prod.tiers].sort((a, b) => a.minQty - b.minQty);
+  const idx = sorted.findIndex((t, i) => {
+    const next = sorted[i + 1];
+    return qty >= t.minQty && (!next || qty < next.minQty);
+  });
+  if (idx === -1) return null;
+  const t = sorted[idx];
+  const next = sorted[idx + 1];
+  if (next) return `Tier: ${t.minQty.toLocaleString()}–${(next.minQty - 1).toLocaleString()} ${prod.saleType}`;
+  return `Tier: ${t.minQty.toLocaleString()}+ ${prod.saleType}`;
+}
 type SaleItem  = { id: number; productName: string; saleType: string; quantity: number; unitPrice: number; currency: string; lineTotal: number };
 type Sale      = { id: number; customerId: number; customerName: string; status: string; note: string; totalAmount: number; createdAt: string; saleItems: SaleItem[] };
 
@@ -94,7 +118,10 @@ function NewSaleDialog({
   const watchProd = itemForm.watch("product");
   const watchQty  = itemForm.watch("quantity");
   const selProd   = salesProducts.find(p => p.name === watchProd);
-  const lineTotal = selProd ? Number(watchQty) * selProd.defaultPrice : 0;
+  const currentQty = Number(watchQty) || 0;
+  const unitPrice  = selProd ? getTierPrice(selProd, currentQty) : 0;
+  const lineTotal  = unitPrice * currentQty;
+  const tierLabel  = selProd && currentQty > 0 ? getTierLabel(selProd, currentQty) : null;
 
   function addItem() {
     if (!selProd) return;
@@ -102,11 +129,12 @@ function NewSaleDialog({
     const qty  = Number(vals.quantity);
     if (!qty || qty <= 0) { setItemError("Miqdorni to'g'ri kiriting"); return; }
     setItemError("");
+    const price = getTierPrice(selProd, qty);
 
     if (editKey) {
       setDraftItems(prev => prev.map(it =>
         it.key === editKey
-          ? { ...it, quantity: qty, unitPrice: selProd.defaultPrice, lineTotal: qty * selProd.defaultPrice }
+          ? { ...it, quantity: qty, unitPrice: price, lineTotal: qty * price }
           : it
       ));
       setEditKey(null);
@@ -116,9 +144,9 @@ function NewSaleDialog({
         productName: selProd.name,
         saleType:    selProd.saleType,
         quantity:    qty,
-        unitPrice:   selProd.defaultPrice,
+        unitPrice:   price,
         currency:    selProd.currency,
-        lineTotal:   qty * selProd.defaultPrice,
+        lineTotal:   qty * price,
       }]);
     }
     itemForm.reset();
@@ -236,16 +264,21 @@ function NewSaleDialog({
 
             {/* Auto info row */}
             {selProd && (
-              <div className="flex items-center gap-4 text-sm bg-background rounded p-2 border">
+              <div className="flex items-center gap-3 text-sm bg-background rounded p-2 border flex-wrap">
                 <span className="text-muted-foreground">Narx:</span>
-                <span className="font-medium">{selProd.currency === "USD" ? `$${selProd.defaultPrice}` : `${selProd.defaultPrice.toLocaleString()} so'm`} / {selProd.saleType}</span>
-                <span className="text-muted-foreground ml-2">Jami:</span>
-                <span className="font-bold text-primary">{selProd.currency === "USD" ? `${lineTotal.toFixed(2)} $` : `${lineTotal.toLocaleString()} so'm`}</span>
-                <span className="ml-auto">
-                  <Badge variant="outline" className={selProd.currency === "USD" ? "text-green-700 border-green-300" : "text-blue-700 border-blue-300"}>
-                    {selProd.currency}
-                  </Badge>
+                <span className="font-semibold text-emerald-700">
+                  {selProd.currency === "USD" ? `$${unitPrice}` : `${unitPrice.toLocaleString()} so'm`} / {selProd.saleType}
                 </span>
+                {tierLabel && (
+                  <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">{tierLabel}</span>
+                )}
+                <span className="text-muted-foreground ml-auto">Jami:</span>
+                <span className="font-bold text-primary">
+                  {selProd.currency === "USD" ? `${lineTotal.toFixed(2)} $` : `${lineTotal.toLocaleString()} so'm`}
+                </span>
+                <Badge variant="outline" className={selProd.currency === "USD" ? "text-green-700 border-green-300" : "text-blue-700 border-blue-300"}>
+                  {selProd.currency}
+                </Badge>
               </div>
             )}
 

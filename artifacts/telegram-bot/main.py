@@ -17,6 +17,7 @@ from bot.handlers.kpi import register as register_kpi_handlers
 from bot.handlers.salary import register as register_salary_handlers
 from bot.handlers.sales import register as register_sales_handlers
 from bot.handlers.inventory import build_inventory_handler
+from bot.handlers.debts import register as register_debt_handlers
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -46,6 +47,7 @@ def main() -> None:
     register_cleardata(app)
     register_salary_handlers(app)
     register_sales_handlers(app)
+    register_debt_handlers(app)
     app.add_handler(build_inventory_handler())
     app.add_handler(build_admin_handler())
     app.add_handler(build_packer_handler())

@@ -23,7 +23,7 @@ def admin_reply_keyboard() -> ReplyKeyboardMarkup:
             ["📊 KPI Hisobot", "💰 Maosh"],
             ["🛒 Savdo", "📊 Savdolar"],
             ["➕ Sotuv Tovar", "📦 Tovarlar"],
-            ["🏬 Ombor"],
+            ["💳 Nasiyalar", "🏬 Ombor"],
             ["⚙️ Admin panel"],
         ],
         resize_keyboard=True,

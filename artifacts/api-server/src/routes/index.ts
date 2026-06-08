@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { requireAuth } from "../middleware/requireAuth";
 import healthRouter from "./health";
 import authRouter from "./auth";
 import dashboardRouter from "./dashboard";
@@ -15,8 +16,13 @@ import salesProductsRouter from "./sales-products";
 
 const router: IRouter = Router();
 
+// ── Public routes (no auth required) ─────────────────────────────────────────
 router.use(healthRouter);
 router.use(authRouter);
+
+// ── Auth wall: everything below requires a valid session ──────────────────────
+router.use(requireAuth);
+
 router.use(dashboardRouter);
 router.use(batchesRouter);
 router.use(workersRouter);

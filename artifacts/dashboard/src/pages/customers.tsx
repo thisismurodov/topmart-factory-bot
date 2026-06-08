@@ -56,9 +56,11 @@ type SaleRow = {
   paymentType: string; currency: string; createdAt: string;
   items: { productName: string; saleType: string; quantity: number; unitPrice: number; currency: string; lineTotal: number }[];
 };
+type CurrencyStats = { total: number; paid: number; debt: number };
 type ProfileStats = {
-  totalSales: number; totalAmount: number; totalPaid: number;
-  totalDebt: number; paidCount: number; pendingCount: number; partialCount: number;
+  totalSales: number;
+  paidCount: number; pendingCount: number; partialCount: number;
+  usd: CurrencyStats; uzs: CurrencyStats;
 };
 type Profile = { customer: Customer; stats: ProfileStats; sales: SaleRow[] };
 
@@ -294,24 +296,34 @@ function CustomerProfileDialog({ customer, open, onClose, onEdit }: {
             </div>
 
             {/* ── Financial summary ── */}
-            <div className="rounded-lg border p-4 space-y-2.5">
+            <div className="rounded-lg border p-4 space-y-3">
               <p className="text-sm font-semibold flex items-center gap-2"><TrendingUp className="w-4 h-4 text-primary" /> Moliyaviy xulosa</p>
-              <div className="grid grid-cols-3 gap-3">
-                <div className="rounded bg-muted/50 px-3 py-2.5">
-                  <p className="text-xs text-muted-foreground mb-1">Umumiy xarid</p>
-                  <p className="font-bold text-sm">{fmtAmt(st.totalAmount, "USD")}</p>
-                </div>
-                <div className="rounded bg-green-50 border border-green-200 px-3 py-2.5">
-                  <p className="text-xs text-green-600 mb-1">To'langan</p>
-                  <p className="font-bold text-sm text-green-700">{fmtAmt(st.totalPaid, "USD")}</p>
-                </div>
-                <div className="rounded bg-amber-50 border border-amber-200 px-3 py-2.5">
-                  <p className="text-xs text-amber-600 mb-1">Qolgan nasiya</p>
-                  <p className={`font-bold text-sm ${st.totalDebt > 0 ? "text-amber-700" : "text-muted-foreground"}`}>
-                    {st.totalDebt > 0 ? fmtAmt(st.totalDebt, "USD") : "Yo'q"}
-                  </p>
-                </div>
-              </div>
+              {[{ label: "USD ($)", cur: "USD", data: st.usd }, { label: "UZS (so'm)", cur: "UZS", data: st.uzs }]
+                .filter(({ data }) => data.total > 0 || data.debt > 0)
+                .map(({ label, cur, data }) => (
+                  <div key={cur}>
+                    <p className="text-xs text-muted-foreground mb-1.5 font-medium">{label}</p>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="rounded bg-muted/50 px-3 py-2">
+                        <p className="text-xs text-muted-foreground mb-0.5">Umumiy</p>
+                        <p className="font-bold text-sm">{fmtAmt(data.total, cur)}</p>
+                      </div>
+                      <div className="rounded bg-green-50 border border-green-200 px-3 py-2">
+                        <p className="text-xs text-green-600 mb-0.5">To'langan</p>
+                        <p className="font-bold text-sm text-green-700">{fmtAmt(data.paid, cur)}</p>
+                      </div>
+                      <div className={`rounded px-3 py-2 ${data.debt > 0 ? "bg-amber-50 border border-amber-200" : "bg-muted/30 border"}`}>
+                        <p className="text-xs text-amber-600 mb-0.5">Nasiya</p>
+                        <p className={`font-bold text-sm ${data.debt > 0 ? "text-amber-700" : "text-muted-foreground"}`}>
+                          {data.debt > 0 ? fmtAmt(data.debt, cur) : "Yo'q"}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              {st.usd.total === 0 && st.uzs.total === 0 && (
+                <p className="text-sm text-muted-foreground">Savdolar yo'q</p>
+              )}
             </div>
 
             {/* ── Sales history ── */}
@@ -332,16 +344,15 @@ function CustomerProfileDialog({ customer, open, onClose, onEdit }: {
             </div>
 
             {/* ── Debt warning ── */}
-            {st.totalDebt > 0 && (
+            {(st.usd.debt > 0 || st.uzs.debt > 0) && (
               <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 flex items-center gap-3">
                 <CreditCard className="w-5 h-5 text-amber-500 shrink-0" />
                 <div>
-                  <p className="text-sm font-semibold text-amber-800">
-                    Nasiya borligini eslatib o'ting
-                  </p>
-                  <p className="text-xs text-amber-600">
-                    Mijoz hali {fmtAmt(st.totalDebt, "USD")} to'lashi kerak
-                  </p>
+                  <p className="text-sm font-semibold text-amber-800">Nasiya bor — to'lov eslatmasi</p>
+                  <div className="text-xs text-amber-700 mt-0.5 space-x-3">
+                    {st.usd.debt > 0 && <span>{fmtAmt(st.usd.debt, "USD")}</span>}
+                    {st.uzs.debt > 0 && <span>{fmtAmt(st.uzs.debt, "UZS")}</span>}
+                  </div>
                 </div>
               </div>
             )}

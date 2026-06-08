@@ -45,7 +45,8 @@ const salesFormSchema = z.object({
 });
 
 // ── Local tier row type (for "add" form) ──────────────────────────────────────
-type LocalTier = { minQty: string; price: string };
+// fromQty → minQty (DB), toQty → display only
+type LocalTier = { fromQty: string; toQty: string; price: string };
 
 const SALES_PRODUCTS_KEY = ["sales-products"];
 
@@ -71,8 +72,8 @@ function useCreateSalesProduct() {
           name: data.name, saleType: data.saleType,
           defaultPrice: data.defaultPrice, currency: data.currency,
           tiers: data.tiers
-            .filter(t => t.minQty !== "" && t.price !== "")
-            .map(t => ({ minQty: Number(t.minQty), price: Number(t.price), currency: data.currency })),
+            .filter(t => t.fromQty !== "" && t.price !== "")
+            .map(t => ({ minQty: Number(t.fromQty), price: Number(t.price), currency: data.currency })),
         }),
       });
       if (!res.ok) throw new Error("Failed");
@@ -131,35 +132,62 @@ function useDeleteTier() {
 
 // ── TierManager: inline tier add/remove panel ─────────────────────────────────
 function TierManager({ product }: { product: SalesProduct }) {
-  const [minQty, setMinQty] = useState("");
-  const [price, setPrice]   = useState("");
+  const [fromQty, setFromQty] = useState("");
+  const [toQty,   setToQty]   = useState("");
+  const [price,   setPrice]   = useState("");
   const addTier    = useAddTier();
   const deleteTier = useDeleteTier();
 
-  const sym = product.currency === "USD" ? "$" : "so'm";
+  const sym  = product.currency === "USD" ? "$" : "so'm";
+  const unit = product.saleType === "kg" ? "kg" : "dona";
 
-  function handleAdd() {
-    if (!minQty || !price) return;
-    addTier.mutate({ productId: product.id, minQty: Number(minQty), price: Number(price), currency: product.currency }, {
-      onSuccess: () => { setMinQty(""); setPrice(""); },
-    });
+  // Sort ascending for range display
+  const sorted = [...product.tiers].sort((a, b) => a.minQty - b.minQty);
+
+  function rangeLabel(idx: number) {
+    const t    = sorted[idx];
+    const next = sorted[idx + 1];
+    const from = t.minQty.toLocaleString();
+    if (next) {
+      const to = (next.minQty - 1).toLocaleString();
+      return `${from} – ${to} ${unit}`;
+    }
+    return `${from} ${unit} va undan ko'p`;
   }
 
-  const sorted = [...product.tiers].sort((a, b) => b.minQty - a.minQty);
+  function handleAdd() {
+    if (!fromQty || !price) return;
+    addTier.mutate(
+      { productId: product.id, minQty: Number(fromQty), price: Number(price), currency: product.currency },
+      { onSuccess: () => { setFromQty(""); setToQty(""); setPrice(""); } },
+    );
+  }
+
+  // Auto-fill "gacha" when "dan" changes: suggest next round number
+  function handleFromChange(v: string) {
+    setFromQty(v);
+    if (v && !toQty) {
+      const n = Number(v);
+      if (!isNaN(n) && n > 0) {
+        // suggest "from+999" or round up
+        setToQty(String(n + 999));
+      }
+    }
+  }
 
   return (
     <div className="space-y-3">
       {sorted.length > 0 ? (
-        <div className="rounded-md border divide-y">
-          <div className="grid grid-cols-[1fr_1fr_auto] text-xs text-muted-foreground px-3 py-1.5 bg-muted/40 font-medium">
-            <span>Min miqdor (≥)</span>
+        <div className="rounded-md border divide-y overflow-hidden">
+          <div className="grid grid-cols-[1.8fr_1fr_auto] text-xs text-muted-foreground px-3 py-1.5 bg-muted/40 font-medium">
+            <span>Miqdor oralig'i</span>
             <span>Narx</span>
             <span />
           </div>
-          {sorted.map(t => (
-            <div key={t.id} className="grid grid-cols-[1fr_1fr_auto] items-center px-3 py-2 text-sm">
-              <span className="font-mono">{t.minQty} {product.saleType}</span>
-              <span className="font-mono font-medium">
+          {sorted.map((t, idx) => (
+            <div key={t.id} className="grid grid-cols-[1.8fr_1fr_auto] items-center px-3 py-2 text-sm">
+              <span className="font-mono text-xs">{rangeLabel(idx)}</span>
+              <span className="font-mono font-semibold text-emerald-700 dark:text-emerald-400">
                 {t.currency === "USD" ? `$${t.price}` : formatCurrency(t.price)}
               </span>
               <Button
@@ -178,33 +206,55 @@ function TierManager({ product }: { product: SalesProduct }) {
         </p>
       )}
 
-      <div className="flex gap-2 items-end">
-        <div className="flex-1">
-          <label className="text-xs text-muted-foreground mb-1 block">Min miqdor ({product.saleType})</label>
-          <Input
-            type="number" min={0} step="any" placeholder="masalan: 1000"
-            value={minQty} onChange={e => setMinQty(e.target.value)}
-            className="h-8 text-sm"
-          />
+      {/* Add row */}
+      <div className="rounded-md border p-3 bg-muted/10 space-y-2">
+        <p className="text-xs font-medium text-muted-foreground">Yangi oraliq qo'shish</p>
+        <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 items-end">
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">Dan ({unit})</label>
+            <Input
+              type="number" min={0} step="any" placeholder="1"
+              value={fromQty} onChange={e => handleFromChange(e.target.value)}
+              className="h-8 text-sm"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">Gacha ({unit})</label>
+            <Input
+              type="number" min={0} step="any" placeholder="1000"
+              value={toQty} onChange={e => setToQty(e.target.value)}
+              className="h-8 text-sm text-muted-foreground"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">Narx ({sym})</label>
+            <Input
+              type="number" min={0} step="0.01" placeholder="2.5"
+              value={price} onChange={e => setPrice(e.target.value)}
+              className="h-8 text-sm"
+            />
+          </div>
+          <Button
+            size="sm" variant="default" onClick={handleAdd}
+            disabled={!fromQty || !price || addTier.isPending}
+            className="h-8"
+          >
+            <Plus className="w-3.5 h-3.5" />
+          </Button>
         </div>
-        <div className="flex-1">
-          <label className="text-xs text-muted-foreground mb-1 block">Narx ({sym})</label>
-          <Input
-            type="number" min={0} step="0.01" placeholder="masalan: 2.5"
-            value={price} onChange={e => setPrice(e.target.value)}
-            className="h-8 text-sm"
-          />
-        </div>
-        <Button
-          size="sm" variant="outline" onClick={handleAdd}
-          disabled={!minQty || !price || addTier.isPending}
-          className="h-8"
-        >
-          <Plus className="w-3.5 h-3.5 mr-1" /> Qo'shish
-        </Button>
+        {fromQty && toQty && price && (
+          <p className="text-xs text-emerald-700 dark:text-emerald-400 font-medium">
+            Preview: {Number(fromQty).toLocaleString()} – {Number(toQty).toLocaleString()} {unit} → {product.currency === "USD" ? `$${price}` : `${price} so'm`}
+          </p>
+        )}
+        {fromQty && !toQty && price && (
+          <p className="text-xs text-emerald-700 dark:text-emerald-400 font-medium">
+            Preview: {Number(fromQty).toLocaleString()} {unit} va undan ko'p → {product.currency === "USD" ? `$${price}` : `${price} so'm`}
+          </p>
+        )}
       </div>
       <p className="text-xs text-muted-foreground">
-        ℹ️ Bot savdoda kiritilgan miqdorga qarab eng mos tier narxni avtomatik tanlaydi.
+        ℹ️ Bot savdoda kiritilgan miqdorga qarab eng mos narxni avtomatik tanlaydi.
       </p>
     </div>
   );
@@ -217,43 +267,73 @@ function LocalTierEditor({
   tiers: LocalTier[]; currency: string; saleType: string;
   onChange: (tiers: LocalTier[]) => void;
 }) {
-  const sym = currency === "USD" ? "$" : "so'm";
+  const sym  = currency === "USD" ? "$" : "so'm";
+  const unit = saleType === "kg" ? "kg" : "dona";
 
-  function addRow() { onChange([...tiers, { minQty: "", price: "" }]); }
+  function addRow() { onChange([...tiers, { fromQty: "", toQty: "", price: "" }]); }
   function removeRow(i: number) { onChange(tiers.filter((_, idx) => idx !== i)); }
   function update(i: number, field: keyof LocalTier, val: string) {
-    onChange(tiers.map((t, idx) => idx === i ? { ...t, [field]: val } : t));
+    const updated = tiers.map((t, idx) => idx === i ? { ...t, [field]: val } : t);
+    // Auto-fill next row's "dan" from current row's "gacha" + 1
+    if (field === "toQty" && val && updated[i + 1] !== undefined && !updated[i + 1].fromQty) {
+      const nextFrom = String(Number(val) + 1);
+      updated[i + 1] = { ...updated[i + 1], fromQty: nextFrom };
+    }
+    onChange(updated);
   }
 
   return (
     <div className="space-y-2">
+      {tiers.length > 0 && (
+        <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 text-xs text-muted-foreground px-0.5">
+          <span>Dan ({unit})</span>
+          <span>Gacha ({unit})</span>
+          <span>Narx ({sym})</span>
+          <span />
+        </div>
+      )}
       {tiers.map((t, i) => (
-        <div key={i} className="flex gap-2 items-center">
-          <div className="flex-1">
-            {i === 0 && <label className="text-xs text-muted-foreground mb-1 block">Min miqdor ({saleType})</label>}
-            <Input
-              type="number" min={0} step="any" placeholder="1000"
-              value={t.minQty} onChange={e => update(i, "minQty", e.target.value)}
-              className="h-8 text-sm"
-            />
-          </div>
-          <div className="flex-1">
-            {i === 0 && <label className="text-xs text-muted-foreground mb-1 block">Narx ({sym})</label>}
-            <Input
-              type="number" min={0} step="0.01" placeholder="2.5"
-              value={t.price} onChange={e => update(i, "price", e.target.value)}
-              className="h-8 text-sm"
-            />
-          </div>
+        <div key={i} className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 items-center">
+          <Input
+            type="number" min={0} step="any" placeholder="1"
+            value={t.fromQty} onChange={e => update(i, "fromQty", e.target.value)}
+            className="h-8 text-sm"
+          />
+          <Input
+            type="number" min={0} step="any" placeholder="999"
+            value={t.toQty} onChange={e => update(i, "toQty", e.target.value)}
+            className="h-8 text-sm text-muted-foreground"
+          />
+          <Input
+            type="number" min={0} step="0.01" placeholder="2.5"
+            value={t.price} onChange={e => update(i, "price", e.target.value)}
+            className="h-8 text-sm"
+          />
           <Button
             variant="ghost" size="icon"
-            className={`h-8 w-8 text-destructive hover:text-destructive ${i === 0 ? "mt-5" : ""}`}
+            className="h-8 w-8 text-destructive hover:text-destructive"
             onClick={() => removeRow(i)}
           >
             <Trash2 className="w-3.5 h-3.5" />
           </Button>
         </div>
       ))}
+      {/* Preview */}
+      {tiers.some(t => t.fromQty && t.price) && (
+        <div className="rounded bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 px-3 py-2 space-y-0.5">
+          {tiers.filter(t => t.fromQty && t.price).map((t, i) => {
+            const priceLabel = currency === "USD" ? `$${t.price}` : `${t.price} so'm`;
+            const range = t.toQty
+              ? `${Number(t.fromQty).toLocaleString()} – ${Number(t.toQty).toLocaleString()} ${unit}`
+              : `${Number(t.fromQty).toLocaleString()} ${unit}+`;
+            return (
+              <p key={i} className="text-xs text-emerald-700 dark:text-emerald-400 font-mono">
+                {range} → {priceLabel}
+              </p>
+            );
+          })}
+        </div>
+      )}
       <Button variant="outline" size="sm" type="button" onClick={addRow} className="h-7 text-xs">
         <Plus className="w-3 h-3 mr-1" /> Tier narx qo'shish
       </Button>

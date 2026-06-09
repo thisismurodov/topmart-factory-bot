@@ -38,12 +38,16 @@ router.get("/salary/report", async (req, res): Promise<void> => {
 
   const paidMap = new Map(paymentsResult.rows.map((p) => [p.worker, p.paid_at]));
 
-  const rows = earningsResult.rows.map((e) => ({
-    worker: e.worker,
-    totalEarnings: Number(e.totalEarnings),
-    isPaid: paidMap.has(e.worker),
-    paidAt: paidMap.get(e.worker) ?? null,
-  }));
+  const rows = earningsResult.rows.map((e) => {
+    const raw = paidMap.get(e.worker);
+    const paidAt = raw instanceof Date ? raw.toISOString() : (raw ?? null);
+    return {
+      worker: e.worker,
+      totalEarnings: Number(e.totalEarnings),
+      isPaid: paidMap.has(e.worker),
+      paidAt,
+    };
+  });
 
   res.json(GetSalaryReportResponse.parse(rows));
 });

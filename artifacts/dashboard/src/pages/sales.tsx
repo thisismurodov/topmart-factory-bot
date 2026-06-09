@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import {
   useGetCustomers, getGetCustomersQueryKey,
   useDeleteSale,
@@ -18,15 +18,128 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import {
   Plus, Trash2, ShoppingBag, CheckCircle2, Clock, ChevronDown, ChevronRight,
-  Pencil, PackagePlus, Banknote, CreditCard, Shuffle, History,
+  Pencil, PackagePlus, Banknote, CreditCard, Shuffle, History, Search, X,
 } from "lucide-react";
+
+// ── SearchCombobox — qidiruv bilan dropdown ────────────────────────────────────
+function SearchCombobox({
+  options,
+  value,
+  onChange,
+  placeholder = "Tanlang",
+  searchPlaceholder = "Qidirish...",
+  emptyText = "Topilmadi",
+  displayValue,
+}: {
+  options: { value: string; label: string }[];
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  searchPlaceholder?: string;
+  emptyText?: string;
+  displayValue?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const containerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const filtered = query.trim()
+    ? options.filter(o => o.label.toLowerCase().includes(query.toLowerCase()))
+    : options;
+
+  const selectedLabel = displayValue ?? options.find(o => o.value === value)?.label;
+
+  useEffect(() => {
+    if (!open) return;
+    function handler(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+        setQuery("");
+      }
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  useEffect(() => {
+    if (open) setTimeout(() => inputRef.current?.focus(), 50);
+  }, [open]);
+
+  function select(v: string) {
+    onChange(v);
+    setOpen(false);
+    setQuery("");
+  }
+
+  function clear(e: React.MouseEvent) {
+    e.stopPropagation();
+    onChange("");
+    setQuery("");
+  }
+
+  return (
+    <div ref={containerRef} className="relative w-full">
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        className="flex h-9 w-full items-center justify-between rounded-md border border-input bg-transparent px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <span className={selectedLabel ? "text-foreground" : "text-muted-foreground"}>
+          {selectedLabel ?? placeholder}
+        </span>
+        <div className="flex items-center gap-1">
+          {value && (
+            <X
+              className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground"
+              onClick={clear}
+            />
+          )}
+          <ChevronDown className="w-4 h-4 opacity-50" />
+        </div>
+      </button>
+
+      {open && (
+        <div className="absolute z-[200] mt-1 w-full rounded-md border bg-popover shadow-md">
+          <div className="flex items-center border-b px-3 py-2 gap-2">
+            <Search className="w-4 h-4 text-muted-foreground shrink-0" />
+            <input
+              ref={inputRef}
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder={searchPlaceholder}
+              className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+            />
+          </div>
+          <div className="max-h-[220px] overflow-y-auto p-1">
+            {filtered.length === 0 ? (
+              <p className="text-center text-sm text-muted-foreground py-4">{emptyText}</p>
+            ) : (
+              filtered.map(o => (
+                <button
+                  key={o.value}
+                  type="button"
+                  onClick={() => select(o.value)}
+                  className={`w-full text-left rounded-sm px-3 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground ${
+                    value === o.value ? "bg-accent/60 font-medium" : ""
+                  }`}
+                >
+                  {o.label}
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Tier      = { id: number; minQty: number; price: number; currency: string };
@@ -375,12 +488,16 @@ function NewSaleDialog({
               <FormField control={mainForm.control} name="customerId" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Mijoz</FormLabel>
-                  <Select onValueChange={v => field.onChange(parseInt(v))} value={field.value?.toString()}>
-                    <FormControl><SelectTrigger><SelectValue placeholder="Tanlang" /></SelectTrigger></FormControl>
-                    <SelectContent>
-                      {customers?.map(c => <SelectItem key={c.id} value={c.id.toString()}>{c.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
+                  <FormControl>
+                    <SearchCombobox
+                      options={customers?.map((c: any) => ({ value: c.id.toString(), label: c.name })) ?? []}
+                      value={field.value?.toString() ?? ""}
+                      onChange={v => field.onChange(v ? parseInt(v) : 0)}
+                      placeholder="Mijoz tanlang"
+                      searchPlaceholder="Mijoz qidirish..."
+                      emptyText="Mijoz topilmadi"
+                    />
+                  </FormControl>
                   <FormMessage />
                 </FormItem>
               )} />
@@ -403,14 +520,16 @@ function NewSaleDialog({
                 <FormField control={itemForm.control} name="product" render={({ field }) => (
                   <FormItem>
                     <FormLabel>Mahsulot</FormLabel>
-                    <Select onValueChange={v => { field.onChange(v); itemForm.setValue("quantity", 0); setItemError(""); }} value={field.value}>
-                      <FormControl><SelectTrigger><SelectValue placeholder="Tanlang" /></SelectTrigger></FormControl>
-                      <SelectContent>
-                        {salesProducts.length === 0
-                          ? <SelectItem value="__" disabled>Sotuv mahsulotlari yo'q</SelectItem>
-                          : salesProducts.map(p => <SelectItem key={p.id} value={p.name}>{p.name}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
+                    <FormControl>
+                      <SearchCombobox
+                        options={salesProducts.map(p => ({ value: p.name, label: p.name }))}
+                        value={field.value}
+                        onChange={v => { field.onChange(v); itemForm.setValue("quantity", 0); setItemError(""); }}
+                        placeholder="Mahsulot tanlang"
+                        searchPlaceholder="Mahsulot qidirish..."
+                        emptyText="Mahsulot topilmadi"
+                      />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )} />

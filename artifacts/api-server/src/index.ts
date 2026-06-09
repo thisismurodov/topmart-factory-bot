@@ -1,5 +1,8 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { pool, db, adminUsersTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
+import bcrypt from "bcryptjs";
 
 const rawPort = process.env["PORT"];
 
@@ -15,11 +18,53 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-app.listen(port, (err) => {
-  if (err) {
-    logger.error({ err }, "Error listening on port");
-    process.exit(1);
-  }
+async function initDb() {
+  // admin_users jadvali (Drizzle schema bor, lekin Railway DB'da bo'lmasligi mumkin)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS admin_users (
+      id SERIAL PRIMARY KEY,
+      username TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'admin',
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    )
+  `);
 
-  logger.info({ port }, "Server listening");
-});
+  // admin_sessions — Drizzle sxemasida yo'q, raw SQL bilan yaratiladi
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS admin_sessions (
+      id SERIAL PRIMARY KEY,
+      token TEXT NOT NULL UNIQUE,
+      user_id INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  // Admin userni seed qilish (mavjud bo'lmasa)
+  const existing = await db.select().from(adminUsersTable).where(eq(adminUsersTable.username, "thisismurodov"));
+  if (existing.length === 0) {
+    const passwordHash = await bcrypt.hash("topmart2026", 10);
+    await db.insert(adminUsersTable).values({
+      username: "thisismurodov",
+      passwordHash,
+      role: "admin",
+    });
+    logger.info("Admin user created: thisismurodov");
+  }
+}
+
+initDb()
+  .then(() => {
+    logger.info("DB initialized");
+    app.listen(port, (err) => {
+      if (err) {
+        logger.error({ err }, "Error listening on port");
+        process.exit(1);
+      }
+      logger.info({ port }, "Server listening");
+    });
+  })
+  .catch((err) => {
+    logger.error({ err }, "DB init failed — aborting");
+    process.exit(1);
+  });

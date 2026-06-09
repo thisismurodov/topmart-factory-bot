@@ -12,12 +12,9 @@ import Salary from "@/pages/salary";
 import Customers from "@/pages/customers";
 import Sales from "@/pages/sales";
 import Inventory from "@/pages/inventory";
-import Debts from "@/pages/debts";
-import Reports from "@/pages/reports";
 import Login from "@/pages/login";
 import { Layout } from "@/components/layout";
-import { setAuthTokenGetter, setAuthStorageKey } from "@workspace/api-client-react";
-
+import { setAuthTokenGetter, setBaseUrl } from "@workspace/api-client-react";
 const AUTH_TOKEN_KEY = "topmart_auth_token";
 
 export function getStoredToken(): string | null {
@@ -30,8 +27,8 @@ export function clearToken(): void {
   localStorage.removeItem(AUTH_TOKEN_KEY);
 }
 
+setBaseUrl(import.meta.env.VITE_API_URL || "https://keen-energy-production-f4d2.up.railway.app");
 setAuthTokenGetter(() => getStoredToken());
-setAuthStorageKey(AUTH_TOKEN_KEY);
 
 const queryClient = new QueryClient();
 
@@ -58,8 +55,6 @@ function Router() {
             <Route path="/salary" component={Salary} />
             <Route path="/customers" component={Customers} />
             <Route path="/sales" component={Sales} />
-            <Route path="/debts" component={Debts} />
-            <Route path="/reports" component={Reports} />
             <Route path="/inventory" component={Inventory} />
             <Route component={NotFound} />
           </Switch>

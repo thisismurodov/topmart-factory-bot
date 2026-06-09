@@ -23,19 +23,6 @@ def get_conn():
         conn.close()
 
 
-def _safe_alter(sql: str) -> None:
-    """Run a single ALTER TABLE ignoring errors (e.g. table/column already exists or missing)."""
-    conn = psycopg2.connect(DATABASE_URL)
-    try:
-        with conn.cursor() as cur:
-            cur.execute(sql)
-        conn.commit()
-    except Exception:
-        conn.rollback()
-    finally:
-        conn.close()
-
-
 def init_db() -> None:
     with get_conn() as (conn, cur):
         cur.execute("""
@@ -149,28 +136,16 @@ def init_db() -> None:
                 value TEXT NOT NULL
             )
         """)
+        # product_type ustunini mavjud jadvallarga qo'shamiz (agar yo'q bo'lsa)
+        cur.execute("""
+            ALTER TABLE stock_movements
+            ADD COLUMN IF NOT EXISTS product_type TEXT NOT NULL DEFAULT 'finished'
+        """)
+        cur.execute("""
+            ALTER TABLE inventory
+            ADD COLUMN IF NOT EXISTS product_type TEXT NOT NULL DEFAULT 'finished'
+        """)
         _seed(cur)
-
-    # ── Nasiya migration (separate connection — idempotent) ────────────────────
-    _safe_alter("ALTER TABLE sales ADD COLUMN IF NOT EXISTS payment_type TEXT NOT NULL DEFAULT 'naqd'")
-    _safe_alter("ALTER TABLE sales ADD COLUMN IF NOT EXISTS paid_amount  NUMERIC(12,2) NOT NULL DEFAULT 0")
-    _safe_alter("ALTER TABLE sales ADD COLUMN IF NOT EXISTS debt_amount  NUMERIC(12,2) NOT NULL DEFAULT 0")
-    _safe_alter("ALTER TABLE sales ADD COLUMN IF NOT EXISTS currency     TEXT NOT NULL DEFAULT 'USD'")
-    _safe_alter("""
-        CREATE TABLE IF NOT EXISTS sale_payments (
-            id         SERIAL PRIMARY KEY,
-            sale_id    INTEGER NOT NULL REFERENCES sales(id) ON DELETE CASCADE,
-            amount     NUMERIC(12,2) NOT NULL,
-            currency   TEXT NOT NULL DEFAULT 'USD',
-            note       TEXT NOT NULL DEFAULT '',
-            created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
-        )
-    """)
-    _safe_alter("UPDATE sales SET paid_amount = total_amount WHERE status = 'paid' AND paid_amount = 0 AND total_amount > 0")
-    _safe_alter("UPDATE sales SET debt_amount = total_amount - paid_amount WHERE status IN ('pending','partial') AND debt_amount = 0 AND total_amount > 0")
-    _safe_alter("ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS product_type TEXT NOT NULL DEFAULT 'finished'")
-    _safe_alter("ALTER TABLE inventory ADD COLUMN IF NOT EXISTS product_type TEXT NOT NULL DEFAULT 'finished'")
-    _safe_alter("ALTER TABLE customers ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE")
 
 
 def _seed(cur) -> None:
@@ -905,99 +880,3 @@ def get_stock_by_warehouse_typed() -> dict:
         pt = r["product_type"] if r["product_type"] in ("finished", "raw") else "finished"
         result[pt].append(r)
     return result
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# NASIYA / DEBT functions
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def get_debt_customers() -> list[dict]:
-    """Barcha qarzdor mijozlar va ularning umumiy nasiyasi."""
-    with get_conn() as (conn, cur):
-        cur.execute("""
-            SELECT
-                c.id                                                            AS customer_id,
-                c.name                                                          AS customer_name,
-                c.phone,
-                COALESCE(SUM(s.debt_amount) FILTER (WHERE UPPER(s.currency)='USD'), 0) AS debt_usd,
-                COALESCE(SUM(s.debt_amount) FILTER (WHERE UPPER(s.currency)='UZS'), 0) AS debt_uzs,
-                COUNT(s.id)::int                                                AS sale_count,
-                MIN(s.created_at)                                               AS oldest_sale
-            FROM sales s
-            JOIN customers c ON c.id = s.customer_id
-            WHERE s.debt_amount > 0
-              AND s.status IN ('pending', 'partial')
-              AND (c.deleted_at IS NULL OR c.deleted_at > NOW())
-            GROUP BY c.id, c.name, c.phone
-            ORDER BY debt_usd DESC, debt_uzs DESC
-        """)
-        return cur.fetchall()
-
-
-def get_customer_debt_sales(customer_id: int) -> list[dict]:
-    """Bir mijozning nasiyali savdolari."""
-    with get_conn() as (conn, cur):
-        cur.execute("""
-            SELECT id, total_amount, paid_amount, debt_amount,
-                   currency, status, note, created_at
-            FROM sales
-            WHERE customer_id = %s
-              AND debt_amount > 0
-              AND status IN ('pending', 'partial')
-            ORDER BY created_at ASC
-        """, (customer_id,))
-        return cur.fetchall()
-
-
-def add_debt_payment(sale_id: int, amount: float, currency: str, note: str = "") -> dict:
-    """Nasiyaga to'lov qo'shish. Overpayment imkonsiz."""
-    with get_conn() as (conn, cur):
-        cur.execute(
-            "SELECT id, debt_amount, paid_amount, status FROM sales WHERE id=%s FOR UPDATE",
-            (sale_id,)
-        )
-        sale = cur.fetchone()
-        if not sale:
-            return {"ok": False, "error": "Savdo topilmadi"}
-
-        max_pay = float(sale["debt_amount"])
-        if max_pay <= 0:
-            return {"ok": False, "error": "Bu savdo allaqachon to'liq to'langan"}
-
-        effective = min(amount, max_pay)
-        new_paid = float(sale["paid_amount"]) + effective
-        new_debt = max(0.0, max_pay - effective)
-        new_status = "paid" if new_debt < 0.01 else "partial"
-
-        cur.execute(
-            "UPDATE sales SET paid_amount=%s, debt_amount=%s, status=%s WHERE id=%s",
-            (new_paid, new_debt, new_status, sale_id)
-        )
-        cur.execute(
-            """INSERT INTO sale_payments (sale_id, amount, currency, note)
-               VALUES (%s,%s,%s,%s)""",
-            (sale_id, effective, currency.upper(), note)
-        )
-        conn.commit()
-        return {
-            "ok": True,
-            "paid": effective,
-            "new_paid": new_paid,
-            "new_debt": new_debt,
-            "status": new_status,
-        }
-
-
-def get_debt_totals() -> dict:
-    """Barcha nasiyalarning umumiy summasi."""
-    with get_conn() as (conn, cur):
-        cur.execute("""
-            SELECT
-                COALESCE(SUM(debt_amount) FILTER (WHERE UPPER(currency)='USD'), 0) AS total_usd,
-                COALESCE(SUM(debt_amount) FILTER (WHERE UPPER(currency)='UZS'), 0) AS total_uzs,
-                COUNT(DISTINCT customer_id)::int                                   AS customer_count,
-                COUNT(*)::int                                                      AS sale_count
-            FROM sales
-            WHERE debt_amount > 0 AND status IN ('pending','partial')
-        """)
-        return cur.fetchone()

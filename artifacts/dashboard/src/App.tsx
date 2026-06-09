@@ -14,8 +14,7 @@ import Sales from "@/pages/sales";
 import Inventory from "@/pages/inventory";
 import Login from "@/pages/login";
 import { Layout } from "@/components/layout";
-import { setAuthTokenGetter } from "@workspace/api-client-react";
-
+import { setAuthTokenGetter, setBaseUrl } from "@workspace/api-client-react";
 const AUTH_TOKEN_KEY = "topmart_auth_token";
 
 export function getStoredToken(): string | null {
@@ -28,6 +27,7 @@ export function clearToken(): void {
   localStorage.removeItem(AUTH_TOKEN_KEY);
 }
 
+setBaseUrl(import.meta.env.VITE_API_URL || "https://keen-energy-production-f4d2.up.railway.app");
 setAuthTokenGetter(() => getStoredToken());
 
 const queryClient = new QueryClient();

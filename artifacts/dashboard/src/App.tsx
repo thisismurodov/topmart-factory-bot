@@ -27,8 +27,20 @@ export function clearToken(): void {
   localStorage.removeItem(AUTH_TOKEN_KEY);
 }
 
-setBaseUrl(import.meta.env.VITE_API_URL || "https://keen-energy-production-f4d2.up.railway.app");
+setBaseUrl(import.meta.env.VITE_API_URL ?? null);
 setAuthTokenGetter(() => getStoredToken());
+
+export async function authFetch(url: string, opts: RequestInit = {}): Promise<Response> {
+  const token = getStoredToken();
+  const headers: Record<string, string> = { ...(opts.headers as Record<string, string> ?? {}) };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(url, { ...opts, headers });
+  if (res.status === 401) {
+    clearToken();
+    window.location.href = "/dashboard/login";
+  }
+  return res;
+}
 
 const queryClient = new QueryClient();
 

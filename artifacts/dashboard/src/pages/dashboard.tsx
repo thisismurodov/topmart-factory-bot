@@ -1,3 +1,4 @@
+import { authFetch } from "@/App";
 import { useQuery } from "@tanstack/react-query";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -35,7 +36,7 @@ function useDashboardV2() {
   return useQuery<V2Data>({
     queryKey: ["dashboard-v2"],
     queryFn: async () => {
-      const res = await fetch("/api/dashboard/v2");
+      const res = await authFetch("/api/dashboard/v2");
       if (!res.ok) throw new Error("API xatosi");
       return res.json();
     },

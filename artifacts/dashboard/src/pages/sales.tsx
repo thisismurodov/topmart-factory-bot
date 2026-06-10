@@ -1,3 +1,4 @@
+import { authFetch } from "@/App";
 import { useState, useRef, useEffect } from "react";
 import {
   useGetCustomers, getGetCustomersQueryKey,
@@ -231,7 +232,7 @@ function AddPaymentDialog({ sale, onSuccess }: { sale: Sale; onSuccess: () => vo
     if (a > sale.debtAmount + 0.001) { setErr(`Nasiya miqdoridan ko'p: ${debtLabel}`); return; }
     setSaving(true); setErr("");
     try {
-      const res = await fetch(`/api/sales/${sale.id}/payments`, {
+      const res = await authFetch(`/api/sales/${sale.id}/payments`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ amount: a, currency: sale.currency, note }),
       });
@@ -322,7 +323,7 @@ function PaymentHistoryDialog({ saleId, currency }: { saleId: number; currency: 
   const { data: payments = [], isLoading } = useQuery({
     queryKey: ["sale-payments", saleId],
     queryFn: async () => {
-      const r = await fetch(`/api/sales/${saleId}/payments`);
+      const r = await authFetch(`/api/sales/${saleId}/payments`);
       return r.json();
     },
     enabled: open,
@@ -836,7 +837,7 @@ export default function Sales() {
     queryKey: [...SALES_Q_KEY, statusFilter],
     queryFn: async () => {
       const qs  = statusFilter !== "all" ? `?status=${statusFilter}` : "";
-      const res = await fetch(`/api/sales${qs}`);
+      const res = await authFetch(`/api/sales${qs}`);
       if (!res.ok) throw new Error("Fetch failed");
       return res.json();
     },
@@ -845,12 +846,12 @@ export default function Sales() {
   const { data: customers }      = useGetCustomers({ query: { queryKey: getGetCustomersQueryKey() } });
   const { data: salesProducts = [] } = useQuery<SalesProd[]>({
     queryKey: SALES_PROD_KEY,
-    queryFn: async () => { const r = await fetch("/api/sales-products"); return r.json(); },
+    queryFn: async () => { const r = await authFetch("/api/sales-products"); return r.json(); },
   });
 
   const createSale = useMutation({
     mutationFn: async (data: any) => {
-      const res = await fetch("/api/sales", {
+      const res = await authFetch("/api/sales", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data),
       });
       if (!res.ok) throw new Error("Failed");
@@ -865,7 +866,7 @@ export default function Sales() {
 
   function handleStatusToggle(sale: Sale) {
     const newStatus = sale.status === "paid" ? (sale.paymentType === "nasiya" ? "pending" : "partial") : "paid";
-    fetch(`/api/sales/${sale.id}/status`, {
+    authFetch(`/api/sales/${sale.id}/status`, {
       method: "PATCH", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: newStatus }),
     }).then(() => queryClient.invalidateQueries({ queryKey: SALES_Q_KEY }));

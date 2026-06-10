@@ -1,3 +1,4 @@
+import { authFetch } from "@/App";
 import { useState } from "react";
 import { useGetProducts, getGetProductsQueryKey, useCreateProduct, useDeleteProduct } from "@workspace/api-client-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -55,7 +56,7 @@ function useSalesProducts() {
   return useQuery<SalesProduct[]>({
     queryKey: SALES_PRODUCTS_KEY,
     queryFn: async () => {
-      const res = await fetch("/api/sales-products");
+      const res = await authFetch("/api/sales-products");
       if (!res.ok) throw new Error("Fetch failed");
       return res.json();
     },
@@ -66,7 +67,7 @@ function useCreateSalesProduct() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (data: { name: string; saleType: string; defaultPrice: number; currency: string; tiers: LocalTier[] }) => {
-      const res = await fetch("/api/sales-products", {
+      const res = await authFetch("/api/sales-products", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: data.name, saleType: data.saleType,
@@ -87,7 +88,7 @@ function useUpdateSalesProduct() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, ...data }: { id: number; name: string; saleType: string; defaultPrice: number; currency: string }) => {
-      const res = await fetch(`/api/sales-products/${id}`, {
+      const res = await authFetch(`/api/sales-products/${id}`, {
         method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data),
       });
       if (!res.ok) throw new Error("Failed");
@@ -100,7 +101,7 @@ function useUpdateSalesProduct() {
 function useDeleteSalesProduct() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (id: number) => { await fetch(`/api/sales-products/${id}`, { method: "DELETE" }); },
+    mutationFn: async (id: number) => { await authFetch(`/api/sales-products/${id}`, { method: "DELETE" }); },
     onSuccess: () => qc.invalidateQueries({ queryKey: SALES_PRODUCTS_KEY }),
   });
 }
@@ -109,7 +110,7 @@ function useAddTier() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ productId, minQty, price, currency }: { productId: number; minQty: number; price: number; currency: string }) => {
-      const res = await fetch(`/api/sales-products/${productId}/tiers`, {
+      const res = await authFetch(`/api/sales-products/${productId}/tiers`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ minQty, price, currency }),
       });
@@ -124,7 +125,7 @@ function useDeleteTier() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ productId, tierId }: { productId: number; tierId: number }) => {
-      await fetch(`/api/sales-products/${productId}/tiers/${tierId}`, { method: "DELETE" });
+      await authFetch(`/api/sales-products/${productId}/tiers/${tierId}`, { method: "DELETE" });
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: SALES_PRODUCTS_KEY }),
   });
@@ -361,7 +362,7 @@ function EditSalesProductModal({ product }: { product: SalesProduct }) {
 
   async function onSubmit(values: z.infer<typeof salesFormSchema>) {
     if (values.saleType !== product.saleType) {
-      const chk = await fetch(`/api/sales-products/${product.id}/has-sales`);
+      const chk = await authFetch(`/api/sales-products/${product.id}/has-sales`);
       const { hasSales } = await chk.json();
       if (hasSales) { setPendingValues(values); setWarnOpen(true); return; }
     }

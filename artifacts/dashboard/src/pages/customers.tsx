@@ -1,3 +1,4 @@
+import { authFetch } from "@/App";
 import { useState } from "react";
 import {
   useGetCustomers, getGetCustomersQueryKey,
@@ -88,7 +89,7 @@ function EditCustomerDialog({ customer, onSuccess }: { customer: Customer; onSuc
 
   const update = useMutation({
     mutationFn: async (data: z.infer<typeof customerSchema>) => {
-      const res = await fetch(`/api/customers/${customer.id}`, {
+      const res = await authFetch(`/api/customers/${customer.id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
@@ -228,7 +229,7 @@ function CustomerProfileDialog({ customer, open, onClose, onEdit }: {
   const { data: profile, isLoading } = useQuery<Profile>({
     queryKey: ["customer-profile", customer.id],
     queryFn: async () => {
-      const r = await fetch(`/api/customers/${customer.id}/profile`);
+      const r = await authFetch(`/api/customers/${customer.id}/profile`);
       if (!r.ok) throw new Error("Failed");
       return r.json();
     },
@@ -617,7 +618,7 @@ function EditCustomerInlineForm({ customer, onSuccess, onCancel }: {
 
   const update = useMutation({
     mutationFn: async (data: z.infer<typeof customerSchema>) => {
-      const res = await fetch(`/api/customers/${customer.id}`, {
+      const res = await authFetch(`/api/customers/${customer.id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data),
       });
       if (!res.ok) throw new Error("Failed");

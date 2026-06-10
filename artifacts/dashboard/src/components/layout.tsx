@@ -40,10 +40,17 @@ export function Layout({ children }: { children: ReactNode }) {
   const [location] = useLocation();
   const queryClient = useQueryClient();
 
-  const { data: user, error, isLoading } = useGetMe({
+  const { data: user, error, isLoading, refetch } = useGetMe({
     query: {
-      retry: false,
       queryKey: getGetMeQueryKey(),
+      // Cold-start tolerant: retry transient/network errors (autoscale waking up),
+      // but never retry a genuine 401 (invalid/expired token) — that goes to login.
+      retry: (failureCount, err) => {
+        const status = (err as { status?: number } | null)?.status;
+        if (status === 401) return false;
+        return failureCount < 4;
+      },
+      retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
     }
   });
 
@@ -55,7 +62,11 @@ export function Layout({ children }: { children: ReactNode }) {
   });
 
   useEffect(() => {
-    if (error) {
+    const status = (error as { status?: number } | null)?.status;
+    // Only a real 401 means the session is invalid — log out then.
+    // Transient errors (cold start / network) must NOT log the user out.
+    if (status === 401) {
+      import("@/App").then(({ clearToken }) => clearToken());
       setLocation("/login");
     }
   }, [error, setLocation]);
@@ -69,6 +80,25 @@ export function Layout({ children }: { children: ReactNode }) {
       }
     }
   });
+
+  const errorStatus = (error as { status?: number } | null)?.status;
+
+  // Server unreachable after retries (e.g. autoscale cold start) — offer a manual
+  // retry instead of silently logging the user out or spinning forever.
+  if (!user && error && errorStatus !== 401) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-muted/20">
+        <div className="flex flex-col items-center text-center max-w-sm px-4">
+          <ShoppingCart className="w-12 h-12 text-muted-foreground mb-4" />
+          <div className="text-foreground font-medium mb-1">Serverga ulanib bo'lmadi</div>
+          <div className="text-sm text-muted-foreground mb-4">
+            Server ishga tushayotgan bo'lishi mumkin. Bir necha soniyadan so'ng qayta urinib ko'ring.
+          </div>
+          <Button onClick={() => refetch()}>Qayta urinish</Button>
+        </div>
+      </div>
+    );
+  }
 
   if (isLoading || !user) {
     return (

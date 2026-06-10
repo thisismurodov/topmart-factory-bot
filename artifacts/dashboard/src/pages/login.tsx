@@ -21,6 +21,7 @@ const formSchema = z.object({
 export default function Login() {
   const [, setLocation] = useLocation();
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   const form = useForm<z.infer<typeof formSchema>>({
@@ -30,28 +31,46 @@ export default function Login() {
 
   async function onSubmit(values: z.infer<typeof formSchema>) {
     setError(null);
+    setInfo(null);
     setLoading(true);
+    const maxAttempts = 3;
     try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(values),
-      });
-      if (!res.ok) {
-        setError("Foydalanuvchi nomi yoki parol noto'g'ri");
-        return;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          const res = await fetch("/api/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(values),
+          });
+          // 401 — haqiqiy noto'g'ri login/parol. Qayta urinmaymiz.
+          if (res.status === 401) {
+            setError("Foydalanuvchi nomi yoki parol noto'g'ri");
+            return;
+          }
+          // 5xx va boshqa xatolar — server ishga tushayotgan bo'lishi mumkin, qayta urinamiz.
+          if (!res.ok) {
+            throw new Error("server-unavailable");
+          }
+          const data = await res.json();
+          if (data.token) {
+            storeToken(data.token);
+            setLocation("/dashboard");
+            return;
+          }
+          setError("Server xatosi. Qayta urinib ko'ring.");
+          return;
+        } catch {
+          if (attempt < maxAttempts) {
+            setInfo("Server ishga tushmoqda, biroz kuting...");
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+            continue;
+          }
+          setError("Server hozircha javob bermayapti. Bir necha soniyadan so'ng qayta urinib ko'ring.");
+        }
       }
-      const data = await res.json();
-      if (data.token) {
-        storeToken(data.token);
-        setLocation("/dashboard");
-      } else {
-        setError("Server xatosi. Qayta urinib ko'ring.");
-      }
-    } catch {
-      setError("Tarmoq xatosi. Qayta urinib ko'ring.");
     } finally {
       setLoading(false);
+      setInfo(null);
     }
   }
 
@@ -78,6 +97,12 @@ export default function Login() {
                   <Alert variant="destructive">
                     <AlertCircle className="h-4 w-4" />
                     <AlertDescription>{error}</AlertDescription>
+                  </Alert>
+                )}
+                {info && !error && (
+                  <Alert>
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>{info}</AlertDescription>
                   </Alert>
                 )}
                 <FormField control={form.control} name="username" render={({ field }) => (

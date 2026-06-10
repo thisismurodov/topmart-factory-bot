@@ -1,3 +1,4 @@
 - [Python bot setup on Replit](python-bot-setup.md) — Python not pre-installed; must use installProgrammingLanguage before installLanguagePackages; packages land in .pythonlibs via uv.
 - [PostgreSQL migration from SQLite](pg-migration.md) — Bot uses psycopg2; table names workers/products (not workers_config/products_config); salary_payments.worker not worker_name; db_meta created by bot not Drizzle.
 - [TopMart batch & raw-material flow](topmart-batch-flow.md) — batches created ONLY via bot (api batches.ts has no POST); BOM deduction lives in bot create_batch, not API.
+- [Deploy DB topology + cold-start auth](deploy-db-topology.md) — runtime uses RAILWAY_DATABASE_URL (real data); drizzle.config stays on empty Replit DB so migrations never touch Railway; autoscale cold-start 5xx must NOT log users out (only true 401).

@@ -7,7 +7,7 @@ description: How the Replit deployment, dev, and Railway databases relate, and w
 
 The app runs in three places that resolve their database differently:
 
-- **Runtime connection** (`lib/db/src/index.ts`) uses `RAILWAY_DATABASE_URL || DATABASE_URL`. `RAILWAY_DATABASE_URL` is a **global secret** (present in dev AND Replit production), so both the dev API and the Replit deployment connect to **Railway** — the real data + the real `thisismurodov` admin account live there.
+- **Runtime connection** (`lib/db/src/index.ts`) uses `RAILWAY_DATABASE_URL || DATABASE_URL`. `RAILWAY_DATABASE_URL` is a **global secret** (present in dev AND Replit production), so both the dev API and the Replit deployment connect to **Railway** — the real data + the real admin account live there.
 - **Railway services** (bot + api) don't set `RAILWAY_DATABASE_URL`; they fall back to Railway's injected `DATABASE_URL`. Same Railway DB. Correct everywhere.
 - **`drizzle.config.ts` intentionally stays on `DATABASE_URL`** (the Replit-managed Helium DB, which is near-empty/unused). So Replit publish-time migrations (incl. any scary `truncate ... cascade`) hit that empty Replit DB, **never Railway**.
 
@@ -16,6 +16,6 @@ The app runs in three places that resolve their database differently:
 **How to apply:** During Replit publish, the DB-migration step is harmless — it only edits the empty Replit DB. Don't repoint `drizzle.config` at Railway "to fix" the migration warning. If schema sync to Railway is ever truly needed, model the bot-only columns/tables in Drizzle first, or use `tablesFilter`, and review the SQL for DROP/TRUNCATE before applying.
 
 ## Login facts
-- Production URL: `factory-bot-manager.replit.app` (autoscale). Real login: `thisismurodov` / `topmart2026` (verified 200 against prod + Railway).
+- Production URL: `factory-bot-manager.replit.app` (autoscale). The real admin account lives on Railway; token-based login verified working against prod (do NOT store the actual credentials here).
 - `admin` user is a **stale artifact in the Replit dev DB only** (old seed); it does not exist on Railway. Seeing `admin` when querying `DATABASE_URL` directly does NOT mean the app uses that DB.
-- Autoscale cold starts / restarts emit transient `healthcheck ... 500` and can make a login attempt fail momentarily; retry after the instance is warm before assuming a real auth bug.
+- Autoscale cold starts / restarts emit transient 5xx (e.g. `healthcheck ... 500`) and can make a login attempt fail momentarily; the dashboard now retries these (login.tsx + layout.tsx useGetMe) and only logs out on a true 401. Retry after the instance is warm before assuming a real auth bug.

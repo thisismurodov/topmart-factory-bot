@@ -609,49 +609,43 @@ def get_product_rate_type(product_name: str) -> str:
 # ── Sale products (sotuv uchun alohida tovar ro'yxati) ────────────────────────
 
 def get_sale_products() -> list[dict]:
-    """sales_products jadvalidan o'qiydi (narx, tur, valyuta bilan)."""
+    """V3: unified products jadvalidan o'qiydi (default_sale_price, currency_type, unit_type)."""
     with get_conn() as (conn, cur):
         cur.execute(
-            """SELECT id, name, sale_type AS unit, default_price, currency
-               FROM sales_products WHERE active = TRUE ORDER BY name"""
+            """SELECT id, name,
+                      unit_type        AS unit,
+                      default_sale_price AS default_price,
+                      currency_type    AS currency
+               FROM products WHERE active = TRUE ORDER BY name"""
         )
         return cur.fetchall()
 
 
 def get_sale_product_by_id(prod_id: int) -> dict | None:
+    """V3: unified products jadvalidan id bo'yicha."""
     with get_conn() as (conn, cur):
         cur.execute(
-            "SELECT id, name, sale_type AS unit, default_price, currency FROM sales_products WHERE id = %s",
+            """SELECT id, name,
+                      unit_type        AS unit,
+                      default_sale_price AS default_price,
+                      currency_type    AS currency
+               FROM products WHERE id = %s AND active = TRUE""",
             (prod_id,),
         )
         return cur.fetchone()
 
 
 def get_price_for_qty(product_id: int, qty: float) -> tuple[float, str]:
-    """
-    Miqdorga qarab narxni qaytaradi.
-    sales_product_tiers'dan min_qty <= qty shartiga to'g'ri keladigan
-    eng katta min_qty'li tier tanlanadi.
-    Agar tier yo'q bo'lsa, sales_products.default_price qaytariladi.
-    Return: (price, currency)
-    """
+    """V3: products jadvalidan default_sale_price va currency_type qaytaradi."""
     with get_conn() as (conn, cur):
         cur.execute(
-            """SELECT price, currency FROM sales_product_tiers
-               WHERE product_id = %s AND min_qty <= %s
-               ORDER BY min_qty DESC LIMIT 1""",
-            (product_id, qty),
-        )
-        tier = cur.fetchone()
-        if tier:
-            return float(tier["price"]), tier["currency"]
-        cur.execute(
-            "SELECT default_price, currency FROM sales_products WHERE id = %s",
+            """SELECT default_sale_price AS price, currency_type AS currency
+               FROM products WHERE id = %s AND active = TRUE""",
             (product_id,),
         )
         prod = cur.fetchone()
         if prod:
-            return float(prod["default_price"] or 0), prod["currency"] or "UZS"
+            return float(prod["price"] or 0), prod["currency"] or "UZS"
         return 0.0, "UZS"
 
 

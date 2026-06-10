@@ -65,8 +65,8 @@ def products_inline_keyboard(
 ) -> InlineKeyboardMarkup:
     from .database import get_product_names, get_worker_allowed_products, get_packer_assigned_products
     if packer_name:
-        assigned = get_packer_assigned_products(packer_name)
-        products = assigned if assigned else get_product_names()
+        products = get_packer_assigned_products(packer_name)
+        # Strict: packer only sees their assigned products, no fallback to all
     elif worker_name:
         allowed = get_worker_allowed_products(worker_name)
         products = allowed if allowed else get_product_names()

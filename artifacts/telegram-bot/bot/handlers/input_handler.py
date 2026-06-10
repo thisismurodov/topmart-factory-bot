@@ -39,10 +39,14 @@ async def choose_worker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     worker = query.data.split(":", 1)[1]
     context.user_data["worker"] = worker
     packer_name = context.user_data.get("_packer_name")
+    if packer_name:
+        kb = products_inline_keyboard(packer_name=packer_name)
+    else:
+        kb = products_inline_keyboard(worker_name=worker)
     await query.edit_message_text(
         f"👷 *{worker}*\n\n📦 *Mahsulotni tanlang:*",
         parse_mode="Markdown",
-        reply_markup=products_inline_keyboard(packer_name=packer_name),
+        reply_markup=kb,
     )
     return CHOOSE_PRODUCT
 

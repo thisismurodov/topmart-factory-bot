@@ -162,9 +162,33 @@ function EditCustomerDialog({ customer, onSuccess }: { customer: Customer; onSuc
   );
 }
 
+// ── SaleCard helpers ──────────────────────────────────────────────────────────
+function getSaleTotals(sale: SaleRow) {
+  if (sale.items.length === 0) return { usd: 0, uzs: 0, mixed: false };
+  const usd = sale.items.filter(i => i.currency.toUpperCase() === "USD").reduce((s, i) => s + i.lineTotal, 0);
+  const uzs = sale.items.filter(i => i.currency.toUpperCase() === "UZS").reduce((s, i) => s + i.lineTotal, 0);
+  return { usd, uzs, mixed: usd > 0 && uzs > 0 };
+}
+
 // ── SaleCard (inside profile) ─────────────────────────────────────────────────
 function SaleCard({ sale }: { sale: SaleRow }) {
   const [exp, setExp] = useState(false);
+  const totals = getSaleTotals(sale);
+
+  const totalLabel = totals.mixed ? (
+    <div className="flex flex-wrap gap-1">
+      {totals.usd > 0 && <span>{fmtAmt(totals.usd, "USD")}</span>}
+      {totals.uzs > 0 && <span className="text-muted-foreground">+</span>}
+      {totals.uzs > 0 && <span>{fmtAmt(totals.uzs, "UZS")}</span>}
+    </div>
+  ) : totals.usd > 0 ? fmtAmt(totals.usd, "USD")
+    : totals.uzs > 0 ? fmtAmt(totals.uzs, "UZS")
+    : fmtAmt(sale.totalAmount, sale.currency);
+
+  const debtUsd = totals.mixed ? totals.usd * (sale.debtAmount > 0 ? sale.debtAmount / (sale.totalAmount || 1) : 0) : 0;
+  const debtUzs = totals.mixed ? totals.uzs * (sale.debtAmount > 0 ? sale.debtAmount / (sale.totalAmount || 1) : 0) : 0;
+  const hasDebt = sale.debtAmount > 0;
+
   return (
     <div className="border rounded-lg overflow-hidden">
       <button
@@ -174,16 +198,21 @@ function SaleCard({ sale }: { sale: SaleRow }) {
         <div className="flex items-center gap-3">
           <PaymentIcon type={sale.paymentType} />
           <div>
-            <div className="text-sm font-medium">{fmtAmt(sale.totalAmount, sale.currency)}</div>
+            <div className="text-sm font-medium">{totalLabel}</div>
             <div className="text-xs text-muted-foreground">{sale.createdAt?.slice(0, 10)}</div>
           </div>
           {sale.note && <span className="text-xs text-muted-foreground italic">— {sale.note}</span>}
         </div>
         <div className="flex items-center gap-2">
           <StatusBadge status={sale.status} />
-          {sale.debtAmount > 0 && (
+          {hasDebt && !totals.mixed && (
             <span className="text-xs text-amber-600 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded font-medium">
               Nasiya: {fmtAmt(sale.debtAmount, sale.currency)}
+            </span>
+          )}
+          {hasDebt && totals.mixed && (
+            <span className="text-xs text-amber-600 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded font-medium">
+              Nasiya: {debtUsd > 0 ? fmtAmt(debtUsd, "USD") : ""}{debtUsd > 0 && debtUzs > 0 ? " + " : ""}{debtUzs > 0 ? fmtAmt(debtUzs, "UZS") : ""}
             </span>
           )}
           {exp ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
@@ -212,8 +241,8 @@ function SaleCard({ sale }: { sale: SaleRow }) {
           </table>
           {(sale.paymentType === "aralash" || sale.paymentType === "nasiya") && (
             <div className="px-4 py-2 border-t flex gap-4 text-xs">
-              {sale.paidAmount > 0 && <span className="text-green-700">✓ Naqd: {fmtAmt(sale.paidAmount, sale.currency)}</span>}
-              {sale.debtAmount > 0 && <span className="text-amber-700">⏳ Nasiya: {fmtAmt(sale.debtAmount, sale.currency)}</span>}
+              {sale.paidAmount > 0 && !totals.mixed && <span className="text-green-700">✓ Naqd: {fmtAmt(sale.paidAmount, sale.currency)}</span>}
+              {sale.debtAmount > 0 && !totals.mixed && <span className="text-amber-700">⏳ Nasiya: {fmtAmt(sale.debtAmount, sale.currency)}</span>}
             </div>
           )}
         </div>

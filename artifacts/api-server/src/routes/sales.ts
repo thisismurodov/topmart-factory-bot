@@ -289,15 +289,18 @@ router.post("/sales/:id/payments", async (req, res): Promise<void> => {
     await client.query("BEGIN");
 
     const saleRes = await client.query(
-      "SELECT id, debt_amount, paid_amount, status, currency FROM sales WHERE id=$1 FOR UPDATE",
+      "SELECT id, total_amount, debt_amount, paid_amount, status, currency FROM sales WHERE id=$1 FOR UPDATE",
       [saleId],
     );
     if (!saleRes.rows.length) {
       res.status(404).json({ error: "Sale not found" }); return;
     }
 
-    const sale    = saleRes.rows[0];
-    const maxPay  = Number(sale.debt_amount);
+    const sale = saleRes.rows[0];
+    // Bot-created sales have debt_amount=0 but status='pending'; compute effective debt
+    const maxPay = Number(sale.debt_amount) > 0
+      ? Number(sale.debt_amount)
+      : Math.max(0, Number(sale.total_amount) - Number(sale.paid_amount ?? 0));
 
     if (maxPay <= 0) {
       res.status(400).json({ error: "Bu savdo allaqachon to'liq to'langan" }); return;

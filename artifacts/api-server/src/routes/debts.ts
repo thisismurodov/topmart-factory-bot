@@ -10,12 +10,19 @@ router.get("/debts/summary", async (_req, res): Promise<void> => {
     // Global totals
     pool.query(`
       SELECT
-        COALESCE(SUM(debt_amount) FILTER (WHERE currency = 'USD'), 0) AS total_usd,
-        COALESCE(SUM(debt_amount) FILTER (WHERE currency = 'UZS'), 0) AS total_uzs,
+        COALESCE(SUM(
+          CASE WHEN debt_amount > 0 THEN debt_amount
+               ELSE GREATEST(0, total_amount - COALESCE(paid_amount,0)) END
+        ) FILTER (WHERE LOWER(currency) = 'usd'), 0) AS total_usd,
+        COALESCE(SUM(
+          CASE WHEN debt_amount > 0 THEN debt_amount
+               ELSE GREATEST(0, total_amount - COALESCE(paid_amount,0)) END
+        ) FILTER (WHERE LOWER(currency) = 'uzs'), 0) AS total_uzs,
         COUNT(DISTINCT customer_id)::int                               AS customer_count,
         COUNT(*)::int                                                  AS sale_count
       FROM sales
-      WHERE debt_amount > 0 AND status IN ('pending', 'partial')
+      WHERE status IN ('pending', 'partial')
+        AND (debt_amount > 0 OR total_amount > COALESCE(paid_amount, 0))
     `),
 
     // Per-customer breakdown
@@ -25,13 +32,20 @@ router.get("/debts/summary", async (_req, res): Promise<void> => {
         c.name          AS customer_name,
         c.phone,
         c.company,
-        COALESCE(SUM(s.debt_amount) FILTER (WHERE s.currency = 'USD'), 0) AS debt_usd,
-        COALESCE(SUM(s.debt_amount) FILTER (WHERE s.currency = 'UZS'), 0) AS debt_uzs,
+        COALESCE(SUM(
+          CASE WHEN s.debt_amount > 0 THEN s.debt_amount
+               ELSE GREATEST(0, s.total_amount - COALESCE(s.paid_amount,0)) END
+        ) FILTER (WHERE LOWER(s.currency) = 'usd'), 0) AS debt_usd,
+        COALESCE(SUM(
+          CASE WHEN s.debt_amount > 0 THEN s.debt_amount
+               ELSE GREATEST(0, s.total_amount - COALESCE(s.paid_amount,0)) END
+        ) FILTER (WHERE LOWER(s.currency) = 'uzs'), 0) AS debt_uzs,
         COUNT(s.id)::int                                                   AS sale_count,
         MIN(s.created_at)                                                  AS oldest_sale
       FROM sales s
       JOIN customers c ON c.id = s.customer_id
-      WHERE s.debt_amount > 0 AND s.status IN ('pending', 'partial')
+      WHERE s.status IN ('pending', 'partial')
+        AND (s.debt_amount > 0 OR s.total_amount > COALESCE(s.paid_amount, 0))
         AND c.deleted_at IS NULL
       GROUP BY c.id, c.name, c.phone, c.company
       ORDER BY debt_usd DESC, debt_uzs DESC
@@ -111,7 +125,9 @@ router.get("/customers/:id/debt-sales", async (req, res): Promise<void> => {
   const r = await pool.query(
     `SELECT id, total_amount, paid_amount, debt_amount, currency, status, note, created_at
      FROM sales
-     WHERE customer_id = $1 AND debt_amount > 0 AND status IN ('pending','partial')
+     WHERE customer_id = $1
+       AND status IN ('pending','partial')
+       AND (debt_amount > 0 OR total_amount > COALESCE(paid_amount, 0))
      ORDER BY created_at ASC`,
     [id],
   );

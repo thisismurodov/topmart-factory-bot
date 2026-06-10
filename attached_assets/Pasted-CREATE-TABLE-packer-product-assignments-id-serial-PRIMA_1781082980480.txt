@@ -1,0 +1,34 @@
+CREATE TABLE "packer_product_assignments" (
+	"id" serial PRIMARY KEY NOT NULL,
+	"packer_name" text NOT NULL,
+	"product_name" text NOT NULL,
+	CONSTRAINT "packer_product_assignments_packer_name_product_name_key" UNIQUE("packer_name","product_name")
+);
+CREATE TABLE "product_materials" (
+	"id" serial PRIMARY KEY NOT NULL,
+	"product_name" text NOT NULL,
+	"raw_material_id" integer NOT NULL,
+	"quantity_required" numeric(12, 3) NOT NULL,
+	CONSTRAINT "product_materials_product_name_raw_material_id_key" UNIQUE("product_name","raw_material_id")
+);
+truncate table "products" cascade;
+ALTER TABLE "products" ADD COLUMN "id" serial NOT NULL;
+ALTER TABLE "products" ADD COLUMN "sku" text DEFAULT '' NOT NULL;
+ALTER TABLE "products" ADD COLUMN "unit_type" text DEFAULT 'dona' NOT NULL;
+ALTER TABLE "products" ADD COLUMN "currency_type" text DEFAULT 'UZS' NOT NULL;
+ALTER TABLE "products" ADD COLUMN "default_sale_price" numeric(12, 2) DEFAULT '0' NOT NULL;
+ALTER TABLE "products" ADD COLUMN "salary_cost" numeric(12, 2) DEFAULT '0' NOT NULL;
+ALTER TABLE "products" ADD COLUMN "electricity_cost" numeric(12, 2) DEFAULT '0' NOT NULL;
+ALTER TABLE "products" ADD COLUMN "other_cost" numeric(12, 2) DEFAULT '0' NOT NULL;
+ALTER TABLE "products" ADD COLUMN "minimum_stock" integer DEFAULT 0 NOT NULL;
+ALTER TABLE "products" ADD COLUMN "active" boolean DEFAULT true NOT NULL;
+ALTER TABLE "products" ADD COLUMN "created_at" timestamp with time zone DEFAULT now() NOT NULL;
+ALTER TABLE "raw_materials" ADD COLUMN "unit_type" text DEFAULT 'kg' NOT NULL;
+ALTER TABLE "raw_materials" ADD COLUMN "default_cost" numeric(12, 2) DEFAULT '0' NOT NULL;
+ALTER TABLE "raw_materials" ADD COLUMN "current_stock" numeric(12, 3) DEFAULT '0' NOT NULL;
+ALTER TABLE "raw_materials" ADD COLUMN "minimum_stock" numeric(12, 3) DEFAULT '0' NOT NULL;
+ALTER TABLE "packer_product_assignments" ADD CONSTRAINT "packer_product_assignments_packer_name_fkey" FOREIGN KEY ("packer_name") REFERENCES "public"."workers"("name") ON DELETE cascade ON UPDATE no action;
+ALTER TABLE "packer_product_assignments" ADD CONSTRAINT "packer_product_assignments_product_name_fkey" FOREIGN KEY ("product_name") REFERENCES "public"."products"("name") ON DELETE cascade ON UPDATE no action;
+ALTER TABLE "product_materials" ADD CONSTRAINT "product_materials_product_name_fkey" FOREIGN KEY ("product_name") REFERENCES "public"."products"("name") ON DELETE cascade ON UPDATE no action;
+ALTER TABLE "product_materials" ADD CONSTRAINT "product_materials_raw_material_id_fkey" FOREIGN KEY ("raw_material_id") REFERENCES "public"."raw_materials"("id") ON DELETE cascade ON UPDATE no action;
+ALTER TABLE "products" ADD CONSTRAINT "products_id_key" UNIQUE("id");

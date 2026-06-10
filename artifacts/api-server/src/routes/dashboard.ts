@@ -314,6 +314,53 @@ router.get("/dashboard/v2", async (_req, res): Promise<void> => {
   });
 });
 
+router.get("/dashboard/product-highlights", async (_req, res): Promise<void> => {
+  const { rows } = await pool.query(`
+    SELECT
+      p.name,
+      p.default_sale_price,
+      p.salary_cost + p.electricity_cost + p.other_cost +
+        COALESCE((
+          SELECT SUM(rm.default_cost * pm.quantity_required)
+          FROM product_materials pm
+          JOIN raw_materials rm ON rm.id = pm.raw_material_id
+          WHERE pm.product_name = p.name
+        ), 0) AS total_cost,
+      COALESCE(SUM(si.line_total) FILTER (WHERE LOWER(si.currency)='uzs'), 0) AS revenue_uzs,
+      COALESCE(SUM(si.line_total) FILTER (WHERE LOWER(si.currency)='usd'), 0) AS revenue_usd,
+      COALESCE(SUM(si.quantity), 0) AS units_sold
+    FROM products p
+    LEFT JOIN sale_items si ON si.product_name = p.name
+    WHERE p.active = TRUE AND p.default_sale_price > 0
+    GROUP BY p.name, p.default_sale_price,
+             p.salary_cost, p.electricity_cost, p.other_cost
+  `);
+
+  if (!rows.length) {
+    res.json({ mostProfitable: null, highestRevenue: null, highestMargin: null, lowestMargin: null });
+    return;
+  }
+
+  const enriched = rows.map(r => {
+    const cost   = Number(r.total_cost);
+    const price  = Number(r.default_sale_price);
+    const profit = price - cost;
+    const margin = price > 0 ? (profit / price) * 100 : 0;
+    return { name: r.name, profit, margin, revenueUzs: Number(r.revenue_uzs), revenueUsd: Number(r.revenue_usd) };
+  });
+
+  const byProfit  = [...enriched].sort((a, b) => b.profit  - a.profit);
+  const byRevenue = [...enriched].sort((a, b) => b.revenueUzs - a.revenueUzs);
+  const byMargin  = [...enriched].sort((a, b) => b.margin  - a.margin);
+
+  res.json({
+    mostProfitable: byProfit[0]  ?? null,
+    highestRevenue: byRevenue[0] ?? null,
+    highestMargin:  byMargin[0]  ?? null,
+    lowestMargin:   byMargin[byMargin.length - 1] ?? null,
+  });
+});
+
 router.get("/dashboard/today-extended", async (_req, res): Promise<void> => {
   const [salesResult, batchesResult] = await Promise.all([
     pool.query(

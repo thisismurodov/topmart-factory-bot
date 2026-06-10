@@ -1,11 +1,22 @@
-import { pgTable, text, numeric } from "drizzle-orm/pg-core";
+import { pgTable, text, numeric, serial, boolean, timestamp, integer } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
 export const productsTable = pgTable("products", {
-  name: text("name").primaryKey(),
-  rateType: text("rate_type").notNull(),
-  rate: numeric("rate", { precision: 12, scale: 2 }).notNull(),
+  id:                serial("id").unique().notNull(),
+  name:              text("name").primaryKey(),
+  rateType:          text("rate_type").notNull().default("dona"),
+  rate:              numeric("rate", { precision: 12, scale: 2 }).notNull().default("0"),
+  sku:               text("sku").notNull().default(""),
+  unitType:          text("unit_type").notNull().default("dona"),
+  currencyType:      text("currency_type").notNull().default("UZS"),
+  defaultSalePrice:  numeric("default_sale_price", { precision: 12, scale: 2 }).notNull().default("0"),
+  salaryCost:        numeric("salary_cost", { precision: 12, scale: 2 }).notNull().default("0"),
+  electricityCost:   numeric("electricity_cost", { precision: 12, scale: 2 }).notNull().default("0"),
+  otherCost:         numeric("other_cost", { precision: 12, scale: 2 }).notNull().default("0"),
+  minimumStock:      integer("minimum_stock").notNull().default(0),
+  active:            boolean("active").notNull().default(true),
+  createdAt:         timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const insertProductSchema = createInsertSchema(productsTable);

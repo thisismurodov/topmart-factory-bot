@@ -123,11 +123,32 @@ def init_db() -> None:
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS raw_materials (
-                id         SERIAL PRIMARY KEY,
-                name       TEXT NOT NULL UNIQUE,
-                unit       TEXT NOT NULL DEFAULT 'kg',
-                active     BOOLEAN NOT NULL DEFAULT true,
-                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+                id            SERIAL PRIMARY KEY,
+                name          TEXT NOT NULL UNIQUE,
+                unit          TEXT NOT NULL DEFAULT 'kg',
+                unit_type     TEXT NOT NULL DEFAULT 'kg',
+                default_cost  NUMERIC(12,2) NOT NULL DEFAULT 0,
+                current_stock NUMERIC(12,3) NOT NULL DEFAULT 0,
+                minimum_stock NUMERIC(12,3) NOT NULL DEFAULT 0,
+                active        BOOLEAN NOT NULL DEFAULT true,
+                created_at    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS product_materials (
+                id                SERIAL PRIMARY KEY,
+                product_name      TEXT NOT NULL REFERENCES products(name) ON DELETE CASCADE,
+                raw_material_id   INTEGER NOT NULL REFERENCES raw_materials(id) ON DELETE CASCADE,
+                quantity_required NUMERIC(12,3) NOT NULL,
+                UNIQUE (product_name, raw_material_id)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS packer_product_assignments (
+                id           SERIAL PRIMARY KEY,
+                packer_name  TEXT NOT NULL REFERENCES workers(name) ON DELETE CASCADE,
+                product_name TEXT NOT NULL REFERENCES products(name) ON DELETE CASCADE,
+                UNIQUE (packer_name, product_name)
             )
         """)
         cur.execute("""

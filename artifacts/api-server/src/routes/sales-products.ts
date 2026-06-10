@@ -6,39 +6,28 @@ const VALID_CURRENCIES  = ["UZS", "USD"] as const;
 
 const router: IRouter = Router();
 
-// ── GET all (with tiers) ───────────────────────────────────────────────────────
+// Compatibility shim: sales-products -> products table
+// Maps: sale_type -> unit_type, default_price -> default_sale_price, currency -> currency_type
+
+// ── GET all ───────────────────────────────────────────────────────────────────
 router.get("/sales-products", async (_req, res): Promise<void> => {
-  const { rows: prods } = await pool.query(
-    `SELECT id, name, sale_type, default_price, currency
-     FROM sales_products WHERE active = TRUE ORDER BY name`
+  const { rows } = await pool.query(
+    `SELECT id, name, unit_type AS sale_type, default_sale_price AS default_price, currency_type AS currency, active
+     FROM products WHERE active = TRUE ORDER BY name`
   );
-  const ids = prods.map(r => r.id);
-  let tiersByProd: Record<number, any[]> = {};
-  if (ids.length > 0) {
-    const { rows: tierRows } = await pool.query(
-      `SELECT id, product_id, min_qty, price, currency
-       FROM sales_product_tiers WHERE product_id = ANY($1)
-       ORDER BY product_id, min_qty DESC`,
-      [ids]
-    );
-    for (const t of tierRows) {
-      if (!tiersByProd[t.product_id]) tiersByProd[t.product_id] = [];
-      tiersByProd[t.product_id].push({ id: t.id, minQty: Number(t.min_qty), price: Number(t.price), currency: t.currency });
-    }
-  }
-  res.json(prods.map(r => ({
+  res.json(rows.map(r => ({
     id:           r.id,
     name:         r.name,
     saleType:     r.sale_type,
     defaultPrice: Number(r.default_price),
     currency:     r.currency,
-    tiers:        tiersByProd[r.id] ?? [],
+    tiers:        [],
   })));
 });
 
 // ── POST create ───────────────────────────────────────────────────────────────
 router.post("/sales-products", async (req, res): Promise<void> => {
-  const { name, saleType = "dona", defaultPrice = 0, currency = "UZS", tiers = [] } = req.body ?? {};
+  const { name, saleType = "dona", defaultPrice = 0, currency = "UZS" } = req.body ?? {};
 
   if (!name || typeof name !== "string" || name.trim().length === 0) {
     res.status(400).json({ error: "name is required" }); return;
@@ -50,42 +39,26 @@ router.post("/sales-products", async (req, res): Promise<void> => {
     res.status(400).json({ error: "currency must be 'UZS' or 'USD'" }); return;
   }
 
-  const client = await pool.connect();
   try {
-    await client.query("BEGIN");
-    const { rows } = await client.query(
-      `INSERT INTO sales_products (name, sale_type, default_price, currency, unit)
-       VALUES ($1,$2,$3,$4,$2)
+    const { rows } = await pool.query(
+      `INSERT INTO products (name, unit_type, rate_type, currency_type, default_sale_price, active)
+       VALUES ($1,$2,$2,$3,$4,TRUE)
        ON CONFLICT (name) DO UPDATE
-         SET sale_type=$2, default_price=$3, currency=$4, unit=$2, active=TRUE
-       RETURNING id, name, sale_type, default_price, currency`,
-      [name.trim(), saleType, Number(defaultPrice), currency]
+         SET unit_type=$2, rate_type=$2, currency_type=$3, default_sale_price=$4, active=TRUE
+       RETURNING id, name, unit_type AS sale_type, default_sale_price AS default_price, currency_type AS currency`,
+      [name.trim(), saleType, currency, Number(defaultPrice)]
     );
-    const prodId = rows[0].id;
-    // insert tiers if provided
-    for (const t of tiers) {
-      if (t.minQty != null && t.price != null) {
-        await client.query(
-          `INSERT INTO sales_product_tiers (product_id, min_qty, price, currency) VALUES ($1,$2,$3,$4)`,
-          [prodId, Number(t.minQty), Number(t.price), t.currency || currency]
-        );
-      }
-    }
-    await client.query("COMMIT");
     const r = rows[0];
     res.status(201).json({
       id: r.id, name: r.name,
       saleType: r.sale_type, defaultPrice: Number(r.default_price), currency: r.currency,
     });
   } catch (e: any) {
-    await client.query("ROLLBACK");
     res.status(500).json({ error: e.message });
-  } finally {
-    client.release();
   }
 });
 
-// ── PUT update ────────────────────────────────────────────────────────────────
+// ── PUT update (by numeric id) ────────────────────────────────────────────────
 router.put("/sales-products/:id", async (req, res): Promise<void> => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
@@ -102,32 +75,16 @@ router.put("/sales-products/:id", async (req, res): Promise<void> => {
   const sets: string[] = [];
   const vals: unknown[] = [];
 
-  if (name) {
-    vals.push(name.trim());
-    sets.push(`name=$${vals.length}`);
-  }
-  if (saleType) {
-    vals.push(saleType);
-    const idx = vals.length;
-    sets.push(`sale_type=$${idx}`, `unit=$${idx}`);
-  }
-  if (defaultPrice !== undefined) {
-    vals.push(Number(defaultPrice));
-    sets.push(`default_price=$${vals.length}`);
-  }
-  if (currency) {
-    vals.push(currency);
-    sets.push(`currency=$${vals.length}`);
-  }
+  if (name)               { vals.push(name.trim());        sets.push(`name=$${vals.length}`); }
+  if (saleType)           { vals.push(saleType);           sets.push(`unit_type=$${vals.length}`, `rate_type=$${vals.length}`); }
+  if (defaultPrice !== undefined) { vals.push(Number(defaultPrice)); sets.push(`default_sale_price=$${vals.length}`); }
+  if (currency)           { vals.push(currency);           sets.push(`currency_type=$${vals.length}`); }
 
   if (sets.length === 0) { res.status(400).json({ error: "No fields to update" }); return; }
 
   vals.push(id);
   try {
-    await pool.query(
-      `UPDATE sales_products SET ${sets.join(",")} WHERE id=$${vals.length}`,
-      vals
-    );
+    await pool.query(`UPDATE products SET ${sets.join(",")} WHERE id=$${vals.length}`, vals);
     res.json({ ok: true });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
@@ -138,68 +95,35 @@ router.put("/sales-products/:id", async (req, res): Promise<void> => {
 router.delete("/sales-products/:id", async (req, res): Promise<void> => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
-  await pool.query("UPDATE sales_products SET active=FALSE WHERE id=$1", [id]);
+  await pool.query("UPDATE products SET active=FALSE WHERE id=$1", [id]);
   res.json({ ok: true });
 });
 
-// ── POST add tier ─────────────────────────────────────────────────────────────
-router.post("/sales-products/:id/tiers", async (req, res): Promise<void> => {
-  const id = parseInt(req.params.id);
-  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
-  const { minQty, price, currency } = req.body ?? {};
-  if (minQty == null || price == null) {
-    res.status(400).json({ error: "minQty and price are required" }); return;
-  }
-  const prod = await pool.query("SELECT currency FROM sales_products WHERE id=$1", [id]);
-  if (!prod.rows.length) { res.status(404).json({ error: "Product not found" }); return; }
-  const cur = currency || prod.rows[0].currency;
-  const { rows } = await pool.query(
-    `INSERT INTO sales_product_tiers (product_id, min_qty, price, currency)
-     VALUES ($1,$2,$3,$4) RETURNING id, min_qty, price, currency`,
-    [id, Number(minQty), Number(price), cur]
-  );
-  const t = rows[0];
-  res.status(201).json({ id: t.id, minQty: Number(t.min_qty), price: Number(t.price), currency: t.currency });
+// ── Tiers stubs (no-op; kept for backward-compat) ────────────────────────────
+router.post("/sales-products/:id/tiers", async (_req, res): Promise<void> => {
+  res.status(400).json({ error: "Tiers not supported in unified products model; use /api/products with pricing" });
 });
-
-// ── DELETE tier ───────────────────────────────────────────────────────────────
-router.delete("/sales-products/:id/tiers/:tierId", async (req, res): Promise<void> => {
-  const tierId = parseInt(req.params.tierId);
-  if (isNaN(tierId)) { res.status(400).json({ error: "Invalid tierId" }); return; }
-  await pool.query("DELETE FROM sales_product_tiers WHERE id=$1", [tierId]);
+router.delete("/sales-products/:id/tiers/:tierId", async (_req, res): Promise<void> => {
   res.json({ ok: true });
 });
 
-// ── GET price for qty (used by bot / sales form) ──────────────────────────────
+// ── GET price for qty ─────────────────────────────────────────────────────────
 router.get("/sales-products/:id/price", async (req, res): Promise<void> => {
   const id  = parseInt(req.params.id);
-  const qty = parseFloat(req.query.qty as string ?? "0");
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
 
-  const prod = await pool.query(
-    "SELECT default_price, currency FROM sales_products WHERE id=$1", [id]
+  const { rows } = await pool.query(
+    "SELECT default_sale_price AS default_price, currency_type AS currency FROM products WHERE id=$1", [id]
   );
-  if (!prod.rows.length) { res.status(404).json({ error: "Not found" }); return; }
-
-  const { rows: tiers } = await pool.query(
-    `SELECT price, currency FROM sales_product_tiers
-     WHERE product_id=$1 AND min_qty <= $2
-     ORDER BY min_qty DESC LIMIT 1`,
-    [id, qty]
-  );
-
-  if (tiers.length > 0) {
-    res.json({ price: Number(tiers[0].price), currency: tiers[0].currency, fromTier: true });
-  } else {
-    res.json({ price: Number(prod.rows[0].default_price), currency: prod.rows[0].currency, fromTier: false });
-  }
+  if (!rows.length) { res.status(404).json({ error: "Not found" }); return; }
+  res.json({ price: Number(rows[0].default_price), currency: rows[0].currency, fromTier: false });
 });
 
-// ── Has sales check (warning before sale_type change) ────────────────────────
+// ── Has sales check ────────────────────────────────────────────────────────────
 router.get("/sales-products/:id/has-sales", async (req, res): Promise<void> => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
-  const sp = await pool.query("SELECT name FROM sales_products WHERE id=$1", [id]);
+  const sp = await pool.query("SELECT name FROM products WHERE id=$1", [id]);
   if (!sp.rows.length) { res.status(404).json({ error: "Not found" }); return; }
   const { rows } = await pool.query(
     "SELECT COUNT(*) AS cnt FROM sale_items WHERE product_name=$1", [sp.rows[0].name]

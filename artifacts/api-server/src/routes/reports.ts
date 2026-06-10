@@ -174,4 +174,81 @@ router.get("/reports/summary", async (req, res): Promise<void> => {
   });
 });
 
+// ── GET /reports/product-profitability ───────────────────────────────────────
+router.get("/reports/product-profitability", async (req, res): Promise<void> => {
+  const sortBy = (req.query.sortBy as string) ?? "profit";
+
+  const orderMap: Record<string, string> = {
+    profit:    "profit DESC",
+    margin:    "margin_pct DESC",
+    low_margin:"margin_pct ASC",
+    sold:      "units_sold DESC",
+    revenue:   "revenue_uzs DESC",
+  };
+  const orderClause = orderMap[sortBy] ?? "profit DESC";
+
+  const { rows } = await pool.query(`
+    WITH base AS (
+      SELECT
+        p.name,
+        p.sku,
+        p.unit_type,
+        p.currency_type,
+        p.default_sale_price,
+        p.salary_cost,
+        p.electricity_cost,
+        p.other_cost,
+        COALESCE((
+          SELECT SUM(rm.default_cost * pm.quantity_required)
+          FROM product_materials pm
+          JOIN raw_materials rm ON rm.id = pm.raw_material_id
+          WHERE pm.product_name = p.name
+        ), 0) AS raw_material_cost,
+        COALESCE(SUM(si.line_total) FILTER (WHERE LOWER(si.currency)='uzs'), 0) AS revenue_uzs,
+        COALESCE(SUM(si.line_total) FILTER (WHERE LOWER(si.currency)='usd'), 0) AS revenue_usd,
+        COALESCE(SUM(si.quantity), 0) AS units_sold
+      FROM products p
+      LEFT JOIN sale_items si ON si.product_name = p.name
+      WHERE p.active = TRUE
+      GROUP BY p.name, p.sku, p.unit_type, p.currency_type,
+               p.default_sale_price, p.salary_cost, p.electricity_cost, p.other_cost
+    ),
+    enriched AS (
+      SELECT *,
+        (default_sale_price - salary_cost - electricity_cost - other_cost - raw_material_cost) AS profit,
+        CASE WHEN default_sale_price > 0
+          THEN (default_sale_price - salary_cost - electricity_cost - other_cost - raw_material_cost)
+               / default_sale_price * 100
+          ELSE 0 END AS margin_pct
+      FROM base
+    )
+    SELECT * FROM enriched ORDER BY ${orderClause}
+  `);
+
+  res.json(rows.map(r => {
+    const rawCost  = Number(r.raw_material_cost);
+    const totalCost = rawCost + Number(r.salary_cost) + Number(r.electricity_cost) + Number(r.other_cost);
+    const salePrice = Number(r.default_sale_price);
+    const profit    = salePrice - totalCost;
+    const marginPct = salePrice > 0 ? Math.round((profit / salePrice) * 10000) / 100 : 0;
+    return {
+      name:            r.name,
+      sku:             r.sku,
+      unitType:        r.unit_type,
+      currencyType:    r.currency_type,
+      salePrice,
+      rawMaterialCost: rawCost,
+      salaryCost:      Number(r.salary_cost),
+      electricityCost: Number(r.electricity_cost),
+      otherCost:       Number(r.other_cost),
+      totalCost,
+      profit,
+      marginPct,
+      revenueUzs:      Number(r.revenue_uzs),
+      revenueUsd:      Number(r.revenue_usd),
+      unitsSold:       Number(r.units_sold),
+    };
+  }));
+});
+
 export default router;

@@ -16,6 +16,9 @@ import salesProductsRouter from "./sales-products";
 import debtsRouter from "./debts";
 import reportsRouter from "./reports";
 import exchangeRateRouter from "./exchange-rate";
+import rawMaterialsRouter from "./raw-materials";
+import productMaterialsRouter from "./product-materials";
+import packerProductAssignmentsRouter from "./packer-product-assignments";
 
 const router: IRouter = Router();
 
@@ -40,5 +43,8 @@ router.use(salesProductsRouter);
 router.use(debtsRouter);
 router.use(reportsRouter);
 router.use(exchangeRateRouter);
+router.use(rawMaterialsRouter);
+router.use(productMaterialsRouter);
+router.use(packerProductAssignmentsRouter);
 
 export default router;

@@ -68,16 +68,12 @@ def workers_inline_keyboard(packer_chat_id: int | None = None) -> InlineKeyboard
 
 
 def products_inline_keyboard(
-    worker_name: str | None = None,
     packer_name: str | None = None,
 ) -> InlineKeyboardMarkup:
-    from .database import get_product_names, get_worker_allowed_products, get_packer_assigned_products
+    from .database import get_product_names, get_packer_assigned_products
     if packer_name:
         products = get_packer_assigned_products(packer_name)
         # Strict: packer only sees their assigned products, no fallback to all
-    elif worker_name:
-        allowed = get_worker_allowed_products(worker_name)
-        products = allowed if allowed else get_product_names()
     else:
         products = get_product_names()
     buttons = []
@@ -102,7 +98,6 @@ def admin_main_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("➕ Hodim qo'shish",        callback_data="adm:add_worker")],
         [InlineKeyboardButton("➕ Mahsulot qo'shish",     callback_data="adm:add_product")],
         [InlineKeyboardButton("👔 Upakovkachi belgilash", callback_data="adm:assign_packer")],
-        [InlineKeyboardButton("🔐 Mahsulot ruxsatlari",  callback_data="adm:ruxsatlar")],
         [InlineKeyboardButton("📋 Hodimlar ro'yxati",     callback_data="adm:list_workers")],
         [InlineKeyboardButton("📦 Mahsulotlar ro'yxati",  callback_data="adm:list_products")],
         [InlineKeyboardButton("💰 Maosh boshqaruvi",      callback_data="adm:salary")],

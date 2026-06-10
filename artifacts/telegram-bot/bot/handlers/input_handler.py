@@ -44,7 +44,7 @@ async def choose_worker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     if packer_name:
         kb = products_inline_keyboard(packer_name=packer_name)
     else:
-        kb = products_inline_keyboard(worker_name=worker)
+        kb = products_inline_keyboard()
     await query.edit_message_text(
         f"👷 *{worker}*\n\n📦 *Mahsulotni tanlang:*",
         parse_mode="Markdown",

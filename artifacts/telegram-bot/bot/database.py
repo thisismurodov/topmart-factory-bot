@@ -175,13 +175,6 @@ def init_db() -> None:
             )
         """)
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS worker_product_permissions (
-                worker_name  TEXT NOT NULL,
-                product_name TEXT NOT NULL,
-                PRIMARY KEY (worker_name, product_name)
-            )
-        """)
-        cur.execute("""
             CREATE TABLE IF NOT EXISTS db_meta (
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL
@@ -835,20 +828,8 @@ def get_recent_movements(limit: int = 10) -> list[dict]:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# WORKER PRODUCT PERMISSIONS
+# PACKER PRODUCT ASSIGNMENTS
 # ══════════════════════════════════════════════════════════════════════════════
-
-def get_worker_allowed_products(worker_name: str) -> list[str]:
-    """Returns list of allowed product names for a worker.
-    If no permissions set → returns [] (caller should treat as 'all allowed')."""
-    with get_conn() as (conn, cur):
-        cur.execute(
-            "SELECT product_name FROM worker_product_permissions WHERE worker_name=%s ORDER BY product_name",
-            (worker_name,),
-        )
-        rows = cur.fetchall()
-    return [r["product_name"] for r in rows]
-
 
 def get_packer_assigned_products(packer_name: str) -> list[str]:
     """V3: Returns products assigned to a packer via packer_product_assignments.
@@ -863,30 +844,6 @@ def get_packer_assigned_products(packer_name: str) -> list[str]:
             (packer_name,),
         )
         return [r["product_name"] for r in cur.fetchall()]
-
-
-def set_worker_allowed_products(worker_name: str, product_names: list[str]) -> None:
-    """Replace all permissions for a worker with the given list."""
-    with get_conn() as (conn, cur):
-        cur.execute("DELETE FROM worker_product_permissions WHERE worker_name=%s", (worker_name,))
-        for pname in product_names:
-            cur.execute(
-                "INSERT INTO worker_product_permissions (worker_name, product_name) VALUES (%s,%s) ON CONFLICT DO NOTHING",
-                (worker_name, pname),
-            )
-
-
-def get_all_worker_permissions() -> dict[str, list[str]]:
-    """Returns {worker_name: [product_name, ...]} for all workers that have permissions."""
-    with get_conn() as (conn, cur):
-        cur.execute(
-            "SELECT worker_name, product_name FROM worker_product_permissions ORDER BY worker_name, product_name"
-        )
-        rows = cur.fetchall()
-    result: dict[str, list[str]] = {}
-    for r in rows:
-        result.setdefault(r["worker_name"], []).append(r["product_name"])
-    return result
 
 
 # ══════════════════════════════════════════════════════════════════════════════

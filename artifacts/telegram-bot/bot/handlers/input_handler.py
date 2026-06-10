@@ -118,7 +118,7 @@ async def _save_batch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     prefix   = workers.get(worker, worker[:2].upper())
     batch_code = next_batch_code(prefix)
 
-    create_batch(batch_code, worker, product, quantity, weight_kg, earnings)
+    low_materials = create_batch(batch_code, worker, product, quantity, weight_kg, earnings)
 
     from ..keyboards import packer_menu_keyboard
     chat_id  = update.effective_chat.id
@@ -132,6 +132,14 @@ async def _save_batch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         if weight_kg > 0 else ""
     )
 
+    low_line = ""
+    if low_materials:
+        items = "\n".join(
+            f"  • {m['name']}: {m['current_stock']:.0f} {m['unit']} (min {m['minimum_stock']:.0f})"
+            for m in low_materials
+        )
+        low_line = f"\n\n⚠️ *Xom ashyo kam qoldi — to'ldiring!*\n{items}"
+
     await update.message.reply_text(
         f"✅ *Partiya yaratildi!*\n\n"
         f"📌 Partiya: `{batch_code}`\n"
@@ -140,7 +148,8 @@ async def _save_batch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         f"🔢 Miqdor: *{quantity} dona*\n"
         f"{weight_line}"
         f"💰 Haq: *{earnings:,.0f} so'm*\n"
-        f"📅 Sana: {today_str}",
+        f"📅 Sana: {today_str}"
+        f"{low_line}",
         parse_mode="Markdown",
         reply_markup=kb,
     )

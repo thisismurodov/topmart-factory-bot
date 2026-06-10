@@ -347,7 +347,14 @@ def next_batch_code(worker_prefix: str) -> str:
 def create_batch(
     batch_code: str, worker: str, product: str,
     quantity: int, weight_kg: float, earnings: float,
-) -> None:
+) -> list[dict]:
+    """Partiya yaratadi, tayyor mahsulotni omborga kiritadi va BOM bo'yicha
+    xom ashyo zahirasini avtomatik kamaytiradi.
+
+    Returns: minimal zahiradan kam yoki teng bo'lib qolgan xom ashyolar ro'yxati
+    (har biri: name, current_stock, minimum_stock, unit). Bo'sh bo'lsa ogohlantirish yo'q.
+    """
+    low_materials: list[dict] = []
     with get_conn() as (conn, cur):
         cur.execute(
             """INSERT INTO batches (batch_code, worker, product, quantity, weight_kg, earnings)
@@ -373,6 +380,38 @@ def create_batch(
                    DO UPDATE SET quantity=inventory.quantity+%s, updated_at=NOW()""",
                 (wh_id, product, quantity, quantity),
             )
+
+        # Xom ashyo zahirasini BOM (product_materials) bo'yicha avtomatik kamaytirish.
+        # Faqat product_materials to'ldirilgan mahsulotlar uchun ishlaydi.
+        cur.execute(
+            """SELECT pm.raw_material_id, pm.quantity_required,
+                      rm.name, rm.unit, rm.minimum_stock
+               FROM product_materials pm
+               JOIN raw_materials rm ON rm.id = pm.raw_material_id
+               WHERE pm.product_name = %s""",
+            (product,),
+        )
+        for req in cur.fetchall():
+            consumed = float(req["quantity_required"]) * quantity
+            cur.execute(
+                """UPDATE raw_materials
+                   SET current_stock = current_stock - %s
+                   WHERE id = %s
+                   RETURNING current_stock""",
+                (consumed, req["raw_material_id"]),
+            )
+            updated = cur.fetchone()
+            new_stock = float(updated["current_stock"]) if updated else 0.0
+            min_stock = float(req["minimum_stock"] or 0)
+            if min_stock > 0 and new_stock <= min_stock:
+                low_materials.append({
+                    "name":          req["name"],
+                    "current_stock": new_stock,
+                    "minimum_stock": min_stock,
+                    "unit":          req["unit"] or "",
+                })
+
+    return low_materials
 
 
 def get_today_batches(worker_filter: list[str] | None = None) -> list[dict]:

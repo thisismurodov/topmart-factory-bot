@@ -16,6 +16,7 @@ import {
   CreditCard,
   BarChart2,
   HardHat,
+  Boxes,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -24,6 +25,7 @@ const NAV_ITEMS = [
   { href: "/batches",    label: "Partiyalar",  icon: Package },
   { href: "/workers",    label: "Ishchilar",   icon: Users },
   { href: "/products",   label: "Mahsulotlar", icon: FileBox },
+  { href: "/raw-materials", label: "Xom ashyolar", icon: Boxes },
   { href: "/packers",    label: "Packerlar",   icon: HardHat },
   { href: "/salary",     label: "Maosh",       icon: Banknote },
   { href: "/customers",  label: "Mijozlar",    icon: Building2 },

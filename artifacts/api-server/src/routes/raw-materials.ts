@@ -24,6 +24,17 @@ router.get("/raw-materials", async (_req, res): Promise<void> => {
   res.json(rows.map(toRow));
 });
 
+// ── GET /raw-materials/low-stock ──────────────────────────────────────────────
+// Minimal zahiradan kam yoki teng bo'lib qolgan faol xom ashyolar.
+router.get("/raw-materials/low-stock", async (_req, res): Promise<void> => {
+  const { rows } = await pool.query(
+    `SELECT * FROM raw_materials
+     WHERE active = TRUE AND minimum_stock > 0 AND current_stock <= minimum_stock
+     ORDER BY name`
+  );
+  res.json(rows.map(toRow));
+});
+
 // ── POST /raw-materials ───────────────────────────────────────────────────────
 router.post("/raw-materials", async (req, res): Promise<void> => {
   const { name, unitType = "kg", defaultCost = 0, currentStock = 0, minimumStock = 0, active = true } = req.body ?? {};

@@ -5,7 +5,7 @@ import { customFetch } from "@workspace/api-client-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import {
-  BarChart, Bar, LineChart, Line,
+  BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
 import {
@@ -169,6 +169,38 @@ export default function Reports() {
   const totalWeight    = prodData.reduce((s, r) => s + r.totalWeight, 0);
   const totalEarnings  = prodData.reduce((s, r) => s + r.totalEarnings, 0);
   const totalSalary    = salaryFilled.reduce((s, r) => s + r.totalPaid, 0);
+
+  // ── Product profitability charts (#8) ──────────────────────────────────────
+  // Cost structure: average each cost component's share of total cost across
+  // products. Using per-product shares keeps it currency-agnostic (USD/UZS mix).
+  const costStructure = (() => {
+    let raw = 0, salary = 0, elec = 0, other = 0, n = 0;
+    for (const r of profitRows) {
+      if (r.totalCost <= 0) continue;
+      raw    += r.rawMaterialCost / r.totalCost;
+      salary += r.salaryCost      / r.totalCost;
+      elec   += r.electricityCost / r.totalCost;
+      other  += r.otherCost       / r.totalCost;
+      n++;
+    }
+    if (n === 0) return [] as { name: string; value: number; fill: string }[];
+    return [
+      { name: "Xom ashyo", value: Math.round((raw    / n) * 1000) / 10, fill: "#0B5D2A" },
+      { name: "Ish haqi",  value: Math.round((salary / n) * 1000) / 10, fill: "#22c55e" },
+      { name: "Elektr",    value: Math.round((elec   / n) * 1000) / 10, fill: "#f59e0b" },
+      { name: "Boshqa",    value: Math.round((other  / n) * 1000) / 10, fill: "#94a3b8" },
+    ].filter((d) => d.value > 0);
+  })();
+
+  // Margin% across products (top → bottom), color-coded by health.
+  const marginData = [...profitRows]
+    .sort((a, b) => b.marginPct - a.marginPct)
+    .slice(0, 12)
+    .map((r) => ({
+      name: r.name,
+      marginPct: r.marginPct,
+      fill: r.marginPct >= 20 ? "#22c55e" : r.marginPct >= 0 ? "#f59e0b" : "#ef4444",
+    }));
 
   return (
     <div className="p-6 space-y-6">
@@ -519,6 +551,68 @@ export default function Reports() {
               </button>
             ))}
           </div>
+
+          {/* Profitability charts (#8) */}
+          {profitRows.length > 0 && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+              {/* Cost structure pie */}
+              <div className="rounded-xl border bg-card p-5">
+                <p className="text-sm font-semibold mb-4 flex items-center gap-2">
+                  <DollarSign className="w-4 h-4 text-primary" /> O'rtacha xarajat tarkibi
+                </p>
+                {costStructure.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-10">Ma'lumot yo'q</p>
+                ) : (
+                  <>
+                    <ResponsiveContainer width="100%" height={220}>
+                      <PieChart>
+                        <Pie
+                          data={costStructure}
+                          dataKey="value"
+                          nameKey="name"
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={45}
+                          outerRadius={82}
+                          paddingAngle={2}
+                        >
+                          {costStructure.map((d) => <Cell key={d.name} fill={d.fill} />)}
+                        </Pie>
+                        <Tooltip formatter={(v: any) => `${v}%`} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div className="flex flex-wrap justify-center gap-x-4 gap-y-1 mt-2">
+                      {costStructure.map((d) => (
+                        <div key={d.name} className="flex items-center gap-1.5 text-xs">
+                          <span className="w-2.5 h-2.5 rounded-sm" style={{ background: d.fill }} />
+                          <span className="text-muted-foreground">{d.name}</span>
+                          <span className="font-semibold">{d.value}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Margin% horizontal bar */}
+              <div className="rounded-xl border bg-card p-5">
+                <p className="text-sm font-semibold mb-4 flex items-center gap-2">
+                  <BarChart2 className="w-4 h-4 text-primary" /> Mahsulotlar margin% (yuqori → past)
+                </p>
+                <ResponsiveContainer width="100%" height={Math.max(220, marginData.length * 34)}>
+                  <BarChart data={marginData} layout="vertical" margin={{ left: 8, right: 24 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
+                    <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={(v) => `${v}%`} />
+                    <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 11 }} />
+                    <Tooltip formatter={(v: any) => `${v}%`} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
+                    <Bar dataKey="marginPct" name="Margin" radius={[0, 4, 4, 0]}>
+                      {marginData.map((d) => <Cell key={d.name} fill={d.fill} />)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
 
           {/* Table */}
           <div className="rounded-xl border bg-card overflow-x-auto">

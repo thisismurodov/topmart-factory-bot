@@ -189,6 +189,8 @@ def init_db() -> None:
             ALTER TABLE inventory
             ADD COLUMN IF NOT EXISTS product_type TEXT NOT NULL DEFAULT 'finished'
         """)
+        # Eski mahsulot-ruxsat tizimi olib tashlandi — qolgan jadvalni tozalaymiz
+        cur.execute("DROP TABLE IF EXISTS worker_product_permissions")
         _seed(cur)
 
 

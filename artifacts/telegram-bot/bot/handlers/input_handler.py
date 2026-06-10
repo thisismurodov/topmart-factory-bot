@@ -5,7 +5,7 @@ from telegram.ext import (
     CallbackQueryHandler, MessageHandler, filters,
 )
 from ..keyboards import workers_inline_keyboard, products_inline_keyboard, cancel_keyboard, main_menu_keyboard
-from ..database import create_batch, next_batch_code, get_worker_chat_id, get_workers, get_products
+from ..database import create_batch, next_batch_code, get_worker_chat_id, get_workers, get_products, get_user_role
 from ..config import calc_earnings
 from ..label_generator import generate_label_pdf
 
@@ -19,6 +19,12 @@ MONTHS_UZ = {
 
 
 async def start_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    chat_id = update.effective_chat.id
+    user_row = get_user_role(chat_id)
+    if user_row and user_row["role"] == "packer":
+        context.user_data["_packer_name"] = user_row["worker_name"]
+    else:
+        context.user_data.pop("_packer_name", None)
     await update.message.reply_text(
         "👷 *Kim ishlab chiqardi?*",
         parse_mode="Markdown",
@@ -32,10 +38,11 @@ async def choose_worker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     await query.answer()
     worker = query.data.split(":", 1)[1]
     context.user_data["worker"] = worker
+    packer_name = context.user_data.get("_packer_name")
     await query.edit_message_text(
         f"👷 *{worker}*\n\n📦 *Mahsulotni tanlang:*",
         parse_mode="Markdown",
-        reply_markup=products_inline_keyboard(worker_name=worker),
+        reply_markup=products_inline_keyboard(packer_name=packer_name),
     )
     return CHOOSE_PRODUCT
 
@@ -107,7 +114,6 @@ async def _save_batch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
     create_batch(batch_code, worker, product, quantity, weight_kg, earnings)
 
-    from ..database import get_user_role
     from ..keyboards import packer_menu_keyboard
     chat_id  = update.effective_chat.id
     user_row = get_user_role(chat_id)

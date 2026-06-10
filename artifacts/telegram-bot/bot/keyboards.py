@@ -59,20 +59,27 @@ def workers_inline_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(buttons)
 
 
-def products_inline_keyboard(worker_name: str | None = None) -> InlineKeyboardMarkup:
-    from .database import get_product_names, get_worker_allowed_products
-    all_products = get_product_names()
-    if worker_name:
+def products_inline_keyboard(
+    worker_name: str | None = None,
+    packer_name: str | None = None,
+) -> InlineKeyboardMarkup:
+    from .database import get_product_names, get_worker_allowed_products, get_packer_assigned_products
+    if packer_name:
+        assigned = get_packer_assigned_products(packer_name)
+        products = assigned if assigned else get_product_names()
+    elif worker_name:
         allowed = get_worker_allowed_products(worker_name)
-        products = allowed if allowed else all_products  # fallback: all if none set
+        products = allowed if allowed else get_product_names()
     else:
-        products = all_products
+        products = get_product_names()
     buttons = []
     for i in range(0, len(products), 2):
         row = [InlineKeyboardButton(products[i], callback_data=f"product:{products[i]}")]
         if i + 1 < len(products):
             row.append(InlineKeyboardButton(products[i + 1], callback_data=f"product:{products[i + 1]}"))
         buttons.append(row)
+    if not buttons:
+        buttons = [[InlineKeyboardButton("⚠️ Mahsulotlar biriktirilmagan", callback_data="cancel")]]
     return InlineKeyboardMarkup(buttons)
 
 

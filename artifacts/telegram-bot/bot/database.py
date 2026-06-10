@@ -175,6 +175,13 @@ def init_db() -> None:
             )
         """)
         cur.execute("""
+            CREATE TABLE IF NOT EXISTS worker_product_permissions (
+                worker_name  TEXT NOT NULL,
+                product_name TEXT NOT NULL,
+                PRIMARY KEY (worker_name, product_name)
+            )
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS db_meta (
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL
@@ -227,14 +234,14 @@ def get_all_workers_config() -> list[dict]:
 
 def get_products() -> list[tuple[str, str, float]]:
     with get_conn() as (conn, cur):
-        cur.execute("SELECT name, rate_type, rate FROM products ORDER BY name")
+        cur.execute("SELECT name, rate_type, rate FROM products WHERE active=TRUE ORDER BY name")
         rows = cur.fetchall()
     return [(r["name"], r["rate_type"], float(r["rate"])) for r in rows]
 
 
 def get_product_names() -> list[str]:
     with get_conn() as (conn, cur):
-        cur.execute("SELECT name FROM products ORDER BY name")
+        cur.execute("SELECT name FROM products WHERE active=TRUE ORDER BY name")
         return [r["name"] for r in cur.fetchall()]
 
 
@@ -842,6 +849,21 @@ def get_worker_allowed_products(worker_name: str) -> list[str]:
         )
         rows = cur.fetchall()
     return [r["product_name"] for r in rows]
+
+
+def get_packer_assigned_products(packer_name: str) -> list[str]:
+    """V3: Returns products assigned to a packer via packer_product_assignments.
+    Returns [] if no assignments (caller should fallback to all active products)."""
+    with get_conn() as (conn, cur):
+        cur.execute(
+            """SELECT pa.product_name
+               FROM packer_product_assignments pa
+               JOIN products p ON p.name = pa.product_name
+               WHERE pa.packer_name = %s AND p.active = TRUE
+               ORDER BY pa.product_name""",
+            (packer_name,),
+        )
+        return [r["product_name"] for r in cur.fetchall()]
 
 
 def set_worker_allowed_products(worker_name: str, product_names: list[str]) -> None:

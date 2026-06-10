@@ -11,23 +11,50 @@ router.get("/reports/summary", async (req, res): Promise<void> => {
   const [salesRes, productionRes, salaryRes, topCustomersRes, topWorkersRes, topProductsRes] =
     await Promise.all([
 
-      // Sales by month
+      // Sales by month — totals from sale_items (accurate per-currency), stats from sales
       pool.query(`
+        WITH item_totals AS (
+          SELECT
+            DATE_TRUNC('month', s.created_at) AS month,
+            COALESCE(SUM(si.line_total) FILTER (WHERE LOWER(si.currency)='usd'), 0) AS sales_usd,
+            COALESCE(SUM(si.line_total) FILTER (WHERE LOWER(si.currency)='uzs'), 0) AS sales_uzs
+          FROM sales s
+          JOIN sale_items si ON si.sale_id = s.id
+          WHERE s.created_at >= DATE_TRUNC('month', NOW()) - INTERVAL '${interval}'
+          GROUP BY 1
+        ),
+        sale_stats AS (
+          SELECT
+            DATE_TRUNC('month', created_at) AS month,
+            COALESCE(SUM(paid_amount)  FILTER (WHERE LOWER(currency)='usd'), 0) AS paid_usd,
+            COALESCE(SUM(paid_amount)  FILTER (WHERE LOWER(currency)='uzs'), 0) AS paid_uzs,
+            COALESCE(SUM(
+              CASE WHEN debt_amount > 0 THEN debt_amount
+                   WHEN status IN ('pending','partial') THEN GREATEST(0, total_amount - COALESCE(paid_amount,0))
+                   ELSE 0 END
+            ) FILTER (WHERE LOWER(currency)='usd'), 0) AS debt_usd,
+            COALESCE(SUM(
+              CASE WHEN debt_amount > 0 THEN debt_amount
+                   WHEN status IN ('pending','partial') THEN GREATEST(0, total_amount - COALESCE(paid_amount,0))
+                   ELSE 0 END
+            ) FILTER (WHERE LOWER(currency)='uzs'), 0) AS debt_uzs,
+            COUNT(*)::int                                    AS sale_count,
+            COUNT(*) FILTER (WHERE status='paid')::int      AS paid_count,
+            COUNT(*) FILTER (WHERE status='pending')::int   AS pending_count
+          FROM sales
+          WHERE created_at >= DATE_TRUNC('month', NOW()) - INTERVAL '${interval}'
+          GROUP BY 1
+        )
         SELECT
-          TO_CHAR(DATE_TRUNC('month', created_at), 'YYYY-MM')      AS month,
-          COALESCE(SUM(total_amount) FILTER (WHERE UPPER(currency)='USD'), 0) AS sales_usd,
-          COALESCE(SUM(total_amount) FILTER (WHERE UPPER(currency)='UZS'), 0) AS sales_uzs,
-          COALESCE(SUM(paid_amount)  FILTER (WHERE UPPER(currency)='USD'), 0) AS paid_usd,
-          COALESCE(SUM(paid_amount)  FILTER (WHERE UPPER(currency)='UZS'), 0) AS paid_uzs,
-          COALESCE(SUM(debt_amount)  FILTER (WHERE UPPER(currency)='USD'), 0) AS debt_usd,
-          COALESCE(SUM(debt_amount)  FILTER (WHERE UPPER(currency)='UZS'), 0) AS debt_uzs,
-          COUNT(*)::int                                              AS sale_count,
-          COUNT(*) FILTER (WHERE status='paid')::int                AS paid_count,
-          COUNT(*) FILTER (WHERE status='pending')::int             AS pending_count
-        FROM sales
-        WHERE created_at >= DATE_TRUNC('month', NOW()) - INTERVAL '${interval}'
-        GROUP BY DATE_TRUNC('month', created_at)
-        ORDER BY DATE_TRUNC('month', created_at)
+          TO_CHAR(ss.month, 'YYYY-MM')      AS month,
+          COALESCE(it.sales_usd, 0)         AS sales_usd,
+          COALESCE(it.sales_uzs, 0)         AS sales_uzs,
+          ss.paid_usd, ss.paid_uzs,
+          ss.debt_usd, ss.debt_uzs,
+          ss.sale_count, ss.paid_count, ss.pending_count
+        FROM sale_stats ss
+        LEFT JOIN item_totals it USING (month)
+        ORDER BY ss.month
       `),
 
       // Production (batches) by month
@@ -56,16 +83,17 @@ router.get("/reports/summary", async (req, res): Promise<void> => {
         ORDER BY year, month
       `),
 
-      // Top customers (by period)
+      // Top customers — use sale_items for accurate per-currency totals
       pool.query(`
         SELECT
-          customer_name,
-          COALESCE(SUM(total_amount) FILTER (WHERE UPPER(currency)='USD'), 0) AS total_usd,
-          COALESCE(SUM(total_amount) FILTER (WHERE UPPER(currency)='UZS'), 0) AS total_uzs,
-          COUNT(*)::int AS sale_count
-        FROM sales
-        WHERE created_at >= DATE_TRUNC('month', NOW()) - INTERVAL '${interval}'
-        GROUP BY customer_name
+          s.customer_name,
+          COALESCE(SUM(si.line_total) FILTER (WHERE LOWER(si.currency)='usd'), 0) AS total_usd,
+          COALESCE(SUM(si.line_total) FILTER (WHERE LOWER(si.currency)='uzs'), 0) AS total_uzs,
+          COUNT(DISTINCT s.id)::int AS sale_count
+        FROM sales s
+        JOIN sale_items si ON si.sale_id = s.id
+        WHERE s.created_at >= DATE_TRUNC('month', NOW()) - INTERVAL '${interval}'
+        GROUP BY s.customer_name
         ORDER BY total_usd DESC, total_uzs DESC
         LIMIT 8
       `),

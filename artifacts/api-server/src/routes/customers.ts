@@ -133,28 +133,39 @@ router.get("/customers/:id/profile", async (req, res): Promise<void> => {
       [id],
     ),
     pool.query(
-      `SELECT
-         COUNT(*)::int                                              AS total_sales,
-         COUNT(*) FILTER (WHERE status='paid')::int                AS paid_count,
-         COUNT(*) FILTER (WHERE status='pending')::int             AS pending_count,
-         COUNT(*) FILTER (WHERE status='partial')::int             AS partial_count,
-         -- USD totals
-         COALESCE(SUM(total_amount) FILTER (WHERE LOWER(currency)='usd'), 0) AS total_usd,
-         COALESCE(SUM(paid_amount)  FILTER (WHERE LOWER(currency)='usd'), 0) AS paid_usd,
-         COALESCE(SUM(
-           CASE WHEN debt_amount > 0 THEN debt_amount
-                WHEN status IN ('pending','partial') THEN GREATEST(0, total_amount - COALESCE(paid_amount,0))
-                ELSE 0 END
-         ) FILTER (WHERE LOWER(currency)='usd'), 0) AS debt_usd,
-         -- UZS totals
-         COALESCE(SUM(total_amount) FILTER (WHERE LOWER(currency)='uzs'), 0) AS total_uzs,
-         COALESCE(SUM(paid_amount)  FILTER (WHERE LOWER(currency)='uzs'), 0) AS paid_uzs,
-         COALESCE(SUM(
-           CASE WHEN debt_amount > 0 THEN debt_amount
-                WHEN status IN ('pending','partial') THEN GREATEST(0, total_amount - COALESCE(paid_amount,0))
-                ELSE 0 END
-         ) FILTER (WHERE LOWER(currency)='uzs'), 0) AS debt_uzs
-       FROM sales WHERE customer_id=$1`,
+      `WITH item_totals AS (
+         SELECT
+           COALESCE(SUM(si.line_total) FILTER (WHERE LOWER(si.currency)='usd'), 0) AS total_usd,
+           COALESCE(SUM(si.line_total) FILTER (WHERE LOWER(si.currency)='uzs'), 0) AS total_uzs
+         FROM sales s
+         JOIN sale_items si ON si.sale_id = s.id
+         WHERE s.customer_id = $1
+       ),
+       sale_stats AS (
+         SELECT
+           COUNT(*)::int                                              AS total_sales,
+           COUNT(*) FILTER (WHERE status='paid')::int                AS paid_count,
+           COUNT(*) FILTER (WHERE status='pending')::int             AS pending_count,
+           COUNT(*) FILTER (WHERE status='partial')::int             AS partial_count,
+           COALESCE(SUM(paid_amount)  FILTER (WHERE LOWER(currency)='usd'), 0) AS paid_usd,
+           COALESCE(SUM(paid_amount)  FILTER (WHERE LOWER(currency)='uzs'), 0) AS paid_uzs,
+           COALESCE(SUM(
+             CASE WHEN debt_amount > 0 THEN debt_amount
+                  WHEN status IN ('pending','partial') THEN GREATEST(0, total_amount - COALESCE(paid_amount,0))
+                  ELSE 0 END
+           ) FILTER (WHERE LOWER(currency)='usd'), 0) AS debt_usd,
+           COALESCE(SUM(
+             CASE WHEN debt_amount > 0 THEN debt_amount
+                  WHEN status IN ('pending','partial') THEN GREATEST(0, total_amount - COALESCE(paid_amount,0))
+                  ELSE 0 END
+           ) FILTER (WHERE LOWER(currency)='uzs'), 0) AS debt_uzs
+         FROM sales WHERE customer_id=$1
+       )
+       SELECT
+         ss.total_sales, ss.paid_count, ss.pending_count, ss.partial_count,
+         it.total_usd, ss.paid_usd, ss.debt_usd,
+         it.total_uzs, ss.paid_uzs, ss.debt_uzs
+       FROM sale_stats ss, item_totals it`,
       [id],
     ),
     pool.query(

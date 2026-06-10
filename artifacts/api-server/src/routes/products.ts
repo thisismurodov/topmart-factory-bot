@@ -36,6 +36,12 @@ router.get("/products", async (_req, res): Promise<void> => {
     rawMaterialCost:  Number(row.raw_material_cost),
     totalCost:        Number(row.salary_cost) + Number(row.electricity_cost) + Number(row.other_cost) + Number(row.raw_material_cost),
     profit:           Number(row.default_sale_price) - Number(row.salary_cost) - Number(row.electricity_cost) - Number(row.other_cost) - Number(row.raw_material_cost),
+    marginPct:        Number(row.default_sale_price) > 0
+      ? Math.round(
+          ((Number(row.default_sale_price) - Number(row.salary_cost) - Number(row.electricity_cost) - Number(row.other_cost) - Number(row.raw_material_cost))
+            / Number(row.default_sale_price)) * 10000
+        ) / 100
+      : 0,
     minimumStock:     row.minimum_stock,
     active:           row.active,
     createdAt:        row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),

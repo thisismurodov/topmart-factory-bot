@@ -1,3 +1,4 @@
+import { authFetch } from "@/App";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { customFetch } from "@workspace/api-client-react";
@@ -108,6 +109,16 @@ export default function Reports() {
     queryFn: () => customFetch(`/api/reports/summary?months=${months}`),
   });
 
+  const { data: rateData } = useQuery<{ rate: number; date: string; source: string }>({
+    queryKey: ["exchange-rate"],
+    queryFn: async () => {
+      const r = await authFetch("/api/exchange-rate");
+      if (!r.ok) throw new Error("Failed");
+      return r.json();
+    },
+    staleTime: 30 * 60 * 1000,
+  });
+
   // Derived: fill missing months with zeros
   const allMonths: string[] = [];
   {
@@ -169,6 +180,45 @@ export default function Reports() {
 
         {/* ═══════════════════════ SAVDO ═══════════════════════ */}
         <TabsContent value="sales" className="mt-5 space-y-6">
+          {/* Combined totals with exchange rate */}
+          {(totalSalesUsd > 0 || totalSalesUzs > 0) && (
+            <div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
+                  <p className="text-xs text-blue-500 mb-1 font-medium uppercase tracking-wide">Jami savdo so'mda</p>
+                  <p className="text-xl font-bold text-blue-800 leading-tight">
+                    {rateData
+                      ? fmtUzs(totalSalesUzs + totalSalesUsd * rateData.rate)
+                      : fmtUzs(totalSalesUzs)}
+                  </p>
+                  {rateData && totalSalesUsd > 0 && totalSalesUzs > 0 && (
+                    <p className="text-[10px] text-blue-400 mt-0.5">
+                      {fmtUzs(totalSalesUzs)} + {fmtUsd(totalSalesUsd)} × {rateData.rate.toLocaleString("uz-UZ")}
+                    </p>
+                  )}
+                </div>
+                <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4">
+                  <p className="text-xs text-indigo-500 mb-1 font-medium uppercase tracking-wide">Jami savdo dollarda</p>
+                  <p className="text-xl font-bold text-indigo-800 leading-tight">
+                    {rateData
+                      ? fmtUsd(totalSalesUsd + (rateData.rate > 0 ? totalSalesUzs / rateData.rate : 0))
+                      : fmtUsd(totalSalesUsd)}
+                  </p>
+                  {rateData && totalSalesUsd > 0 && totalSalesUzs > 0 && (
+                    <p className="text-[10px] text-indigo-400 mt-0.5">
+                      {fmtUsd(totalSalesUsd)} + {fmtUzs(totalSalesUzs)} ÷ {rateData.rate.toLocaleString("uz-UZ")}
+                    </p>
+                  )}
+                </div>
+              </div>
+              {rateData && (
+                <p className="text-[10px] text-muted-foreground text-right mt-1">
+                  1 USD = {rateData.rate.toLocaleString("uz-UZ")} so'm • {rateData.source} • {rateData.date}
+                </p>
+              )}
+            </div>
+          )}
+
           {/* Summary cards */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <StatCard label="Jami savdo (USD)" value={fmtUsd(totalSalesUsd)} sub={`${months} oy`} color="blue" />

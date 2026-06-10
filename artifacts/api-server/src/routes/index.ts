@@ -15,6 +15,7 @@ import warehousesRouter from "./warehouses";
 import salesProductsRouter from "./sales-products";
 import debtsRouter from "./debts";
 import reportsRouter from "./reports";
+import exchangeRateRouter from "./exchange-rate";
 
 const router: IRouter = Router();
 
@@ -38,5 +39,6 @@ router.use(warehousesRouter);
 router.use(salesProductsRouter);
 router.use(debtsRouter);
 router.use(reportsRouter);
+router.use(exchangeRateRouter);
 
 export default router;

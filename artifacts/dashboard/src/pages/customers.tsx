@@ -236,6 +236,17 @@ function CustomerProfileDialog({ customer, open, onClose, onEdit }: {
     enabled: open,
   });
 
+  const { data: rateData } = useQuery<{ rate: number; date: string; source: string }>({
+    queryKey: ["exchange-rate"],
+    queryFn: async () => {
+      const r = await authFetch("/api/exchange-rate");
+      if (!r.ok) throw new Error("Failed");
+      return r.json();
+    },
+    staleTime: 30 * 60 * 1000,
+    enabled: open,
+  });
+
   const st = profile?.stats;
 
   return (
@@ -276,6 +287,45 @@ function CustomerProfileDialog({ customer, open, onClose, onEdit }: {
           </div>
         ) : profile && st ? (
           <div className="space-y-5 mt-2">
+            {/* ── Jami qarz (top summary) ── */}
+            {(st.usd.debt > 0 || st.uzs.debt > 0) && (
+              <div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-lg border border-red-200 bg-red-50 p-4">
+                    <p className="text-xs text-red-500 mb-1 font-medium uppercase tracking-wide">Jami qarz so'mda</p>
+                    <p className="text-lg font-bold text-red-700 leading-tight">
+                      {rateData
+                        ? fmtAmt(st.uzs.debt + st.usd.debt * rateData.rate, "UZS")
+                        : fmtAmt(st.uzs.debt, "UZS")}
+                    </p>
+                    {rateData && st.usd.debt > 0 && st.uzs.debt > 0 && (
+                      <p className="text-[10px] text-red-400 mt-0.5">
+                        {fmtAmt(st.uzs.debt, "UZS")} + ${st.usd.debt.toFixed(2)} × {rateData.rate.toLocaleString("uz-UZ")}
+                      </p>
+                    )}
+                  </div>
+                  <div className="rounded-lg border border-orange-200 bg-orange-50 p-4">
+                    <p className="text-xs text-orange-500 mb-1 font-medium uppercase tracking-wide">Jami qarz dollarda</p>
+                    <p className="text-lg font-bold text-orange-700 leading-tight">
+                      {rateData
+                        ? fmtAmt(st.usd.debt + (rateData.rate > 0 ? st.uzs.debt / rateData.rate : 0), "USD")
+                        : fmtAmt(st.usd.debt, "USD")}
+                    </p>
+                    {rateData && st.usd.debt > 0 && st.uzs.debt > 0 && (
+                      <p className="text-[10px] text-orange-400 mt-0.5">
+                        ${st.usd.debt.toFixed(2)} + {fmtAmt(st.uzs.debt, "UZS")} ÷ {rateData.rate.toLocaleString("uz-UZ")}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                {rateData && (
+                  <p className="text-[10px] text-muted-foreground text-right mt-1">
+                    1 USD = {rateData.rate.toLocaleString("uz-UZ")} so'm • {rateData.source} • {rateData.date}
+                  </p>
+                )}
+              </div>
+            )}
+
             {/* ── Stats grid ── */}
             <div className="grid grid-cols-4 gap-3">
               <div className="rounded-lg border p-3 text-center">

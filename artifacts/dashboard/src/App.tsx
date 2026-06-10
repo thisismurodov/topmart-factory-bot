@@ -14,6 +14,7 @@ import Sales from "@/pages/sales";
 import Inventory from "@/pages/inventory";
 import Debts from "@/pages/debts";
 import Reports from "@/pages/reports";
+import Packers from "@/pages/packers";
 import Login from "@/pages/login";
 import { Layout } from "@/components/layout";
 import { setAuthTokenGetter, setBaseUrl } from "@workspace/api-client-react";
@@ -71,6 +72,7 @@ function Router() {
             <Route path="/sales" component={Sales} />
             <Route path="/inventory" component={Inventory} />
             <Route path="/debts" component={Debts} />
+            <Route path="/packers" component={Packers} />
             <Route path="/reports" component={Reports} />
             <Route component={NotFound} />
           </Switch>

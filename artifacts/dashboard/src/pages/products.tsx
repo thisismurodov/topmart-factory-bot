@@ -1,6 +1,5 @@
 import { authFetch } from "@/App";
 import { useState } from "react";
-import { useGetProducts, getGetProductsQueryKey, useCreateProduct, useDeleteProduct } from "@workspace/api-client-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -8,880 +7,844 @@ import * as z from "zod";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  Dialog, DialogContent, DialogDescription, DialogFooter,
-  DialogHeader, DialogTitle, DialogTrigger,
+  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Trash2, Package, ShoppingCart, Pencil, AlertTriangle, ChevronDown, ChevronRight, Layers } from "lucide-react";
-import { formatCurrency } from "@/lib/format";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
-  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Plus, Trash2, Pencil, Package } from "lucide-react";
+import { formatCurrency } from "@/lib/format";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type Tier = { id: number; minQty: number; price: number; currency: string };
-type SalesProduct = {
-  id: number; name: string; saleType: string;
-  defaultPrice: number; currency: string; tiers: Tier[];
+type Product = {
+  id: number;
+  name: string;
+  sku: string;
+  unitType: string;
+  currencyType: string;
+  defaultSalePrice: number;
+  rate: number;
+  rateType: string;
+  salaryCost: number;
+  electricityCost: number;
+  otherCost: number;
+  rawMaterialCost: number;
+  totalCost: number;
+  profit: number;
+  marginPct: number;
+  minimumStock: number;
+  active: boolean;
+  createdAt: string;
+};
+
+type RawMaterial = {
+  id: number;
+  name: string;
+  unitType: string;
+  defaultCost: number;
+  active: boolean;
+};
+
+type BomItem = {
+  id: number;
+  productName: string;
+  rawMaterialId: number;
+  rawMaterialName: string;
+  unitType: string;
+  defaultCost: number;
+  quantityRequired: number;
+  lineCost: number;
 };
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
-const prodFormSchema = z.object({
-  name:     z.string().min(1, "Mahsulot nomi kiritilishi shart"),
-  rateType: z.enum(["per_kg", "per_piece"]),
-  rate:     z.coerce.number().min(0),
+const productSchema = z.object({
+  name: z.string().min(1, "Mahsulot nomi kiritilishi shart"),
+  sku: z.string().default(""),
+  unitType: z.enum(["dona", "kg"]),
+  currencyType: z.enum(["UZS", "USD"]),
+  defaultSalePrice: z.coerce.number().min(0),
+  rate: z.coerce.number().min(0),
+  salaryCost: z.coerce.number().min(0),
+  electricityCost: z.coerce.number().min(0),
+  otherCost: z.coerce.number().min(0),
+  minimumStock: z.coerce.number().min(0).int(),
+  active: z.boolean().default(true),
 });
+type ProductForm = z.infer<typeof productSchema>;
 
-const salesFormSchema = z.object({
-  name:         z.string().min(1, "Nomi kiritilishi shart"),
-  saleType:     z.enum(["dona", "kg"]),
-  defaultPrice: z.coerce.number().min(0),
-  currency:     z.enum(["UZS", "USD"]),
-});
-
-// ── Local tier row type (for "add" form) ──────────────────────────────────────
-// fromQty → minQty (DB), toQty → display only
-type LocalTier = { fromQty: string; toQty: string; price: string };
-
-const SALES_PRODUCTS_KEY = ["sales-products"];
+// ── Query keys ────────────────────────────────────────────────────────────────
+const PRODUCTS_KEY = ["v3-products"];
+const RAW_MATERIALS_KEY = ["raw-materials"];
+const bomKey = (name: string) => ["bom", name];
 
 // ── Hooks ─────────────────────────────────────────────────────────────────────
-function useSalesProducts() {
-  return useQuery<SalesProduct[]>({
-    queryKey: SALES_PRODUCTS_KEY,
+function useProducts() {
+  return useQuery<Product[]>({
+    queryKey: PRODUCTS_KEY,
     queryFn: async () => {
-      const res = await authFetch("/api/sales-products");
-      if (!res.ok) throw new Error("Fetch failed");
+      const res = await authFetch("/api/products");
+      if (!res.ok) throw new Error("Yuklashda xato");
       return res.json();
     },
   });
 }
 
-function useCreateSalesProduct() {
+function useRawMaterials() {
+  return useQuery<RawMaterial[]>({
+    queryKey: RAW_MATERIALS_KEY,
+    queryFn: async () => {
+      const res = await authFetch("/api/raw-materials");
+      if (!res.ok) throw new Error("Yuklashda xato");
+      return res.json();
+    },
+  });
+}
+
+function useBom(productName: string | null) {
+  return useQuery<BomItem[]>({
+    queryKey: bomKey(productName ?? ""),
+    queryFn: async () => {
+      if (!productName) return [];
+      const res = await authFetch(
+        `/api/product-materials?productName=${encodeURIComponent(productName)}`,
+      );
+      if (!res.ok) throw new Error("Yuklashda xato");
+      return res.json();
+    },
+    enabled: !!productName,
+  });
+}
+
+function useCreateProduct() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (data: { name: string; saleType: string; defaultPrice: number; currency: string; tiers: LocalTier[] }) => {
-      const res = await authFetch("/api/sales-products", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: data.name, saleType: data.saleType,
-          defaultPrice: data.defaultPrice, currency: data.currency,
-          tiers: data.tiers
-            .filter(t => t.fromQty !== "" && t.price !== "")
-            .map(t => ({ minQty: Number(t.fromQty), price: Number(t.price), currency: data.currency })),
-        }),
+    mutationFn: async (data: ProductForm) => {
+      const res = await authFetch("/api/products", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
       });
-      if (!res.ok) throw new Error("Failed");
+      if (!res.ok) throw new Error("Saqlashda xato");
       return res.json();
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: SALES_PRODUCTS_KEY }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: PRODUCTS_KEY }),
   });
 }
 
-function useUpdateSalesProduct() {
+function useUpdateProduct() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, ...data }: { id: number; name: string; saleType: string; defaultPrice: number; currency: string }) => {
-      const res = await authFetch(`/api/sales-products/${id}`, {
-        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data),
+    mutationFn: async ({ name, ...data }: ProductForm & { name: string }) => {
+      const res = await authFetch(`/api/products/${encodeURIComponent(name)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
       });
-      if (!res.ok) throw new Error("Failed");
+      if (!res.ok) throw new Error("Saqlashda xato");
       return res.json();
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: SALES_PRODUCTS_KEY }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: PRODUCTS_KEY }),
   });
 }
 
-function useDeleteSalesProduct() {
+function useDeleteProduct() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (id: number) => { await authFetch(`/api/sales-products/${id}`, { method: "DELETE" }); },
-    onSuccess: () => qc.invalidateQueries({ queryKey: SALES_PRODUCTS_KEY }),
-  });
-}
-
-function useAddTier() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ productId, minQty, price, currency }: { productId: number; minQty: number; price: number; currency: string }) => {
-      const res = await authFetch(`/api/sales-products/${productId}/tiers`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ minQty, price, currency }),
+    mutationFn: async (name: string) => {
+      const res = await authFetch(`/api/products/${encodeURIComponent(name)}`, {
+        method: "DELETE",
       });
-      if (!res.ok) throw new Error("Failed");
+      if (!res.ok) throw new Error("O'chirishda xato");
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: PRODUCTS_KEY }),
+  });
+}
+
+type AddBomVars = { productName: string; rawMaterialId: number; quantityRequired: number };
+type DeleteBomVars = { id: number; productName: string };
+
+function useAddBomItem() {
+  const qc = useQueryClient();
+  return useMutation<unknown, Error, AddBomVars>({
+    mutationFn: async (data) => {
+      const res = await authFetch("/api/product-materials", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error("Qo'shishda xato");
       return res.json();
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: SALES_PRODUCTS_KEY }),
-  });
-}
-
-function useDeleteTier() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ productId, tierId }: { productId: number; tierId: number }) => {
-      await authFetch(`/api/sales-products/${productId}/tiers/${tierId}`, { method: "DELETE" });
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: bomKey(vars.productName) });
+      qc.invalidateQueries({ queryKey: PRODUCTS_KEY });
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: SALES_PRODUCTS_KEY }),
   });
 }
 
-// ── TierManager: inline tier add/remove panel ─────────────────────────────────
-function TierManager({ product }: { product: SalesProduct }) {
-  const [fromQty, setFromQty] = useState("");
-  const [toQty,   setToQty]   = useState("");
-  const [price,   setPrice]   = useState("");
-  const addTier    = useAddTier();
-  const deleteTier = useDeleteTier();
+function useDeleteBomItem() {
+  const qc = useQueryClient();
+  return useMutation<unknown, Error, DeleteBomVars>({
+    mutationFn: async ({ id }) => {
+      const res = await authFetch(`/api/product-materials/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("O'chirishda xato");
+    },
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: bomKey(vars.productName) });
+      qc.invalidateQueries({ queryKey: PRODUCTS_KEY });
+    },
+  });
+}
 
-  const sym  = product.currency === "USD" ? "$" : "so'm";
-  const unit = product.saleType === "kg" ? "kg" : "dona";
+// ── Cost summary ──────────────────────────────────────────────────────────────
+function CostSummary({
+  rawMaterialCost, salaryCost, electricityCost, otherCost, salePrice, currencyType,
+}: {
+  rawMaterialCost: number;
+  salaryCost: number;
+  electricityCost: number;
+  otherCost: number;
+  salePrice: number;
+  currencyType: string;
+}) {
+  const totalCost = rawMaterialCost + salaryCost + electricityCost + otherCost;
+  const profit = salePrice - totalCost;
+  const marginPct = salePrice > 0 ? (profit / salePrice) * 100 : 0;
+  const isUsd = currencyType === "USD";
+  const fmt = (v: number) =>
+    isUsd
+      ? `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      : formatCurrency(v);
 
-  // Sort ascending for range display
-  const sorted = [...product.tiers].sort((a, b) => a.minQty - b.minQty);
+  return (
+    <div className="rounded-lg border bg-muted/30 p-3 space-y-1.5 text-xs">
+      <div className="flex justify-between text-muted-foreground">
+        <span>Xom ashyo xarajati</span>
+        <span className="font-mono">{fmt(rawMaterialCost)}</span>
+      </div>
+      <div className="flex justify-between text-muted-foreground">
+        <span>Maosh xarajati</span>
+        <span className="font-mono">{fmt(salaryCost)}</span>
+      </div>
+      <div className="flex justify-between text-muted-foreground">
+        <span>Elektr xarajati</span>
+        <span className="font-mono">{fmt(electricityCost)}</span>
+      </div>
+      <div className="flex justify-between text-muted-foreground">
+        <span>Boshqa xarajatlar</span>
+        <span className="font-mono">{fmt(otherCost)}</span>
+      </div>
+      <div className="flex justify-between font-semibold border-t pt-1.5">
+        <span>Jami xarajat</span>
+        <span className="font-mono">{fmt(totalCost)}</span>
+      </div>
+      <div className="flex justify-between text-muted-foreground">
+        <span>Sotuv narxi</span>
+        <span className="font-mono">{fmt(salePrice)}</span>
+      </div>
+      <div
+        className={`flex justify-between font-bold text-sm ${
+          profit >= 0 ? "text-green-700" : "text-red-600"
+        }`}
+      >
+        <span>Foyda</span>
+        <span className="font-mono">{fmt(profit)}</span>
+      </div>
+      <div
+        className={`flex justify-between font-semibold ${
+          marginPct >= 20 ? "text-green-700" : marginPct >= 0 ? "text-amber-600" : "text-red-600"
+        }`}
+      >
+        <span>Margin</span>
+        <span className="font-mono">{marginPct.toFixed(1)}%</span>
+      </div>
+    </div>
+  );
+}
 
-  function rangeLabel(idx: number) {
-    const t    = sorted[idx];
-    const next = sorted[idx + 1];
-    const from = t.minQty.toLocaleString();
-    if (next) {
-      const to = (next.minQty - 1).toLocaleString();
-      return `${from} – ${to} ${unit}`;
-    }
-    return `${from} ${unit} va undan ko'p`;
-  }
+// ── BOM tab ───────────────────────────────────────────────────────────────────
+function BomTab({
+  product, rawMaterials,
+}: {
+  product: Product; rawMaterials: RawMaterial[];
+}) {
+  const { data: bom = [], isLoading } = useBom(product.name);
+  const addBom = useAddBomItem();
+  const deleteBom = useDeleteBomItem();
+  const [selMat, setSelMat] = useState<string>("");
+  const [qty, setQty] = useState<string>("");
+
+  const rawMatCost = bom.reduce((s, b) => s + b.lineCost, 0);
+  const usedIds = new Set(bom.map(b => b.rawMaterialId));
+  const available = rawMaterials.filter(m => m.active && !usedIds.has(m.id));
 
   function handleAdd() {
-    if (!fromQty || !price) return;
-    addTier.mutate(
-      { productId: product.id, minQty: Number(fromQty), price: Number(price), currency: product.currency },
-      { onSuccess: () => { setFromQty(""); setToQty(""); setPrice(""); } },
+    if (!selMat || !qty || isNaN(Number(qty))) return;
+    addBom.mutate(
+      { productName: product.name, rawMaterialId: Number(selMat), quantityRequired: Number(qty) },
+      { onSuccess: () => { setSelMat(""); setQty(""); } },
     );
   }
 
-  // Auto-fill "gacha" when "dan" changes: suggest next round number
-  function handleFromChange(v: string) {
-    setFromQty(v);
-    if (v && !toQty) {
-      const n = Number(v);
-      if (!isNaN(n) && n > 0) {
-        // suggest "from+999" or round up
-        setToQty(String(n + 999));
-      }
-    }
-  }
-
   return (
-    <div className="space-y-3">
-      {sorted.length > 0 ? (
-        <div className="rounded-md border divide-y overflow-hidden">
-          <div className="grid grid-cols-[1.8fr_1fr_auto] text-xs text-muted-foreground px-3 py-1.5 bg-muted/40 font-medium">
-            <span>Miqdor oralig'i</span>
-            <span>Narx</span>
+    <div className="space-y-4">
+      {isLoading ? (
+        <div className="space-y-2">
+          {[1, 2, 3].map(i => <Skeleton key={i} className="h-9 w-full" />)}
+        </div>
+      ) : bom.length === 0 ? (
+        <div className="text-center py-8 text-sm text-muted-foreground border rounded-lg">
+          <Package className="w-8 h-8 mx-auto mb-2 opacity-30" />
+          Xom ashyo qo'shilmagan
+        </div>
+      ) : (
+        <div className="rounded-lg border overflow-hidden text-sm">
+          <div className="grid grid-cols-[2fr_0.8fr_1fr_1.2fr_auto] text-xs text-muted-foreground px-3 py-2 bg-muted/40 font-medium">
+            <span>Xom ashyo</span>
+            <span>Birlik</span>
+            <span>Narx/birlik</span>
+            <span>Miqdor → Jami</span>
             <span />
           </div>
-          {sorted.map((t, idx) => (
-            <div key={t.id} className="grid grid-cols-[1.8fr_1fr_auto] items-center px-3 py-2 text-sm">
-              <span className="font-mono text-xs">{rangeLabel(idx)}</span>
-              <span className="font-mono font-semibold text-emerald-700 dark:text-emerald-400">
-                {t.currency === "USD" ? `$${t.price}` : formatCurrency(t.price)}
+          {bom.map(item => (
+            <div
+              key={item.id}
+              className="grid grid-cols-[2fr_0.8fr_1fr_1.2fr_auto] items-center px-3 py-2 border-t"
+            >
+              <span className="font-medium truncate">{item.rawMaterialName}</span>
+              <span className="text-muted-foreground text-xs">{item.unitType}</span>
+              <span className="font-mono text-xs">{formatCurrency(item.defaultCost)}</span>
+              <span className="font-mono text-xs">
+                {item.quantityRequired} →{" "}
+                <strong>{formatCurrency(item.lineCost)}</strong>
               </span>
               <Button
-                variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive"
-                onClick={() => deleteTier.mutate({ productId: product.id, tierId: t.id })}
-                disabled={deleteTier.isPending}
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-destructive hover:text-destructive"
+                onClick={() => deleteBom.mutate({ id: item.id, productName: product.name })}
+                disabled={deleteBom.isPending}
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </Button>
             </div>
           ))}
         </div>
-      ) : (
-        <p className="text-xs text-muted-foreground py-2">
-          Tier narxlar yo'q — barcha miqdor uchun asosiy narx qo'llaniladi.
-        </p>
       )}
 
-      {/* Add row */}
-      <div className="rounded-md border p-3 bg-muted/10 space-y-2">
-        <p className="text-xs font-medium text-muted-foreground">Yangi oraliq qo'shish</p>
-        <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 items-end">
-          <div>
-            <label className="text-xs text-muted-foreground mb-1 block">Dan ({unit})</label>
+      {available.length > 0 && (
+        <div className="rounded-lg border p-3 bg-muted/10 space-y-2">
+          <p className="text-xs font-medium text-muted-foreground">Xom ashyo qo'shish</p>
+          <div className="flex gap-2">
+            <Select value={selMat} onValueChange={setSelMat}>
+              <SelectTrigger className="flex-1 h-8 text-sm">
+                <SelectValue placeholder="Xom ashyo tanlang..." />
+              </SelectTrigger>
+              <SelectContent>
+                {available.map(m => (
+                  <SelectItem key={m.id} value={String(m.id)}>
+                    {m.name} ({m.unitType}) — {formatCurrency(m.defaultCost)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Input
-              type="number" min={0} step="any" placeholder="1"
-              value={fromQty} onChange={e => handleFromChange(e.target.value)}
-              className="h-8 text-sm"
+              type="number"
+              min={0}
+              step="0.001"
+              placeholder="Miqdor"
+              value={qty}
+              onChange={e => setQty(e.target.value)}
+              className="w-24 h-8 text-sm"
             />
+            <Button
+              size="sm"
+              className="h-8 shrink-0"
+              onClick={handleAdd}
+              disabled={!selMat || !qty || addBom.isPending}
+            >
+              <Plus className="w-3.5 h-3.5" />
+            </Button>
           </div>
-          <div>
-            <label className="text-xs text-muted-foreground mb-1 block">Gacha ({unit})</label>
-            <Input
-              type="number" min={0} step="any" placeholder="1000"
-              value={toQty} onChange={e => setToQty(e.target.value)}
-              className="h-8 text-sm text-muted-foreground"
-            />
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground mb-1 block">Narx ({sym})</label>
-            <Input
-              type="number" min={0} step="0.01" placeholder="2.5"
-              value={price} onChange={e => setPrice(e.target.value)}
-              className="h-8 text-sm"
-            />
-          </div>
-          <Button
-            size="sm" variant="default" onClick={handleAdd}
-            disabled={!fromQty || !price || addTier.isPending}
-            className="h-8"
-          >
-            <Plus className="w-3.5 h-3.5" />
-          </Button>
         </div>
-        {fromQty && toQty && price && (
-          <p className="text-xs text-emerald-700 dark:text-emerald-400 font-medium">
-            Preview: {Number(fromQty).toLocaleString()} – {Number(toQty).toLocaleString()} {unit} → {product.currency === "USD" ? `$${price}` : `${price} so'm`}
-          </p>
-        )}
-        {fromQty && !toQty && price && (
-          <p className="text-xs text-emerald-700 dark:text-emerald-400 font-medium">
-            Preview: {Number(fromQty).toLocaleString()} {unit} va undan ko'p → {product.currency === "USD" ? `$${price}` : `${price} so'm`}
-          </p>
-        )}
-      </div>
-      <p className="text-xs text-muted-foreground">
-        ℹ️ Bot savdoda kiritilgan miqdorga qarab eng mos narxni avtomatik tanlaydi.
-      </p>
+      )}
+
+      <CostSummary
+        rawMaterialCost={rawMatCost}
+        salaryCost={product.salaryCost}
+        electricityCost={product.electricityCost}
+        otherCost={product.otherCost}
+        salePrice={product.defaultSalePrice}
+        currencyType={product.currencyType}
+      />
     </div>
   );
 }
 
-// ── LocalTierEditor: for "create" form (before product is saved) ──────────────
-function LocalTierEditor({
-  tiers, currency, saleType, onChange,
+// ── Product dialog ────────────────────────────────────────────────────────────
+function ProductDialog({
+  open, onClose, product, rawMaterials,
 }: {
-  tiers: LocalTier[]; currency: string; saleType: string;
-  onChange: (tiers: LocalTier[]) => void;
+  open: boolean;
+  onClose: () => void;
+  product?: Product | null;
+  rawMaterials: RawMaterial[];
 }) {
-  const sym  = currency === "USD" ? "$" : "so'm";
-  const unit = saleType === "kg" ? "kg" : "dona";
+  const [tab, setTab] = useState<"info" | "bom">("info");
+  const isEdit = !!product;
+  const createProd = useCreateProduct();
+  const updateProd = useUpdateProduct();
+  const isPending = createProd.isPending || updateProd.isPending;
 
-  function addRow() { onChange([...tiers, { fromQty: "", toQty: "", price: "" }]); }
-  function removeRow(i: number) { onChange(tiers.filter((_, idx) => idx !== i)); }
-  function update(i: number, field: keyof LocalTier, val: string) {
-    const updated = tiers.map((t, idx) => idx === i ? { ...t, [field]: val } : t);
-    // Auto-fill next row's "dan" from current row's "gacha" + 1
-    if (field === "toQty" && val && updated[i + 1] !== undefined && !updated[i + 1].fromQty) {
-      const nextFrom = String(Number(val) + 1);
-      updated[i + 1] = { ...updated[i + 1], fromQty: nextFrom };
-    }
-    onChange(updated);
-  }
-
-  return (
-    <div className="space-y-2">
-      {tiers.length > 0 && (
-        <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 text-xs text-muted-foreground px-0.5">
-          <span>Dan ({unit})</span>
-          <span>Gacha ({unit})</span>
-          <span>Narx ({sym})</span>
-          <span />
-        </div>
-      )}
-      {tiers.map((t, i) => (
-        <div key={i} className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 items-center">
-          <Input
-            type="number" min={0} step="any" placeholder="1"
-            value={t.fromQty} onChange={e => update(i, "fromQty", e.target.value)}
-            className="h-8 text-sm"
-          />
-          <Input
-            type="number" min={0} step="any" placeholder="999"
-            value={t.toQty} onChange={e => update(i, "toQty", e.target.value)}
-            className="h-8 text-sm text-muted-foreground"
-          />
-          <Input
-            type="number" min={0} step="0.01" placeholder="2.5"
-            value={t.price} onChange={e => update(i, "price", e.target.value)}
-            className="h-8 text-sm"
-          />
-          <Button
-            variant="ghost" size="icon"
-            className="h-8 w-8 text-destructive hover:text-destructive"
-            onClick={() => removeRow(i)}
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </Button>
-        </div>
-      ))}
-      {/* Preview */}
-      {tiers.some(t => t.fromQty && t.price) && (
-        <div className="rounded bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 px-3 py-2 space-y-0.5">
-          {tiers.filter(t => t.fromQty && t.price).map((t, i) => {
-            const priceLabel = currency === "USD" ? `$${t.price}` : `${t.price} so'm`;
-            const range = t.toQty
-              ? `${Number(t.fromQty).toLocaleString()} – ${Number(t.toQty).toLocaleString()} ${unit}`
-              : `${Number(t.fromQty).toLocaleString()} ${unit}+`;
-            return (
-              <p key={i} className="text-xs text-emerald-700 dark:text-emerald-400 font-mono">
-                {range} → {priceLabel}
-              </p>
-            );
-          })}
-        </div>
-      )}
-      <Button variant="outline" size="sm" type="button" onClick={addRow} className="h-7 text-xs">
-        <Plus className="w-3 h-3 mr-1" /> Tier narx qo'shish
-      </Button>
-    </div>
-  );
-}
-
-// ── Edit modal ────────────────────────────────────────────────────────────────
-function EditSalesProductModal({ product }: { product: SalesProduct }) {
-  const [open, setOpen]           = useState(false);
-  const [warnOpen, setWarnOpen]   = useState(false);
-  const [pendingValues, setPendingValues] = useState<z.infer<typeof salesFormSchema> | null>(null);
-  const [tab, setTab] = useState<"info" | "tiers">("info");
-  const updateProd = useUpdateSalesProduct();
-
-  const form = useForm<z.infer<typeof salesFormSchema>>({
-    resolver: zodResolver(salesFormSchema),
-    defaultValues: {
-      name:         product.name,
-      saleType:     product.saleType as "dona" | "kg",
-      defaultPrice: product.defaultPrice,
-      currency:     product.currency as "UZS" | "USD",
+  const form = useForm<ProductForm>({
+    resolver: zodResolver(productSchema),
+    values: {
+      name: product?.name ?? "",
+      sku: product?.sku ?? "",
+      unitType: (product?.unitType as "dona" | "kg") ?? "dona",
+      currencyType: (product?.currencyType as "UZS" | "USD") ?? "UZS",
+      defaultSalePrice: product?.defaultSalePrice ?? 0,
+      rate: product?.rate ?? 0,
+      salaryCost: product?.salaryCost ?? 0,
+      electricityCost: product?.electricityCost ?? 0,
+      otherCost: product?.otherCost ?? 0,
+      minimumStock: product?.minimumStock ?? 0,
+      active: product?.active ?? true,
     },
   });
 
-  async function onSubmit(values: z.infer<typeof salesFormSchema>) {
-    if (values.saleType !== product.saleType) {
-      const chk = await authFetch(`/api/sales-products/${product.id}/has-sales`);
-      const { hasSales } = await chk.json();
-      if (hasSales) { setPendingValues(values); setWarnOpen(true); return; }
+  const watchedSalePrice = form.watch("defaultSalePrice");
+  const watchedSalary    = form.watch("salaryCost");
+  const watchedElec      = form.watch("electricityCost");
+  const watchedOther     = form.watch("otherCost");
+  const watchedCurrency  = form.watch("currencyType");
+
+  function onSubmit(values: ProductForm) {
+    if (isEdit) {
+      updateProd.mutate(
+        { ...values, name: product!.name },
+        { onSuccess: () => handleClose() },
+      );
+    } else {
+      createProd.mutate(values, {
+        onSuccess: () => { form.reset(); handleClose(); },
+      });
     }
-    save(values);
   }
 
-  function save(values: z.infer<typeof salesFormSchema>) {
-    updateProd.mutate({ id: product.id, ...values }, {
-      onSuccess: () => { setOpen(false); setWarnOpen(false); }
-    });
+  function handleClose() {
+    setTab("info");
+    onClose();
   }
-
-  const currency = form.watch("currency");
-  const saleType = form.watch("saleType");
 
   return (
-    <>
-      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setOpen(true)}>
-        <Pencil className="w-4 h-4" />
-      </Button>
+    <Dialog open={open} onOpenChange={o => !o && handleClose()}>
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{isEdit ? "Mahsulotni tahrirlash" : "Yangi mahsulot"}</DialogTitle>
+          {isEdit && <DialogDescription>{product!.name}</DialogDescription>}
+        </DialogHeader>
 
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Mahsulotni tahrirlash</DialogTitle>
-            <DialogDescription>{product.name}</DialogDescription>
-          </DialogHeader>
-
-          {/* Tab switcher */}
-          <div className="flex gap-1 border-b pb-0">
-            <button
-              type="button"
-              onClick={() => setTab("info")}
-              className={`px-3 py-1.5 text-sm font-medium rounded-t border-b-2 transition-colors ${
-                tab === "info"
-                  ? "border-primary text-primary"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Asosiy ma'lumot
-            </button>
-            <button
-              type="button"
-              onClick={() => setTab("tiers")}
-              className={`px-3 py-1.5 text-sm font-medium rounded-t border-b-2 transition-colors flex items-center gap-1 ${
-                tab === "tiers"
-                  ? "border-primary text-primary"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <Layers className="w-3.5 h-3.5" />
-              Narx tizimlari
-              {product.tiers.length > 0 && (
-                <span className="ml-1 bg-primary/10 text-primary text-xs px-1.5 rounded-full">
-                  {product.tiers.length}
-                </span>
-              )}
-            </button>
+        {isEdit && (
+          <div className="flex gap-1 border-b">
+            {(["info", "bom"] as const).map(t => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setTab(t)}
+                className={`px-3 py-1.5 text-sm font-medium border-b-2 transition-colors ${
+                  tab === t
+                    ? "border-primary text-primary"
+                    : "border-transparent text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {t === "info" ? "Asosiy ma'lumot" : "Xarajatlar (BOM)"}
+              </button>
+            ))}
           </div>
+        )}
 
-          {tab === "info" ? (
-            <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                <FormField control={form.control} name="name" render={({ field }) => (
+        {(!isEdit || tab === "info") && (
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+              <FormField
+                control={form.control}
+                name="name"
+                render={({ field }) => (
                   <FormItem>
                     <FormLabel>Nomi</FormLabel>
-                    <FormControl><Input {...field} /></FormControl>
+                    <FormControl>
+                      <Input
+                        {...field}
+                        disabled={isEdit}
+                        className={isEdit ? "bg-muted" : ""}
+                      />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
-                )} />
-                <div className="grid grid-cols-3 gap-3">
-                  <FormField control={form.control} name="saleType" render={({ field }) => (
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="sku"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>SKU (ixtiyoriy)</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="RM-001" />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+
+              <div className="grid grid-cols-2 gap-3">
+                <FormField
+                  control={form.control}
+                  name="unitType"
+                  render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Sotish turi</FormLabel>
+                      <FormLabel>Birlik turi</FormLabel>
                       <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
+                        <FormControl>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                        </FormControl>
                         <SelectContent>
                           <SelectItem value="dona">Dona</SelectItem>
                           <SelectItem value="kg">Kilogramm</SelectItem>
                         </SelectContent>
                       </Select>
-                      <FormMessage />
                     </FormItem>
-                  )} />
-                  <FormField control={form.control} name="defaultPrice" render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Asosiy narx</FormLabel>
-                      <FormControl><Input type="number" step="0.01" min={0} {...field} /></FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )} />
-                  <FormField control={form.control} name="currency" render={({ field }) => (
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="currencyType"
+                  render={({ field }) => (
                     <FormItem>
                       <FormLabel>Valyuta</FormLabel>
                       <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
+                        <FormControl>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                        </FormControl>
                         <SelectContent>
                           <SelectItem value="UZS">UZS (so'm)</SelectItem>
                           <SelectItem value="USD">USD ($)</SelectItem>
                         </SelectContent>
                       </Select>
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <FormField
+                  control={form.control}
+                  name="defaultSalePrice"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Sotuv narxi</FormLabel>
+                      <FormControl>
+                        <Input type="number" step="0.01" min={0} {...field} />
+                      </FormControl>
                       <FormMessage />
                     </FormItem>
-                  )} />
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Asosiy narx — tier mos kelmasa qo'llaniladi.
-                </p>
-                <DialogFooter>
-                  <Button type="submit" disabled={updateProd.isPending}>
-                    {updateProd.isPending ? "Saqlanmoqda..." : "Saqlash"}
-                  </Button>
-                </DialogFooter>
-              </form>
-            </Form>
-          ) : (
-            <div className="space-y-2">
-              <TierManager product={{ ...product, saleType, currency }} />
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="rate"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Maosh stavkasi</FormLabel>
+                      <FormControl>
+                        <Input type="number" step="0.01" min={0} {...field} />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+              </div>
 
-      <AlertDialog open={warnOpen} onOpenChange={setWarnOpen}>
+              <div className="grid grid-cols-3 gap-3">
+                <FormField
+                  control={form.control}
+                  name="salaryCost"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Maosh xarajati</FormLabel>
+                      <FormControl>
+                        <Input type="number" step="0.01" min={0} {...field} />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="electricityCost"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Elektr xarajati</FormLabel>
+                      <FormControl>
+                        <Input type="number" step="0.01" min={0} {...field} />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="otherCost"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Boshqa xarajat</FormLabel>
+                      <FormControl>
+                        <Input type="number" step="0.01" min={0} {...field} />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <FormField
+                  control={form.control}
+                  name="minimumStock"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Minimal qoldiq</FormLabel>
+                      <FormControl>
+                        <Input type="number" step="1" min={0} {...field} />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="active"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-col justify-end pb-1">
+                      <FormLabel>Faol</FormLabel>
+                      <div className="flex items-center gap-2 mt-1">
+                        <FormControl>
+                          <Switch checked={field.value} onCheckedChange={field.onChange} />
+                        </FormControl>
+                        <span className="text-sm text-muted-foreground">
+                          {field.value ? "Ha" : "Yo'q"}
+                        </span>
+                      </div>
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <CostSummary
+                rawMaterialCost={isEdit ? (product?.rawMaterialCost ?? 0) : 0}
+                salaryCost={Number(watchedSalary) || 0}
+                electricityCost={Number(watchedElec) || 0}
+                otherCost={Number(watchedOther) || 0}
+                salePrice={Number(watchedSalePrice) || 0}
+                currencyType={watchedCurrency}
+              />
+
+              <DialogFooter>
+                <Button type="submit" disabled={isPending}>
+                  {isPending ? "Saqlanmoqda..." : isEdit ? "Saqlash" : "Yaratish"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        )}
+
+        {isEdit && tab === "bom" && (
+          <BomTab product={product!} rawMaterials={rawMaterials} />
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+export default function Products() {
+  const [createOpen, setCreateOpen]   = useState(false);
+  const [editProduct, setEditProduct] = useState<Product | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Product | null>(null);
+
+  const { data: products = [], isLoading } = useProducts();
+  const { data: rawMaterials = [] }        = useRawMaterials();
+  const deleteProd = useDeleteProduct();
+
+  const isUsd      = (p: Product) => p.currencyType === "USD";
+  const fmtPrice   = (p: Product) =>
+    isUsd(p) ? `$${p.defaultSalePrice.toFixed(2)}` : formatCurrency(p.defaultSalePrice);
+  const fmtCost    = (p: Product) =>
+    isUsd(p) ? `$${p.totalCost.toFixed(2)}` : formatCurrency(p.totalCost);
+  const fmtProfit  = (p: Product) =>
+    isUsd(p) ? `$${p.profit.toFixed(2)}` : formatCurrency(p.profit);
+
+  return (
+    <>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+            <Package className="w-6 h-6 text-primary" /> Mahsulotlar
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            {isLoading ? "Yuklanmoqda..." : `${products.length} ta mahsulot`}
+          </p>
+        </div>
+        <Button onClick={() => setCreateOpen(true)}>
+          <Plus className="w-4 h-4 mr-2" /> Yangi mahsulot
+        </Button>
+      </div>
+
+      <div className="rounded-xl border bg-card shadow-sm overflow-x-auto">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Nomi</TableHead>
+              <TableHead>SKU</TableHead>
+              <TableHead>Birlik</TableHead>
+              <TableHead>Valyuta</TableHead>
+              <TableHead className="text-right">Sotuv narxi</TableHead>
+              <TableHead className="text-right">Jami xarajat</TableHead>
+              <TableHead className="text-right">Foyda</TableHead>
+              <TableHead className="text-right">Margin%</TableHead>
+              <TableHead>Holat</TableHead>
+              <TableHead />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {isLoading
+              ? Array.from({ length: 6 }).map((_, i) => (
+                  <TableRow key={i}>
+                    {Array.from({ length: 10 }).map((_c, j) => (
+                      <TableCell key={j}>
+                        <Skeleton className="h-5 w-full" />
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))
+              : products.length === 0
+                ? (
+                  <TableRow>
+                    <TableCell colSpan={10} className="text-center py-12 text-muted-foreground">
+                      <Package className="w-10 h-10 mx-auto mb-2 opacity-20" />
+                      Mahsulotlar yo'q
+                    </TableCell>
+                  </TableRow>
+                )
+                : products.map(p => {
+                    const marginPct  = p.marginPct ?? 0;
+                    const profitCls  = p.profit >= 0 ? "text-green-700" : "text-red-600";
+                    const marginCls  = marginPct >= 20
+                      ? "text-green-700"
+                      : marginPct >= 0
+                        ? "text-amber-600"
+                        : "text-red-600";
+                    return (
+                      <TableRow key={p.id} className={!p.active ? "opacity-50" : ""}>
+                        <TableCell className="font-medium">{p.name}</TableCell>
+                        <TableCell className="text-muted-foreground text-xs font-mono">
+                          {p.sku || "—"}
+                        </TableCell>
+                        <TableCell className="text-xs">{p.unitType}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="text-xs">
+                            {p.currencyType}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-sm">
+                          {fmtPrice(p)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                          {fmtCost(p)}
+                        </TableCell>
+                        <TableCell className={`text-right font-mono text-sm font-semibold ${profitCls}`}>
+                          {fmtProfit(p)}
+                        </TableCell>
+                        <TableCell className={`text-right font-semibold text-sm ${marginCls}`}>
+                          {marginPct.toFixed(1)}%
+                        </TableCell>
+                        <TableCell>
+                          {p.active
+                            ? (
+                              <Badge className="bg-green-100 text-green-700 hover:bg-green-100 border border-green-200 shadow-none">
+                                Faol
+                              </Badge>
+                            )
+                            : <Badge variant="secondary">Nofaol</Badge>}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={() => setEditProduct(p)}
+                            >
+                              <Pencil className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-destructive hover:text-destructive"
+                              onClick={() => setDeleteTarget(p)}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+          </TableBody>
+        </Table>
+      </div>
+
+      <ProductDialog
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        rawMaterials={rawMaterials}
+      />
+      <ProductDialog
+        open={!!editProduct}
+        onClose={() => setEditProduct(null)}
+        product={editProduct}
+        rawMaterials={rawMaterials}
+      />
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={o => !o && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5 text-amber-500" /> Diqqat!
-            </AlertDialogTitle>
+            <AlertDialogTitle>Mahsulotni o'chirish</AlertDialogTitle>
             <AlertDialogDescription>
-              Bu mahsulot bo'yicha avvalgi savdolar mavjud. Sotish turini o'zgartirish
-              (dona → kg yoki aksincha) hisobotlarga ta'sir qilishi mumkin. Davom etilsinmi?
+              <strong>{deleteTarget?.name}</strong> mahsulotini o'chirmoqchimisiz?
+              Bu amalni bekor qilib bo'lmaydi.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Bekor qilish</AlertDialogCancel>
             <AlertDialogAction
-              className="bg-amber-500 hover:bg-amber-600 text-white"
-              onClick={() => pendingValues && save(pendingValues)}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                if (!deleteTarget) return;
+                deleteProd.mutate(deleteTarget.name, {
+                  onSuccess: () => setDeleteTarget(null),
+                });
+              }}
+              disabled={deleteProd.isPending}
             >
-              Ha, o'zgartirish
+              {deleteProd.isPending ? "O'chirilmoqda..." : "O'chirish"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </>
-  );
-}
-
-// ── Tier badge (in table row) ─────────────────────────────────────────────────
-function TierBadge({ count }: { count: number }) {
-  if (count === 0) return null;
-  return (
-    <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">
-      <Layers className="w-2.5 h-2.5" /> {count} tier
-    </span>
-  );
-}
-
-// ── Main component ────────────────────────────────────────────────────────────
-export default function Products() {
-  const queryClient = useQueryClient();
-  const [isProdOpen, setIsProdOpen] = useState(false);
-  const [isSalesOpen, setIsSalesOpen] = useState(false);
-  const [localTiers, setLocalTiers] = useState<LocalTier[]>([]);
-
-  const { data: products, isLoading: prodLoading } = useGetProducts({
-    query: { queryKey: getGetProductsQueryKey() }
-  });
-  const { data: salesProducts, isLoading: salesLoading } = useSalesProducts();
-
-  const createProduct = useCreateProduct({
-    mutation: {
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: getGetProductsQueryKey() });
-        setIsProdOpen(false);
-        prodForm.reset();
-      }
-    }
-  });
-  const deleteProduct = useDeleteProduct({
-    mutation: { onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductsQueryKey() }) }
-  });
-
-  const createSalesProd = useCreateSalesProduct();
-  const deleteSalesProd = useDeleteSalesProduct();
-
-  const prodForm = useForm<z.infer<typeof prodFormSchema>>({
-    resolver: zodResolver(prodFormSchema),
-    defaultValues: { name: "", rateType: "per_kg", rate: 0 },
-  });
-  const salesForm = useForm<z.infer<typeof salesFormSchema>>({
-    resolver: zodResolver(salesFormSchema),
-    defaultValues: { name: "", saleType: "dona", defaultPrice: 0, currency: "UZS" },
-  });
-
-  const salesCurrency = salesForm.watch("currency");
-  const salesSaleType = salesForm.watch("saleType");
-
-  return (
-    <div className="space-y-6">
-      <h1 className="text-xl font-semibold tracking-tight flex items-center">
-        <Package className="w-5 h-5 mr-2" /> Mahsulotlar
-      </h1>
-
-      <Tabs defaultValue="production">
-        <TabsList>
-          <TabsTrigger value="production">⚙️ Ishlab chiqarish</TabsTrigger>
-          <TabsTrigger value="sales">🛒 Sotuv mahsulotlari</TabsTrigger>
-        </TabsList>
-
-        {/* ── Production tab ─────────────────────────────────────────────── */}
-        <TabsContent value="production" className="space-y-4 mt-4">
-          <div className="flex items-center justify-between">
-            <p className="text-sm text-muted-foreground">Ishchilar maoshi hisoblanadigan mahsulotlar</p>
-            <Dialog open={isProdOpen} onOpenChange={setIsProdOpen}>
-              <DialogTrigger asChild>
-                <Button data-testid="btn-add-product">
-                  <Plus className="w-4 h-4 mr-2" /> Mahsulot qo'shish
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Yangi ishlab chiqarish mahsuloti</DialogTitle>
-                  <DialogDescription>Ishchiga to'lanadigan narxni belgilang.</DialogDescription>
-                </DialogHeader>
-                <Form {...prodForm}>
-                  <form onSubmit={prodForm.handleSubmit(v => createProduct.mutate({ data: v }))} className="space-y-4">
-                    <FormField control={prodForm.control} name="name" render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Mahsulot nomi</FormLabel>
-                        <FormControl><Input placeholder="masalan: Arqon 12mm Ko'k" {...field} data-testid="input-product-name" /></FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )} />
-                    <div className="grid grid-cols-2 gap-4">
-                      <FormField control={prodForm.control} name="rateType" render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Hisoblash usuli</FormLabel>
-                          <Select onValueChange={field.onChange} defaultValue={field.value}>
-                            <FormControl><SelectTrigger data-testid="select-product-ratetype"><SelectValue /></SelectTrigger></FormControl>
-                            <SelectContent>
-                              <SelectItem value="per_kg">Kilogramm bo'yicha</SelectItem>
-                              <SelectItem value="per_piece">Dona bo'yicha</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )} />
-                      <FormField control={prodForm.control} name="rate" render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Narx (so'm)</FormLabel>
-                          <FormControl><Input type="number" placeholder="0" {...field} data-testid="input-product-rate" /></FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )} />
-                    </div>
-                    <DialogFooter className="pt-4">
-                      <Button type="submit" disabled={createProduct.isPending} data-testid="btn-submit-product">
-                        {createProduct.isPending ? "Saqlanmoqda..." : "Saqlash"}
-                      </Button>
-                    </DialogFooter>
-                  </form>
-                </Form>
-              </DialogContent>
-            </Dialog>
-          </div>
-          <Card className="border-border">
-            <CardContent className="p-0">
-              <Table>
-                <TableHeader className="bg-muted/50">
-                  <TableRow>
-                    <TableHead>Mahsulot nomi</TableHead>
-                    <TableHead>Hisoblash usuli</TableHead>
-                    <TableHead className="text-right">Narx</TableHead>
-                    <TableHead className="text-right w-[80px]"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {prodLoading ? (
-                    Array.from({ length: 3 }).map((_, i) => (
-                      <TableRow key={i}>
-                        <TableCell><Skeleton className="h-5 w-48" /></TableCell>
-                        <TableCell><Skeleton className="h-5 w-24" /></TableCell>
-                        <TableCell className="text-right"><Skeleton className="h-5 w-24 ml-auto" /></TableCell>
-                        <TableCell></TableCell>
-                      </TableRow>
-                    ))
-                  ) : products?.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
-                        Mahsulotlar kiritilmagan.
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    products?.map(product => (
-                      <TableRow key={product.name} data-testid={`product-row-${product.name}`}>
-                        <TableCell className="font-medium">{product.name}</TableCell>
-                        <TableCell>
-                          <span className="text-xs uppercase tracking-wider text-muted-foreground bg-muted px-2 py-1 rounded">
-                            {product.rateType === "per_kg" ? "kg bo'yicha" : "dona bo'yicha"}
-                          </span>
-                        </TableCell>
-                        <TableCell className="text-right font-mono font-medium">
-                          {formatCurrency(product.rate)}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10" data-testid={`btn-delete-${product.name}`}>
-                                <Trash2 className="w-4 h-4" />
-                              </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>Mahsulotni o'chirish?</AlertDialogTitle>
-                                <AlertDialogDescription>{product.name} katalogdan o'chiriladi.</AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>Bekor qilish</AlertDialogCancel>
-                                <AlertDialogAction
-                                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                  onClick={() => deleteProduct.mutate({ name: product.name })}
-                                  data-testid="btn-confirm-delete"
-                                >
-                                  O'chirish
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* ── Sales products tab ─────────────────────────────────────────── */}
-        <TabsContent value="sales" className="space-y-4 mt-4">
-          <div className="flex items-center justify-between">
-            <p className="text-sm text-muted-foreground">Savdo formasida ko'rinadigan mahsulotlar (narx va valyuta bilan)</p>
-            <Dialog open={isSalesOpen} onOpenChange={(v) => { setIsSalesOpen(v); if (!v) setLocalTiers([]); }}>
-              <DialogTrigger asChild>
-                <Button><Plus className="w-4 h-4 mr-2" /> Sotuv mahsulot qo'shish</Button>
-              </DialogTrigger>
-              <DialogContent className="max-w-lg">
-                <DialogHeader>
-                  <DialogTitle>Yangi sotuv mahsuloti</DialogTitle>
-                  <DialogDescription>Mijozlarga sotiladigan mahsulot ma'lumotlarini kiriting.</DialogDescription>
-                </DialogHeader>
-                <Form {...salesForm}>
-                  <form onSubmit={salesForm.handleSubmit(v => {
-                    createSalesProd.mutate({ ...v, tiers: localTiers }, {
-                      onSuccess: () => { setIsSalesOpen(false); salesForm.reset(); setLocalTiers([]); }
-                    });
-                  })} className="space-y-4">
-                    <FormField control={salesForm.control} name="name" render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Mahsulot nomi</FormLabel>
-                        <FormControl><Input placeholder="masalan: PoliPropilen Sariq Kurtka" {...field} /></FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )} />
-                    <div className="grid grid-cols-3 gap-3">
-                      <FormField control={salesForm.control} name="saleType" render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Sotish turi</FormLabel>
-                          <Select onValueChange={field.onChange} defaultValue={field.value}>
-                            <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
-                            <SelectContent>
-                              <SelectItem value="dona">Dona</SelectItem>
-                              <SelectItem value="kg">Kilogramm</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )} />
-                      <FormField control={salesForm.control} name="defaultPrice" render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Asosiy narx</FormLabel>
-                          <FormControl><Input type="number" step="0.01" min={0} placeholder="0" {...field} /></FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )} />
-                      <FormField control={salesForm.control} name="currency" render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Valyuta</FormLabel>
-                          <Select onValueChange={field.onChange} defaultValue={field.value}>
-                            <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
-                            <SelectContent>
-                              <SelectItem value="UZS">UZS (so'm)</SelectItem>
-                              <SelectItem value="USD">USD ($)</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )} />
-                    </div>
-
-                    {/* Tier section */}
-                    <div className="rounded-md border p-3 space-y-2 bg-muted/20">
-                      <p className="text-xs font-semibold flex items-center gap-1 text-muted-foreground">
-                        <Layers className="w-3.5 h-3.5" /> Narx tizimlari (ixtiyoriy)
-                      </p>
-                      <LocalTierEditor
-                        tiers={localTiers}
-                        currency={salesCurrency}
-                        saleType={salesSaleType}
-                        onChange={setLocalTiers}
-                      />
-                    </div>
-
-                    <DialogFooter className="pt-2">
-                      <Button type="submit" disabled={createSalesProd.isPending}>
-                        {createSalesProd.isPending ? "Saqlanmoqda..." : "Saqlash"}
-                      </Button>
-                    </DialogFooter>
-                  </form>
-                </Form>
-              </DialogContent>
-            </Dialog>
-          </div>
-
-          <Card className="border-border">
-            <CardContent className="p-0">
-              <Table>
-                <TableHeader className="bg-muted/50">
-                  <TableRow>
-                    <TableHead>Mahsulot nomi</TableHead>
-                    <TableHead>Sotish turi</TableHead>
-                    <TableHead className="text-right">Asosiy narx</TableHead>
-                    <TableHead className="text-right">Valyuta</TableHead>
-                    <TableHead className="text-right w-[120px]"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {salesLoading ? (
-                    Array.from({ length: 3 }).map((_, i) => (
-                      <TableRow key={i}>
-                        <TableCell><Skeleton className="h-5 w-48" /></TableCell>
-                        <TableCell><Skeleton className="h-5 w-16" /></TableCell>
-                        <TableCell className="text-right"><Skeleton className="h-5 w-24 ml-auto" /></TableCell>
-                        <TableCell></TableCell>
-                        <TableCell></TableCell>
-                      </TableRow>
-                    ))
-                  ) : salesProducts?.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={5} className="text-center py-12 text-muted-foreground">
-                        <ShoppingCart className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                        Sotuv mahsulotlari kiritilmagan.<br />
-                        <span className="text-xs">Yuqoridagi tugmadan qo'shing</span>
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    salesProducts?.map(sp => (
-                      <TableRow key={sp.id}>
-                        <TableCell className="font-medium">
-                          <div className="flex items-center gap-2">
-                            {sp.name}
-                            <TierBadge count={sp.tiers.length} />
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <span className="text-xs uppercase tracking-wider text-muted-foreground bg-muted px-2 py-1 rounded">
-                            {sp.saleType}
-                          </span>
-                        </TableCell>
-                        <TableCell className="text-right font-mono font-medium">
-                          {sp.defaultPrice > 0
-                            ? sp.currency === "USD"
-                              ? `$${sp.defaultPrice}`
-                              : formatCurrency(sp.defaultPrice)
-                            : "—"}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <span className={`text-xs font-semibold px-2 py-0.5 rounded ${sp.currency === "USD" ? "bg-green-100 text-green-700" : "bg-blue-100 text-blue-700"}`}>
-                            {sp.currency}
-                          </span>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-1">
-                            <EditSalesProductModal product={sp} />
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
-                                <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10">
-                                  <Trash2 className="w-4 h-4" />
-                                </Button>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent>
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle>O'chirish?</AlertDialogTitle>
-                                  <AlertDialogDescription>{sp.name} savdo ro'yxatidan o'chiriladi.</AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel>Bekor qilish</AlertDialogCancel>
-                                  <AlertDialogAction
-                                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                    onClick={() => deleteSalesProd.mutate(sp.id)}
-                                  >
-                                    O'chirish
-                                  </AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
-    </div>
   );
 }

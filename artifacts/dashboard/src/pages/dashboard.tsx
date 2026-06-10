@@ -29,6 +29,10 @@ type V2Data = {
   topWorkers: { worker: string; qty: number; earnings: number; batches: number }[];
   topProducts: { product: string; soldQty: number }[];
   liveFeed: { time: string; type: string; actor: string; description: string }[];
+  mostProfitableProduct: { name: string; profit: number; marginPct: number } | null;
+  highestRevenueProduct: { name: string; revenueUzs: number; revenueUsd: number } | null;
+  highestMarginProduct: { name: string; marginPct: number } | null;
+  lowestMarginProduct: { name: string; marginPct: number } | null;
 };
 
 /* ─── Hooks ─── */
@@ -126,6 +130,51 @@ export default function Dashboard() {
           </div>
         </Panel>
       </div>
+
+      {/* ══ SECTION 2.5: Mahsulot foydadorligi ══ */}
+      {(d?.mostProfitableProduct || d?.highestMarginProduct) && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <KpiCard
+            icon="💎"
+            label="Eng foydali mahsulot"
+            loading={isLoading}
+            value={d?.mostProfitableProduct?.name ?? "—"}
+            sub={d?.mostProfitableProduct
+              ? `Margin: ${d.mostProfitableProduct.marginPct.toFixed(1)}%`
+              : undefined}
+          />
+          <KpiCard
+            icon="💵"
+            label="Eng yuqori daromad"
+            loading={isLoading}
+            value={d?.highestRevenueProduct?.name ?? "—"}
+            sub={d?.highestRevenueProduct
+              ? (d.highestRevenueProduct.revenueUsd > 0
+                  ? `$${formatNumber(d.highestRevenueProduct.revenueUsd)}`
+                  : formatCurrency(d.highestRevenueProduct.revenueUzs))
+              : undefined}
+          />
+          <KpiCard
+            icon="📈"
+            label="Eng yuqori margin"
+            loading={isLoading}
+            value={d?.highestMarginProduct?.name ?? "—"}
+            sub={d?.highestMarginProduct
+              ? `${d.highestMarginProduct.marginPct.toFixed(1)}%`
+              : undefined}
+          />
+          <KpiCard
+            icon="📉"
+            label="Eng past margin"
+            loading={isLoading}
+            value={d?.lowestMarginProduct?.name ?? "—"}
+            sub={d?.lowestMarginProduct
+              ? `${d.lowestMarginProduct.marginPct.toFixed(1)}%`
+              : undefined}
+            warn={!!(d?.lowestMarginProduct && d.lowestMarginProduct.marginPct < 10)}
+          />
+        </div>
+      )}
 
       {/* ══ SECTION 3: Ishlab chiqarish + Top ishchilar ══ */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">

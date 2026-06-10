@@ -10,6 +10,7 @@ import {
 } from "recharts";
 import {
   TrendingUp, Package, Banknote, Users, ShoppingBag, Award, BarChart2,
+  DollarSign, TrendingDown,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -23,6 +24,12 @@ type SalaryMonth = { month: string; totalPaid: number; workerCount: number };
 type TopCustomer = { customerName: string; totalUsd: number; totalUzs: number; saleCount: number };
 type TopWorker = { worker: string; totalEarnings: number; batchCount: number; totalWeight: number };
 type TopProduct = { product: string; batchCount: number; totalWeight: number; totalEarnings: number };
+type ProductProfitRow = {
+  name: string; sku: string; unitType: string; currencyType: string;
+  salePrice: number; rawMaterialCost: number; salaryCost: number;
+  electricityCost: number; otherCost: number; totalCost: number;
+  profit: number; marginPct: number; revenueUzs: number; revenueUsd: number; unitsSold: number;
+};
 type ReportData = {
   months: number;
   salesByMonth: SalesMonth[];
@@ -103,6 +110,16 @@ function PeriodBtn({ active, onClick, label }: { active: boolean; onClick: () =>
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function Reports() {
   const [months, setMonths] = useState(6);
+  const [sortBy, setSortBy] = useState<"profit" | "margin" | "low_margin" | "sold" | "revenue">("profit");
+
+  const { data: profitRows = [], isLoading: profitLoading } = useQuery<ProductProfitRow[]>({
+    queryKey: ["product-profitability", sortBy],
+    queryFn: async () => {
+      const res = await authFetch(`/api/reports/product-profitability?sortBy=${sortBy}`);
+      if (!res.ok) throw new Error("Yuklashda xato");
+      return res.json();
+    },
+  });
 
   const { data, isLoading } = useQuery<ReportData>({
     queryKey: ["reports", months],
@@ -172,10 +189,11 @@ export default function Reports() {
 
       {/* Tabs */}
       <Tabs defaultValue="sales">
-        <TabsList className="grid w-full grid-cols-3 max-w-md">
-          <TabsTrigger value="sales"    className="gap-2"><TrendingUp className="w-4 h-4" /> Savdo</TabsTrigger>
-          <TabsTrigger value="production" className="gap-2"><Package className="w-4 h-4" /> Ishlab chiqarish</TabsTrigger>
-          <TabsTrigger value="salary"   className="gap-2"><Banknote className="w-4 h-4" /> Maosh</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-4 max-w-xl">
+          <TabsTrigger value="sales"      className="gap-1.5"><TrendingUp className="w-3.5 h-3.5" /> Savdo</TabsTrigger>
+          <TabsTrigger value="production" className="gap-1.5"><Package className="w-3.5 h-3.5" /> Ishlab chiqarish</TabsTrigger>
+          <TabsTrigger value="salary"     className="gap-1.5"><Banknote className="w-3.5 h-3.5" /> Maosh</TabsTrigger>
+          <TabsTrigger value="product"    className="gap-1.5"><DollarSign className="w-3.5 h-3.5" /> Mahsulot</TabsTrigger>
         </TabsList>
 
         {/* ═══════════════════════ SAVDO ═══════════════════════ */}
@@ -472,6 +490,149 @@ export default function Reports() {
               )}
             </div>
           </div>
+        </TabsContent>
+
+        {/* ═══════════════════════ MAHSULOT ═══════════════════════ */}
+        <TabsContent value="product" className="mt-5 space-y-5">
+          {/* Sort controls */}
+          <div className="flex flex-wrap gap-2 items-center">
+            <span className="text-xs text-muted-foreground font-medium">Saralash:</span>
+            {(
+              [
+                { key: "profit",     label: "Yuqori foyda" },
+                { key: "margin",     label: "Yuqori margin" },
+                { key: "low_margin", label: "Past margin" },
+                { key: "revenue",    label: "Yuqori daromad" },
+                { key: "sold",       label: "Ko'p sotilgan" },
+              ] as const
+            ).map(({ key, label }) => (
+              <button
+                key={key}
+                onClick={() => setSortBy(key)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  sortBy === key
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted/50 text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* Table */}
+          <div className="rounded-xl border bg-card overflow-x-auto">
+            {profitLoading ? (
+              <div className="p-6 space-y-3">
+                {[1, 2, 3, 4, 5].map(i => (
+                  <div key={i} className="h-10 bg-muted/40 rounded animate-pulse" />
+                ))}
+              </div>
+            ) : profitRows.length === 0 ? (
+              <div className="text-center py-12 text-sm text-muted-foreground">
+                Ma'lumot yo'q
+              </div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-xs text-muted-foreground">
+                    <th className="text-left px-4 py-3 font-medium">Mahsulot</th>
+                    <th className="text-right px-4 py-3 font-medium">Daromad</th>
+                    <th className="text-right px-4 py-3 font-medium">Xarajat</th>
+                    <th className="text-right px-4 py-3 font-medium">Foyda</th>
+                    <th className="text-right px-4 py-3 font-medium">Margin%</th>
+                    <th className="text-right px-4 py-3 font-medium">Sotilgan</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {profitRows.map((row, i) => {
+                    const isUsd = row.currencyType === "USD";
+                    const fmtVal = (v: number) =>
+                      isUsd
+                        ? `$${v.toFixed(2)}`
+                        : fmtUzs(v);
+                    const revenueDisplay = row.revenueUsd > 0
+                      ? fmtUsd(row.revenueUsd)
+                      : fmtUzs(row.revenueUzs);
+                    const profitColor =
+                      row.profit >= 0 ? "text-green-700" : "text-red-600";
+                    const marginColor =
+                      row.marginPct >= 20
+                        ? "text-green-700"
+                        : row.marginPct >= 0
+                          ? "text-amber-600"
+                          : "text-red-600";
+                    return (
+                      <tr
+                        key={row.name}
+                        className="hover:bg-muted/30 transition-colors"
+                      >
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <span className="w-5 h-5 rounded text-xs font-bold flex items-center justify-center bg-muted text-muted-foreground shrink-0">
+                              {i + 1}
+                            </span>
+                            <div>
+                              <div className="font-medium">{row.name}</div>
+                              {row.sku && (
+                                <div className="text-xs text-muted-foreground font-mono">
+                                  {row.sku}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono text-xs">
+                          {revenueDisplay}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono text-xs text-muted-foreground">
+                          {fmtVal(row.totalCost)}
+                        </td>
+                        <td className={`px-4 py-3 text-right font-mono text-xs font-semibold ${profitColor}`}>
+                          {fmtVal(row.profit)}
+                        </td>
+                        <td className={`px-4 py-3 text-right font-semibold text-sm ${marginColor}`}>
+                          {row.marginPct.toFixed(1)}%
+                        </td>
+                        <td className="px-4 py-3 text-right text-xs text-muted-foreground">
+                          {row.unitsSold > 0 ? `${row.unitsSold} ${row.unitType}` : "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {/* Summary cards */}
+          {profitRows.length > 0 && (() => {
+            const topProfit = profitRows.reduce((a, b) => a.profit > b.profit ? a : b);
+            const topMargin = profitRows.reduce((a, b) => a.marginPct > b.marginPct ? a : b);
+            const botMargin = profitRows.reduce((a, b) => a.marginPct < b.marginPct ? a : b);
+            return (
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                <StatCard
+                  label="Eng foydali mahsulot"
+                  value={topProfit.name}
+                  sub={`Foyda: ${topProfit.currencyType === "USD" ? `$${topProfit.profit.toFixed(2)}` : fmtUzs(topProfit.profit)}`}
+                  color="green"
+                />
+                <StatCard
+                  label="Eng yuqori margin"
+                  value={topMargin.name}
+                  sub={`${topMargin.marginPct.toFixed(1)}%`}
+                  color="green"
+                />
+                <StatCard
+                  label="Eng past margin"
+                  value={botMargin.name}
+                  sub={`${botMargin.marginPct.toFixed(1)}%`}
+                  color="amber"
+                />
+              </div>
+            );
+          })()}
         </TabsContent>
       </Tabs>
 

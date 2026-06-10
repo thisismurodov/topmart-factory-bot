@@ -49,12 +49,20 @@ def contact_keyboard() -> ReplyKeyboardMarkup:
     )
 
 
-def workers_inline_keyboard() -> InlineKeyboardMarkup:
-    from .database import get_workers
+def workers_inline_keyboard(packer_chat_id: int | None = None) -> InlineKeyboardMarkup:
+    from .database import get_workers, get_packer_workers
     workers = get_workers()
+    names = list(workers.keys())
+    if packer_chat_id is not None:
+        assigned = get_packer_workers(packer_chat_id)
+        if assigned:
+            filtered = [n for n in names if n in assigned]
+            # Fallback to all workers if packer has no (valid) assignments
+            if filtered:
+                names = filtered
     buttons = [
         [InlineKeyboardButton(name, callback_data=f"worker:{name}")]
-        for name in workers
+        for name in names
     ]
     return InlineKeyboardMarkup(buttons)
 

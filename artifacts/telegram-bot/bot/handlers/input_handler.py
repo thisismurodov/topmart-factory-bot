@@ -23,12 +23,14 @@ async def start_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     user_row = get_user_role(chat_id)
     if user_row and user_row["role"] == "packer":
         context.user_data["_packer_name"] = user_row["worker_name"]
+        kb = workers_inline_keyboard(packer_chat_id=chat_id)
     else:
         context.user_data.pop("_packer_name", None)
+        kb = workers_inline_keyboard()
     await update.message.reply_text(
         "👷 *Kim ishlab chiqardi?*",
         parse_mode="Markdown",
-        reply_markup=workers_inline_keyboard(),
+        reply_markup=kb,
     )
     return CHOOSE_WORKER
 

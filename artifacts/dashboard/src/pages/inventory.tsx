@@ -1,3 +1,4 @@
+import { authFetch } from "@/App";
 import { useQuery } from "@tanstack/react-query";
 import { formatNumber } from "@/lib/format";
 
@@ -29,7 +30,7 @@ type Movement = {
 function useStock() {
   return useQuery<StockWarehouse[]>({
     queryKey: ["inventory-stock"],
-    queryFn: () => fetch("/api/inventory/stock").then((r) => r.json()),
+    queryFn: () => authFetch("/api/inventory/stock").then((r) => r.json()),
     refetchInterval: 30_000,
   });
 }
@@ -37,7 +38,7 @@ function useStock() {
 function useSummary() {
   return useQuery<Summary>({
     queryKey: ["inventory-summary"],
-    queryFn: () => fetch("/api/inventory/summary").then((r) => r.json()),
+    queryFn: () => authFetch("/api/inventory/summary").then((r) => r.json()),
     refetchInterval: 30_000,
   });
 }
@@ -45,7 +46,7 @@ function useSummary() {
 function useMovements() {
   return useQuery<Movement[]>({
     queryKey: ["inventory-movements"],
-    queryFn: () => fetch("/api/inventory/movements?limit=30").then((r) => r.json()),
+    queryFn: () => authFetch("/api/inventory/movements?limit=30").then((r) => r.json()),
     refetchInterval: 30_000,
   });
 }

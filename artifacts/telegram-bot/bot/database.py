@@ -40,6 +40,21 @@ def init_db() -> None:
                 rate      NUMERIC(12,2) NOT NULL DEFAULT 100
             )
         """)
+        # V3: add new cost/pricing columns idempotently
+        cur.execute("""
+            ALTER TABLE products
+              ADD COLUMN IF NOT EXISTS id               SERIAL UNIQUE,
+              ADD COLUMN IF NOT EXISTS sku              TEXT NOT NULL DEFAULT '',
+              ADD COLUMN IF NOT EXISTS unit_type        TEXT NOT NULL DEFAULT 'dona',
+              ADD COLUMN IF NOT EXISTS currency_type    TEXT NOT NULL DEFAULT 'UZS',
+              ADD COLUMN IF NOT EXISTS default_sale_price NUMERIC(12,2) NOT NULL DEFAULT 0,
+              ADD COLUMN IF NOT EXISTS salary_cost      NUMERIC(12,2) NOT NULL DEFAULT 0,
+              ADD COLUMN IF NOT EXISTS electricity_cost NUMERIC(12,2) NOT NULL DEFAULT 0,
+              ADD COLUMN IF NOT EXISTS other_cost       NUMERIC(12,2) NOT NULL DEFAULT 0,
+              ADD COLUMN IF NOT EXISTS minimum_stock    INTEGER NOT NULL DEFAULT 0,
+              ADD COLUMN IF NOT EXISTS active           BOOLEAN NOT NULL DEFAULT TRUE,
+              ADD COLUMN IF NOT EXISTS created_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+        """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS batches (
                 id         SERIAL PRIMARY KEY,

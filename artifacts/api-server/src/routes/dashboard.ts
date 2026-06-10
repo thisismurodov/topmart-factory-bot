@@ -160,6 +160,7 @@ router.get("/dashboard/v2", async (_req, res): Promise<void> => {
     feedBatchRes,
     feedSaleRes,
     feedCustomerRes,
+    profitabilityRes,
   ] = await Promise.all([
     pool.query(
       `SELECT
@@ -247,6 +248,34 @@ router.get("/dashboard/v2", async (_req, res): Promise<void> => {
       `SELECT name AS actor, created_at
        FROM customers ORDER BY id DESC LIMIT 4`
     ),
+    pool.query(`
+      WITH enriched AS (
+        SELECT
+          p.name,
+          p.default_sale_price,
+          p.salary_cost + p.electricity_cost + p.other_cost +
+            COALESCE((
+              SELECT SUM(rm.default_cost * pm.quantity_required)
+              FROM product_materials pm
+              JOIN raw_materials rm ON rm.id = pm.raw_material_id
+              WHERE pm.product_name = p.name
+            ), 0) AS total_cost,
+          COALESCE(SUM(si.line_total) FILTER (WHERE LOWER(si.currency)='uzs'), 0) AS revenue_uzs,
+          COALESCE(SUM(si.line_total) FILTER (WHERE LOWER(si.currency)='usd'), 0) AS revenue_usd
+        FROM products p
+        LEFT JOIN sale_items si ON si.product_name = p.name
+        WHERE p.active = TRUE AND p.default_sale_price > 0
+        GROUP BY p.name, p.default_sale_price, p.salary_cost, p.electricity_cost, p.other_cost
+      )
+      SELECT name, default_sale_price AS sale_price, total_cost,
+             (default_sale_price - total_cost) AS profit,
+             CASE WHEN default_sale_price > 0
+               THEN ROUND((default_sale_price - total_cost) / default_sale_price * 100, 2)
+               ELSE 0 END AS margin_pct,
+             revenue_uzs, revenue_usd
+      FROM enriched
+      ORDER BY profit DESC
+    `),
   ]);
 
   // Inventory: merge produced vs sold
@@ -311,6 +340,18 @@ router.get("/dashboard/v2", async (_req, res): Promise<void> => {
     topWorkers:           topWorkersRes.rows.map((r) => ({ worker: r.worker, qty: Number(r.qty), earnings: Number(r.earnings), batches: Number(r.batches) })),
     topProducts:          topProductsRes.rows.map((r) => ({ product: r.product, soldQty: Number(r.sold_qty) })),
     liveFeed:             feed.slice(0, 10),
+    mostProfitableProduct: profitabilityRes.rows.length > 0
+      ? { name: profitabilityRes.rows[0].name, profit: Number(profitabilityRes.rows[0].profit), marginPct: Number(profitabilityRes.rows[0].margin_pct) }
+      : null,
+    highestRevenueProduct: profitabilityRes.rows.length > 0
+      ? (() => { const sorted = [...profitabilityRes.rows].sort((a,b) => Number(b.revenue_uzs) - Number(a.revenue_uzs)); return { name: sorted[0].name, revenueUzs: Number(sorted[0].revenue_uzs), revenueUsd: Number(sorted[0].revenue_usd) }; })()
+      : null,
+    highestMarginProduct: profitabilityRes.rows.length > 0
+      ? (() => { const sorted = [...profitabilityRes.rows].sort((a,b) => Number(b.margin_pct) - Number(a.margin_pct)); return { name: sorted[0].name, marginPct: Number(sorted[0].margin_pct) }; })()
+      : null,
+    lowestMarginProduct: profitabilityRes.rows.length > 0
+      ? (() => { const sorted = [...profitabilityRes.rows].sort((a,b) => Number(a.margin_pct) - Number(b.margin_pct)); return { name: sorted[0].name, marginPct: Number(sorted[0].margin_pct) }; })()
+      : null,
   });
 });
 

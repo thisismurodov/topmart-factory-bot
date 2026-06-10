@@ -149,6 +149,14 @@ def init_db() -> None:
                 created_at    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
             )
         """)
+        # V3: idempotent migration — add new columns if pre-V3 table exists
+        cur.execute("""
+            ALTER TABLE raw_materials
+              ADD COLUMN IF NOT EXISTS unit_type     TEXT NOT NULL DEFAULT 'kg',
+              ADD COLUMN IF NOT EXISTS default_cost  NUMERIC(12,2) NOT NULL DEFAULT 0,
+              ADD COLUMN IF NOT EXISTS current_stock NUMERIC(12,3) NOT NULL DEFAULT 0,
+              ADD COLUMN IF NOT EXISTS minimum_stock NUMERIC(12,3) NOT NULL DEFAULT 0
+        """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS product_materials (
                 id                SERIAL PRIMARY KEY,

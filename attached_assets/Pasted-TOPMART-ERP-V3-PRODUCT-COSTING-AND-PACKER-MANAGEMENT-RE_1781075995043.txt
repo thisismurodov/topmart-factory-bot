@@ -1,0 +1,351 @@
+TOPMART ERP V3 - PRODUCT, COSTING AND PACKER MANAGEMENT REFACTOR
+
+IMPORTANT:
+
+This is a major architecture update.
+
+Existing data must be preserved.
+
+Run database migrations safely.
+
+Do not remove existing records.
+
+==================================================
+
+MAIN GOAL
+
+Remove separation between:
+
+* Ishlab chiqarish mahsulotlari
+* Sotuv mahsulotlari
+
+Create a single unified Products module.
+
+TopMart produces and sells the same products.
+
+One product = one source of truth.
+
+==================================================
+
+DATABASE REFACTOR
+
+Replace product logic with:
+
+products
+
+id
+name
+sku
+unit_type
+currency_type
+default_sale_price
+salary_cost
+electricity_cost
+other_cost
+minimum_stock
+active
+created_at
+
+==================================================
+
+NEW TABLE
+
+raw_materials
+
+id
+name
+unit_type
+default_cost
+current_stock
+minimum_stock
+active
+
+Examples:
+
+PP Granula
+Polipropilen
+Qop
+Etiketka
+Plastik
+
+==================================================
+
+NEW TABLE
+
+product_materials
+
+id
+product_id
+raw_material_id
+quantity_required
+
+Example:
+
+Tulpor 4 kg
+
+PP Granula = 3.9 kg
+Qop = 1 dona
+Etiketka = 1 dona
+
+==================================================
+
+NEW TABLE
+
+packer_assignments
+
+id
+packer_id
+product_id
+
+==================================================
+
+REMOVE
+
+"Ishlab chiqarish mahsulotlari"
+
+tab completely.
+
+Create one menu:
+
+📦 Mahsulotlar
+
+==================================================
+
+PRODUCT CREATE / EDIT PAGE
+
+Fields:
+
+Mahsulot nomi
+
+SKU
+
+Birlik turi
+
+* Dona
+* Kg
+
+Valyuta
+
+* USD
+* UZS
+
+Sotuv narxi
+
+Maosh xarajati
+
+Elektr xarajati
+
+Boshqa xarajat
+
+Minimal qoldiq
+
+Faol/Nofaol
+
+==================================================
+
+PRODUCT COSTS TAB
+
+Inside product edit page create:
+
+📊 Xarajatlar
+
+Admin can add:
+
+Raw Material
+Quantity Required
+
+Example:
+
+PP Granula
+3.9 kg
+
+Qop
+1 dona
+
+Etiketka
+1 dona
+
+==================================================
+
+AUTOMATIC COST CALCULATION
+
+System calculates:
+
+Raw Material Cost
+
+*
+
+Salary Cost
+
+*
+
+Electricity Cost
+
+*
+
+Other Cost
+
+=
+
+Total Production Cost
+
+==================================================
+
+AUTOMATIC PROFIT CALCULATION
+
+Sale Price
+
+*
+
+Production Cost
+
+=
+
+Profit
+
+Profit %
+
+Example:
+
+Sale Price:
+70000
+
+Production Cost:
+61500
+
+Profit:
+8500
+
+Margin:
+12.14%
+
+==================================================
+
+PACKER MANAGEMENT
+
+Create new menu:
+
+👷 Packerlar
+
+Each packer has assigned products.
+
+Example:
+
+Dilnoza
+
+✓ Tulpor 4 kg
+✓ Tulpor 5 kg
+✓ Tulpor 6 kg
+
+Shaxnoza
+
+✓ Strupa Oq
+✓ Strupa Sariq
+
+==================================================
+
+FACTORY BOT INTEGRATION
+
+When worker selects:
+
+🏭 Tovar kiritish
+
+System should:
+
+1. Detect packer
+
+2. Show only products assigned to that packer
+
+This prevents wrong product entry.
+
+==================================================
+
+PARTIYA LOGIC
+
+When batch is completed:
+
+Automatically create inventory movement:
+
+Type:
+finished
+
+Movement:
+IN
+
+Warehouse:
+selected warehouse
+
+No manual warehouse entry required.
+
+==================================================
+
+PRODUCT ANALYTICS
+
+Create dashboard section:
+
+🏆 Top Mahsulotlar
+
+Columns:
+
+Product
+
+Sales Revenue
+
+Production Cost
+
+Profit
+
+Profit %
+
+Units Sold
+
+==================================================
+
+NEW REPORT PAGE
+
+📈 Mahsulot Rentabelligi
+
+Sort by:
+
+Highest Profit
+
+Highest Margin
+
+Lowest Margin
+
+Most Sold
+
+==================================================
+
+DASHBOARD ADDITIONS
+
+CEO Dashboard should display:
+
+Most Profitable Product
+
+Highest Revenue Product
+
+Highest Margin Product
+
+Lowest Margin Product
+
+==================================================
+
+GOAL
+
+Transform TopMart ERP from:
+
+Production Tracking System
+
+into
+
+Profit-Oriented Manufacturing ERP
+
+Every product must know:
+
+* Sale price
+* Production cost
+* Profit
+* Margin
+
+System must allow management decisions based on profitability instead of only production volume.

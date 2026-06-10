@@ -113,7 +113,7 @@ async def kirim_category_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
     ctx.user_data["inv_product_type"] = cat
 
     if cat == "finished":
-        # sotuv mahsulotlari — sales_products
+        # sotuv mahsulotlari — unified products jadvali
         prods = [p["name"] for p in get_sale_products()]
         label = "📦 Tayyor mahsulot tanlang:"
     else:

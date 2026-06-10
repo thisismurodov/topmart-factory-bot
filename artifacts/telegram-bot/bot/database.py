@@ -650,10 +650,11 @@ def get_price_for_qty(product_id: int, qty: float) -> tuple[float, str]:
 
 
 def get_sale_product_unit(name: str) -> str:
+    """V3: unified products jadvalidan unit_type qaytaradi."""
     with get_conn() as (conn, cur):
-        cur.execute("SELECT sale_type FROM sales_products WHERE name = %s", (name,))
+        cur.execute("SELECT unit_type FROM products WHERE name = %s", (name,))
         row = cur.fetchone()
-    return row["sale_type"] if row else "dona"
+    return row["unit_type"] if row else "dona"
 
 
 def create_sale_multi(
@@ -694,16 +695,19 @@ def create_sale_multi(
 
 
 def add_sale_product(name: str, code: str = "", unit: str = "dona", currency: str = "uzs") -> bool:
+    """V3: unified products jadvaliga yozadi (sotuv tovari = mahsulot)."""
     cur_norm = currency.upper() if currency.upper() in ("UZS", "USD") else "UZS"
     unit_norm = unit if unit in ("kg", "dona") else "dona"
     try:
         with get_conn() as (conn, cur):
             cur.execute(
-                """INSERT INTO sales_products (name, sale_type, currency, default_price)
-                   VALUES (%s, %s, %s, 0)
+                """INSERT INTO products (name, sku, unit_type, currency_type, rate_type)
+                   VALUES (%s, %s, %s, %s, %s)
                    ON CONFLICT (name) DO UPDATE
-                   SET active=true, sale_type=%s, currency=%s""",
-                (name, unit_norm, cur_norm, unit_norm, cur_norm),
+                   SET active=TRUE,
+                       unit_type=EXCLUDED.unit_type,
+                       currency_type=EXCLUDED.currency_type""",
+                (name, code, unit_norm, cur_norm, unit_norm),
             )
             return True
     except Exception:
@@ -711,9 +715,10 @@ def add_sale_product(name: str, code: str = "", unit: str = "dona", currency: st
 
 
 def delete_sale_product(name: str) -> bool:
+    """V3: unified products jadvalida active=false qiladi."""
     with get_conn() as (conn, cur):
         cur.execute(
-            "UPDATE sales_products SET active = false WHERE name = %s",
+            "UPDATE products SET active = false WHERE name = %s",
             (name,),
         )
         return cur.rowcount > 0

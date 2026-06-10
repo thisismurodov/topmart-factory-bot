@@ -250,10 +250,11 @@ router.get("/dashboard/v2", async (_req, res): Promise<void> => {
     ),
     pool.query(`
       WITH enriched AS (
+        -- narx/xarajatlar 1 birlik uchun → og'irlikka ko'paytiramiz; xom ashyo (BOM) mutlaq
         SELECT
           p.name,
-          p.default_sale_price,
-          p.salary_cost + p.electricity_cost + p.other_cost +
+          p.default_sale_price * COALESCE(NULLIF(p.weight, 0), 1) AS sale_price,
+          (p.salary_cost + p.electricity_cost + p.other_cost) * COALESCE(NULLIF(p.weight, 0), 1) +
             COALESCE((
               SELECT SUM(rm.default_cost * pm.quantity_required)
               FROM product_materials pm
@@ -265,12 +266,12 @@ router.get("/dashboard/v2", async (_req, res): Promise<void> => {
         FROM products p
         LEFT JOIN sale_items si ON si.product_name = p.name
         WHERE p.active = TRUE AND p.default_sale_price > 0
-        GROUP BY p.name, p.default_sale_price, p.salary_cost, p.electricity_cost, p.other_cost
+        GROUP BY p.name, p.default_sale_price, p.weight, p.salary_cost, p.electricity_cost, p.other_cost
       )
-      SELECT name, default_sale_price AS sale_price, total_cost,
-             (default_sale_price - total_cost) AS profit,
-             CASE WHEN default_sale_price > 0
-               THEN ROUND((default_sale_price - total_cost) / default_sale_price * 100, 2)
+      SELECT name, sale_price, total_cost,
+             (sale_price - total_cost) AS profit,
+             CASE WHEN sale_price > 0
+               THEN ROUND((sale_price - total_cost) / sale_price * 100, 2)
                ELSE 0 END AS margin_pct,
              revenue_uzs, revenue_usd
       FROM enriched
@@ -359,8 +360,8 @@ router.get("/dashboard/product-highlights", async (_req, res): Promise<void> => 
   const { rows } = await pool.query(`
     SELECT
       p.name,
-      p.default_sale_price,
-      p.salary_cost + p.electricity_cost + p.other_cost +
+      p.default_sale_price * COALESCE(NULLIF(p.weight, 0), 1) AS sale_price,
+      (p.salary_cost + p.electricity_cost + p.other_cost) * COALESCE(NULLIF(p.weight, 0), 1) +
         COALESCE((
           SELECT SUM(rm.default_cost * pm.quantity_required)
           FROM product_materials pm
@@ -373,7 +374,7 @@ router.get("/dashboard/product-highlights", async (_req, res): Promise<void> => 
     FROM products p
     LEFT JOIN sale_items si ON si.product_name = p.name
     WHERE p.active = TRUE AND p.default_sale_price > 0
-    GROUP BY p.name, p.default_sale_price,
+    GROUP BY p.name, p.default_sale_price, p.weight,
              p.salary_cost, p.electricity_cost, p.other_cost
   `);
 
@@ -384,7 +385,7 @@ router.get("/dashboard/product-highlights", async (_req, res): Promise<void> => 
 
   const enriched = rows.map(r => {
     const cost   = Number(r.total_cost);
-    const price  = Number(r.default_sale_price);
+    const price  = Number(r.sale_price);
     const profit = price - cost;
     const margin = price > 0 ? (profit / price) * 100 : 0;
     return { name: r.name, profit, margin, revenueUzs: Number(r.revenue_uzs), revenueUsd: Number(r.revenue_usd) };

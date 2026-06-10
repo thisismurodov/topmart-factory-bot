@@ -40,6 +40,13 @@ async function initDb() {
     )
   `);
 
+  // products.weight (og'irlik) — runtime DB (Railway) ustuniga idempotent qo'shamiz.
+  // drizzle.config bo'sh Replit DB'ga ishlaydi, shuning uchun bu ALTER kerak.
+  await pool.query(`
+    ALTER TABLE IF EXISTS products
+      ADD COLUMN IF NOT EXISTS weight NUMERIC(12,3) NOT NULL DEFAULT 1
+  `);
+
   // Admin userni seed qilish (mavjud bo'lmasa)
   const existing = await db.select().from(adminUsersTable).where(eq(adminUsersTable.username, "thisismurodov"));
   if (existing.length === 0) {

@@ -195,6 +195,7 @@ router.get("/reports/product-profitability", async (req, res): Promise<void> => 
         p.unit_type,
         p.currency_type,
         p.default_sale_price,
+        COALESCE(NULLIF(p.weight, 0), 1) AS weight,
         p.salary_cost,
         p.electricity_cost,
         p.other_cost,
@@ -211,14 +212,19 @@ router.get("/reports/product-profitability", async (req, res): Promise<void> => 
       LEFT JOIN sale_items si ON si.product_name = p.name
       WHERE p.active = TRUE
       GROUP BY p.name, p.sku, p.unit_type, p.currency_type,
-               p.default_sale_price, p.salary_cost, p.electricity_cost, p.other_cost
+               p.default_sale_price, p.weight, p.salary_cost, p.electricity_cost, p.other_cost
     ),
     enriched AS (
+      -- narx/xarajatlar 1 birlik uchun → og'irlikka ko'paytiramiz; xom ashyo (BOM) mutlaq
       SELECT *,
-        (default_sale_price - salary_cost - electricity_cost - other_cost - raw_material_cost) AS profit,
-        CASE WHEN default_sale_price > 0
-          THEN (default_sale_price - salary_cost - electricity_cost - other_cost - raw_material_cost)
-               / default_sale_price * 100
+        (default_sale_price * weight
+          - (salary_cost + electricity_cost + other_cost) * weight
+          - raw_material_cost) AS profit,
+        CASE WHEN default_sale_price * weight > 0
+          THEN (default_sale_price * weight
+                - (salary_cost + electricity_cost + other_cost) * weight
+                - raw_material_cost)
+               / (default_sale_price * weight) * 100
           ELSE 0 END AS margin_pct
       FROM base
     )
@@ -226,9 +232,13 @@ router.get("/reports/product-profitability", async (req, res): Promise<void> => 
   `);
 
   res.json(rows.map(r => {
-    const rawCost  = Number(r.raw_material_cost);
-    const totalCost = rawCost + Number(r.salary_cost) + Number(r.electricity_cost) + Number(r.other_cost);
-    const salePrice = Number(r.default_sale_price);
+    const w         = Number(r.weight) > 0 ? Number(r.weight) : 1;
+    const rawCost   = Number(r.raw_material_cost);
+    const salaryCost      = Number(r.salary_cost) * w;
+    const electricityCost = Number(r.electricity_cost) * w;
+    const otherCost       = Number(r.other_cost) * w;
+    const salePrice       = Number(r.default_sale_price) * w;
+    const totalCost = rawCost + salaryCost + electricityCost + otherCost;
     const profit    = salePrice - totalCost;
     const marginPct = salePrice > 0 ? Math.round((profit / salePrice) * 10000) / 100 : 0;
     return {
@@ -236,11 +246,12 @@ router.get("/reports/product-profitability", async (req, res): Promise<void> => 
       sku:             r.sku,
       unitType:        r.unit_type,
       currencyType:    r.currency_type,
+      weight:          w,
       salePrice,
       rawMaterialCost: rawCost,
-      salaryCost:      Number(r.salary_cost),
-      electricityCost: Number(r.electricity_cost),
-      otherCost:       Number(r.other_cost),
+      salaryCost,
+      electricityCost,
+      otherCost,
       totalCost,
       profit,
       marginPct,

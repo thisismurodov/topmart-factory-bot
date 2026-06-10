@@ -30,6 +30,8 @@ type Product = {
   unitType: string;
   currencyType: string;
   defaultSalePrice: number;
+  weight: number;
+  effectiveSalePrice: number;
   rate: number;
   rateType: string;
   salaryCost: number;
@@ -70,6 +72,7 @@ const productSchema = z.object({
   unitType: z.enum(["dona", "kg"]),
   currencyType: z.enum(["UZS", "USD"]),
   defaultSalePrice: z.coerce.number().min(0),
+  weight: z.coerce.number().min(0).default(1),
   rate: z.coerce.number().min(0),
   salaryCost: z.coerce.number().min(0),
   electricityCost: z.coerce.number().min(0),
@@ -205,18 +208,26 @@ function useDeleteBomItem() {
 
 // ── Cost summary ──────────────────────────────────────────────────────────────
 function CostSummary({
-  rawMaterialCost, salaryCost, electricityCost, otherCost, salePrice, currencyType,
+  rawMaterialCost, salaryCost, electricityCost, otherCost, salePrice, weight, currencyType,
 }: {
   rawMaterialCost: number;
   salaryCost: number;
   electricityCost: number;
   otherCost: number;
   salePrice: number;
+  weight: number;
   currencyType: string;
 }) {
-  const totalCost = rawMaterialCost + salaryCost + electricityCost + otherCost;
-  const profit = salePrice - totalCost;
-  const marginPct = salePrice > 0 ? (profit / salePrice) * 100 : 0;
+  // narx/xarajatlar 1 birlik uchun → og'irlikka ko'paytiramiz; xom ashyo (BOM) mutlaq
+  const w        = weight > 0 ? weight : 1;
+  const effSalary = salaryCost * w;
+  const effElec   = electricityCost * w;
+  const effOther  = otherCost * w;
+  const effSale   = salePrice * w;
+  const totalCost = rawMaterialCost + effSalary + effElec + effOther;
+  const profit    = effSale - totalCost;
+  const marginPct = effSale > 0 ? (profit / effSale) * 100 : 0;
+  const scaled    = w !== 1;
   const isUsd = currencyType === "USD";
   const fmt = (v: number) =>
     isUsd
@@ -225,29 +236,35 @@ function CostSummary({
 
   return (
     <div className="rounded-lg border bg-muted/30 p-3 space-y-1.5 text-xs">
+      {scaled && (
+        <div className="flex justify-between font-medium text-foreground border-b pb-1.5">
+          <span>Og'irlik</span>
+          <span className="font-mono">{w} kg</span>
+        </div>
+      )}
       <div className="flex justify-between text-muted-foreground">
         <span>Xom ashyo xarajati</span>
         <span className="font-mono">{fmt(rawMaterialCost)}</span>
       </div>
       <div className="flex justify-between text-muted-foreground">
-        <span>Maosh xarajati</span>
-        <span className="font-mono">{fmt(salaryCost)}</span>
+        <span>Maosh xarajati{scaled && ` (×${w})`}</span>
+        <span className="font-mono">{fmt(effSalary)}</span>
       </div>
       <div className="flex justify-between text-muted-foreground">
-        <span>Elektr xarajati</span>
-        <span className="font-mono">{fmt(electricityCost)}</span>
+        <span>Elektr xarajati{scaled && ` (×${w})`}</span>
+        <span className="font-mono">{fmt(effElec)}</span>
       </div>
       <div className="flex justify-between text-muted-foreground">
-        <span>Boshqa xarajatlar</span>
-        <span className="font-mono">{fmt(otherCost)}</span>
+        <span>Boshqa xarajatlar{scaled && ` (×${w})`}</span>
+        <span className="font-mono">{fmt(effOther)}</span>
       </div>
       <div className="flex justify-between font-semibold border-t pt-1.5">
         <span>Jami xarajat</span>
         <span className="font-mono">{fmt(totalCost)}</span>
       </div>
       <div className="flex justify-between text-muted-foreground">
-        <span>Sotuv narxi</span>
-        <span className="font-mono">{fmt(salePrice)}</span>
+        <span>Sotuv narxi{scaled && ` (×${w})`}</span>
+        <span className="font-mono">{fmt(effSale)}</span>
       </div>
       <div
         className={`flex justify-between font-bold text-sm ${
@@ -382,6 +399,7 @@ function BomTab({
         electricityCost={product.electricityCost}
         otherCost={product.otherCost}
         salePrice={product.defaultSalePrice}
+        weight={product.weight}
         currencyType={product.currencyType}
       />
     </div>
@@ -411,6 +429,7 @@ function ProductDialog({
       unitType: (product?.unitType as "dona" | "kg") ?? "dona",
       currencyType: (product?.currencyType as "UZS" | "USD") ?? "UZS",
       defaultSalePrice: product?.defaultSalePrice ?? 0,
+      weight: product?.weight ?? 1,
       rate: product?.rate ?? 0,
       salaryCost: product?.salaryCost ?? 0,
       electricityCost: product?.electricityCost ?? 0,
@@ -421,6 +440,7 @@ function ProductDialog({
   });
 
   const watchedSalePrice = form.watch("defaultSalePrice");
+  const watchedWeight    = form.watch("weight");
   const watchedSalary    = form.watch("salaryCost");
   const watchedElec      = form.watch("electricityCost");
   const watchedOther     = form.watch("otherCost");
@@ -544,7 +564,7 @@ function ProductDialog({
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 <FormField
                   control={form.control}
                   name="defaultSalePrice"
@@ -553,6 +573,19 @@ function ProductDialog({
                       <FormLabel>Sotuv narxi</FormLabel>
                       <FormControl>
                         <Input type="number" step="0.01" min={0} {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="weight"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Og'irlik (kg)</FormLabel>
+                      <FormControl>
+                        <Input type="number" step="0.001" min={0} {...field} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -571,6 +604,10 @@ function ProductDialog({
                   )}
                 />
               </div>
+              <p className="text-xs text-muted-foreground -mt-1">
+                Sotuv narxi va xarajatlar 1 birlik (kg/dona) uchun. Jami = og'irlik × narx.
+                Xom ashyo (BOM) bundan mustasno.
+              </p>
 
               <div className="grid grid-cols-3 gap-3">
                 <FormField
@@ -649,6 +686,7 @@ function ProductDialog({
                 electricityCost={Number(watchedElec) || 0}
                 otherCost={Number(watchedOther) || 0}
                 salePrice={Number(watchedSalePrice) || 0}
+                weight={Number(watchedWeight) || 1}
                 currencyType={watchedCurrency}
               />
 
@@ -681,7 +719,7 @@ export default function Products() {
 
   const isUsd      = (p: Product) => p.currencyType === "USD";
   const fmtPrice   = (p: Product) =>
-    isUsd(p) ? `$${p.defaultSalePrice.toFixed(2)}` : formatCurrency(p.defaultSalePrice);
+    isUsd(p) ? `$${p.effectiveSalePrice.toFixed(2)}` : formatCurrency(p.effectiveSalePrice);
   const fmtCost    = (p: Product) =>
     isUsd(p) ? `$${p.totalCost.toFixed(2)}` : formatCurrency(p.totalCost);
   const fmtProfit  = (p: Product) =>
@@ -753,7 +791,12 @@ export default function Products() {
                         <TableCell className="text-muted-foreground text-xs font-mono">
                           {p.sku || "—"}
                         </TableCell>
-                        <TableCell className="text-xs">{p.unitType}</TableCell>
+                        <TableCell className="text-xs">
+                          {p.unitType}
+                          {p.weight && p.weight !== 1
+                            ? <span className="text-muted-foreground"> · {p.weight} kg</span>
+                            : null}
+                        </TableCell>
                         <TableCell>
                           <Badge variant="outline" className="text-xs">
                             {p.currencyType}

@@ -8,7 +8,7 @@ router.get("/products", async (_req, res): Promise<void> => {
   const { rows } = await pool.query(`
     SELECT
       p.id, p.name, p.sku, p.unit_type, p.currency_type,
-      p.default_sale_price, p.rate, p.rate_type,
+      p.default_sale_price, p.weight, p.rate, p.rate_type,
       p.salary_cost, p.electricity_cost, p.other_cost,
       p.minimum_stock, p.active, p.created_at,
       COALESCE(
@@ -21,38 +21,51 @@ router.get("/products", async (_req, res): Promise<void> => {
     ORDER BY p.name
   `);
 
-  res.json(rows.map(row => ({
-    id:               row.id,
-    name:             row.name,
-    sku:              row.sku,
-    unitType:         row.unit_type,
-    currencyType:     row.currency_type,
-    defaultSalePrice: Number(row.default_sale_price),
-    rate:             Number(row.rate),
-    rateType:         row.rate_type,
-    salaryCost:       Number(row.salary_cost),
-    electricityCost:  Number(row.electricity_cost),
-    otherCost:        Number(row.other_cost),
-    rawMaterialCost:  Number(row.raw_material_cost),
-    totalCost:        Number(row.salary_cost) + Number(row.electricity_cost) + Number(row.other_cost) + Number(row.raw_material_cost),
-    profit:           Number(row.default_sale_price) - Number(row.salary_cost) - Number(row.electricity_cost) - Number(row.other_cost) - Number(row.raw_material_cost),
-    marginPct:        Number(row.default_sale_price) > 0
-      ? Math.round(
-          ((Number(row.default_sale_price) - Number(row.salary_cost) - Number(row.electricity_cost) - Number(row.other_cost) - Number(row.raw_material_cost))
-            / Number(row.default_sale_price)) * 10000
-        ) / 100
-      : 0,
-    minimumStock:     row.minimum_stock,
-    active:           row.active,
-    createdAt:        row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
-  })));
+  res.json(rows.map(row => {
+    // weight (og'irlik) — narx va xarajatlar 1 birlik (kg/dona) uchun kiritiladi,
+    // jami = og'irlik × narx. Xom ashyo (BOM) allaqachon mutlaq miqdor bo'yicha.
+    const w               = Number(row.weight) > 0 ? Number(row.weight) : 1;
+    const salePriceBase   = Number(row.default_sale_price);
+    const salaryBase      = Number(row.salary_cost);
+    const elecBase        = Number(row.electricity_cost);
+    const otherBase       = Number(row.other_cost);
+    const rawCost         = Number(row.raw_material_cost);
+    const effectiveSale   = salePriceBase * w;
+    const totalCost       = rawCost + (salaryBase + elecBase + otherBase) * w;
+    const profit          = effectiveSale - totalCost;
+    const marginPct       = effectiveSale > 0
+      ? Math.round((profit / effectiveSale) * 10000) / 100
+      : 0;
+    return {
+      id:                 row.id,
+      name:               row.name,
+      sku:                row.sku,
+      unitType:           row.unit_type,
+      currencyType:       row.currency_type,
+      defaultSalePrice:   salePriceBase,   // 1 birlik narxi (tahrirlash uchun)
+      weight:             w,
+      effectiveSalePrice: effectiveSale,    // jami sotuv narxi = narx × og'irlik
+      rate:               Number(row.rate),
+      rateType:           row.rate_type,
+      salaryCost:         salaryBase,       // 1 birlik uchun (tahrirlash uchun)
+      electricityCost:    elecBase,
+      otherCost:          otherBase,
+      rawMaterialCost:    rawCost,
+      totalCost,
+      profit,
+      marginPct,
+      minimumStock:       row.minimum_stock,
+      active:             row.active,
+      createdAt:          row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+    };
+  }));
 });
 
 // ── POST /products — create ───────────────────────────────────────────────────
 router.post("/products", async (req, res): Promise<void> => {
   const {
     name, sku = "", unitType = "dona", currencyType = "UZS",
-    defaultSalePrice = 0, rate = 0, rateType,
+    defaultSalePrice = 0, weight = 1, rate = 0, rateType,
     salaryCost = 0, electricityCost = 0, otherCost = 0,
     minimumStock = 0, active = true,
   } = req.body ?? {};
@@ -62,19 +75,20 @@ router.post("/products", async (req, res): Promise<void> => {
   }
 
   const finalRateType = rateType || unitType;
+  const finalWeight   = Number(weight) > 0 ? Number(weight) : 1;
 
   try {
     const { rows } = await pool.query(
       `INSERT INTO products
-         (name, sku, unit_type, currency_type, default_sale_price, rate, rate_type,
+         (name, sku, unit_type, currency_type, default_sale_price, weight, rate, rate_type,
           salary_cost, electricity_cost, other_cost, minimum_stock, active)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
        ON CONFLICT (name) DO UPDATE SET
-         sku=$2, unit_type=$3, currency_type=$4, default_sale_price=$5, rate=$6, rate_type=$7,
-         salary_cost=$8, electricity_cost=$9, other_cost=$10, minimum_stock=$11, active=$12
-       RETURNING id, name, sku, unit_type, currency_type, default_sale_price, rate, rate_type,
+         sku=$2, unit_type=$3, currency_type=$4, default_sale_price=$5, weight=$6, rate=$7, rate_type=$8,
+         salary_cost=$9, electricity_cost=$10, other_cost=$11, minimum_stock=$12, active=$13
+       RETURNING id, name, sku, unit_type, currency_type, default_sale_price, weight, rate, rate_type,
                  salary_cost, electricity_cost, other_cost, minimum_stock, active`,
-      [name.trim(), sku, unitType, currencyType, Number(defaultSalePrice), Number(rate),
+      [name.trim(), sku, unitType, currencyType, Number(defaultSalePrice), finalWeight, Number(rate),
        finalRateType, Number(salaryCost), Number(electricityCost), Number(otherCost),
        Number(minimumStock), Boolean(active)]
     );
@@ -82,7 +96,7 @@ router.post("/products", async (req, res): Promise<void> => {
     res.status(201).json({
       id: p.id, name: p.name, sku: p.sku,
       unitType: p.unit_type, currencyType: p.currency_type,
-      defaultSalePrice: Number(p.default_sale_price),
+      defaultSalePrice: Number(p.default_sale_price), weight: Number(p.weight),
       rate: Number(p.rate), rateType: p.rate_type,
       salaryCost: Number(p.salary_cost), electricityCost: Number(p.electricity_cost),
       otherCost: Number(p.other_cost), minimumStock: p.minimum_stock, active: p.active,
@@ -100,14 +114,18 @@ router.patch("/products/:name", async (req, res): Promise<void> => {
 
   const allowed = [
     ["sku", "sku"], ["unit_type", "unitType"], ["currency_type", "currencyType"],
-    ["default_sale_price", "defaultSalePrice"], ["rate", "rate"], ["rate_type", "rateType"],
+    ["default_sale_price", "defaultSalePrice"], ["weight", "weight"], ["rate", "rate"], ["rate_type", "rateType"],
     ["salary_cost", "salaryCost"], ["electricity_cost", "electricityCost"],
     ["other_cost", "otherCost"], ["minimum_stock", "minimumStock"], ["active", "active"],
   ];
 
   for (const [col, key] of allowed) {
     if (req.body[key] !== undefined) {
-      vals.push(req.body[key]);
+      // og'irlik 0 yoki manfiy bo'lsa 1 ga tenglaymiz (manfiy narx oldini olish)
+      const value = col === "weight"
+        ? (Number(req.body[key]) > 0 ? Number(req.body[key]) : 1)
+        : req.body[key];
+      vals.push(value);
       fields.push(`${col}=$${vals.length}`);
     }
   }
@@ -158,19 +176,25 @@ router.get("/products/:name/profitability", async (req, res): Promise<void> => {
 
   const p = prodRes.rows[0];
   const s = salesRes.rows[0];
-  const rawCost = Number(p.raw_material_cost);
-  const totalCost = rawCost + Number(p.salary_cost) + Number(p.electricity_cost) + Number(p.other_cost);
-  const salePrice = Number(p.default_sale_price);
-  const profit = salePrice - totalCost;
-  const marginPct = salePrice > 0 ? (profit / salePrice) * 100 : 0;
+  const w         = Number(p.weight) > 0 ? Number(p.weight) : 1;
+  const rawCost   = Number(p.raw_material_cost);
+  // narx/xarajatlar 1 birlik uchun → og'irlikka ko'paytiramiz; xom ashyo (BOM) mutlaq.
+  const salaryCost      = Number(p.salary_cost) * w;
+  const electricityCost = Number(p.electricity_cost) * w;
+  const otherCost       = Number(p.other_cost) * w;
+  const salePrice       = Number(p.default_sale_price) * w;
+  const totalCost       = rawCost + salaryCost + electricityCost + otherCost;
+  const profit          = salePrice - totalCost;
+  const marginPct       = salePrice > 0 ? (profit / salePrice) * 100 : 0;
 
   res.json({
     name:            p.name,
+    weight:          w,
     salePrice,
     rawMaterialCost: rawCost,
-    salaryCost:      Number(p.salary_cost),
-    electricityCost: Number(p.electricity_cost),
-    otherCost:       Number(p.other_cost),
+    salaryCost,
+    electricityCost,
+    otherCost,
     totalCost,
     profit,
     marginPct:       Math.round(marginPct * 100) / 100,

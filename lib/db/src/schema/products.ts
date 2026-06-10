@@ -11,6 +11,7 @@ export const productsTable = pgTable("products", {
   unitType:          text("unit_type").notNull().default("dona"),
   currencyType:      text("currency_type").notNull().default("UZS"),
   defaultSalePrice:  numeric("default_sale_price", { precision: 12, scale: 2 }).notNull().default("0"),
+  weight:            numeric("weight", { precision: 12, scale: 3 }).notNull().default("1"),
   salaryCost:        numeric("salary_cost", { precision: 12, scale: 2 }).notNull().default("0"),
   electricityCost:   numeric("electricity_cost", { precision: 12, scale: 2 }).notNull().default("0"),
   otherCost:         numeric("other_cost", { precision: 12, scale: 2 }).notNull().default("0"),

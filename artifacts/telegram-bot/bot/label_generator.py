@@ -177,6 +177,39 @@ def generate_label_pdf(
     return out
 
 
+def generate_batch_session_pdf(
+    batch_code: str,
+    worker: str,
+    items: list[dict],
+    created_at: datetime | None = None,
+) -> io.BytesIO:
+    """Bitta batch_code ostidagi BARCHA mahsulotlar uchun yagona PDF.
+    Har bir mahsulot o'z stikerlariga ega (quantity dona, N/M raqamlash mahsulot ichida).
+
+    items: [{"product", "quantity", "weight_kg"}]
+    """
+    ts = created_at or datetime.now()
+    png_pages: list[bytes] = []
+    for it in items:
+        product   = it["product"]
+        quantity  = int(it["quantity"])
+        weight_kg = float(it.get("weight_kg") or 0.0)
+        unit_weight = (weight_kg / quantity) if quantity > 0 else 0.0
+        for i in range(1, quantity + 1):
+            img = _build_single(batch_code, worker, product, i, quantity, unit_weight, ts)
+            buf = io.BytesIO()
+            img.save(buf, format="PNG", dpi=(_DPI, _DPI))
+            png_pages.append(buf.getvalue())
+
+    pdf_bytes = img2pdf.convert(
+        png_pages,
+        layout_fun=img2pdf.get_fixed_dpi_layout_fun((_DPI, _DPI)),
+    )
+    out = io.BytesIO(pdf_bytes)
+    out.seek(0)
+    return out
+
+
 def generate_label(
     batch_code: str,
     worker: str,

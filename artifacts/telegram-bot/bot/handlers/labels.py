@@ -3,7 +3,15 @@ from telegram.ext import ContextTypes, CallbackQueryHandler, MessageHandler, fil
 
 from ..database import get_today_batches
 from ..keyboards import main_menu_keyboard
-from ..label_generator import generate_label_pdf
+from ..label_generator import generate_batch_session_pdf
+
+
+def _group_by_code(rows: list[dict]) -> dict[str, list[dict]]:
+    """Bugungi qatorlarni batch_code bo'yicha guruhlaydi (tartibni saqlaydi)."""
+    grouped: dict[str, list[dict]] = {}
+    for r in rows:
+        grouped.setdefault(r["batch_code"], []).append(r)
+    return grouped
 
 
 async def show_label_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -16,13 +24,16 @@ async def show_label_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         return
 
-    buttons = [
-        [InlineKeyboardButton(
-            f"{r['batch_code']} | {r['product']} | {r['quantity']} dona",
-            callback_data=f"label:{r['batch_code']}"
-        )]
-        for r in rows
-    ]
+    grouped = _group_by_code(rows)
+    buttons = []
+    for code, items in grouped.items():
+        if len(items) == 1:
+            label = f"{code} | {items[0]['product']} | {items[0]['quantity']} dona"
+        else:
+            total_qty = sum(int(i["quantity"]) for i in items)
+            label = f"{code} | {len(items)} mahsulot | {total_qty} dona"
+        buttons.append([InlineKeyboardButton(label, callback_data=f"label:{code}")])
+
     await update.message.reply_text(
         "🏷️ *Qaysi partiyaning stikerlarini chiqarish kerak?*",
         parse_mode="Markdown",
@@ -36,32 +47,34 @@ async def send_label_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     batch_code = query.data.split(":", 1)[1]
     rows = get_today_batches()
-    row = next((r for r in rows if r["batch_code"] == batch_code), None)
+    items = [r for r in rows if r["batch_code"] == batch_code]
 
-    if not row:
+    if not items:
         await query.edit_message_text("❌ Partiya topilmadi.")
         return
 
-    qty = row["quantity"]
+    worker = items[0]["worker"]
+    total_qty = sum(int(i["quantity"]) for i in items)
     await query.edit_message_text(
-        f"🖨️ *{batch_code}* — {qty} ta stiker tayyorlanmoqda…",
+        f"🖨️ *{batch_code}* — {total_qty} ta stiker tayyorlanmoqda…",
         parse_mode="Markdown",
     )
 
-    pdf_buf = generate_label_pdf(
-        row["batch_code"],
-        row["worker"],
-        row["product"],
-        qty,
-        row["weight_kg"] or 0.0,
-    )
+    pdf_items = [
+        {
+            "product":   r["product"],
+            "quantity":  r["quantity"],
+            "weight_kg": r["weight_kg"] or 0.0,
+        }
+        for r in items
+    ]
+    pdf_buf = generate_batch_session_pdf(batch_code, worker, pdf_items)
     await query.message.reply_document(
         document=pdf_buf,
         filename=f"{batch_code}.pdf",
         caption=(
-            f"🏷️ *{batch_code}* — {row['product']}\n"
-            f"{qty} ta stiker"
-            + (f" | {row['weight_kg']:.1f} kg" if row["weight_kg"] else "")
+            f"🏷️ *{batch_code}* — {worker}\n"
+            f"{len(items)} ta mahsulot · {total_qty} ta stiker"
         ),
         parse_mode="Markdown",
         reply_markup=main_menu_keyboard(),

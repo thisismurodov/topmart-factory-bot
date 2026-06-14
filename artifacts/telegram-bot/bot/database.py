@@ -59,7 +59,7 @@ def init_db() -> None:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS batches (
                 id         SERIAL PRIMARY KEY,
-                batch_code TEXT NOT NULL UNIQUE,
+                batch_code TEXT NOT NULL,
                 worker     TEXT NOT NULL,
                 product    TEXT NOT NULL,
                 quantity   INTEGER NOT NULL,
@@ -68,6 +68,34 @@ def init_db() -> None:
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
             )
         """)
+        # Batch Session: bitta batch_code ostida bir nechta mahsulot (batch items)
+        # bo'lishi uchun batch_code ustidagi UNIQUE cheklovini olib tashlaymiz.
+        # Eski DB'larda u avtomatik nom bilan yaratilgan — faqat public.batches dagi
+        # va batch_code ustunini o'z ichiga olgan UNIQUE cheklovlarni drop qilamiz.
+        cur.execute("""
+            DO $$
+            DECLARE c text;
+            BEGIN
+              FOR c IN
+                SELECT con.conname
+                FROM pg_constraint con
+                JOIN pg_class rel ON rel.oid = con.conrelid
+                JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+                WHERE rel.relname = 'batches'
+                  AND nsp.nspname = 'public'
+                  AND con.contype = 'u'
+                  AND EXISTS (
+                    SELECT 1 FROM pg_attribute a
+                    WHERE a.attrelid = con.conrelid
+                      AND a.attnum = ANY(con.conkey)
+                      AND a.attname = 'batch_code'
+                  )
+              LOOP
+                EXECUTE format('ALTER TABLE public.batches DROP CONSTRAINT %I', c);
+              END LOOP;
+            END $$;
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_batches_batch_code ON batches (batch_code)")
         cur.execute("""
             CREATE TABLE IF NOT EXISTS user_roles (
                 chat_id     BIGINT PRIMARY KEY,
@@ -348,81 +376,111 @@ def next_batch_code(worker_prefix: str) -> str:
     prefix = f"{worker_prefix}-{today}-"
     with get_conn() as (conn, cur):
         cur.execute(
-            "SELECT COUNT(*) AS cnt FROM batches WHERE batch_code LIKE %s",
+            "SELECT COUNT(DISTINCT batch_code) AS cnt FROM batches WHERE batch_code LIKE %s",
             (f"{prefix}%",),
         )
         seq = (cur.fetchone()["cnt"] or 0) + 1
     return f"{prefix}{seq:02d}"
 
 
-def create_batch(
-    batch_code: str, worker: str, product: str,
-    quantity: int, weight_kg: float, earnings: float,
-) -> list[dict]:
-    """Partiya yaratadi, tayyor mahsulotni omborga kiritadi va BOM bo'yicha
-    xom ashyo zahirasini avtomatik kamaytiradi.
+def create_batch_session(worker: str, prefix: str, items: list[dict]) -> dict:
+    """Bitta sessiya = bitta batch_code ostida bir nechta mahsulot (batch items).
 
-    Returns: minimal zahiradan kam yoki teng bo'lib qolgan xom ashyolar ro'yxati
-    (har biri: name, current_stock, minimum_stock, unit). Bo'sh bo'lsa ogohlantirish yo'q.
+    Hammasi BITTA tranzaksiyada bajariladi: bitta kod generatsiya qilinadi, har bir
+    mahsulot uchun alohida qator (batch item) yoziladi, tayyor mahsulot omborga
+    kiritiladi va BOM bo'yicha xom ashyo zahirasi kamaytiriladi. Biror item xatosi
+    bo'lsa, butun sessiya bekor qilinadi (yarim partiya qolmaydi).
+
+    items: [{"product", "quantity", "weight_kg", "earnings"}]
+    Returns: {"batch_code", "total_earnings", "low_materials"}
+      low_materials — minimal zahiradan kam qolgan xom ashyolar (nom bo'yicha dedup).
     """
-    low_materials: list[dict] = []
+    today = date.today().strftime("%y%m%d")
+    code_prefix = f"{prefix}-{today}-"
+    low_by_name: dict[str, dict] = {}
+    total_earnings = 0.0
+
     with get_conn() as (conn, cur):
+        # Bir vaqtning o'zida ikki sessiya bir xil kod olmasligi uchun tranzaksiya-lock
+        # (kod generatsiyasini ketma-ket qiladi; tranzaksiya tugashi bilan ozod bo'ladi).
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (code_prefix,))
+        # Sessiya kodini tranzaksiya ichida generatsiya qilamiz (atomar)
         cur.execute(
-            """INSERT INTO batches (batch_code, worker, product, quantity, weight_kg, earnings)
-               VALUES (%s,%s,%s,%s,%s,%s)""",
-            (batch_code, worker, product, quantity, weight_kg, earnings),
+            "SELECT COUNT(DISTINCT batch_code) AS cnt FROM batches WHERE batch_code LIKE %s",
+            (f"{code_prefix}%",),
         )
-        # Tayyor mahsulotni avtomatik birinchi omborga "Kirim" qilib yozamiz
+        seq = (cur.fetchone()["cnt"] or 0) + 1
+        batch_code = f"{code_prefix}{seq:02d}"
+
+        # Tayyor mahsulot uchun faol ombor (barcha itemlar uchun bir marta)
         cur.execute("SELECT id FROM warehouses WHERE active=TRUE ORDER BY id LIMIT 1")
         wh = cur.fetchone()
-        if wh:
-            wh_id = wh["id"]
+        wh_id = wh["id"] if wh else None
+
+        for it in items:
+            product   = it["product"]
+            quantity  = int(it["quantity"])
+            weight_kg = float(it.get("weight_kg") or 0.0)
+            earnings  = float(it.get("earnings") or 0.0)
+            total_earnings += earnings
+
             cur.execute(
-                """INSERT INTO stock_movements
-                     (product, quantity, movement_type, from_warehouse_id, to_warehouse_id,
-                      note, created_by, product_type)
-                   VALUES (%s,%s,'IN',NULL,%s,%s,%s,'finished')""",
-                (product, quantity, wh_id, f"Partiya: {batch_code}", worker),
-            )
-            cur.execute(
-                """INSERT INTO inventory (warehouse_id, product, quantity, product_type, updated_at)
-                   VALUES (%s,%s,%s,'finished',NOW())
-                   ON CONFLICT (warehouse_id, product)
-                   DO UPDATE SET quantity=inventory.quantity+%s, updated_at=NOW()""",
-                (wh_id, product, quantity, quantity),
+                """INSERT INTO batches (batch_code, worker, product, quantity, weight_kg, earnings)
+                   VALUES (%s,%s,%s,%s,%s,%s)""",
+                (batch_code, worker, product, quantity, weight_kg, earnings),
             )
 
-        # Xom ashyo zahirasini BOM (product_materials) bo'yicha avtomatik kamaytirish.
-        # Faqat product_materials to'ldirilgan mahsulotlar uchun ishlaydi.
-        cur.execute(
-            """SELECT pm.raw_material_id, pm.quantity_required,
-                      rm.name, rm.unit, rm.minimum_stock
-               FROM product_materials pm
-               JOIN raw_materials rm ON rm.id = pm.raw_material_id
-               WHERE pm.product_name = %s""",
-            (product,),
-        )
-        for req in cur.fetchall():
-            consumed = float(req["quantity_required"]) * quantity
-            cur.execute(
-                """UPDATE raw_materials
-                   SET current_stock = current_stock - %s
-                   WHERE id = %s
-                   RETURNING current_stock""",
-                (consumed, req["raw_material_id"]),
-            )
-            updated = cur.fetchone()
-            new_stock = float(updated["current_stock"]) if updated else 0.0
-            min_stock = float(req["minimum_stock"] or 0)
-            if min_stock > 0 and new_stock <= min_stock:
-                low_materials.append({
-                    "name":          req["name"],
-                    "current_stock": new_stock,
-                    "minimum_stock": min_stock,
-                    "unit":          req["unit"] or "",
-                })
+            # Tayyor mahsulotni faol omborga "Kirim" qilib yozamiz
+            if wh_id:
+                cur.execute(
+                    """INSERT INTO stock_movements
+                         (product, quantity, movement_type, from_warehouse_id, to_warehouse_id,
+                          note, created_by, product_type)
+                       VALUES (%s,%s,'IN',NULL,%s,%s,%s,'finished')""",
+                    (product, quantity, wh_id, f"Partiya: {batch_code}", worker),
+                )
+                cur.execute(
+                    """INSERT INTO inventory (warehouse_id, product, quantity, product_type, updated_at)
+                       VALUES (%s,%s,%s,'finished',NOW())
+                       ON CONFLICT (warehouse_id, product)
+                       DO UPDATE SET quantity=inventory.quantity+%s, updated_at=NOW()""",
+                    (wh_id, product, quantity, quantity),
+                )
 
-    return low_materials
+            # Xom ashyo zahirasini BOM (product_materials) bo'yicha kamaytirish
+            cur.execute(
+                """SELECT pm.raw_material_id, pm.quantity_required,
+                          rm.name, rm.unit, rm.minimum_stock
+                   FROM product_materials pm
+                   JOIN raw_materials rm ON rm.id = pm.raw_material_id
+                   WHERE pm.product_name = %s""",
+                (product,),
+            )
+            for req in cur.fetchall():
+                consumed = float(req["quantity_required"]) * quantity
+                cur.execute(
+                    """UPDATE raw_materials
+                       SET current_stock = current_stock - %s
+                       WHERE id = %s
+                       RETURNING current_stock""",
+                    (consumed, req["raw_material_id"]),
+                )
+                updated = cur.fetchone()
+                new_stock = float(updated["current_stock"]) if updated else 0.0
+                min_stock = float(req["minimum_stock"] or 0)
+                if min_stock > 0 and new_stock <= min_stock:
+                    low_by_name[req["name"]] = {
+                        "name":          req["name"],
+                        "current_stock": new_stock,
+                        "minimum_stock": min_stock,
+                        "unit":          req["unit"] or "",
+                    }
+
+    return {
+        "batch_code": batch_code,
+        "total_earnings": total_earnings,
+        "low_materials": list(low_by_name.values()),
+    }
 
 
 def get_today_batches(worker_filter: list[str] | None = None) -> list[dict]:
@@ -452,7 +510,7 @@ def get_monthly_kpi(year: int, month: int) -> list[dict]:
     with get_conn() as (conn, cur):
         cur.execute(
             """SELECT worker, SUM(quantity) AS total_qty, SUM(weight_kg) AS total_kg,
-                      SUM(earnings) AS total_earnings, COUNT(*) AS batch_count
+                      SUM(earnings) AS total_earnings, COUNT(DISTINCT batch_code) AS batch_count
                FROM batches WHERE TO_CHAR(created_at, 'YYYY-MM') = %s
                GROUP BY worker ORDER BY total_earnings DESC""",
             (period,),

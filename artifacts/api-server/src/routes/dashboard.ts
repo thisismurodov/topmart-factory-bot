@@ -13,7 +13,7 @@ const router: IRouter = Router();
 router.get("/dashboard/today", async (_req, res): Promise<void> => {
   const result = await pool.query(
     `SELECT
-       COUNT(*)::int AS "totalBatches",
+       COUNT(DISTINCT batch_code)::int AS "totalBatches",
        COALESCE(SUM(quantity), 0)::int AS "totalQty",
        COALESCE(SUM(weight_kg), 0.0) AS "totalKg",
        COALESCE(SUM(earnings), 0.0) AS "totalEarnings",
@@ -49,7 +49,7 @@ router.get("/dashboard/monthly", async (req, res): Promise<void> => {
   const [productionResult, paidResult, unpaidResult] = await Promise.all([
     pool.query(
       `SELECT
-         COUNT(*)::int AS "totalBatches",
+         COUNT(DISTINCT batch_code)::int AS "totalBatches",
          COALESCE(SUM(quantity), 0)::int AS "totalQty",
          COALESCE(SUM(weight_kg), 0.0) AS "totalKg",
          COALESCE(SUM(earnings), 0.0) AS "totalEarnings",
@@ -214,7 +214,7 @@ router.get("/dashboard/v2", async (_req, res): Promise<void> => {
     ),
     pool.query(
       `SELECT
-         COUNT(*)::int                       AS batches,
+         COUNT(DISTINCT batch_code)::int     AS batches,
          COALESCE(SUM(quantity),0)::int      AS qty,
          COALESCE(SUM(weight_kg),0.0)        AS kg,
          COALESCE(SUM(earnings),0.0)         AS earnings,
@@ -225,7 +225,7 @@ router.get("/dashboard/v2", async (_req, res): Promise<void> => {
       `SELECT worker,
          COALESCE(SUM(quantity),0)::int   AS qty,
          COALESCE(SUM(earnings),0.0)      AS earnings,
-         COUNT(*)::int                    AS batches
+         COUNT(DISTINCT batch_code)::int  AS batches
        FROM batches WHERE TO_CHAR(created_at,'YYYY-MM')=$1
        GROUP BY worker ORDER BY SUM(earnings) DESC LIMIT 5`,
       [period]
@@ -424,7 +424,7 @@ router.get("/dashboard/today-extended", async (_req, res): Promise<void> => {
          COALESCE(SUM(quantity), 0)::int   AS qty,
          COALESCE(SUM(weight_kg), 0.0)     AS kg,
          COALESCE(SUM(earnings), 0.0)      AS earnings,
-         COUNT(*)::int                     AS batches
+         COUNT(DISTINCT batch_code)::int   AS batches
        FROM batches
        WHERE created_at::date = CURRENT_DATE
        GROUP BY worker

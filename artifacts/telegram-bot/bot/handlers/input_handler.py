@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from telegram import Update
 from telegram.ext import (
     ContextTypes, ConversationHandler,
@@ -6,16 +6,17 @@ from telegram.ext import (
 )
 from ..keyboards import (
     workers_inline_keyboard, products_inline_keyboard, cancel_keyboard,
-    main_menu_keyboard, weight_confirm_keyboard,
+    main_menu_keyboard, packer_menu_keyboard, weight_confirm_keyboard,
+    batch_cart_keyboard,
 )
 from ..database import (
-    create_batch, next_batch_code, get_worker_chat_id, get_workers,
-    get_products, get_product_weight, get_user_role,
+    create_batch_session, get_worker_chat_id, get_workers,
+    get_products, get_product_weight, get_user_role, get_worker_monthly,
 )
-from ..config import calc_earnings
-from ..label_generator import generate_label_pdf
+from ..config import calc_earnings, SUPERADMIN_CHAT_ID
+from ..label_generator import generate_batch_session_pdf
 
-CHOOSE_WORKER, CHOOSE_PRODUCT, ENTER_QUANTITY, ENTER_WEIGHT = range(4)
+CHOOSE_WORKER, CHOOSE_PRODUCT, ENTER_QUANTITY, ENTER_WEIGHT, AFTER_ITEM = range(5)
 
 # Profil og'irligidan ruxsat etilgan chetlanish (±kg)
 WEIGHT_TOLERANCE_KG = 0.2
@@ -36,6 +37,8 @@ async def start_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     else:
         context.user_data.pop("_packer_name", None)
         kb = workers_inline_keyboard()
+    # Yangi sessiya — savatni tozalaymiz
+    context.user_data["items"] = []
     await update.message.reply_text(
         "👷 *Kim ishlab chiqardi?*",
         parse_mode="Markdown",
@@ -99,7 +102,7 @@ async def enter_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return ENTER_WEIGHT
 
     context.user_data["weight_kg"] = 0.0
-    return await _save_batch(update, context)
+    return await _add_item(update, context)
 
 
 async def enter_weight(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -136,7 +139,7 @@ async def enter_weight(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         return ENTER_WEIGHT
 
     context.user_data["weight_qc"] = "ok" if meaningful else "none"
-    return await _save_batch(update, context)
+    return await _add_item(update, context)
 
 
 async def accept_weight_anyway(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -147,82 +150,169 @@ async def accept_weight_anyway(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.edit_message_reply_markup(reply_markup=None)
     except Exception:
         pass
-    return await _save_batch(update, context)
+    return await _add_item(update, context)
 
 
-async def _save_batch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+# ── Savat (cart) ───────────────────────────────────────────────────────────────
+
+def _item_detail(it: dict) -> str:
+    w = it.get("weight_kg") or 0.0
+    return f"{w:g} kg" if w > 0 else f"{it['quantity']} dona"
+
+
+async def _add_item(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Joriy mahsulotni vaqtinchalik savatga qo'shadi va sessiya tugmalarini ko'rsatadi."""
     message   = update.effective_message
-    worker    = context.user_data["worker"]
     product   = context.user_data["product"]
     quantity  = context.user_data["quantity"]
     weight_kg = context.user_data.get("weight_kg", 0.0)
+    qc        = context.user_data.get("weight_qc")
+    earnings  = calc_earnings(product, quantity, weight_kg)
 
-    earnings = calc_earnings(product, quantity, weight_kg)
-    workers  = get_workers()
-    prefix   = workers.get(worker, worker[:2].upper())
-    batch_code = next_batch_code(prefix)
+    items = context.user_data.setdefault("items", [])
+    items.append({
+        "product":   product,
+        "quantity":  quantity,
+        "weight_kg": weight_kg,
+        "earnings":  earnings,
+        "qc":        qc,
+    })
 
-    low_materials = create_batch(batch_code, worker, product, quantity, weight_kg, earnings)
+    # Faqat joriy mahsulotning vaqtinchalik maydonlarini tozalaymiz (savat saqlanadi)
+    for k in ("product", "quantity", "weight_kg", "weight_qc"):
+        context.user_data.pop(k, None)
 
-    from ..keyboards import packer_menu_keyboard
+    lines = []
+    total = 0.0
+    for idx, it in enumerate(items, 1):
+        total += it["earnings"]
+        lines.append(f"{idx}. {it['product']} — {_item_detail(it)} · {it['earnings']:,.0f} so'm")
+
+    await message.reply_text(
+        f"➕ *Qo'shildi:* {product} ({_item_detail(items[-1])})\n\n"
+        f"🧾 *Joriy partiya ({len(items)} ta mahsulot):*\n"
+        + "\n".join(lines)
+        + f"\n\n💰 Jami haq: *{total:,.0f} so'm*\n\n"
+        f"Yana mahsulot qo'shasizmi yoki tugatasizmi?",
+        parse_mode="Markdown",
+        reply_markup=batch_cart_keyboard(),
+    )
+    return AFTER_ITEM
+
+
+async def add_more_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """[➕ Yana mahsulot] — mahsulot tanlashga qaytadi (ishchi o'zgarmaydi)."""
+    query = update.callback_query
+    await query.answer()
+    worker = context.user_data["worker"]
+    packer_name = context.user_data.get("_packer_name")
+    if packer_name:
+        kb = products_inline_keyboard(packer_name=packer_name)
+    else:
+        kb = products_inline_keyboard()
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await query.message.reply_text(
+        f"👷 *{worker}*\n\n📦 *Keyingi mahsulotni tanlang:*",
+        parse_mode="Markdown",
+        reply_markup=kb,
+    )
+    return CHOOSE_PRODUCT
+
+
+async def finalize_batches(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """[✅ Tugatish] — savatdagi barcha mahsulotlardan bitta partiya yaratadi."""
+    query = update.callback_query
+    await query.answer()
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    return await _finalize(update, context)
+
+
+async def _finalize(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    message = update.effective_message
+    worker  = context.user_data.get("worker")
+    items   = context.user_data.get("items", [])
+
     chat_id  = update.effective_chat.id
     user_row = get_user_role(chat_id)
     kb = packer_menu_keyboard() if (user_row and user_row["role"] == "packer") else main_menu_keyboard()
 
-    today_str   = date.today().strftime("%d.%m.%Y")
-    unit_weight = (weight_kg / quantity) if weight_kg and quantity > 0 else 0.0
-    weight_line = (
-        f"⚖️ Og'irlik: *{weight_kg} kg* (~{unit_weight:.2f} kg/dona)\n"
-        if weight_kg > 0 else ""
-    )
+    if not items:
+        await message.reply_text(
+            "⚠️ Hech qanday mahsulot kiritilmadi.",
+            reply_markup=kb,
+        )
+        context.user_data.clear()
+        return ConversationHandler.END
 
-    qc = context.user_data.get("weight_qc")
-    qc_line = ""
-    if weight_kg > 0 and qc == "ok":
-        qc_line = "✅ Og'irlik normada\n"
-    elif weight_kg > 0 and qc == "override":
-        qc_line = "⚠️ Og'irlik tasdiqlandi (normadan tashqari)\n"
+    workers = get_workers()
+    prefix  = workers.get(worker, worker[:2].upper())
+    created = datetime.now()
+
+    result        = create_batch_session(worker, prefix, items)
+    batch_code    = result["batch_code"]
+    total         = result["total_earnings"]
+    low_materials = result["low_materials"]
+
+    today_str = date.today().strftime("%d.%m.%Y")
+
+    lines = []
+    for idx, it in enumerate(items, 1):
+        qc = it.get("qc")
+        w  = it.get("weight_kg") or 0.0
+        qmark = ""
+        if w > 0 and qc == "ok":
+            qmark = " ✅"
+        elif w > 0 and qc == "override":
+            qmark = " ⚠️"
+        lines.append(
+            f"{idx}. {it['product']} — {_item_detail(it)}{qmark}\n"
+            f"   💰 {it['earnings']:,.0f} so'm"
+        )
 
     low_line = ""
     if low_materials:
-        items = "\n".join(
+        mtxt = "\n".join(
             f"  • {m['name']}: {m['current_stock']:.0f} {m['unit']} (min {m['minimum_stock']:.0f})"
             for m in low_materials
         )
-        low_line = f"\n\n⚠️ *Xom ashyo kam qoldi — to'ldiring!*\n{items}"
+        low_line = f"\n\n⚠️ *Xom ashyo kam qoldi — to'ldiring!*\n{mtxt}"
 
     await message.reply_text(
         f"✅ *Partiya yaratildi!*\n\n"
         f"📌 Partiya: `{batch_code}`\n"
         f"👷 Ishchi: {worker}\n"
-        f"📦 Mahsulot: {product}\n"
-        f"🔢 Miqdor: *{quantity} dona*\n"
-        f"{weight_line}"
-        f"{qc_line}"
-        f"💰 Haq: *{earnings:,.0f} so'm*\n"
-        f"📅 Sana: {today_str}"
-        f"{low_line}",
+        f"📅 Sana: {today_str}\n"
+        f"📦 Mahsulotlar: *{len(items)} ta*\n\n"
+        + "\n".join(lines)
+        + f"\n\n💰 *Jami haq: {total:,.0f} so'm*"
+        + low_line,
         parse_mode="Markdown",
         reply_markup=kb,
     )
 
-    gen_msg = await message.reply_text(f"🖨️ {quantity} ta stiker tayyorlanmoqda…")
+    total_stickers = sum(int(it["quantity"]) for it in items)
+    gen_msg = await message.reply_text(f"🖨️ {total_stickers} ta stiker tayyorlanmoqda…")
 
-    pdf_buf = generate_label_pdf(batch_code, worker, product, quantity, weight_kg)
+    pdf_buf = generate_batch_session_pdf(batch_code, worker, items, created)
     await message.reply_document(
         document=pdf_buf,
         filename=f"{batch_code}.pdf",
         caption=(
-            f"🏷️ *{batch_code}* — {product}\n"
-            f"{quantity} ta stiker"
-            + (f" | {weight_kg} kg" if weight_kg else "")
+            f"🏷️ *{batch_code}* — {worker}\n"
+            f"{len(items)} ta mahsulot · {total_stickers} ta stiker"
         ),
         parse_mode="Markdown",
     )
     await gen_msg.delete()
 
-    await _notify_worker(context, worker, batch_code, product, quantity, weight_kg, earnings)
-    await _notify_admin(context, worker, batch_code, product, quantity, weight_kg, earnings)
+    await _notify_worker(context, worker, batch_code, items, total)
+    await _notify_admin(context, worker, batch_code, items, total)
 
     context.user_data.clear()
     return ConversationHandler.END
@@ -230,28 +320,26 @@ async def _save_batch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
 async def _notify_worker(
     context: ContextTypes.DEFAULT_TYPE,
-    worker: str, batch_code: str, product: str,
-    quantity: int, weight_kg: float, earnings: float,
+    worker: str, batch_code: str, items: list[dict], total: float,
 ) -> None:
     chat_id = get_worker_chat_id(worker)
     if not chat_id:
         return
 
     today = date.today()
-    detail = f"{weight_kg} kg" if weight_kg > 0 else f"{quantity} dona"
     month_name = MONTHS_UZ.get(today.month, str(today.month))
-
-    from ..database import get_worker_monthly
     month_rows  = get_worker_monthly(worker, today.year, today.month)
     month_total = sum(r["total_earnings"] for r in month_rows)
+
+    prod_lines = "\n".join(f"• {it['product']} — {_item_detail(it)}" for it in items)
 
     try:
         await context.bot.send_message(
             chat_id=chat_id,
             text=(
-                f"✅ *Yangi partiya!*\n\n"
-                f"📦 {product} — {detail}\n"
-                f"💰 Bu partiya: *{earnings:,.0f} so'm*\n"
+                f"✅ *Yangi partiya!* (`{batch_code}`)\n\n"
+                f"{prod_lines}\n\n"
+                f"💰 Bu partiya: *{total:,.0f} so'm*\n"
                 f"📊 {month_name} jami: *{month_total:,.0f} so'm*"
             ),
             parse_mode="Markdown",
@@ -262,20 +350,18 @@ async def _notify_worker(
 
 async def _notify_admin(
     context: ContextTypes.DEFAULT_TYPE,
-    worker: str, batch_code: str, product: str,
-    quantity: int, weight_kg: float, earnings: float,
+    worker: str, batch_code: str, items: list[dict], total: float,
 ) -> None:
-    from ..config import SUPERADMIN_CHAT_ID
-    detail = f"{weight_kg} kg" if weight_kg > 0 else f"{quantity} dona"
+    prod_lines = "\n".join(f"• {it['product']} — {_item_detail(it)}" for it in items)
     try:
         await context.bot.send_message(
             chat_id=SUPERADMIN_CHAT_ID,
             text=(
                 f"🏭 *Yangi partiya kiritildi*\n\n"
                 f"👷 Ishchi: *{worker}*\n"
-                f"📦 {product} — {detail}\n"
-                f"💰 Haq: *{earnings:,.0f} so'm*\n"
-                f"📌 `{batch_code}`"
+                f"📌 `{batch_code}`  ({len(items)} ta mahsulot)\n\n"
+                f"{prod_lines}\n\n"
+                f"💰 Jami haq: *{total:,.0f} so'm*"
             ),
             parse_mode="Markdown",
         )
@@ -319,6 +405,11 @@ def build_conversation_handler() -> ConversationHandler:
             ENTER_WEIGHT: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, enter_weight),
                 CallbackQueryHandler(accept_weight_anyway, pattern=r"^weight_ok$"),
+                CallbackQueryHandler(cancel_callback, pattern=r"^cancel$"),
+            ],
+            AFTER_ITEM: [
+                CallbackQueryHandler(add_more_product, pattern=r"^add_more$"),
+                CallbackQueryHandler(finalize_batches, pattern=r"^finish$"),
                 CallbackQueryHandler(cancel_callback, pattern=r"^cancel$"),
             ],
         },

@@ -100,6 +100,15 @@ def weight_confirm_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
+def batch_cart_keyboard() -> InlineKeyboardMarkup:
+    """Har bir mahsulot qo'shilgandan keyingi sessiya tugmalari."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ Yana mahsulot qo'shish", callback_data="add_more")],
+        [InlineKeyboardButton("✅ Tugatish",               callback_data="finish")],
+        [InlineKeyboardButton("❌ Bekor qilish",           callback_data="cancel")],
+    ])
+
+
 def admin_main_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ Hodim qo'shish",        callback_data="adm:add_worker")],

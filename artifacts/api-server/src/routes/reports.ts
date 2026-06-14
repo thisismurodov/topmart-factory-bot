@@ -61,7 +61,7 @@ router.get("/reports/summary", async (req, res): Promise<void> => {
       pool.query(`
         SELECT
           TO_CHAR(DATE_TRUNC('month', created_at), 'YYYY-MM') AS month,
-          COUNT(*)::int                                        AS batch_count,
+          COUNT(DISTINCT batch_code)::int                      AS batch_count,
           COALESCE(SUM(weight_kg),  0)                        AS total_weight,
           COALESCE(SUM(earnings),   0)                        AS total_earnings,
           COUNT(DISTINCT worker)::int                         AS worker_count
@@ -103,7 +103,7 @@ router.get("/reports/summary", async (req, res): Promise<void> => {
         SELECT
           worker,
           COALESCE(SUM(earnings), 0) AS total_earnings,
-          COUNT(*)::int              AS batch_count,
+          COUNT(DISTINCT batch_code)::int AS batch_count,
           COALESCE(SUM(weight_kg), 0) AS total_weight
         FROM batches
         WHERE created_at >= DATE_TRUNC('month', NOW()) - INTERVAL '${interval}'

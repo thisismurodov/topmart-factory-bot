@@ -254,7 +254,8 @@ router.get("/dashboard/v2", async (_req, res): Promise<void> => {
         SELECT
           p.name,
           p.default_sale_price * COALESCE(NULLIF(p.weight, 0), 1) AS sale_price,
-          (p.salary_cost + p.electricity_cost + p.other_cost) * COALESCE(NULLIF(p.weight, 0), 1) +
+          ((CASE WHEN p.rate_type='kg' THEN p.rate * COALESCE(NULLIF(p.weight, 0), 1) ELSE p.rate END)
+            + (p.electricity_cost + p.other_cost) * COALESCE(NULLIF(p.weight, 0), 1)) +
             COALESCE((
               SELECT SUM(rm.default_cost * pm.quantity_required)
               FROM product_materials pm
@@ -266,7 +267,7 @@ router.get("/dashboard/v2", async (_req, res): Promise<void> => {
         FROM products p
         LEFT JOIN sale_items si ON si.product_name = p.name
         WHERE p.active = TRUE AND p.default_sale_price > 0
-        GROUP BY p.name, p.default_sale_price, p.weight, p.salary_cost, p.electricity_cost, p.other_cost
+        GROUP BY p.name, p.default_sale_price, p.weight, p.rate, p.rate_type, p.electricity_cost, p.other_cost
       )
       SELECT name, sale_price, total_cost,
              (sale_price - total_cost) AS profit,
@@ -361,7 +362,8 @@ router.get("/dashboard/product-highlights", async (_req, res): Promise<void> => 
     SELECT
       p.name,
       p.default_sale_price * COALESCE(NULLIF(p.weight, 0), 1) AS sale_price,
-      (p.salary_cost + p.electricity_cost + p.other_cost) * COALESCE(NULLIF(p.weight, 0), 1) +
+      ((CASE WHEN p.rate_type='kg' THEN p.rate * COALESCE(NULLIF(p.weight, 0), 1) ELSE p.rate END)
+        + (p.electricity_cost + p.other_cost) * COALESCE(NULLIF(p.weight, 0), 1)) +
         COALESCE((
           SELECT SUM(rm.default_cost * pm.quantity_required)
           FROM product_materials pm
@@ -375,7 +377,7 @@ router.get("/dashboard/product-highlights", async (_req, res): Promise<void> => 
     LEFT JOIN sale_items si ON si.product_name = p.name
     WHERE p.active = TRUE AND p.default_sale_price > 0
     GROUP BY p.name, p.default_sale_price, p.weight,
-             p.salary_cost, p.electricity_cost, p.other_cost
+             p.rate, p.rate_type, p.electricity_cost, p.other_cost
   `);
 
   if (!rows.length) {

@@ -26,12 +26,13 @@ router.get("/products", async (_req, res): Promise<void> => {
     // jami = og'irlik × narx. Xom ashyo (BOM) allaqachon mutlaq miqdor bo'yicha.
     const w               = Number(row.weight) > 0 ? Number(row.weight) : 1;
     const salePriceBase   = Number(row.default_sale_price);
-    const salaryBase      = Number(row.salary_cost);
+    // mehnat (maosh) stavkadan hisoblanadi (yagona manba): kg → rate×og'irlik, dona → rate
+    const laborCost       = String(row.rate_type) === "kg" ? Number(row.rate) * w : Number(row.rate);
     const elecBase        = Number(row.electricity_cost);
     const otherBase       = Number(row.other_cost);
     const rawCost         = Number(row.raw_material_cost);
     const effectiveSale   = salePriceBase * w;
-    const totalCost       = rawCost + (salaryBase + elecBase + otherBase) * w;
+    const totalCost       = rawCost + laborCost + (elecBase + otherBase) * w;
     const profit          = effectiveSale - totalCost;
     const marginPct       = effectiveSale > 0
       ? Math.round((profit / effectiveSale) * 10000) / 100
@@ -47,7 +48,7 @@ router.get("/products", async (_req, res): Promise<void> => {
       effectiveSalePrice: effectiveSale,    // jami sotuv narxi = narx × og'irlik
       rate:               Number(row.rate),
       rateType:           row.rate_type,
-      salaryCost:         salaryBase,       // 1 birlik uchun (tahrirlash uchun)
+      salaryCost:         laborCost,        // jami mehnat (stavkadan)
       electricityCost:    elecBase,
       otherCost:          otherBase,
       rawMaterialCost:    rawCost,
@@ -178,12 +179,12 @@ router.get("/products/:name/profitability", async (req, res): Promise<void> => {
   const s = salesRes.rows[0];
   const w         = Number(p.weight) > 0 ? Number(p.weight) : 1;
   const rawCost   = Number(p.raw_material_cost);
-  // narx/xarajatlar 1 birlik uchun → og'irlikka ko'paytiramiz; xom ashyo (BOM) mutlaq.
-  const salaryCost      = Number(p.salary_cost) * w;
+  // mehnat stavkadan (kg → rate×og'irlik, dona → rate); elektr/boshqa/narx × og'irlik; xom ashyo mutlaq.
+  const laborCost       = String(p.rate_type) === "kg" ? Number(p.rate) * w : Number(p.rate);
   const electricityCost = Number(p.electricity_cost) * w;
   const otherCost       = Number(p.other_cost) * w;
   const salePrice       = Number(p.default_sale_price) * w;
-  const totalCost       = rawCost + salaryCost + electricityCost + otherCost;
+  const totalCost       = rawCost + laborCost + electricityCost + otherCost;
   const profit          = salePrice - totalCost;
   const marginPct       = salePrice > 0 ? (profit / salePrice) * 100 : 0;
 
@@ -192,7 +193,7 @@ router.get("/products/:name/profitability", async (req, res): Promise<void> => {
     weight:          w,
     salePrice,
     rawMaterialCost: rawCost,
-    salaryCost,
+    salaryCost:      laborCost,
     electricityCost,
     otherCost,
     totalCost,

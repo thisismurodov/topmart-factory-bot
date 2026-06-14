@@ -4,12 +4,21 @@ from telegram.ext import (
     ContextTypes, ConversationHandler,
     CallbackQueryHandler, MessageHandler, filters,
 )
-from ..keyboards import workers_inline_keyboard, products_inline_keyboard, cancel_keyboard, main_menu_keyboard
-from ..database import create_batch, next_batch_code, get_worker_chat_id, get_workers, get_products, get_user_role
+from ..keyboards import (
+    workers_inline_keyboard, products_inline_keyboard, cancel_keyboard,
+    main_menu_keyboard, weight_confirm_keyboard,
+)
+from ..database import (
+    create_batch, next_batch_code, get_worker_chat_id, get_workers,
+    get_products, get_product_weight, get_user_role,
+)
 from ..config import calc_earnings
 from ..label_generator import generate_label_pdf
 
 CHOOSE_WORKER, CHOOSE_PRODUCT, ENTER_QUANTITY, ENTER_WEIGHT = range(4)
+
+# Profil og'irligidan ruxsat etilgan chetlanish (±kg)
+WEIGHT_TOLERANCE_KG = 0.2
 
 MONTHS_UZ = {
     1: "Yanvar", 2: "Fevral", 3: "Mart", 4: "Aprel",
@@ -104,10 +113,45 @@ async def enter_weight(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         return ENTER_WEIGHT
 
     context.user_data["weight_kg"] = weight
+
+    product  = context.user_data["product"]
+    quantity = context.user_data["quantity"]
+    profile  = get_product_weight(product)
+    unit_w   = (weight / quantity) if quantity > 0 else 0.0
+    # Profil og'irligi "ma'noli" bo'lsa (>0 va standart 1.0 emas) sifat nazorati
+    meaningful = profile > 0 and abs(profile - 1.0) > 0.001
+
+    if meaningful and abs(unit_w - profile) > WEIGHT_TOLERANCE_KG:
+        context.user_data["weight_qc"] = "warn"
+        await update.message.reply_text(
+            f"⚠️ *Og'irlik mos kelmadi!*\n\n"
+            f"📦 {product}\n"
+            f"📋 Profil: *{profile:.3f} kg/dona*\n"
+            f"⚖️ Hozir: *{unit_w:.3f} kg/dona*  ({weight:g} kg ÷ {quantity})\n"
+            f"📐 Farq: *{abs(unit_w - profile):.3f} kg*  (ruxsat: ±{WEIGHT_TOLERANCE_KG:g} kg)\n\n"
+            f"To'g'ri og'irlikni qayta kiriting yoki baribir qabul qiling:",
+            parse_mode="Markdown",
+            reply_markup=weight_confirm_keyboard(),
+        )
+        return ENTER_WEIGHT
+
+    context.user_data["weight_qc"] = "ok" if meaningful else "none"
+    return await _save_batch(update, context)
+
+
+async def accept_weight_anyway(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    context.user_data["weight_qc"] = "override"
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+    except Exception:
+        pass
     return await _save_batch(update, context)
 
 
 async def _save_batch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    message   = update.effective_message
     worker    = context.user_data["worker"]
     product   = context.user_data["product"]
     quantity  = context.user_data["quantity"]
@@ -132,6 +176,13 @@ async def _save_batch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         if weight_kg > 0 else ""
     )
 
+    qc = context.user_data.get("weight_qc")
+    qc_line = ""
+    if weight_kg > 0 and qc == "ok":
+        qc_line = "✅ Og'irlik normada\n"
+    elif weight_kg > 0 and qc == "override":
+        qc_line = "⚠️ Og'irlik tasdiqlandi (normadan tashqari)\n"
+
     low_line = ""
     if low_materials:
         items = "\n".join(
@@ -140,13 +191,14 @@ async def _save_batch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         )
         low_line = f"\n\n⚠️ *Xom ashyo kam qoldi — to'ldiring!*\n{items}"
 
-    await update.message.reply_text(
+    await message.reply_text(
         f"✅ *Partiya yaratildi!*\n\n"
         f"📌 Partiya: `{batch_code}`\n"
         f"👷 Ishchi: {worker}\n"
         f"📦 Mahsulot: {product}\n"
         f"🔢 Miqdor: *{quantity} dona*\n"
         f"{weight_line}"
+        f"{qc_line}"
         f"💰 Haq: *{earnings:,.0f} so'm*\n"
         f"📅 Sana: {today_str}"
         f"{low_line}",
@@ -154,10 +206,10 @@ async def _save_batch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         reply_markup=kb,
     )
 
-    gen_msg = await update.message.reply_text(f"🖨️ {quantity} ta stiker tayyorlanmoqda…")
+    gen_msg = await message.reply_text(f"🖨️ {quantity} ta stiker tayyorlanmoqda…")
 
     pdf_buf = generate_label_pdf(batch_code, worker, product, quantity, weight_kg)
-    await update.message.reply_document(
+    await message.reply_document(
         document=pdf_buf,
         filename=f"{batch_code}.pdf",
         caption=(
@@ -266,6 +318,7 @@ def build_conversation_handler() -> ConversationHandler:
             ],
             ENTER_WEIGHT: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, enter_weight),
+                CallbackQueryHandler(accept_weight_anyway, pattern=r"^weight_ok$"),
                 CallbackQueryHandler(cancel_callback, pattern=r"^cancel$"),
             ],
         },

@@ -2,4 +2,4 @@
 - [PostgreSQL migration from SQLite](pg-migration.md) — Bot uses psycopg2; table names workers/products (not workers_config/products_config); salary_payments.worker not worker_name; db_meta created by bot not Drizzle.
 - [TopMart batch & raw-material flow](topmart-batch-flow.md) — batches created ONLY via bot (api batches.ts has no POST); BOM deduction lives in bot create_batch, not API.
 - [Deploy DB topology + cold-start auth](deploy-db-topology.md) — runtime DB is RAILWAY_DATABASE_URL; apply schema via idempotent ALTER (not drizzle push); cold-start 5xx must not force logout.
-- [Product profitability cost model](product-cost-model.md) — sale price + salary/elec/other are per-unit (×weight); BOM raw-material cost is absolute (never ×weight); revenue = sale_items.line_total.
+- [Product profitability cost model](product-cost-model.md) — labor = rate/rate_type (kg→rate×weight, else rate), salary_cost deprecated; sale/elec/other ×weight; BOM absolute; revenue = sale_items.line_total.

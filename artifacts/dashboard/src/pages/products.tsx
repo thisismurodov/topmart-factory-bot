@@ -34,7 +34,6 @@ type Product = {
   effectiveSalePrice: number;
   rate: number;
   rateType: string;
-  salaryCost: number;
   electricityCost: number;
   otherCost: number;
   rawMaterialCost: number;
@@ -74,7 +73,6 @@ const productSchema = z.object({
   defaultSalePrice: z.coerce.number().min(0),
   weight: z.coerce.number().min(0).default(1),
   rate: z.coerce.number().min(0),
-  salaryCost: z.coerce.number().min(0),
   electricityCost: z.coerce.number().min(0),
   otherCost: z.coerce.number().min(0),
   minimumStock: z.coerce.number().min(0).int(),
@@ -132,7 +130,7 @@ function useCreateProduct() {
       const res = await authFetch("/api/products", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+        body: JSON.stringify({ ...data, rateType: data.unitType }),
       });
       if (!res.ok) throw new Error("Saqlashda xato");
       return res.json();
@@ -148,7 +146,7 @@ function useUpdateProduct() {
       const res = await authFetch(`/api/products/${encodeURIComponent(name)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+        body: JSON.stringify({ ...data, rateType: data.unitType }),
       });
       if (!res.ok) throw new Error("Saqlashda xato");
       return res.json();
@@ -208,19 +206,20 @@ function useDeleteBomItem() {
 
 // ── Cost summary ──────────────────────────────────────────────────────────────
 function CostSummary({
-  rawMaterialCost, salaryCost, electricityCost, otherCost, salePrice, weight, currencyType,
+  rawMaterialCost, rate, rateType, electricityCost, otherCost, salePrice, weight, currencyType,
 }: {
   rawMaterialCost: number;
-  salaryCost: number;
+  rate: number;
+  rateType: string;
   electricityCost: number;
   otherCost: number;
   salePrice: number;
   weight: number;
   currencyType: string;
 }) {
-  // narx/xarajatlar 1 birlik uchun → og'irlikka ko'paytiramiz; xom ashyo (BOM) mutlaq
+  // mehnat (maosh) stavkadan: kg → rate×og'irlik, dona → rate; elektr/boshqa/narx × og'irlik; xom ashyo mutlaq
   const w        = weight > 0 ? weight : 1;
-  const effSalary = salaryCost * w;
+  const effSalary = rateType === "kg" ? rate * w : rate;
   const effElec   = electricityCost * w;
   const effOther  = otherCost * w;
   const effSale   = salePrice * w;
@@ -228,6 +227,7 @@ function CostSummary({
   const profit    = effSale - totalCost;
   const marginPct = effSale > 0 ? (profit / effSale) * 100 : 0;
   const scaled    = w !== 1;
+  const salaryScaled = scaled && rateType === "kg";
   const isUsd = currencyType === "USD";
   const fmt = (v: number) =>
     isUsd
@@ -247,7 +247,7 @@ function CostSummary({
         <span className="font-mono">{fmt(rawMaterialCost)}</span>
       </div>
       <div className="flex justify-between text-muted-foreground">
-        <span>Maosh xarajati{scaled && ` (×${w})`}</span>
+        <span>Maosh (mehnat){salaryScaled && ` (×${w})`}</span>
         <span className="font-mono">{fmt(effSalary)}</span>
       </div>
       <div className="flex justify-between text-muted-foreground">
@@ -395,7 +395,8 @@ function BomTab({
 
       <CostSummary
         rawMaterialCost={rawMatCost}
-        salaryCost={product.salaryCost}
+        rate={product.rate}
+        rateType={product.rateType}
         electricityCost={product.electricityCost}
         otherCost={product.otherCost}
         salePrice={product.defaultSalePrice}
@@ -431,7 +432,6 @@ function ProductDialog({
       defaultSalePrice: product?.defaultSalePrice ?? 0,
       weight: product?.weight ?? 1,
       rate: product?.rate ?? 0,
-      salaryCost: product?.salaryCost ?? 0,
       electricityCost: product?.electricityCost ?? 0,
       otherCost: product?.otherCost ?? 0,
       minimumStock: product?.minimumStock ?? 0,
@@ -441,7 +441,8 @@ function ProductDialog({
 
   const watchedSalePrice = form.watch("defaultSalePrice");
   const watchedWeight    = form.watch("weight");
-  const watchedSalary    = form.watch("salaryCost");
+  const watchedRate      = form.watch("rate");
+  const watchedUnitType  = form.watch("unitType");
   const watchedElec      = form.watch("electricityCost");
   const watchedOther     = form.watch("otherCost");
   const watchedCurrency  = form.watch("currencyType");
@@ -605,23 +606,12 @@ function ProductDialog({
                 />
               </div>
               <p className="text-xs text-muted-foreground -mt-1">
-                Sotuv narxi va xarajatlar 1 birlik (kg/dona) uchun. Jami = og'irlik × narx.
+                Sotuv narxi, elektr va boshqa xarajatlar 1 birlik (kg/dona) uchun.
+                Maosh = stavka (kg uchun × og'irlik). Jami = og'irlik × narx.
                 Xom ashyo (BOM) bundan mustasno.
               </p>
 
-              <div className="grid grid-cols-3 gap-3">
-                <FormField
-                  control={form.control}
-                  name="salaryCost"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Maosh xarajati</FormLabel>
-                      <FormControl>
-                        <Input type="number" step="0.01" min={0} {...field} />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
+              <div className="grid grid-cols-2 gap-3">
                 <FormField
                   control={form.control}
                   name="electricityCost"
@@ -682,7 +672,8 @@ function ProductDialog({
 
               <CostSummary
                 rawMaterialCost={isEdit ? (product?.rawMaterialCost ?? 0) : 0}
-                salaryCost={Number(watchedSalary) || 0}
+                rate={Number(watchedRate) || 0}
+                rateType={watchedUnitType}
                 electricityCost={Number(watchedElec) || 0}
                 otherCost={Number(watchedOther) || 0}
                 salePrice={Number(watchedSalePrice) || 0}

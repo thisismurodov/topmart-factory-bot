@@ -241,6 +241,16 @@ def get_product_names() -> list[str]:
         return [r["name"] for r in cur.fetchall()]
 
 
+def get_product_weight(name: str) -> float:
+    """Mahsulotning profilda ko'rsatilgan 1 dona og'irligi (kg). Topilmasa 1.0."""
+    with get_conn() as (conn, cur):
+        cur.execute("SELECT weight FROM products WHERE name=%s", (name,))
+        row = cur.fetchone()
+    if row and row["weight"] is not None:
+        return float(row["weight"])
+    return 1.0
+
+
 def add_worker(name: str, prefix: str, phone: str, role: str = "worker") -> bool:
     try:
         with get_conn() as (conn, cur):

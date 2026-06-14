@@ -93,6 +93,13 @@ def cancel_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def weight_confirm_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Baribir qabul qilish", callback_data="weight_ok")],
+        [InlineKeyboardButton("❌ Bekor qilish",          callback_data="cancel")],
+    ])
+
+
 def admin_main_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ Hodim qo'shish",        callback_data="adm:add_worker")],

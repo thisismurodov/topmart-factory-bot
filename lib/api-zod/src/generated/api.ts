@@ -172,13 +172,11 @@ export const CreateWorkerBody = zod.object({
 
 
 /**
+ * Identifies the worker by currentName in the body (not the URL) so that workers with names that are empty, ".", or contain "/" can still be edited.
  * @summary Update worker (rename + edit fields)
  */
-export const UpdateWorkerParams = zod.object({
-  "name": zod.coerce.string()
-})
-
 export const UpdateWorkerBody = zod.object({
+  "currentName": zod.string(),
   "name": zod.string(),
   "prefix": zod.string(),
   "phone": zod.string(),
@@ -194,10 +192,11 @@ export const UpdateWorkerResponse = zod.object({
 
 
 /**
+ * Identifies the worker by name in the body (not the URL) so that workers with names that are empty, ".", or contain "/" can still be deleted.
  * @summary Delete worker
  */
-export const DeleteWorkerParams = zod.object({
-  "name": zod.coerce.string()
+export const DeleteWorkerBody = zod.object({
+  "name": zod.string()
 })
 
 export const DeleteWorkerResponse = zod.object({

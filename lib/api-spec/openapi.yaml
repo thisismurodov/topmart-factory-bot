@@ -247,23 +247,20 @@ paths:
               schema:
                 $ref: "#/components/schemas/Worker"
 
-  /workers/{name}:
+  /workers/update:
     put:
       operationId: updateWorker
       tags: [workers]
       summary: Update worker (rename + edit fields)
-      parameters:
-        - name: name
-          in: path
-          required: true
-          schema:
-            type: string
+      description: >-
+        Identifies the worker by currentName in the body (not the URL) so that
+        workers with names that are empty, ".", or contain "/" can still be edited.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/WorkerInput"
+              $ref: "#/components/schemas/WorkerUpdateInput"
       responses:
         "200":
           description: OK
@@ -271,16 +268,21 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Worker"
-    delete:
+
+  /workers/delete:
+    post:
       operationId: deleteWorker
       tags: [workers]
       summary: Delete worker
-      parameters:
-        - name: name
-          in: path
-          required: true
-          schema:
-            type: string
+      description: >-
+        Identifies the worker by name in the body (not the URL) so that workers
+        with names that are empty, ".", or contain "/" can still be deleted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkerDeleteInput"
       responses:
         "200":
           description: OK
@@ -716,6 +718,28 @@ components:
         role:
           type: string
       required: [name, prefix, phone, role]
+
+    WorkerUpdateInput:
+      type: object
+      properties:
+        currentName:
+          type: string
+        name:
+          type: string
+        prefix:
+          type: string
+        phone:
+          type: string
+        role:
+          type: string
+      required: [currentName, name, prefix, phone, role]
+
+    WorkerDeleteInput:
+      type: object
+      properties:
+        name:
+          type: string
+      required: [name]
 
     # ── Products ─────────────────────────────────────────────────────
     Product:

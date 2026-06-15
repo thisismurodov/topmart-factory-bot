@@ -3,4 +3,4 @@
 - [TopMart batch & raw-material flow](topmart-batch-flow.md) — batches created ONLY via bot (api batches.ts has no POST); BOM deduction lives in bot create_batch, not API.
 - [Deploy DB topology + cold-start auth](deploy-db-topology.md) — runtime DB is RAILWAY_DATABASE_URL; apply schema via idempotent ALTER (not drizzle push); cold-start 5xx must not force logout.
 - [Product profitability cost model](product-cost-model.md) — labor = rate/rate_type (kg→rate×weight, else rate), salary_cost deprecated; sale/elec/other ×weight; BOM absolute; revenue = sale_items.line_total.
-- [Worker name denormalization](worker-name-denormalization.md) — worker name copied into 7 tables (incl stock_movements.created_by); rename = copy→repoint→delete (FK has ON DELETE but no ON UPDATE CASCADE).
+- [Worker name denormalization](worker-name-denormalization.md) — name copied into 7 tables; rename = copy→repoint→delete; NEVER put worker name in URL path (junk names ./empty// break it) — identify via JSON body.

@@ -91,6 +91,18 @@ export interface WorkerInput {
   role: string;
 }
 
+export interface WorkerUpdateInput {
+  currentName: string;
+  name: string;
+  prefix: string;
+  phone: string;
+  role: string;
+}
+
+export interface WorkerDeleteInput {
+  name: string;
+}
+
 export interface Product {
   name: string;
   rateType: string;

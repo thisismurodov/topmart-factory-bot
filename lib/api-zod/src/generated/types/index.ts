@@ -32,5 +32,7 @@ export * from './saleInput';
 export * from './saleList';
 export * from './saleStatusInput';
 export * from './worker';
+export * from './workerDeleteInput';
 export * from './workerInput';
 export * from './workerStat';
+export * from './workerUpdateInput';

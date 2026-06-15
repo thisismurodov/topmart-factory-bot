@@ -4,10 +4,9 @@ import {
   GetWorkersResponse,
   CreateWorkerBody,
   UpdateWorkerBody,
-  UpdateWorkerParams,
   UpdateWorkerResponse,
-  DeleteWorkerParams,
-  HealthCheckResponse,
+  DeleteWorkerBody,
+  DeleteWorkerResponse,
 } from "@workspace/api-zod";
 
 const router: IRouter = Router();
@@ -42,20 +41,14 @@ router.post("/workers", async (req, res): Promise<void> => {
   }
 });
 
-router.put("/workers/:name", async (req, res): Promise<void> => {
-  const raw = Array.isArray(req.params.name) ? req.params.name[0] : req.params.name;
-  const params = UpdateWorkerParams.safeParse({ name: raw });
-  if (!params.success) {
-    res.status(400).json({ error: params.error.message });
-    return;
-  }
+router.put("/workers/update", async (req, res): Promise<void> => {
   const parsed = UpdateWorkerBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
 
-  const currentName = params.data.name;
+  const currentName = parsed.data.currentName;
   const newName = parsed.data.name.trim();
   const phone = parsed.data.phone.trim();
   const role = parsed.data.role;
@@ -140,22 +133,21 @@ router.put("/workers/:name", async (req, res): Promise<void> => {
   }
 });
 
-router.delete("/workers/:name", async (req, res): Promise<void> => {
-  const raw = Array.isArray(req.params.name) ? req.params.name[0] : req.params.name;
-  const params = DeleteWorkerParams.safeParse({ name: raw });
-  if (!params.success) {
-    res.status(400).json({ error: params.error.message });
+router.post("/workers/delete", async (req, res): Promise<void> => {
+  const parsed = DeleteWorkerBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
     return;
   }
 
-  const result = await pool.query("DELETE FROM workers WHERE name = $1", [params.data.name]);
+  const result = await pool.query("DELETE FROM workers WHERE name = $1", [parsed.data.name]);
 
   if ((result.rowCount ?? 0) === 0) {
     res.status(404).json({ error: "Worker not found" });
     return;
   }
 
-  res.json(HealthCheckResponse.parse({ status: "ok" }));
+  res.json(DeleteWorkerResponse.parse({ status: "ok" }));
 });
 
 export default router;

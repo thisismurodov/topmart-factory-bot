@@ -95,7 +95,7 @@ export default function Workers() {
 
   function onEditSubmit(values: WorkerForm) {
     if (!editingWorker) return;
-    updateWorker.mutate({ name: encodeURIComponent(editingWorker.name), data: values });
+    updateWorker.mutate({ data: { currentName: editingWorker.name, ...values } });
   }
 
   return (
@@ -349,7 +349,7 @@ export default function Workers() {
                               <AlertDialogCancel>Bekor qilish</AlertDialogCancel>
                               <AlertDialogAction
                                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                onClick={() => deleteWorker.mutate({ name: encodeURIComponent(worker.name) })}
+                                onClick={() => deleteWorker.mutate({ data: { name: worker.name } })}
                                 data-testid="btn-confirm-delete"
                               >
                                 {deleteWorker.isPending ? "O'chirilmoqda..." : "O'chirish"}

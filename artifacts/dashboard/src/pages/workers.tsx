@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useGetWorkers, getGetWorkersQueryKey, useCreateWorker, useDeleteWorker } from "@workspace/api-client-react";
+import { useState, useEffect } from "react";
+import { useGetWorkers, getGetWorkersQueryKey, useCreateWorker, useUpdateWorker, useDeleteWorker } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -12,7 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, Pencil } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -32,9 +32,15 @@ const formSchema = z.object({
   role: z.string().min(1, "Lavozim tanlanishi shart"),
 });
 
+type WorkerForm = z.infer<typeof formSchema>;
+
+const roleLabel = (role: string) =>
+  role === "worker" ? "Ishchi" : role === "packer" ? "Qadoqlovchi" : role === "admin" ? "Admin" : role;
+
 export default function Workers() {
   const queryClient = useQueryClient();
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [editingWorker, setEditingWorker] = useState<WorkerForm | null>(null);
 
   const { data: workers, isLoading } = useGetWorkers({
     query: { queryKey: getGetWorkersQueryKey() }
@@ -50,6 +56,15 @@ export default function Workers() {
     }
   });
 
+  const updateWorker = useUpdateWorker({
+    mutation: {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: getGetWorkersQueryKey() });
+        setEditingWorker(null);
+      }
+    }
+  });
+
   const deleteWorker = useDeleteWorker({
     mutation: {
       onSuccess: () => {
@@ -58,13 +73,29 @@ export default function Workers() {
     }
   });
 
-  const form = useForm<z.infer<typeof formSchema>>({
+  const form = useForm<WorkerForm>({
     resolver: zodResolver(formSchema),
     defaultValues: { name: "", prefix: "", phone: "", role: "worker" },
   });
 
-  function onSubmit(values: z.infer<typeof formSchema>) {
+  const editForm = useForm<WorkerForm>({
+    resolver: zodResolver(formSchema),
+    defaultValues: { name: "", prefix: "", phone: "", role: "worker" },
+  });
+
+  useEffect(() => {
+    if (editingWorker) {
+      editForm.reset(editingWorker);
+    }
+  }, [editingWorker, editForm]);
+
+  function onSubmit(values: WorkerForm) {
     createWorker.mutate({ data: values });
+  }
+
+  function onEditSubmit(values: WorkerForm) {
+    if (!editingWorker) return;
+    updateWorker.mutate({ name: encodeURIComponent(editingWorker.name), data: values });
   }
 
   return (
@@ -160,6 +191,94 @@ export default function Workers() {
         </Dialog>
       </div>
 
+      <Dialog open={editingWorker !== null} onOpenChange={(open) => { if (!open) { setEditingWorker(null); updateWorker.reset(); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Ishchini tahrirlash</DialogTitle>
+            <DialogDescription>
+              Ismni to'g'rilang yoki boshqa ma'lumotlarni yangilang. Ism o'zgartirilsa, ishchining barcha partiyalari, oyliklari va bot ulanishi avtomatik yangilanadi.
+            </DialogDescription>
+          </DialogHeader>
+          <Form {...editForm}>
+            <form onSubmit={editForm.handleSubmit(onEditSubmit)} className="space-y-4">
+              <FormField
+                control={editForm.control}
+                name="name"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>To'liq ismi</FormLabel>
+                    <FormControl>
+                      <Input placeholder="masalan: Aziz Karimov" {...field} data-testid="input-edit-worker-name" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={editForm.control}
+                  name="prefix"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Prefiks (Bot ID)</FormLabel>
+                      <FormControl>
+                        <Input placeholder="masalan: AZ" {...field} className="uppercase" data-testid="input-edit-worker-prefix" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={editForm.control}
+                  name="role"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Lavozim</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value}>
+                        <FormControl>
+                          <SelectTrigger data-testid="select-edit-worker-role">
+                            <SelectValue placeholder="Tanlang" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="worker">Ishchi</SelectItem>
+                          <SelectItem value="packer">Qadoqlovchi</SelectItem>
+                          <SelectItem value="admin">Admin</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+              <FormField
+                control={editForm.control}
+                name="phone"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Telegram telefon raqami</FormLabel>
+                    <FormControl>
+                      <Input placeholder="+998901234567" {...field} data-testid="input-edit-worker-phone" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              {updateWorker.isError && (
+                <p className="text-sm text-destructive" data-testid="text-edit-error">
+                  Saqlashda xatolik yuz berdi. Ism band bo'lishi mumkin.
+                </p>
+              )}
+              <DialogFooter className="pt-4">
+                <Button type="submit" disabled={updateWorker.isPending} data-testid="btn-submit-edit-worker">
+                  {updateWorker.isPending ? "Saqlanmoqda..." : "Saqlash"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
+
       <Card className="border-border">
         <CardContent className="p-0">
           <Table>
@@ -169,7 +288,7 @@ export default function Workers() {
                 <TableHead>Prefiks</TableHead>
                 <TableHead>Lavozim</TableHead>
                 <TableHead>Telefon</TableHead>
-                <TableHead className="text-right w-[80px]"></TableHead>
+                <TableHead className="text-right w-[120px]"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -199,35 +318,46 @@ export default function Workers() {
                       </span>
                     </TableCell>
                     <TableCell className="text-sm">
-                      {worker.role === "worker" ? "Ishchi" : worker.role === "packer" ? "Qadoqlovchi" : worker.role === "admin" ? "Admin" : worker.role}
+                      {roleLabel(worker.role)}
                     </TableCell>
                     <TableCell className="font-mono text-sm text-muted-foreground">{worker.phone}</TableCell>
                     <TableCell className="text-right">
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10" data-testid={`btn-delete-${worker.name}`}>
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>Ishchini o'chirish?</AlertDialogTitle>
-                            <AlertDialogDescription>
-                              {worker.name} bundan keyin bot orqali partiya kira olmaydi. Mavjud partiyalar saqlanib qoladi.
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>Bekor qilish</AlertDialogCancel>
-                            <AlertDialogAction 
-                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                              onClick={() => deleteWorker.mutate({ name: worker.name })}
-                              data-testid="btn-confirm-delete"
-                            >
-                              {deleteWorker.isPending ? "O'chirilmoqda..." : "O'chirish"}
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
+                      <div className="flex items-center justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                          onClick={() => setEditingWorker({ name: worker.name, prefix: worker.prefix, phone: worker.phone, role: worker.role })}
+                          data-testid={`btn-edit-${worker.name}`}
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </Button>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10" data-testid={`btn-delete-${worker.name}`}>
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Ishchini o'chirish?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                {worker.name} bundan keyin bot orqali partiya kira olmaydi. Mavjud partiyalar saqlanib qoladi.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Bekor qilish</AlertDialogCancel>
+                              <AlertDialogAction
+                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                onClick={() => deleteWorker.mutate({ name: encodeURIComponent(worker.name) })}
+                                data-testid="btn-confirm-delete"
+                              >
+                                {deleteWorker.isPending ? "O'chirilmoqda..." : "O'chirish"}
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))

@@ -973,6 +973,78 @@ export const useCreateWorker = <TError = ErrorType<unknown>,
       return useMutation(getCreateWorkerMutationOptions(options));
     }
 
+export const getUpdateWorkerUrl = (name: string,) => {
+
+
+
+
+  return `/api/workers/${name}`
+}
+
+/**
+ * @summary Update worker (rename + edit fields)
+ */
+export const updateWorker = async (name: string,
+    workerInput: WorkerInput, options?: RequestInit): Promise<Worker> => {
+
+  return customFetch<Worker>(getUpdateWorkerUrl(name),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      workerInput,)
+  }
+);}
+
+
+
+
+export const getUpdateWorkerMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateWorker>>, TError,{name: string;data: BodyType<WorkerInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateWorker>>, TError,{name: string;data: BodyType<WorkerInput>}, TContext> => {
+
+const mutationKey = ['updateWorker'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateWorker>>, {name: string;data: BodyType<WorkerInput>}> = (props) => {
+          const {name,data} = props ?? {};
+
+          return  updateWorker(name,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateWorkerMutationResult = NonNullable<Awaited<ReturnType<typeof updateWorker>>>
+    export type UpdateWorkerMutationBody = BodyType<WorkerInput>
+    export type UpdateWorkerMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Update worker (rename + edit fields)
+ */
+export const useUpdateWorker = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateWorker>>, TError,{name: string;data: BodyType<WorkerInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateWorker>>,
+        TError,
+        {name: string;data: BodyType<WorkerInput>},
+        TContext
+      > => {
+      return useMutation(getUpdateWorkerMutationOptions(options));
+    }
+
 export const getDeleteWorkerUrl = (name: string,) => {
 
 

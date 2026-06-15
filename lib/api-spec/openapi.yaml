@@ -248,6 +248,29 @@ paths:
                 $ref: "#/components/schemas/Worker"
 
   /workers/{name}:
+    put:
+      operationId: updateWorker
+      tags: [workers]
+      summary: Update worker (rename + edit fields)
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkerInput"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Worker"
     delete:
       operationId: deleteWorker
       tags: [workers]

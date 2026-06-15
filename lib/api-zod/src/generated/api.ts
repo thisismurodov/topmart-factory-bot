@@ -172,6 +172,28 @@ export const CreateWorkerBody = zod.object({
 
 
 /**
+ * @summary Update worker (rename + edit fields)
+ */
+export const UpdateWorkerParams = zod.object({
+  "name": zod.coerce.string()
+})
+
+export const UpdateWorkerBody = zod.object({
+  "name": zod.string(),
+  "prefix": zod.string(),
+  "phone": zod.string(),
+  "role": zod.string()
+})
+
+export const UpdateWorkerResponse = zod.object({
+  "name": zod.string(),
+  "prefix": zod.string(),
+  "phone": zod.string(),
+  "role": zod.string()
+})
+
+
+/**
  * @summary Delete worker
  */
 export const DeleteWorkerParams = zod.object({

@@ -1,0 +1,418 @@
+Bro 🔥
+
+Bu endi oddiy maosh hisoblash emas.
+
+Bu **TopMart Factory Payroll Engine** bo'lib qolyapti.
+
+Menga logika juda yoqdi, chunki endi ishchilar mahsulot emas, **kg oqimi** bo'yicha bog'lanadi.
+
+---
+
+# Ulushli kg-stavka tizimi
+
+## Arqon bo'limi
+
+```text
+Ishlab chiqaruvchi:
+1125 so'm/kg
+
+Zagatovkachi:
+375 so'm/kg
+
+Upakovka:
+750 so'm/kg
+
+Jami:
+2250 so'm/kg
+```
+
+---
+
+# Misol
+
+Botga kiritildi:
+
+```text
+Aziza
+3000 kg
+
+Gullola
+2700 kg
+
+Shohida
+2000 kg
+```
+
+---
+
+ERP hisoblaydi:
+
+```text
+Jami:
+
+7700 kg
+```
+
+---
+
+## Ishlab chiqaruvchilar
+
+Aziza
+
+```text
+3000 × 1125
+
+=
+3 375 000
+```
+
+---
+
+Gullola
+
+```text
+2700 × 1125
+
+=
+3 037 500
+```
+
+---
+
+Shohida
+
+```text
+2000 × 1125
+
+=
+2 250 000
+```
+
+---
+
+## Zagatovkachi
+
+```text
+7700 × 375
+
+=
+2 887 500
+```
+
+---
+
+## Upakovka
+
+Madina
+
+```text
+7700 × 375
+
+=
+2 887 500
+```
+
+---
+
+Dilnoza
+
+```text
+7700 × 375
+
+=
+2 887 500
+```
+
+---
+
+# Bot logikasi
+
+Bu yer eng zo'ri.
+
+Operator hech qachon:
+
+```text
+Zagatovkachi
+Upakovka
+```
+
+kiritmaydi.
+
+Faqat ishlab chiqaruvchilarni kiritadi.
+
+---
+
+Misol:
+
+```text
+Aziza
+120 kg
+
+Gullola
+200 kg
+
+Shohida
+120 kg
+```
+
+---
+
+Bot:
+
+```text
+Jami:
+
+440 kg
+```
+
+hisoblaydi.
+
+---
+
+Va avtomatik:
+
+## Aziza
+
+```text
+120 × 1125
+
+=
+135 000
+```
+
+---
+
+## Gullola
+
+```text
+200 × 1125
+
+=
+225 000
+```
+
+---
+
+## Shohida
+
+```text
+120 × 1125
+
+=
+135 000
+```
+
+---
+
+## Zagatovkachi TG
+
+Bot yuboradi:
+
+```text
+🏭 TopMart Factory
+
+Bugungi hajm:
+
+440 kg
+
+Hisob:
+
+440 × 375
+
+=
+
+165 000 so'm
+```
+
+---
+
+## Madina TG
+
+```text
+🏭 TopMart Factory
+
+Bugungi hajm:
+
+440 kg
+
+Hisob:
+
+440 × 375
+
+=
+
+165 000 so'm
+```
+
+---
+
+## Dilnoza TG
+
+```text
+🏭 TopMart Factory
+
+Bugungi hajm:
+
+440 kg
+
+Hisob:
+
+440 × 375
+
+=
+
+165 000 so'm
+```
+
+---
+
+# Database
+
+Yangi jadval kerak.
+
+```sql
+worker_profiles
+
+id
+name
+
+role
+
+producer
+preparation
+packer
+
+rate
+
+1125
+375
+375
+
+telegram_id
+```
+
+---
+
+# Payroll Ledger
+
+```sql
+salary_entries
+
+id
+
+worker_id
+
+batch_id
+
+kg
+
+rate
+
+amount
+
+created_at
+```
+
+---
+
+Misol:
+
+```text
+Aziza
+
+120 kg
+
+1125
+
+135000
+```
+
+---
+
+```text
+Madina
+
+440 kg
+
+375
+
+165000
+```
+
+---
+
+# Dashboard
+
+Har bir ishchi profilida:
+
+```text
+Aziza
+
+Bugun:
+135 000
+
+Bu oy:
+3 875 000
+
+Jami kg:
+3445
+```
+
+---
+
+```text
+Madina
+
+Bugun:
+165 000
+
+Bu oy:
+2 200 000
+
+Jami kg:
+5860
+```
+
+---
+
+# Men qo'shadigan eng kuchli narsa
+
+Rol bazasida:
+
+```text
+Producer
+1125
+
+Preparation
+375
+
+Packer
+375
+```
+
+saqlansin.
+
+Shunda ertaga:
+
+```text
+Producer
+1300
+```
+
+qilib qo'ysang, barcha hisob avtomatik o'zgaradi.
+
+---
+
+### Replit uchun asosiy topshiriq
+
+**Auto Shared Payroll Logic**
+
+* Producers are paid individually by their own kg × 1125.
+* Preparation workers are paid by TOTAL producer kg × 375.
+* Packers are paid by TOTAL producer kg × 375.
+* System automatically creates salary entries for preparation and packer workers after producer batch completion.
+* Salary notifications are automatically sent to assigned Telegram accounts.
+* Every generated payroll record must be stored in worker salary history.
+* Dashboard must show daily, monthly and lifetime earnings per worker.
+
+🔥 Bro, bu logika bilan maosh hisoblash deyarli to'liq avtomatlashtiriladi va eng muhimi — operator faqat ishlab chiqarilgan kg ni kiritadi, qolgan hamma narsani ERP hisoblaydi. Bu aynan tizimning kuchi. 😎🏭📦📊💰🚀

@@ -210,7 +210,8 @@ export const DeleteWorkerResponse = zod.object({
 export const GetProductsResponseItem = zod.object({
   "name": zod.string(),
   "rateType": zod.string(),
-  "rate": zod.number()
+  "rate": zod.number(),
+  "payrollMethod": zod.string()
 })
 export const GetProductsResponse = zod.array(GetProductsResponseItem)
 
@@ -221,7 +222,8 @@ export const GetProductsResponse = zod.array(GetProductsResponseItem)
 export const CreateProductBody = zod.object({
   "name": zod.string(),
   "rateType": zod.string(),
-  "rate": zod.number()
+  "rate": zod.number(),
+  "payrollMethod": zod.string().optional()
 })
 
 
@@ -266,6 +268,96 @@ export const MarkSalaryPaidBody = zod.object({
 
 export const MarkSalaryPaidResponse = zod.object({
   "status": zod.string()
+})
+
+
+/**
+ * @summary List role rates
+ */
+export const GetPayrollRoleRatesResponseItem = zod.object({
+  "scope": zod.string(),
+  "role": zod.string(),
+  "rate": zod.number(),
+  "updatedAt": zod.string().nullable()
+})
+export const GetPayrollRoleRatesResponse = zod.array(GetPayrollRoleRatesResponseItem)
+
+
+/**
+ * @summary Update a role rate
+ */
+export const UpdatePayrollRoleRateBody = zod.object({
+  "scope": zod.string().optional(),
+  "role": zod.string(),
+  "rate": zod.number()
+})
+
+export const UpdatePayrollRoleRateResponse = zod.object({
+  "scope": zod.string(),
+  "role": zod.string(),
+  "rate": zod.number(),
+  "updatedAt": zod.string().nullable()
+})
+
+
+/**
+ * @summary List assigned kg payroll workers
+ */
+export const GetKgPayrollWorkersResponseItem = zod.object({
+  "id": zod.number(),
+  "scope": zod.string(),
+  "workerName": zod.string(),
+  "role": zod.string(),
+  "active": zod.boolean()
+})
+export const GetKgPayrollWorkersResponse = zod.array(GetKgPayrollWorkersResponseItem)
+
+
+/**
+ * @summary Assign a worker to the kg payroll pool
+ */
+export const AssignKgPayrollWorkerBody = zod.object({
+  "scope": zod.string().optional(),
+  "workerName": zod.string(),
+  "role": zod.string()
+})
+
+
+/**
+ * @summary Remove a kg payroll assignment
+ */
+export const RemoveKgPayrollWorkerParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const RemoveKgPayrollWorkerResponse = zod.object({
+  "status": zod.string()
+})
+
+
+/**
+ * @summary Per-worker today/month/lifetime earnings and kg
+ */
+export const GetPayrollWorkerEarningsResponseItem = zod.object({
+  "worker": zod.string(),
+  "todayEarnings": zod.number(),
+  "monthEarnings": zod.number(),
+  "lifetimeEarnings": zod.number(),
+  "todayKg": zod.number(),
+  "monthKg": zod.number(),
+  "lifetimeKg": zod.number()
+})
+export const GetPayrollWorkerEarningsResponse = zod.array(GetPayrollWorkerEarningsResponseItem)
+
+
+/**
+ * @summary Today's day-close status and producer volume
+ */
+export const GetPayrollDayStatusResponse = zod.object({
+  "workDate": zod.string(),
+  "totalKg": zod.number(),
+  "closed": zod.boolean(),
+  "closedAt": zod.string().nullable()
 })
 
 

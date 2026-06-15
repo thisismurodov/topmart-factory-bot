@@ -65,6 +65,7 @@ def init_db() -> None:
                 quantity   INTEGER NOT NULL,
                 weight_kg  NUMERIC(10,3) NOT NULL DEFAULT 0,
                 earnings   NUMERIC(12,2) NOT NULL DEFAULT 0,
+                payroll_method TEXT NOT NULL DEFAULT 'PRODUCT_RATE',
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
             )
         """)
@@ -218,6 +219,88 @@ def init_db() -> None:
             ALTER TABLE inventory
             ADD COLUMN IF NOT EXISTS product_type TEXT NOT NULL DEFAULT 'finished'
         """)
+        # ── Rolga asoslangan kg maosh (Arqon bo'limi) ────────────────────
+        cur.execute("""
+            ALTER TABLE products
+              ADD COLUMN IF NOT EXISTS payroll_method TEXT NOT NULL DEFAULT 'PRODUCT_RATE'
+        """)
+        # Partiya yaratilgan paytdagi maosh usulini snapshot qilib saqlaymiz, shunda
+        # kun yopilganda umumiy kg ishlab chiqaruvchiga to'langan asos bilan mos keladi
+        # (mahsulot usuli keyin o'zgartirilsa ham eski partiyalarga ta'sir qilmaydi).
+        cur.execute("""
+            ALTER TABLE batches
+              ADD COLUMN IF NOT EXISTS payroll_method TEXT NOT NULL DEFAULT 'PRODUCT_RATE'
+        """)
+        # ROLE_BASED_KG faqat kg mahsulotlar uchun — DB darajasidagi kafolat (barcha
+        # yozuv yo'llari uchun: API PATCH/POST, bot va h.k.). Idempotent qo'shamiz.
+        cur.execute("""
+            DO $$ BEGIN
+              IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='products_role_kg_requires_kg') THEN
+                ALTER TABLE products ADD CONSTRAINT products_role_kg_requires_kg
+                  CHECK (payroll_method <> 'ROLE_BASED_KG' OR rate_type = 'kg');
+              END IF;
+            END $$;
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS payroll_role_rates (
+                id         SERIAL PRIMARY KEY,
+                scope      TEXT NOT NULL DEFAULT 'arqon',
+                role       TEXT NOT NULL,
+                rate       NUMERIC(12,2) NOT NULL DEFAULT 0,
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                UNIQUE (scope, role)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS kg_payroll_workers (
+                id          SERIAL PRIMARY KEY,
+                scope       TEXT NOT NULL DEFAULT 'arqon',
+                worker_name TEXT NOT NULL,
+                role        TEXT NOT NULL,
+                active      BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at  TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                UNIQUE (scope, worker_name, role)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS salary_entries (
+                id          SERIAL PRIMARY KEY,
+                scope       TEXT NOT NULL DEFAULT 'arqon',
+                worker      TEXT NOT NULL,
+                role        TEXT NOT NULL,
+                source_type TEXT NOT NULL,
+                batch_id    INTEGER,
+                work_date   DATE NOT NULL,
+                kg          NUMERIC(12,3) NOT NULL DEFAULT 0,
+                rate        NUMERIC(12,2) NOT NULL DEFAULT 0,
+                amount      NUMERIC(12,2) NOT NULL DEFAULT 0,
+                created_at  TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS salary_entries_daily_shared_uniq
+              ON salary_entries (scope, worker, role, work_date)
+              WHERE source_type = 'daily_shared'
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS daily_payroll_runs (
+                id        SERIAL PRIMARY KEY,
+                scope     TEXT NOT NULL DEFAULT 'arqon',
+                work_date DATE NOT NULL,
+                total_kg  NUMERIC(12,3) NOT NULL DEFAULT 0,
+                status    TEXT NOT NULL DEFAULT 'closed',
+                closed_by TEXT,
+                closed_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                UNIQUE (scope, work_date)
+            )
+        """)
+        # Standart rol stavkalari (Arqon) — seeded bayrog'idan qat'i nazar idempotent
+        for _role, _rate in (("producer", 1125), ("preparation", 375), ("packer", 375)):
+            cur.execute(
+                "INSERT INTO payroll_role_rates (scope, role, rate) VALUES ('arqon', %s, %s) "
+                "ON CONFLICT (scope, role) DO NOTHING",
+                (_role, _rate),
+            )
         # Eski mahsulot-ruxsat tizimi olib tashlandi — qolgan jadvalni tozalaymiz
         cur.execute("DROP TABLE IF EXISTS worker_product_permissions")
         _seed(cur)
@@ -277,6 +360,122 @@ def get_product_weight(name: str) -> float:
     if row and row["weight"] is not None:
         return float(row["weight"])
     return 1.0
+
+
+# ── Rolga asoslangan kg maosh (Arqon) ────────────────────────────────────────
+
+def get_product_method(name: str) -> str:
+    with get_conn() as (conn, cur):
+        cur.execute("SELECT payroll_method FROM products WHERE name=%s", (name,))
+        row = cur.fetchone()
+    return row["payroll_method"] if row and row["payroll_method"] else "PRODUCT_RATE"
+
+
+def get_role_rate(role: str, scope: str = "arqon") -> float:
+    with get_conn() as (conn, cur):
+        cur.execute(
+            "SELECT rate FROM payroll_role_rates WHERE scope=%s AND role=%s",
+            (scope, role),
+        )
+        row = cur.fetchone()
+    return float(row["rate"]) if row else 0.0
+
+
+def close_day(closed_by: str, scope: str = "arqon") -> dict:
+    """Kunni yopadi (bir marta hisoblanadi — "computed once").
+
+    Bugungi ROLE_BASED_KG ishlab chiqaruvchilar jami kg sini (partiya snapshot
+    usuli bo'yicha) hisoblab, biriktirilgan (active) tayyorlovchi/upakovkachilarga
+    (kg × rol stavkasi) 'daily_shared' maosh yozuvlarini yozadi va kunni
+    daily_payroll_runs'da qayd etadi. Sana Asia/Tashkent bo'yicha.
+
+    Kun yopilgach yozuvlar MUZLATILADI: qayta chaqirilsa stavka/summa snapshot'i
+    o'zgarmaydi va xodimlar qayta xabardor qilinmaydi — mavjud yozuvlar qaytariladi.
+
+    Returns: {"work_date", "total_kg", "entries":[{worker,role,rate,amount}], "already_closed"}
+    """
+    with get_conn() as (conn, cur):
+        cur.execute("SELECT (NOW() AT TIME ZONE 'Asia/Tashkent')::date AS d")
+        work_date = cur.fetchone()["d"]
+
+        # Bir vaqtda ikkita "Kunni yopish" bosilsa — ketma-ket bajariladi (ikki marta
+        # hisoblash/xabar yuborishning oldini oladi). Lock tranzaksiya oxirida ozod bo'ladi.
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"close_day:{scope}:{work_date}",))
+
+        cur.execute(
+            "SELECT total_kg FROM daily_payroll_runs WHERE scope=%s AND work_date=%s",
+            (scope, work_date),
+        )
+        existing_run = cur.fetchone()
+
+        # ── Kun avval yopilgan — muzlatilgan snapshot'ni qaytaramiz (qayta hisoblamaymiz) ──
+        if existing_run is not None:
+            cur.execute(
+                """SELECT worker, role, rate, amount FROM salary_entries
+                   WHERE scope=%s AND work_date=%s AND source_type='daily_shared'
+                   ORDER BY role, worker""",
+                (scope, work_date),
+            )
+            entries = [
+                {"worker": r["worker"], "role": r["role"],
+                 "rate": float(r["rate"]), "amount": float(r["amount"])}
+                for r in cur.fetchall()
+            ]
+            return {
+                "work_date": work_date,
+                "total_kg": float(existing_run["total_kg"]),
+                "entries": entries,
+                "already_closed": True,
+            }
+
+        # ── Birinchi yopilish — partiya snapshot usuli bo'yicha umumiy kg ──
+        cur.execute(
+            """SELECT COALESCE(SUM(b.weight_kg), 0) AS total_kg
+               FROM batches b
+               WHERE b.payroll_method = 'ROLE_BASED_KG'
+                 AND (b.created_at AT TIME ZONE 'Asia/Tashkent')::date = %s""",
+            (work_date,),
+        )
+        total_kg = float(cur.fetchone()["total_kg"])
+
+        cur.execute(
+            """SELECT worker_name, role FROM kg_payroll_workers
+               WHERE scope=%s AND active=TRUE ORDER BY role, worker_name""",
+            (scope,),
+        )
+        assigned = cur.fetchall()
+
+        cur.execute("SELECT role, rate FROM payroll_role_rates WHERE scope=%s", (scope,))
+        rates = {r["role"]: float(r["rate"]) for r in cur.fetchall()}
+
+        entries = []
+        for a in assigned:
+            role = a["role"]
+            rate = rates.get(role, 0.0)
+            amount = total_kg * rate
+            cur.execute(
+                """INSERT INTO salary_entries
+                       (scope, worker, role, source_type, work_date, kg, rate, amount)
+                   VALUES (%s,%s,%s,'daily_shared',%s,%s,%s,%s)
+                   ON CONFLICT (scope, worker, role, work_date) WHERE source_type='daily_shared'
+                   DO NOTHING""",
+                (scope, a["worker_name"], role, work_date, total_kg, rate, amount),
+            )
+            entries.append({"worker": a["worker_name"], "role": role, "rate": rate, "amount": amount})
+
+        cur.execute(
+            """INSERT INTO daily_payroll_runs (scope, work_date, total_kg, status, closed_by)
+               VALUES (%s,%s,%s,'closed',%s)
+               ON CONFLICT (scope, work_date) DO NOTHING""",
+            (scope, work_date, total_kg, closed_by),
+        )
+
+    return {
+        "work_date": work_date,
+        "total_kg": total_kg,
+        "entries": entries,
+        "already_closed": False,
+    }
 
 
 def add_worker(name: str, prefix: str, phone: str, role: str = "worker") -> bool:
@@ -424,10 +623,20 @@ def create_batch_session(worker: str, prefix: str, items: list[dict]) -> dict:
             earnings  = float(it.get("earnings") or 0.0)
             total_earnings += earnings
 
+            # Maosh usulini partiya yaratilgan paytda snapshot qilamiz (kun yopilganda
+            # umumiy kg shu asosda hisoblanadi, mahsulot usuli keyin o'zgarsa ham).
+            # Daromad hisoblangan paytdagi usul item bilan kelsa — aynan o'shani
+            # ishlatamiz (mos kafolatlanadi); bo'lmasa joriy usulni o'qiymiz.
+            method = it.get("payroll_method")
+            if not method:
+                cur.execute("SELECT payroll_method FROM products WHERE name=%s", (product,))
+                _prow = cur.fetchone()
+                method = (_prow["payroll_method"] if _prow and _prow["payroll_method"] else "PRODUCT_RATE")
+
             cur.execute(
-                """INSERT INTO batches (batch_code, worker, product, quantity, weight_kg, earnings)
-                   VALUES (%s,%s,%s,%s,%s,%s)""",
-                (batch_code, worker, product, quantity, weight_kg, earnings),
+                """INSERT INTO batches (batch_code, worker, product, quantity, weight_kg, earnings, payroll_method)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+                (batch_code, worker, product, quantity, weight_kg, earnings, method),
             )
 
             # Tayyor mahsulotni faol omborga "Kirim" qilib yozamiz

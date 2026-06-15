@@ -6,9 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface ProductInput {
-  name: string;
-  rateType: string;
-  rate: number;
-  payrollMethod?: string;
+export interface KgPayrollWorker {
+  id: number;
+  scope: string;
+  workerName: string;
+  role: string;
+  active: boolean;
 }

@@ -107,12 +107,14 @@ export interface Product {
   name: string;
   rateType: string;
   rate: number;
+  payrollMethod: string;
 }
 
 export interface ProductInput {
   name: string;
   rateType: string;
   rate: number;
+  payrollMethod?: string;
 }
 
 export interface SalaryRow {
@@ -128,6 +130,52 @@ export interface SalaryPayInput {
   year: number;
   month: number;
   amount: number;
+}
+
+export interface PayrollRoleRate {
+  scope: string;
+  role: string;
+  rate: number;
+  /** @nullable */
+  updatedAt: string | null;
+}
+
+export interface PayrollRoleRateInput {
+  scope?: string;
+  role: string;
+  rate: number;
+}
+
+export interface KgPayrollWorker {
+  id: number;
+  scope: string;
+  workerName: string;
+  role: string;
+  active: boolean;
+}
+
+export interface KgPayrollWorkerInput {
+  scope?: string;
+  workerName: string;
+  role: string;
+}
+
+export interface PayrollWorkerEarnings {
+  worker: string;
+  todayEarnings: number;
+  monthEarnings: number;
+  lifetimeEarnings: number;
+  todayKg: number;
+  monthKg: number;
+  lifetimeKg: number;
+}
+
+export interface PayrollDayStatus {
+  workDate: string;
+  totalKg: number;
+  closed: boolean;
+  /** @nullable */
+  closedAt: string | null;
 }
 
 export interface Customer {

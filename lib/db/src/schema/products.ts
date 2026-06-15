@@ -16,6 +16,7 @@ export const productsTable = pgTable("products", {
   electricityCost:   numeric("electricity_cost", { precision: 12, scale: 2 }).notNull().default("0"),
   otherCost:         numeric("other_cost", { precision: 12, scale: 2 }).notNull().default("0"),
   minimumStock:      integer("minimum_stock").notNull().default(0),
+  payrollMethod:     text("payroll_method").notNull().default("PRODUCT_RATE"),
   active:            boolean("active").notNull().default(true),
   createdAt:         timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

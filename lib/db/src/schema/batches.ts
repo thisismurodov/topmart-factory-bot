@@ -10,6 +10,7 @@ export const batchesTable = pgTable("batches", {
   quantity: integer("quantity").notNull(),
   weightKg: numeric("weight_kg", { precision: 10, scale: 3 }).notNull(),
   earnings: numeric("earnings", { precision: 12, scale: 2 }).notNull(),
+  payrollMethod: text("payroll_method").notNull().default("PRODUCT_RATE"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

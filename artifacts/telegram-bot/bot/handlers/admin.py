@@ -11,7 +11,10 @@ from ..database import (
     get_products, get_registered_packers,
     assign_packer_workers, get_packer_workers, get_workers,
     clear_test_data, delete_worker,
+    close_day, get_worker_chat_id,
 )
+
+ROLE_UZ = {"producer": "Ishlab chiqaruvchi", "preparation": "Tayyorlash", "packer": "Upakovka"}
 
 (
     ADM_HOME,
@@ -69,6 +72,52 @@ async def adm_home_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         from .salary import _send_month_report
         today = _date.today()
         await _send_month_report(query.message, today.year, today.month, edit=True)
+        return ADM_HOME
+
+    elif action == "close_day":
+        result = close_day(closed_by=str(query.from_user.id))
+        work_date = result["work_date"]
+        total_kg  = result["total_kg"]
+        entries   = result["entries"]
+
+        # Faqat birinchi yopilishda xodimlarni xabardor qilamiz (qayta yopishda emas).
+        if not result["already_closed"]:
+            for e in entries:
+                chat_id = get_worker_chat_id(e["worker"])
+                if not chat_id:
+                    continue
+                try:
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=(
+                            f"🏭 *TopMart — Kun yakunlandi*\n\n"
+                            f"📅 Sana: {work_date}\n"
+                            f"⚖️ Bugungi umumiy hajm: *{total_kg:,.1f} kg*\n"
+                            f"🧩 Rol: {ROLE_UZ.get(e['role'], e['role'])}\n"
+                            f"💰 Stavka: {e['rate']:,.0f} so'm/kg\n"
+                            f"💵 Bugungi maosh: *{e['amount']:,.0f} so'm*"
+                        ),
+                        parse_mode="Markdown",
+                    )
+                except Exception:
+                    pass
+
+        if entries:
+            lines = "\n".join(
+                f"• {e['worker']} ({ROLE_UZ.get(e['role'], e['role'])}) — {e['amount']:,.0f} so'm"
+                for e in entries
+            )
+        else:
+            lines = "_(biriktirilgan tayyorlovchi/upakovkachi yo'q)_"
+        note = ("ℹ️ Kun allaqachon yopilgan — mavjud hisob ko'rsatildi (qayta hisoblanmadi)."
+                if result["already_closed"] else "✅ Kun yopildi.")
+        await query.edit_message_text(
+            f"🔒 *Kunni yopish* — {work_date}\n\n"
+            f"⚖️ Umumiy hajm: *{total_kg:,.1f} kg*\n\n"
+            f"{lines}\n\n{note}",
+            parse_mode="Markdown",
+            reply_markup=admin_main_keyboard(),
+        )
         return ADM_HOME
 
     elif action == "assign_packer":

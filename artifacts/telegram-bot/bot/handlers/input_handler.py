@@ -12,6 +12,7 @@ from ..keyboards import (
 from ..database import (
     create_batch_session, get_worker_chat_id, get_workers,
     get_products, get_product_weight, get_user_role, get_worker_monthly,
+    get_product_method,
 )
 from ..config import calc_earnings, SUPERADMIN_CHAT_ID
 from ..label_generator import generate_batch_session_pdf
@@ -167,15 +168,19 @@ async def _add_item(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     quantity  = context.user_data["quantity"]
     weight_kg = context.user_data.get("weight_kg", 0.0)
     qc        = context.user_data.get("weight_qc")
-    earnings  = calc_earnings(product, quantity, weight_kg)
+    # Usulni daromad bilan bir paytda (bir o'qishda) qayd etamiz — keyin partiyaga
+    # shu usul saqlanadi, shunda ishlab chiqaruvchi to'lovi va snapshot mos bo'ladi.
+    method    = get_product_method(product)
+    earnings  = calc_earnings(product, quantity, weight_kg, method=method)
 
     items = context.user_data.setdefault("items", [])
     items.append({
-        "product":   product,
-        "quantity":  quantity,
-        "weight_kg": weight_kg,
-        "earnings":  earnings,
-        "qc":        qc,
+        "product":        product,
+        "quantity":       quantity,
+        "weight_kg":      weight_kg,
+        "earnings":       earnings,
+        "payroll_method": method,
+        "qc":             qc,
     })
 
     # Faqat joriy mahsulotning vaqtinchalik maydonlarini tozalaymiz (savat saqlanadi)

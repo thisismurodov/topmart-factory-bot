@@ -9,6 +9,7 @@ import Batches from "@/pages/batches";
 import Workers from "@/pages/workers";
 import Products from "@/pages/products";
 import Salary from "@/pages/salary";
+import Payroll from "@/pages/payroll";
 import Customers from "@/pages/customers";
 import Sales from "@/pages/sales";
 import Inventory from "@/pages/inventory";
@@ -69,6 +70,7 @@ function Router() {
             <Route path="/workers" component={Workers} />
             <Route path="/products" component={Products} />
             <Route path="/salary" component={Salary} />
+            <Route path="/payroll" component={Payroll} />
             <Route path="/customers" component={Customers} />
             <Route path="/sales" component={Sales} />
             <Route path="/inventory" component={Inventory} />

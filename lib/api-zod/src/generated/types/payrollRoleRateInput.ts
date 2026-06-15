@@ -6,9 +6,8 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface ProductInput {
-  name: string;
-  rateType: string;
+export interface PayrollRoleRateInput {
+  scope?: string;
+  role: string;
   rate: number;
-  payrollMethod?: string;
 }

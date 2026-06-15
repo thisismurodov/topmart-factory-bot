@@ -10,4 +10,5 @@ export interface Product {
   name: string;
   rateType: string;
   rate: number;
+  payrollMethod: string;
 }

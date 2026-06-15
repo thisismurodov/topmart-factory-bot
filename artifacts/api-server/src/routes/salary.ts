@@ -22,10 +22,18 @@ router.get("/salary/report", async (req, res): Promise<void> => {
   const period = `${year}-${String(month).padStart(2, "0")}`;
 
   const [earningsResult, paymentsResult] = await Promise.all([
+    // Producer earnings (batches) + daily_shared prep/packer entries (salary_entries)
     pool.query(
-      `SELECT worker, COALESCE(SUM(earnings), 0.0) AS "totalEarnings"
-       FROM batches
-       WHERE TO_CHAR(created_at, 'YYYY-MM') = $1
+      `SELECT worker, COALESCE(SUM(amt), 0.0) AS "totalEarnings"
+       FROM (
+         SELECT worker, earnings AS amt
+         FROM batches
+         WHERE TO_CHAR(created_at, 'YYYY-MM') = $1
+         UNION ALL
+         SELECT worker, amount AS amt
+         FROM salary_entries
+         WHERE source_type = 'daily_shared' AND TO_CHAR(work_date, 'YYYY-MM') = $1
+       ) t
        GROUP BY worker
        ORDER BY worker`,
       [period]

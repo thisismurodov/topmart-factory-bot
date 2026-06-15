@@ -15,6 +15,7 @@ tags:
   - name: workers
   - name: products
   - name: salary
+  - name: payroll
   - name: customers
   - name: sales
   - name: inventory
@@ -388,6 +389,118 @@ paths:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
 
+  # ── Payroll (rolga asoslangan kg maosh) ───────────────────────────────
+  /payroll/role-rates:
+    get:
+      operationId: getPayrollRoleRates
+      tags: [payroll]
+      summary: List role rates
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PayrollRoleRate"
+    put:
+      operationId: updatePayrollRoleRate
+      tags: [payroll]
+      summary: Update a role rate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PayrollRoleRateInput"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PayrollRoleRate"
+
+  /payroll/workers:
+    get:
+      operationId: getKgPayrollWorkers
+      tags: [payroll]
+      summary: List assigned kg payroll workers
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/KgPayrollWorker"
+    post:
+      operationId: assignKgPayrollWorker
+      tags: [payroll]
+      summary: Assign a worker to the kg payroll pool
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KgPayrollWorkerInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KgPayrollWorker"
+
+  /payroll/workers/{id}:
+    delete:
+      operationId: removeKgPayrollWorker
+      tags: [payroll]
+      summary: Remove a kg payroll assignment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /payroll/worker-earnings:
+    get:
+      operationId: getPayrollWorkerEarnings
+      tags: [payroll]
+      summary: Per-worker today/month/lifetime earnings and kg
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PayrollWorkerEarnings"
+
+  /payroll/day-status:
+    get:
+      operationId: getPayrollDayStatus
+      tags: [payroll]
+      summary: Today's day-close status and producer volume
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PayrollDayStatus"
+
   # ── Customers ─────────────────────────────────────────────────────────
   /customers:
     get:
@@ -751,7 +864,9 @@ components:
           type: string
         rate:
           type: number
-      required: [name, rateType, rate]
+        payrollMethod:
+          type: string
+      required: [name, rateType, rate, payrollMethod]
 
     ProductInput:
       type: object
@@ -762,6 +877,8 @@ components:
           type: string
         rate:
           type: number
+        payrollMethod:
+          type: string
       required: [name, rateType, rate]
 
     # ── Salary ──────────────────────────────────────────────────────
@@ -790,6 +907,89 @@ components:
         amount:
           type: number
       required: [worker, year, month, amount]
+
+    # ── Payroll (rolga asoslangan kg maosh) ─────────────────────────
+    PayrollRoleRate:
+      type: object
+      properties:
+        scope:
+          type: string
+        role:
+          type: string
+        rate:
+          type: number
+        updatedAt:
+          type: ["string", "null"]
+      required: [scope, role, rate, updatedAt]
+
+    PayrollRoleRateInput:
+      type: object
+      properties:
+        scope:
+          type: string
+        role:
+          type: string
+        rate:
+          type: number
+      required: [role, rate]
+
+    KgPayrollWorker:
+      type: object
+      properties:
+        id:
+          type: integer
+        scope:
+          type: string
+        workerName:
+          type: string
+        role:
+          type: string
+        active:
+          type: boolean
+      required: [id, scope, workerName, role, active]
+
+    KgPayrollWorkerInput:
+      type: object
+      properties:
+        scope:
+          type: string
+        workerName:
+          type: string
+        role:
+          type: string
+      required: [workerName, role]
+
+    PayrollWorkerEarnings:
+      type: object
+      properties:
+        worker:
+          type: string
+        todayEarnings:
+          type: number
+        monthEarnings:
+          type: number
+        lifetimeEarnings:
+          type: number
+        todayKg:
+          type: number
+        monthKg:
+          type: number
+        lifetimeKg:
+          type: number
+      required: [worker, todayEarnings, monthEarnings, lifetimeEarnings, todayKg, monthKg, lifetimeKg]
+
+    PayrollDayStatus:
+      type: object
+      properties:
+        workDate:
+          type: string
+        totalKg:
+          type: number
+        closed:
+          type: boolean
+        closedAt:
+          type: ["string", "null"]
+      required: [workDate, totalKg, closed, closedAt]
 
     # ── Customers ───────────────────────────────────────────────────
     Customer:

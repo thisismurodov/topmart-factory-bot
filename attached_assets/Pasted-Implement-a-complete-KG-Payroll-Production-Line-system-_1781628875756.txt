@@ -1,0 +1,249 @@
+Implement a complete KG Payroll Production Line system redesign.
+
+GOAL:
+Replace the current "Kg Maosh" settings page with a Production Line Payroll Management system that reflects the real factory workflow.
+
+==================================
+PAYROLL MODEL
+==================================
+
+There are 3 role groups:
+
+1. PRODUCERS (Ishlab chiqaruvchilar)
+2. PREPARATION (Zagatovka)
+3. PACKAGING (Upakovka)
+
+Producer payroll:
+- Individual salary
+- Formula:
+  worker_kg × 1125
+
+Example:
+Aziza = 400 kg
+Salary = 400 × 1125 = 450,000
+
+Preparation payroll:
+- Shared pool
+- Formula:
+
+(total_line_kg × 375)
+÷ number_of_preparation_workers
+
+Example:
+Total kg = 1000
+
+Pool:
+1000 × 375 = 375,000
+
+If 2 preparation workers:
+375,000 ÷ 2 = 187,500 each
+
+Packaging payroll:
+- Shared pool
+- Formula:
+
+(total_line_kg × 750)
+÷ number_of_packaging_workers
+
+Example:
+Total kg = 1000
+
+Pool:
+1000 × 750 = 750,000
+
+If 2 packaging workers:
+750,000 ÷ 2 = 375,000 each
+
+==================================
+DATABASE CHANGES
+==================================
+
+Create production_lines table:
+
+id
+name
+created_at
+
+Create production_line_workers table:
+
+id
+line_id
+worker_id
+role
+
+Role values:
+
+producer
+preparation
+packaging
+
+==================================
+DASHBOARD REDESIGN
+==================================
+
+Rename:
+
+"Kg Maosh"
+
+to
+
+"Production Lines"
+
+or
+
+"Ishlab Chiqarish Liniyalari"
+
+Each line must visually show:
+
+🏭 Arqon Bo'limi
+
+👷 Ishlab chiqaruvchilar
+
+Aziza
+Gullola
+Shohida
+
+📦 Zagatovkachilar
+
+Zulxumor
+
+📦 Upakovkachilar
+
+Dilnoza
+Madina
+
+==================================
+WORKER LIMITS
+==================================
+
+Producers:
+minimum 1
+maximum 5
+
+Preparation:
+minimum 1
+maximum 3
+
+Packaging:
+minimum 1
+maximum 5
+
+Dashboard must allow:
+
++ Add Producer
++ Add Preparation Worker
++ Add Packaging Worker
+
+with worker selection dropdowns.
+
+==================================
+PAYROLL ENGINE
+==================================
+
+When producer batch is completed:
+
+1. Save producer salary entries immediately.
+
+Example:
+
+Aziza
+400 kg
+400 × 1125
+
+Gullola
+200 kg
+200 × 1125
+
+2. Calculate total line kg.
+
+Example:
+
+400 + 200 + 400
+
+=
+
+1000 kg
+
+3. Create daily preparation pool.
+
+Pool:
+1000 × 375
+
+4. Split pool among all preparation workers.
+
+5. Create daily packaging pool.
+
+Pool:
+1000 × 750
+
+6. Split pool among all packaging workers.
+
+==================================
+SALARY RECORDS
+==================================
+
+Create salary entries for every generated payroll item.
+
+Fields:
+
+worker_id
+line_id
+batch_id
+role
+kg
+rate
+amount
+date
+
+==================================
+WORKER PROFILE
+==================================
+
+Each worker profile should show:
+
+Today salary
+This month salary
+Total salary
+Today kg
+This month kg
+Lifetime kg
+
+==================================
+UI IMPROVEMENT
+==================================
+
+Do NOT display payroll as a simple rate table.
+
+Display it as a visual workflow:
+
+Producers
+     ↓
+Total KG
+     ↓
+Preparation Pool
+     ↓
+Packaging Pool
+     ↓
+Payroll Generated
+
+Make the page look like a production workflow management system, not a configuration screen.
+
+==================================
+IMPORTANT
+==================================
+
+Packaging rate is NOT 375.
+
+Packaging shared pool rate:
+
+750 so'm/kg
+
+Preparation shared pool rate:
+
+375 so'm/kg
+
+Producer rate:
+
+1125 so'm/kg
+
+Use these as default values but keep them editable by admin.

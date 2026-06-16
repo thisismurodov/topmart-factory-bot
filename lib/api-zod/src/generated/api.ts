@@ -340,6 +340,8 @@ export const RemoveKgPayrollWorkerResponse = zod.object({
  */
 export const GetPayrollWorkerEarningsResponseItem = zod.object({
   "worker": zod.string(),
+  "lineName": zod.string().nullable(),
+  "role": zod.string().nullable(),
   "todayEarnings": zod.number(),
   "monthEarnings": zod.number(),
   "lifetimeEarnings": zod.number(),
@@ -356,8 +358,129 @@ export const GetPayrollWorkerEarningsResponse = zod.array(GetPayrollWorkerEarnin
 export const GetPayrollDayStatusResponse = zod.object({
   "workDate": zod.string(),
   "totalKg": zod.number(),
+  "unassignedKg": zod.number(),
   "closed": zod.boolean(),
-  "closedAt": zod.string().nullable()
+  "lines": zod.array(zod.object({
+  "lineId": zod.number(),
+  "lineName": zod.string(),
+  "totalKg": zod.number(),
+  "closed": zod.boolean(),
+  "closedAt": zod.string().nullable(),
+  "producers": zod.array(zod.object({
+  "id": zod.number(),
+  "workerName": zod.string(),
+  "role": zod.string()
+})),
+  "preparation": zod.array(zod.object({
+  "id": zod.number(),
+  "workerName": zod.string(),
+  "role": zod.string()
+})),
+  "packaging": zod.array(zod.object({
+  "id": zod.number(),
+  "workerName": zod.string(),
+  "role": zod.string()
+})),
+  "producerRate": zod.number(),
+  "prepRate": zod.number(),
+  "packagingRate": zod.number(),
+  "prepPool": zod.number(),
+  "prepPerWorker": zod.number(),
+  "packagingPool": zod.number(),
+  "packagingPerWorker": zod.number()
+}))
+})
+
+
+/**
+ * @summary List production lines
+ */
+export const GetProductionLinesResponseItem = zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "createdAt": zod.string().nullable()
+})
+export const GetProductionLinesResponse = zod.array(GetProductionLinesResponseItem)
+
+
+/**
+ * @summary Create a production line
+ */
+export const CreateProductionLineBody = zod.object({
+  "name": zod.string()
+})
+
+export const CreateProductionLineResponse = zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "createdAt": zod.string().nullable()
+})
+
+
+/**
+ * @summary Delete a production line
+ */
+export const DeleteProductionLineParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const DeleteProductionLineResponse = zod.object({
+  "status": zod.string()
+})
+
+
+/**
+ * @summary Add a worker to a production line (enforces per-role limits)
+ */
+export const AddProductionLineWorkerParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const AddProductionLineWorkerBody = zod.object({
+  "workerName": zod.string(),
+  "role": zod.string()
+})
+
+export const AddProductionLineWorkerResponse = zod.object({
+  "id": zod.number(),
+  "lineId": zod.number(),
+  "workerName": zod.string(),
+  "role": zod.string()
+})
+
+
+/**
+ * @summary Remove a worker from a production line
+ */
+export const RemoveProductionLineWorkerParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const RemoveProductionLineWorkerResponse = zod.object({
+  "status": zod.string()
+})
+
+
+/**
+ * @summary Close today's payroll for all lines (idempotent per line+date)
+ */
+export const ClosePayrollDayResponse = zod.object({
+  "workDate": zod.string(),
+  "totalKg": zod.number(),
+  "alreadyClosed": zod.boolean(),
+  "newEntryCount": zod.number(),
+  "lines": zod.array(zod.object({
+  "lineId": zod.number(),
+  "lineName": zod.string(),
+  "totalKg": zod.number(),
+  "alreadyClosed": zod.boolean(),
+  "entries": zod.array(zod.object({
+  "worker": zod.string(),
+  "role": zod.string(),
+  "rate": zod.number(),
+  "amount": zod.number()
+}))
+}))
 })
 
 

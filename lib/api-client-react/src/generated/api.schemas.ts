@@ -162,6 +162,10 @@ export interface KgPayrollWorkerInput {
 
 export interface PayrollWorkerEarnings {
   worker: string;
+  /** @nullable */
+  lineName: string | null;
+  /** @nullable */
+  role: string | null;
   todayEarnings: number;
   monthEarnings: number;
   lifetimeEarnings: number;
@@ -170,12 +174,83 @@ export interface PayrollWorkerEarnings {
   lifetimeKg: number;
 }
 
-export interface PayrollDayStatus {
-  workDate: string;
+export interface ProductionLine {
+  id: number;
+  name: string;
+  /** @nullable */
+  createdAt: string | null;
+}
+
+export interface ProductionLineInput {
+  name: string;
+}
+
+export interface ProductionLineWorker {
+  id: number;
+  lineId: number;
+  workerName: string;
+  role: string;
+}
+
+export interface ProductionLineWorkerInput {
+  workerName: string;
+  role: string;
+}
+
+export interface PayrollLineMember {
+  id: number;
+  workerName: string;
+  role: string;
+}
+
+export interface ProductionLineStatus {
+  lineId: number;
+  lineName: string;
   totalKg: number;
   closed: boolean;
   /** @nullable */
   closedAt: string | null;
+  producers: PayrollLineMember[];
+  preparation: PayrollLineMember[];
+  packaging: PayrollLineMember[];
+  producerRate: number;
+  prepRate: number;
+  packagingRate: number;
+  prepPool: number;
+  prepPerWorker: number;
+  packagingPool: number;
+  packagingPerWorker: number;
+}
+
+export interface PayrollDayStatus {
+  workDate: string;
+  totalKg: number;
+  unassignedKg: number;
+  closed: boolean;
+  lines: ProductionLineStatus[];
+}
+
+export interface PayrollCloseEntry {
+  worker: string;
+  role: string;
+  rate: number;
+  amount: number;
+}
+
+export interface PayrollCloseLine {
+  lineId: number;
+  lineName: string;
+  totalKg: number;
+  alreadyClosed: boolean;
+  entries: PayrollCloseEntry[];
+}
+
+export interface PayrollCloseResult {
+  workDate: string;
+  totalKg: number;
+  alreadyClosed: boolean;
+  newEntryCount: number;
+  lines: PayrollCloseLine[];
 }
 
 export interface Customer {

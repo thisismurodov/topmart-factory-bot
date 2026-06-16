@@ -29,7 +29,7 @@ const NAV_ITEMS = [
   { href: "/raw-materials", label: "Xom ashyolar", icon: Boxes },
   { href: "/packers",    label: "Packerlar",   icon: HardHat },
   { href: "/salary",     label: "Maosh",       icon: Banknote },
-  { href: "/payroll",    label: "Kg maosh",    icon: Scale },
+  { href: "/payroll",    label: "Ishlab chiqarish liniyalari", icon: Scale },
   { href: "/customers",  label: "Mijozlar",    icon: Building2 },
   { href: "/sales",      label: "Savdolar",    icon: ShoppingBag },
   { href: "/debts",      label: "Nasiya",      icon: CreditCard },

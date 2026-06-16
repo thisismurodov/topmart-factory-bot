@@ -14,7 +14,7 @@ from ..database import (
     close_day, get_worker_chat_id,
 )
 
-ROLE_UZ = {"producer": "Ishlab chiqaruvchi", "preparation": "Tayyorlash", "packer": "Upakovka"}
+ROLE_UZ = {"producer": "Ishlab chiqaruvchi", "preparation": "Tayyorlash", "packaging": "Upakovka", "packer": "Upakovka"}
 
 (
     ADM_HOME,
@@ -76,45 +76,51 @@ async def adm_home_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     elif action == "close_day":
         result = close_day(closed_by=str(query.from_user.id))
-        work_date = result["work_date"]
-        total_kg  = result["total_kg"]
-        entries   = result["entries"]
+        work_date    = result["work_date"]
+        total_kg     = result["total_kg"]
+        result_lines = result["lines"]
+        line_totals  = {ln["line_id"]: ln["total_kg"] for ln in result_lines}
 
-        # Faqat birinchi yopilishda xodimlarni xabardor qilamiz (qayta yopishda emas).
-        if not result["already_closed"]:
-            for e in entries:
-                chat_id = get_worker_chat_id(e["worker"])
-                if not chat_id:
-                    continue
-                try:
-                    await context.bot.send_message(
-                        chat_id=chat_id,
-                        text=(
-                            f"🏭 *TopMart — Kun yakunlandi*\n\n"
-                            f"📅 Sana: {work_date}\n"
-                            f"⚖️ Bugungi umumiy hajm: *{total_kg:,.1f} kg*\n"
-                            f"🧩 Rol: {ROLE_UZ.get(e['role'], e['role'])}\n"
-                            f"💰 Stavka: {e['rate']:,.0f} so'm/kg\n"
-                            f"💵 Bugungi maosh: *{e['amount']:,.0f} so'm*"
-                        ),
-                        parse_mode="Markdown",
-                    )
-                except Exception:
-                    pass
+        # Faqat birinchi yopilgan liniyalardagi xodimlarni xabardor qilamiz.
+        for e in result["new_entries"]:
+            chat_id = get_worker_chat_id(e["worker"])
+            if not chat_id:
+                continue
+            try:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=(
+                        f"🏭 *TopMart — Kun yakunlandi*\n\n"
+                        f"📅 Sana: {work_date}\n"
+                        f"🏷 Liniya: {e['line_name']}\n"
+                        f"⚖️ Liniya hajmi: *{line_totals.get(e['line_id'], 0):,.1f} kg*\n"
+                        f"🧩 Rol: {ROLE_UZ.get(e['role'], e['role'])}\n"
+                        f"💰 Stavka: {e['rate']:,.0f} so'm/kg\n"
+                        f"💵 Bugungi maosh: *{e['amount']:,.0f} so'm*"
+                    ),
+                    parse_mode="Markdown",
+                )
+            except Exception:
+                pass
 
-        if entries:
-            lines = "\n".join(
-                f"• {e['worker']} ({ROLE_UZ.get(e['role'], e['role'])}) — {e['amount']:,.0f} so'm"
-                for e in entries
-            )
-        else:
-            lines = "_(biriktirilgan tayyorlovchi/upakovkachi yo'q)_"
+        blocks = []
+        for ln in result_lines:
+            if ln["entries"]:
+                body = "\n".join(
+                    f"  • {e['worker']} ({ROLE_UZ.get(e['role'], e['role'])}) — {e['amount']:,.0f} so'm"
+                    for e in ln["entries"]
+                )
+            else:
+                body = "  _(biriktirilgan tayyorlovchi/upakovkachi yo'q)_"
+            tag = " ✓" if ln["already_closed"] else ""
+            blocks.append(f"🏷 *{ln['line_name']}* — {ln['total_kg']:,.1f} kg{tag}\n{body}")
+        body_text = "\n\n".join(blocks) if blocks else "_(liniyalar yo'q)_"
         note = ("ℹ️ Kun allaqachon yopilgan — mavjud hisob ko'rsatildi (qayta hisoblanmadi)."
                 if result["already_closed"] else "✅ Kun yopildi.")
         await query.edit_message_text(
             f"🔒 *Kunni yopish* — {work_date}\n\n"
             f"⚖️ Umumiy hajm: *{total_kg:,.1f} kg*\n\n"
-            f"{lines}\n\n{note}",
+            f"{body_text}\n\n{note}",
             parse_mode="Markdown",
             reply_markup=admin_main_keyboard(),
         )

@@ -3,11 +3,15 @@ import { authFetch } from "@/App";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   useGetPayrollRoleRates, getGetPayrollRoleRatesQueryKey, useUpdatePayrollRoleRate,
-  useGetKgPayrollWorkers, getGetKgPayrollWorkersQueryKey, useAssignKgPayrollWorker, useRemoveKgPayrollWorker,
   useGetPayrollWorkerEarnings, getGetPayrollWorkerEarningsQueryKey,
   useGetPayrollDayStatus, getGetPayrollDayStatusQueryKey,
   useGetWorkers, getGetWorkersQueryKey,
   useGetProducts, getGetProductsQueryKey,
+  useCreateProductionLine,
+  useDeleteProductionLine,
+  useAddProductionLineWorker,
+  useRemoveProductionLineWorker,
+  useClosePayrollDay,
 } from "@workspace/api-client-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
@@ -24,14 +28,24 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency, formatNumber, formatDate } from "@/lib/format";
-import { Lock, LockOpen, Save, Plus, Trash2, Weight, UserPlus } from "lucide-react";
+import {
+  Lock, LockOpen, Save, Plus, Trash2, Weight, UserPlus, Factory,
+  AlertTriangle, Hammer, Boxes, PackageCheck,
+} from "lucide-react";
 
 const ROLE_UZ: Record<string, string> = {
   producer: "Ishlab chiqaruvchi",
   preparation: "Tayyorlash",
+  packaging: "Qadoqlash",
   packer: "Qadoqlash",
 };
-const ASSIGNABLE_ROLES = ["preparation", "packer"];
+// Roles shown in the rate editor (the ones that drive pay).
+const RATE_ROLES = ["producer", "preparation", "packaging"];
+const ROLE_LIMITS: Record<string, { min: number; max: number }> = {
+  producer: { min: 1, max: 5 },
+  preparation: { min: 1, max: 3 },
+  packaging: { min: 1, max: 5 },
+};
 
 const METHOD_UZ: Record<string, string> = {
   PRODUCT_RATE: "Dona (mahsulot stavkasi)",
@@ -40,6 +54,12 @@ const METHOD_UZ: Record<string, string> = {
 
 function roleLabel(role: string): string {
   return ROLE_UZ[role] ?? role;
+}
+
+function errMsg(e: unknown, fallback: string): string {
+  const data = (e as { data?: { error?: string } } | null)?.data;
+  if (data && typeof data.error === "string" && data.error.trim()) return data.error;
+  return fallback;
 }
 
 // ── Role rate row (own input state) ─────────────────────────────────────────────
@@ -53,10 +73,11 @@ function RoleRateRow({ role, rate, updatedAt }: { role: string; rate: number; up
     mutation: {
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: getGetPayrollRoleRatesQueryKey() });
+        queryClient.invalidateQueries({ queryKey: getGetPayrollDayStatusQueryKey() });
         queryClient.invalidateQueries({ queryKey: getGetPayrollWorkerEarningsQueryKey() });
         toast({ title: "Saqlandi", description: `${roleLabel(role)} stavkasi yangilandi.` });
       },
-      onError: () => toast({ title: "Xato", description: "Stavkani saqlab bo'lmadi.", variant: "destructive" }),
+      onError: (e) => toast({ title: "Xato", description: errMsg(e, "Stavkani saqlab bo'lmadi."), variant: "destructive" }),
     },
   });
 
@@ -92,6 +113,285 @@ function RoleRateRow({ role, rate, updatedAt }: { role: string; rate: number; up
   );
 }
 
+type Member = { id: number; workerName: string; role: string };
+type LineStatus = {
+  lineId: number;
+  lineName: string;
+  totalKg: number;
+  closed: boolean;
+  closedAt: string | null;
+  producers: Member[];
+  preparation: Member[];
+  packaging: Member[];
+  producerRate: number;
+  prepRate: number;
+  packagingRate: number;
+  prepPool: number;
+  prepPerWorker: number;
+  packagingPool: number;
+  packagingPerWorker: number;
+};
+
+const ROLE_ICON: Record<string, typeof Hammer> = {
+  producer: Hammer,
+  preparation: Boxes,
+  packaging: PackageCheck,
+};
+
+// ── One role column inside a line card ──────────────────────────────────────────
+function RoleSection({
+  role, members, availableWorkers, closed, totalKg, pool, perWorker, rate, onAdd, onRemove, adding,
+}: {
+  role: string;
+  members: Member[];
+  availableWorkers: string[];
+  closed: boolean;
+  totalKg: number;
+  pool: number | null; // null for producer (no shared pool)
+  perWorker: number | null;
+  rate: number;
+  onAdd: (role: string, workerName: string) => void;
+  onRemove: (memberId: number, workerName: string, role: string) => void;
+  adding: boolean;
+}) {
+  const [sel, setSel] = useState<string>("");
+  const limit = ROLE_LIMITS[role];
+  const atMax = members.length >= limit.max;
+  const belowMin = members.length < limit.min;
+  const Icon = ROLE_ICON[role] ?? Hammer;
+  const isPool = role !== "producer";
+
+  return (
+    <div className="rounded-lg border border-border bg-card/40 flex flex-col" data-testid={`role-section-${role}`}>
+      <div className="px-3 py-2.5 border-b border-border flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Icon className="w-4 h-4 text-muted-foreground" />
+          <span className="font-medium text-sm">{roleLabel(role)}</span>
+        </div>
+        <Badge
+          variant="outline"
+          className={members.length === 0 ? "text-amber-600 border-amber-300" : "text-muted-foreground"}
+        >
+          {members.length}/{limit.max}
+        </Badge>
+      </div>
+
+      {/* Pool preview */}
+      <div className="px-3 py-2 text-xs border-b border-border bg-muted/20">
+        {isPool ? (
+          <div className="space-y-0.5">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Fond ({formatNumber(totalKg)}×{formatNumber(rate)})</span>
+              <span className="font-mono font-medium">{formatCurrency(pool ?? 0)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Har biriga ({members.length || 0} kishi)</span>
+              <span className="font-mono font-medium text-primary">{formatCurrency(perWorker ?? 0)}</span>
+            </div>
+          </div>
+        ) : (
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Stavka (har partiyada)</span>
+            <span className="font-mono font-medium">{formatNumber(rate)} so'm/kg</span>
+          </div>
+        )}
+      </div>
+
+      {/* Members */}
+      <div className="flex-1 p-2 space-y-1 min-h-[60px]">
+        {members.length === 0 ? (
+          <div className="text-xs text-amber-600 flex items-center gap-1.5 px-1 py-2">
+            <AlertTriangle className="w-3.5 h-3.5" /> Ishchi biriktirilmagan
+          </div>
+        ) : (
+          members.map((m) => (
+            <div
+              key={m.id}
+              className="flex items-center justify-between gap-2 rounded-md bg-background border border-border px-2 py-1.5"
+              data-testid={`member-${m.id}`}
+            >
+              <span className="text-sm truncate">{m.workerName || "(nomsiz)"}</span>
+              {!closed && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-6 w-6 shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                  onClick={() => onRemove(m.id, m.workerName, role)}
+                  data-testid={`btn-remove-member-${m.id}`}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </Button>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Add control */}
+      {!closed && (
+        <div className="p-2 border-t border-border flex gap-1.5">
+          <Select value={sel} onValueChange={setSel} disabled={atMax}>
+            <SelectTrigger className="h-8 text-xs" data-testid={`select-add-${role}`}>
+              <SelectValue placeholder={atMax ? `Maksimal (${limit.max})` : "Ishchi tanlang"} />
+            </SelectTrigger>
+            <SelectContent>
+              {availableWorkers.length === 0 ? (
+                <div className="px-2 py-2 text-xs text-muted-foreground text-center">Mavjud ishchi yo'q</div>
+              ) : (
+                availableWorkers.map((w) => (
+                  <SelectItem key={w} value={w}>{w || "(nomsiz)"}</SelectItem>
+                ))
+              )}
+            </SelectContent>
+          </Select>
+          <Button
+            size="icon"
+            className="h-8 w-8 shrink-0"
+            disabled={!sel || atMax || adding}
+            onClick={() => { onAdd(role, sel); setSel(""); }}
+            data-testid={`btn-add-${role}`}
+          >
+            <Plus className="w-4 h-4" />
+          </Button>
+        </div>
+      )}
+      {belowMin && members.length > 0 && (
+        <div className="px-3 pb-2 text-[11px] text-amber-600">Tavsiya etilgan minimum: {limit.min}</div>
+      )}
+    </div>
+  );
+}
+
+// ── A single production line card ────────────────────────────────────────────────
+function LineCard({
+  line, workers, globalProducers, globalPrep, globalPackaging, onAdd, onRemove, onDelete, adding, deleting,
+}: {
+  line: LineStatus;
+  workers: string[];
+  globalProducers: Set<string>;
+  globalPrep: Set<string>;
+  globalPackaging: Set<string>;
+  onAdd: (lineId: number, role: string, workerName: string) => void;
+  onRemove: (memberId: number, workerName: string, role: string) => void;
+  onDelete: (lineId: number, lineName: string) => void;
+  adding: boolean;
+  deleting: boolean;
+}) {
+  const producerNames = new Set(line.producers.map((m) => m.workerName));
+
+  // Each (worker, role) belongs to exactly one line — filter globally so a
+  // worker already holding a role elsewhere isn't offered for another line.
+  const producerAvail = workers.filter((w) => !globalProducers.has(w));
+  const prepAvail = workers.filter((w) => !globalPrep.has(w));
+  const packagingAvail = workers.filter((w) => !globalPackaging.has(w));
+
+  return (
+    <Card className="border-border overflow-hidden" data-testid={`line-card-${line.lineId}`}>
+      <div className="px-5 py-4 border-b border-border flex items-center justify-between gap-3 bg-muted/30">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-md bg-primary/10 text-primary flex items-center justify-center shrink-0">
+            <Factory className="w-4.5 h-4.5" />
+          </div>
+          <div>
+            <h3 className="font-semibold tracking-tight">{line.lineName}</h3>
+            <div className="text-xs text-muted-foreground flex items-center gap-1.5 mt-0.5">
+              <Weight className="w-3.5 h-3.5" />
+              Bugun: <span className="font-medium text-foreground">{formatNumber(line.totalKg)} kg</span>
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {line.closed ? (
+            <Badge className="bg-primary/15 text-primary border-primary/30 hover:bg-primary/15 cursor-default">
+              <Lock className="w-3 h-3 mr-1" /> Yopilgan
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="text-muted-foreground cursor-default">
+              <LockOpen className="w-3 h-3 mr-1" /> Ochiq
+            </Badge>
+          )}
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                disabled={deleting}
+                data-testid={`btn-delete-line-${line.lineId}`}
+              >
+                <Trash2 className="w-4 h-4" />
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Liniyani o'chirish</AlertDialogTitle>
+                <AlertDialogDescription>
+                  <strong>{line.lineName}</strong> liniyasi va unga biriktirilgan barcha ishchilar o'chiriladi.
+                  Avval hisoblangan maoshlar saqlanib qoladi. Davom etilsinmi?
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Bekor qilish</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={() => onDelete(line.lineId, line.lineName)}
+                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  data-testid={`btn-confirm-delete-line-${line.lineId}`}
+                >
+                  O'chirish
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
+      </div>
+
+      <CardContent className="p-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <RoleSection
+            role="producer"
+            members={line.producers}
+            availableWorkers={producerAvail.filter((w) => !producerNames.has(w))}
+            closed={line.closed}
+            totalKg={line.totalKg}
+            pool={null}
+            perWorker={null}
+            rate={line.producerRate}
+            onAdd={(role, w) => onAdd(line.lineId, role, w)}
+            onRemove={onRemove}
+            adding={adding}
+          />
+          <RoleSection
+            role="preparation"
+            members={line.preparation}
+            availableWorkers={prepAvail}
+            closed={line.closed}
+            totalKg={line.totalKg}
+            pool={line.prepPool}
+            perWorker={line.prepPerWorker}
+            rate={line.prepRate}
+            onAdd={(role, w) => onAdd(line.lineId, role, w)}
+            onRemove={onRemove}
+            adding={adding}
+          />
+          <RoleSection
+            role="packaging"
+            members={line.packaging}
+            availableWorkers={packagingAvail}
+            closed={line.closed}
+            totalKg={line.totalKg}
+            pool={line.packagingPool}
+            perWorker={line.packagingPerWorker}
+            rate={line.packagingRate}
+            onAdd={(role, w) => onAdd(line.lineId, role, w)}
+            onRemove={onRemove}
+            adding={adding}
+          />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Payroll() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -102,9 +402,6 @@ export default function Payroll() {
   const { data: roleRates, isLoading: ratesLoading } = useGetPayrollRoleRates({
     query: { queryKey: getGetPayrollRoleRatesQueryKey() },
   });
-  const { data: kgWorkers, isLoading: kgLoading } = useGetKgPayrollWorkers({
-    query: { queryKey: getGetKgPayrollWorkersQueryKey() },
-  });
   const { data: workers } = useGetWorkers({ query: { queryKey: getGetWorkersQueryKey() } });
   const { data: products, isLoading: productsLoading } = useGetProducts({
     query: { queryKey: getGetProductsQueryKey() },
@@ -113,30 +410,59 @@ export default function Payroll() {
     query: { queryKey: getGetPayrollWorkerEarningsQueryKey() },
   });
 
-  // ── assignment form state ──
-  const [newWorker, setNewWorker] = useState<string>("");
-  const [newRole, setNewRole] = useState<string>("preparation");
+  const invalidateDay = () => {
+    queryClient.invalidateQueries({ queryKey: getGetPayrollDayStatusQueryKey() });
+    queryClient.invalidateQueries({ queryKey: getGetPayrollWorkerEarningsQueryKey() });
+  };
 
-  const assign = useAssignKgPayrollWorker({
+  const [newLineName, setNewLineName] = useState<string>("");
+
+  const createLine = useCreateProductionLine({
     mutation: {
       onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: getGetKgPayrollWorkersQueryKey() });
-        queryClient.invalidateQueries({ queryKey: getGetPayrollWorkerEarningsQueryKey() });
-        setNewWorker("");
-        toast({ title: "Biriktirildi", description: "Ishchi kg maosh ro'yxatiga qo'shildi." });
+        invalidateDay();
+        setNewLineName("");
+        toast({ title: "Yaratildi", description: "Yangi liniya qo'shildi." });
       },
-      onError: () => toast({ title: "Xato", description: "Ishchini biriktirib bo'lmadi.", variant: "destructive" }),
+      onError: (e) => toast({ title: "Xato", description: errMsg(e, "Liniyani yaratib bo'lmadi."), variant: "destructive" }),
     },
   });
 
-  const removeWorker = useRemoveKgPayrollWorker({
+  const deleteLine = useDeleteProductionLine({
     mutation: {
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: getGetKgPayrollWorkersQueryKey() });
-        queryClient.invalidateQueries({ queryKey: getGetPayrollWorkerEarningsQueryKey() });
-        toast({ title: "O'chirildi", description: "Biriktirma olib tashlandi." });
+      onSuccess: () => { invalidateDay(); toast({ title: "O'chirildi", description: "Liniya o'chirildi." }); },
+      onError: (e) => toast({ title: "Xato", description: errMsg(e, "Liniyani o'chirib bo'lmadi."), variant: "destructive" }),
+    },
+  });
+
+  const addWorker = useAddProductionLineWorker({
+    mutation: {
+      onSuccess: () => { invalidateDay(); toast({ title: "Qo'shildi", description: "Ishchi liniyaga biriktirildi." }); },
+      onError: (e) => toast({ title: "Xato", description: errMsg(e, "Ishchini biriktirib bo'lmadi."), variant: "destructive" }),
+    },
+  });
+
+  const removeWorker = useRemoveProductionLineWorker({
+    mutation: {
+      onSuccess: () => { invalidateDay(); toast({ title: "Olib tashlandi", description: "Ishchi liniyadan olib tashlandi." }); },
+      onError: (e) => toast({ title: "Xato", description: errMsg(e, "Ishchini olib tashlab bo'lmadi."), variant: "destructive" }),
+    },
+  });
+
+  const closeDay = useClosePayrollDay({
+    mutation: {
+      onSuccess: (res) => {
+        invalidateDay();
+        if (res.alreadyClosed) {
+          toast({ title: "Allaqachon yopilgan", description: "Bugungi kun barcha liniyalar uchun yopilgan." });
+        } else {
+          toast({
+            title: "Kun yopildi",
+            description: `${res.newEntryCount} ta ulush hisoblandi · jami ${formatNumber(res.totalKg)} kg.`,
+          });
+        }
       },
-      onError: () => toast({ title: "Xato", description: "Biriktirmani o'chirib bo'lmadi.", variant: "destructive" }),
+      onError: (e) => toast({ title: "Xato", description: errMsg(e, "Kunni yopib bo'lmadi."), variant: "destructive" }),
     },
   });
 
@@ -157,8 +483,24 @@ export default function Payroll() {
     onError: () => toast({ title: "Xato", description: "Maosh usulini saqlab bo'lmadi.", variant: "destructive" }),
   });
 
-  const assignedNames = new Set((kgWorkers ?? []).map((w) => `${w.workerName}::${w.role}`));
-  const availableWorkers = (workers ?? []).filter((w) => !assignedNames.has(`${w.name}::${newRole}`));
+  const lines = (dayStatus?.lines ?? []) as LineStatus[];
+  const workerNames = (workers ?? []).map((w) => w.name).filter((n): n is string => !!n);
+  const globalProducers = new Set<string>();
+  const globalPrep = new Set<string>();
+  const globalPackaging = new Set<string>();
+  for (const l of lines) {
+    for (const p of l.producers) globalProducers.add(p.workerName);
+    for (const p of l.preparation) globalPrep.add(p.workerName);
+    for (const p of l.packaging) globalPackaging.add(p.workerName);
+  }
+
+  const unassignedKg = dayStatus?.unassignedKg ?? 0;
+  const allClosed = dayStatus?.closed ?? false;
+  // Lines that have production today but are missing a shared role.
+  const emptyRoleLines = lines.filter(
+    (l) => l.totalKg > 0 && (l.preparation.length === 0 || l.packaging.length === 0)
+  );
+  const hasWarnings = unassignedKg > 0 || emptyRoleLines.length > 0;
 
   const totalToday = (earnings ?? []).reduce((a, r) => a + r.todayEarnings, 0);
   const totalMonth = (earnings ?? []).reduce((a, r) => a + r.monthEarnings, 0);
@@ -167,53 +509,239 @@ export default function Payroll() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">Kg maosh boshqaruvi</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Ishlab chiqarish liniyalari</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Rol asosidagi (Arqon) kg maosh tizimi — stavkalar, biriktirilgan ishchilar va daromadlar.
+          Har bir liniya o'z ishchilari va kunlik kg hajmiga ega. Tayyorlash/qadoqlash fondi liniya ishchilari soniga bo'linadi.
         </p>
       </div>
 
       {/* Day status banner */}
       <Card className="border-border">
-        <CardContent className="p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <CardContent className="p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="flex items-center gap-4">
-            <div className={`w-11 h-11 rounded-full flex items-center justify-center shrink-0 ${dayStatus?.closed ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"}`}>
-              {dayStatus?.closed ? <Lock className="w-5 h-5" /> : <LockOpen className="w-5 h-5" />}
+            <div className={`w-11 h-11 rounded-full flex items-center justify-center shrink-0 ${allClosed ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"}`}>
+              {allClosed ? <Lock className="w-5 h-5" /> : <LockOpen className="w-5 h-5" />}
             </div>
             <div>
               <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1">
                 Bugungi kun {dayStatus ? `(${formatDate(dayStatus.workDate)})` : ""}
               </div>
               {dayLoading ? (
-                <Skeleton className="h-6 w-48" />
+                <Skeleton className="h-6 w-56" />
               ) : (
-                <div className="flex items-center gap-3">
+                <div className="flex flex-wrap items-center gap-3">
                   <span className="text-lg font-semibold tracking-tight flex items-center gap-1.5">
                     <Weight className="w-4 h-4 text-muted-foreground" />
                     {formatNumber(dayStatus?.totalKg ?? 0)} kg
                   </span>
-                  {dayStatus?.closed ? (
-                    <Badge className="bg-primary/15 text-primary border-primary/30 hover:bg-primary/15 cursor-default">
-                      Yopilgan{dayStatus.closedAt ? ` · ${formatDate(dayStatus.closedAt)}` : ""}
-                    </Badge>
+                  {allClosed ? (
+                    <Badge className="bg-primary/15 text-primary border-primary/30 hover:bg-primary/15 cursor-default">Yopilgan</Badge>
                   ) : (
                     <Badge variant="outline" className="text-muted-foreground cursor-default">Ochiq</Badge>
+                  )}
+                  {unassignedKg > 0 && (
+                    <Badge variant="outline" className="text-amber-600 border-amber-300 cursor-default" data-testid="badge-unassigned">
+                      <AlertTriangle className="w-3 h-3 mr-1" /> {formatNumber(unassignedKg)} kg liniyasiz
+                    </Badge>
                   )}
                 </div>
               )}
             </div>
           </div>
-          <div className="text-xs text-muted-foreground max-w-xs sm:text-right">
-            Kunni yopish va tayyorlash/qadoqlash maoshini hisoblash Telegram bot orqali amalga oshiriladi.
-          </div>
+
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button disabled={closeDay.isPending || lines.length === 0} data-testid="btn-close-day">
+                <Lock className="w-4 h-4 mr-2" />
+                {closeDay.isPending ? "Yopilmoqda..." : "Kunni yopish"}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Kunni yopish</AlertDialogTitle>
+                <AlertDialogDescription asChild>
+                  <div className="space-y-2">
+                    <p>
+                      Barcha liniyalar uchun bugungi tayyorlash/qadoqlash ulushi hisoblanadi va ishchilarga Telegram orqali xabar yuboriladi.
+                      Bu amal har bir liniya uchun kuniga bir marta bajariladi.
+                    </p>
+                    {hasWarnings && (
+                      <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-800 text-sm space-y-1">
+                        <div className="font-medium flex items-center gap-1.5">
+                          <AlertTriangle className="w-4 h-4" /> Diqqat
+                        </div>
+                        {unassignedKg > 0 && (
+                          <p>{formatNumber(unassignedKg)} kg hech qaysi liniyaga biriktirilmagan — bu ulush hisoblanmaydi.</p>
+                        )}
+                        {emptyRoleLines.map((l) => (
+                          <p key={l.lineId}>
+                            <strong>{l.lineName}</strong>: {l.preparation.length === 0 ? "tayyorlovchi" : ""}
+                            {l.preparation.length === 0 && l.packaging.length === 0 ? " va " : ""}
+                            {l.packaging.length === 0 ? "qadoqlovchi" : ""} yo'q — ushbu fond hisoblanmaydi.
+                          </p>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Bekor qilish</AlertDialogCancel>
+                <AlertDialogAction onClick={() => closeDay.mutate()} data-testid="btn-confirm-close-day">
+                  Kunni yopish
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </CardContent>
       </Card>
 
-      <Tabs defaultValue="settings" className="space-y-6">
+      <Tabs defaultValue="lines" className="space-y-6">
         <TabsList>
-          <TabsTrigger value="settings" data-testid="tab-settings">Sozlamalar</TabsTrigger>
+          <TabsTrigger value="lines" data-testid="tab-lines">Liniyalar</TabsTrigger>
           <TabsTrigger value="earnings" data-testid="tab-earnings">Ishchilar daromadi</TabsTrigger>
+          <TabsTrigger value="settings" data-testid="tab-settings">Sozlamalar</TabsTrigger>
         </TabsList>
+
+        {/* ── Lines tab ── */}
+        <TabsContent value="lines" className="space-y-5">
+          {/* Create line */}
+          <Card className="border-border">
+            <CardContent className="p-4 flex flex-col sm:flex-row gap-3 sm:items-end">
+              <div className="flex-1 space-y-1.5">
+                <Label className="text-xs">Yangi liniya nomi</Label>
+                <Input
+                  value={newLineName}
+                  onChange={(e) => setNewLineName(e.target.value)}
+                  placeholder="Masalan: Arqon Bo'limi 2"
+                  data-testid="input-new-line"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && newLineName.trim()) createLine.mutate({ data: { name: newLineName.trim() } });
+                  }}
+                />
+              </div>
+              <Button
+                disabled={!newLineName.trim() || createLine.isPending}
+                onClick={() => createLine.mutate({ data: { name: newLineName.trim() } })}
+                data-testid="btn-create-line"
+              >
+                <Plus className="w-4 h-4 mr-2" />
+                {createLine.isPending ? "Qo'shilmoqda..." : "Liniya qo'shish"}
+              </Button>
+            </CardContent>
+          </Card>
+
+          {dayLoading ? (
+            <div className="space-y-4">
+              {Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-64 w-full rounded-xl" />)}
+            </div>
+          ) : lines.length === 0 ? (
+            <Card className="border-border border-dashed">
+              <CardContent className="py-12 text-center text-muted-foreground">
+                <Factory className="w-8 h-8 mx-auto mb-3 opacity-40" />
+                Hali liniya yo'q. Yuqorida birinchi liniyani qo'shing.
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-4">
+              {lines.map((line) => (
+                <LineCard
+                  key={line.lineId}
+                  line={line}
+                  workers={workerNames}
+                  globalProducers={globalProducers}
+                  globalPrep={globalPrep}
+                  globalPackaging={globalPackaging}
+                  onAdd={(lineId, role, workerName) => addWorker.mutate({ id: lineId, data: { workerName, role } })}
+                  onRemove={(memberId) => removeWorker.mutate({ id: memberId })}
+                  onDelete={(lineId) => deleteLine.mutate({ id: lineId })}
+                  adding={addWorker.isPending}
+                  deleting={deleteLine.isPending}
+                />
+              ))}
+            </div>
+          )}
+        </TabsContent>
+
+        {/* ── Earnings tab ── */}
+        <TabsContent value="earnings" className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Card className="border-border bg-sidebar text-sidebar-foreground">
+              <CardContent className="p-5">
+                <div className="text-xs font-bold uppercase tracking-wider mb-2 text-sidebar-foreground/70">Bugun</div>
+                {earningsLoading ? <Skeleton className="h-8 w-24 bg-sidebar-accent" /> : (
+                  <div className="text-2xl font-semibold tracking-tight">{formatCurrency(totalToday)}</div>
+                )}
+              </CardContent>
+            </Card>
+            <Card className="border-border">
+              <CardContent className="p-5">
+                <div className="text-xs font-bold uppercase tracking-wider mb-2 text-muted-foreground">Bu oy</div>
+                {earningsLoading ? <Skeleton className="h-8 w-24" /> : (
+                  <div className="text-2xl font-semibold tracking-tight">{formatCurrency(totalMonth)}</div>
+                )}
+              </CardContent>
+            </Card>
+            <Card className="border-border">
+              <CardContent className="p-5">
+                <div className="text-xs font-bold uppercase tracking-wider mb-2 text-muted-foreground">Jami (umrbod)</div>
+                {earningsLoading ? <Skeleton className="h-8 w-24" /> : (
+                  <div className="text-2xl font-semibold tracking-tight text-primary">{formatCurrency(totalLifetime)}</div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card className="border-border">
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader className="bg-muted/50">
+                  <TableRow>
+                    <TableHead>Ishchi</TableHead>
+                    <TableHead>Liniya</TableHead>
+                    <TableHead>Rol</TableHead>
+                    <TableHead className="text-right">Bugun kg</TableHead>
+                    <TableHead className="text-right">Oy kg</TableHead>
+                    <TableHead className="text-right">Jami kg</TableHead>
+                    <TableHead className="text-right">Bugun</TableHead>
+                    <TableHead className="text-right">Oy</TableHead>
+                    <TableHead className="text-right">Jami</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {earningsLoading ? (
+                    Array.from({ length: 5 }).map((_, i) => (
+                      <TableRow key={i}>
+                        <TableCell><Skeleton className="h-5 w-32" /></TableCell>
+                        {Array.from({ length: 8 }).map((__, j) => (
+                          <TableCell key={j} className="text-right"><Skeleton className="h-5 w-16 ml-auto" /></TableCell>
+                        ))}
+                      </TableRow>
+                    ))
+                  ) : (earnings ?? []).length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">Daromad ma'lumotlari yo'q.</TableCell>
+                    </TableRow>
+                  ) : (
+                    (earnings ?? []).map((r) => (
+                      <TableRow key={r.worker} data-testid={`earnings-row-${r.worker}`}>
+                        <TableCell className="font-medium">{r.worker || "(nomsiz)"}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{r.lineName ?? "—"}</TableCell>
+                        <TableCell>{r.role ? <Badge variant="outline">{roleLabel(r.role)}</Badge> : "—"}</TableCell>
+                        <TableCell className="text-right font-mono text-sm">{formatNumber(r.todayKg)}</TableCell>
+                        <TableCell className="text-right font-mono text-sm">{formatNumber(r.monthKg)}</TableCell>
+                        <TableCell className="text-right font-mono text-sm">{formatNumber(r.lifetimeKg)}</TableCell>
+                        <TableCell className="text-right font-mono text-sm">{formatCurrency(r.todayEarnings)}</TableCell>
+                        <TableCell className="text-right font-mono text-sm">{formatCurrency(r.monthEarnings)}</TableCell>
+                        <TableCell className="text-right font-mono text-sm font-medium">{formatCurrency(r.lifetimeEarnings)}</TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         {/* ── Settings tab ── */}
         <TabsContent value="settings" className="space-y-6">
@@ -222,7 +750,7 @@ export default function Payroll() {
             <CardContent className="p-0">
               <div className="px-5 py-4 border-b border-border">
                 <h2 className="font-semibold">Rol stavkalari</h2>
-                <p className="text-sm text-muted-foreground mt-0.5">Har bir rol uchun 1 kg ga to'lanadigan summa.</p>
+                <p className="text-sm text-muted-foreground mt-0.5">Har bir rol uchun 1 kg ga to'lanadigan summa (barcha liniyalar uchun umumiy).</p>
               </div>
               <Table>
                 <TableHeader className="bg-muted/50">
@@ -243,134 +771,18 @@ export default function Payroll() {
                         <TableCell className="text-right"><Skeleton className="h-8 w-24 ml-auto" /></TableCell>
                       </TableRow>
                     ))
-                  ) : (roleRates ?? []).length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">Stavkalar topilmadi.</TableCell>
-                    </TableRow>
                   ) : (
-                    [...(roleRates ?? [])]
-                      .sort((a, b) => a.role.localeCompare(b.role))
-                      .map((r) => <RoleRateRow key={r.role} role={r.role} rate={r.rate} updatedAt={r.updatedAt} />)
-                  )}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-
-          {/* Assigned workers */}
-          <Card className="border-border">
-            <CardContent className="p-0">
-              <div className="px-5 py-4 border-b border-border">
-                <h2 className="font-semibold">Biriktirilgan ishchilar</h2>
-                <p className="text-sm text-muted-foreground mt-0.5">
-                  Faqat bu yerda biriktirilgan tayyorlash/qadoqlash ishchilari kunlik kg maosh oladi.
-                </p>
-              </div>
-              <div className="px-5 py-4 border-b border-border bg-muted/20 flex flex-col sm:flex-row gap-3 sm:items-end">
-                <div className="flex-1 space-y-1.5">
-                  <Label className="text-xs">Ishchi</Label>
-                  <Select value={newWorker} onValueChange={setNewWorker}>
-                    <SelectTrigger data-testid="select-new-worker"><SelectValue placeholder="Ishchini tanlang" /></SelectTrigger>
-                    <SelectContent>
-                      {availableWorkers.length === 0 ? (
-                        <div className="px-2 py-3 text-sm text-muted-foreground text-center">Mavjud ishchi yo'q</div>
-                      ) : (
-                        availableWorkers.map((w) => (
-                          <SelectItem key={w.name} value={w.name}>{w.name || "(nomsiz)"}</SelectItem>
-                        ))
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="w-full sm:w-48 space-y-1.5">
-                  <Label className="text-xs">Rol</Label>
-                  <Select value={newRole} onValueChange={setNewRole}>
-                    <SelectTrigger data-testid="select-new-role"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {ASSIGNABLE_ROLES.map((r) => (
-                        <SelectItem key={r} value={r}>{roleLabel(r)}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <Button
-                  disabled={!newWorker || assign.isPending}
-                  onClick={() => assign.mutate({ data: { workerName: newWorker, role: newRole } })}
-                  data-testid="btn-assign-worker"
-                >
-                  <UserPlus className="w-4 h-4 mr-2" />
-                  {assign.isPending ? "Qo'shilmoqda..." : "Qo'shish"}
-                </Button>
-              </div>
-              <Table>
-                <TableHeader className="bg-muted/50">
-                  <TableRow>
-                    <TableHead>Ishchi</TableHead>
-                    <TableHead>Rol</TableHead>
-                    <TableHead>Holat</TableHead>
-                    <TableHead className="text-right w-[120px]">Amal</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {kgLoading ? (
-                    Array.from({ length: 3 }).map((_, i) => (
-                      <TableRow key={i}>
-                        <TableCell><Skeleton className="h-5 w-32" /></TableCell>
-                        <TableCell><Skeleton className="h-5 w-24" /></TableCell>
-                        <TableCell><Skeleton className="h-6 w-16 rounded-full" /></TableCell>
-                        <TableCell className="text-right"><Skeleton className="h-8 w-20 ml-auto" /></TableCell>
-                      </TableRow>
-                    ))
-                  ) : (kgWorkers ?? []).length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
-                        Hali ishchi biriktirilmagan.
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    (kgWorkers ?? []).map((w) => (
-                      <TableRow key={w.id} data-testid={`kgworker-row-${w.id}`}>
-                        <TableCell className="font-medium">{w.workerName || "(nomsiz)"}</TableCell>
-                        <TableCell>
-                          <Badge variant="outline">{roleLabel(w.role)}</Badge>
-                        </TableCell>
-                        <TableCell>
-                          {w.active ? (
-                            <Badge className="bg-primary/15 text-primary border-primary/30 hover:bg-primary/15 cursor-default">Faol</Badge>
-                          ) : (
-                            <Badge variant="outline" className="text-muted-foreground cursor-default">Nofaol</Badge>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive hover:bg-destructive/10" data-testid={`btn-remove-kgworker-${w.id}`}>
-                                <Trash2 className="w-4 h-4" />
-                              </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>Biriktirmani o'chirish</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  <strong>{w.workerName || "(nomsiz)"}</strong> ({roleLabel(w.role)}) kg maosh ro'yxatidan olib tashlansinmi?
-                                  Avval hisoblangan maoshlar saqlanib qoladi.
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>Bekor qilish</AlertDialogCancel>
-                                <AlertDialogAction
-                                  onClick={() => removeWorker.mutate({ id: w.id })}
-                                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                  data-testid="btn-confirm-remove-kgworker"
-                                >
-                                  O'chirish
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
-                        </TableCell>
-                      </TableRow>
-                    ))
+                    RATE_ROLES.map((role) => {
+                      const r = (roleRates ?? []).find((x) => x.role === role);
+                      return (
+                        <RoleRateRow
+                          key={role}
+                          role={role}
+                          rate={r?.rate ?? 0}
+                          updatedAt={r?.updatedAt ?? null}
+                        />
+                      );
+                    })
                   )}
                 </TableBody>
               </Table>
@@ -434,82 +846,6 @@ export default function Payroll() {
                             </p>
                           )}
                         </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* ── Earnings tab ── */}
-        <TabsContent value="earnings" className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Card className="border-border bg-sidebar text-sidebar-foreground">
-              <CardContent className="p-5">
-                <div className="text-xs font-bold uppercase tracking-wider mb-2 text-sidebar-foreground/70">Bugun</div>
-                {earningsLoading ? <Skeleton className="h-8 w-24 bg-sidebar-accent" /> : (
-                  <div className="text-2xl font-semibold tracking-tight">{formatCurrency(totalToday)}</div>
-                )}
-              </CardContent>
-            </Card>
-            <Card className="border-border">
-              <CardContent className="p-5">
-                <div className="text-xs font-bold uppercase tracking-wider mb-2 text-muted-foreground">Bu oy</div>
-                {earningsLoading ? <Skeleton className="h-8 w-24" /> : (
-                  <div className="text-2xl font-semibold tracking-tight">{formatCurrency(totalMonth)}</div>
-                )}
-              </CardContent>
-            </Card>
-            <Card className="border-border">
-              <CardContent className="p-5">
-                <div className="text-xs font-bold uppercase tracking-wider mb-2 text-muted-foreground">Jami (umrbod)</div>
-                {earningsLoading ? <Skeleton className="h-8 w-24" /> : (
-                  <div className="text-2xl font-semibold tracking-tight text-primary">{formatCurrency(totalLifetime)}</div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-
-          <Card className="border-border">
-            <CardContent className="p-0">
-              <Table>
-                <TableHeader className="bg-muted/50">
-                  <TableRow>
-                    <TableHead>Ishchi</TableHead>
-                    <TableHead className="text-right">Bugun kg</TableHead>
-                    <TableHead className="text-right">Oy kg</TableHead>
-                    <TableHead className="text-right">Jami kg</TableHead>
-                    <TableHead className="text-right">Bugun</TableHead>
-                    <TableHead className="text-right">Oy</TableHead>
-                    <TableHead className="text-right">Jami</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {earningsLoading ? (
-                    Array.from({ length: 5 }).map((_, i) => (
-                      <TableRow key={i}>
-                        <TableCell><Skeleton className="h-5 w-32" /></TableCell>
-                        {Array.from({ length: 6 }).map((__, j) => (
-                          <TableCell key={j} className="text-right"><Skeleton className="h-5 w-16 ml-auto" /></TableCell>
-                        ))}
-                      </TableRow>
-                    ))
-                  ) : (earnings ?? []).length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">Daromad ma'lumotlari yo'q.</TableCell>
-                    </TableRow>
-                  ) : (
-                    (earnings ?? []).map((r) => (
-                      <TableRow key={r.worker} data-testid={`earnings-row-${r.worker}`}>
-                        <TableCell className="font-medium">{r.worker || "(nomsiz)"}</TableCell>
-                        <TableCell className="text-right font-mono text-sm">{formatNumber(r.todayKg)}</TableCell>
-                        <TableCell className="text-right font-mono text-sm">{formatNumber(r.monthKg)}</TableCell>
-                        <TableCell className="text-right font-mono text-sm">{formatNumber(r.lifetimeKg)}</TableCell>
-                        <TableCell className="text-right font-mono text-sm">{formatCurrency(r.todayEarnings)}</TableCell>
-                        <TableCell className="text-right font-mono text-sm">{formatCurrency(r.monthEarnings)}</TableCell>
-                        <TableCell className="text-right font-mono text-sm font-medium">{formatCurrency(r.lifetimeEarnings)}</TableCell>
                       </TableRow>
                     ))
                   )}

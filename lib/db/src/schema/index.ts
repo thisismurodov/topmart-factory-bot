@@ -7,6 +7,8 @@ export * from "./packer_product_assignments";
 export * from "./salary_payments";
 export * from "./payroll_role_rates";
 export * from "./kg_payroll_workers";
+export * from "./production_lines";
+export * from "./production_line_workers";
 export * from "./salary_entries";
 export * from "./daily_payroll_runs";
 export * from "./admin_users";

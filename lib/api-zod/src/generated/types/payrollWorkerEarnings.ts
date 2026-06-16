@@ -8,6 +8,10 @@
 
 export interface PayrollWorkerEarnings {
   worker: string;
+  /** @nullable */
+  lineName: string | null;
+  /** @nullable */
+  role: string | null;
   todayEarnings: number;
   monthEarnings: number;
   lifetimeEarnings: number;

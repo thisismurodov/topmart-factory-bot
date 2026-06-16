@@ -286,16 +286,77 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS daily_payroll_runs (
                 id        SERIAL PRIMARY KEY,
                 scope     TEXT NOT NULL DEFAULT 'arqon',
+                line_id   INTEGER,
                 work_date DATE NOT NULL,
                 total_kg  NUMERIC(12,3) NOT NULL DEFAULT 0,
                 status    TEXT NOT NULL DEFAULT 'closed',
                 closed_by TEXT,
-                closed_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-                UNIQUE (scope, work_date)
+                closed_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
             )
         """)
+        # ── Ishlab chiqarish liniyalari (per-line payroll) ───────────────────
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS production_lines (
+                id         SERIAL PRIMARY KEY,
+                name       TEXT NOT NULL UNIQUE,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS production_line_workers (
+                id          SERIAL PRIMARY KEY,
+                line_id     INTEGER NOT NULL REFERENCES production_lines(id) ON DELETE CASCADE,
+                worker_name TEXT NOT NULL,
+                role        TEXT NOT NULL,
+                created_at  TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                UNIQUE (line_id, worker_name, role)
+            )
+        """)
+        # Bir ishlab chiqaruvchi faqat bitta liniyada (partiya->liniya bir ma'noli bo'lsin)
+        cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS production_line_workers_one_producer_line_uniq
+              ON production_line_workers (worker_name)
+              WHERE role = 'producer'
+        """)
+        # Har bir (ishchi, rol) faqat bitta liniyada — kunlik ulush (scope, worker, role,
+        # work_date) bo'yicha yagona bo'lib qolishi uchun (ikkita liniyada bir xil rol bo'lmasin)
+        cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS production_line_workers_worker_role_uniq
+              ON production_line_workers (worker_name, role)
+        """)
+        # Partiya yaratilganda liniya snapshot — kun yopilganda liniya bo'yicha jami kg
+        cur.execute("ALTER TABLE batches ADD COLUMN IF NOT EXISTS production_line_id INTEGER")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_batches_line_created ON batches (production_line_id, created_at)")
+        cur.execute("ALTER TABLE salary_entries ADD COLUMN IF NOT EXISTS line_id INTEGER")
+        cur.execute("ALTER TABLE daily_payroll_runs ADD COLUMN IF NOT EXISTS line_id INTEGER")
+        # Eski (scope, work_date) UNIQUE cheklovini olib tashlaymiz — endi (scope, work_date, line_id)
+        cur.execute("""
+            DO $$
+            DECLARE c text;
+            BEGIN
+              FOR c IN
+                SELECT con.conname
+                FROM pg_constraint con
+                JOIN pg_class rel ON rel.oid = con.conrelid
+                JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+                WHERE rel.relname = 'daily_payroll_runs'
+                  AND nsp.nspname = 'public'
+                  AND con.contype = 'u'
+                  AND (SELECT array_agg(a.attname::text ORDER BY a.attname)
+                       FROM pg_attribute a
+                       WHERE a.attrelid = con.conrelid AND a.attnum = ANY(con.conkey))
+                      = ARRAY['scope','work_date']
+              LOOP
+                EXECUTE format('ALTER TABLE public.daily_payroll_runs DROP CONSTRAINT %I', c);
+              END LOOP;
+            END $$;
+        """)
+        cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS daily_payroll_runs_scope_date_line_uniq
+              ON daily_payroll_runs (scope, work_date, line_id)
+        """)
         # Standart rol stavkalari (Arqon) — seeded bayrog'idan qat'i nazar idempotent
-        for _role, _rate in (("producer", 1125), ("preparation", 375), ("packer", 375)):
+        for _role, _rate in (("producer", 1125), ("preparation", 375), ("packaging", 750), ("packer", 375)):
             cur.execute(
                 "INSERT INTO payroll_role_rates (scope, role, rate) VALUES ('arqon', %s, %s) "
                 "ON CONFLICT (scope, role) DO NOTHING",
@@ -303,6 +364,26 @@ def init_db() -> None:
             )
         # Eski mahsulot-ruxsat tizimi olib tashlandi — qolgan jadvalni tozalaymiz
         cur.execute("DROP TABLE IF EXISTS worker_product_permissions")
+        # Standart liniya — "Arqon Bo'limi" (idempotent)
+        cur.execute("INSERT INTO production_lines (name) VALUES ('Arqon Bo''limi') ON CONFLICT (name) DO NOTHING")
+        # Birinchi sozlashda: mavjud kg_payroll_workers (tayyorlash/upakovka) ni
+        # birinchi liniyaga ko'chiramiz. Faqat liniya ishchilari bo'sh bo'lsa —
+        # admin keyin o'chirsa, qayta tiklamaymiz.
+        cur.execute("SELECT COUNT(*) AS cnt FROM production_line_workers")
+        if (cur.fetchone()["cnt"] or 0) == 0:
+            cur.execute("SELECT id FROM production_lines ORDER BY id LIMIT 1")
+            _line = cur.fetchone()
+            if _line:
+                cur.execute(
+                    """INSERT INTO production_line_workers (line_id, worker_name, role)
+                       SELECT %s, worker_name,
+                              CASE WHEN role = 'packer' THEN 'packaging' ELSE role END
+                       FROM kg_payroll_workers
+                       WHERE scope = 'arqon' AND active = TRUE
+                         AND role IN ('preparation', 'packer', 'packaging')
+                       ON CONFLICT (line_id, worker_name, role) DO NOTHING""",
+                    (_line["id"],),
+                )
         _seed(cur)
 
 
@@ -382,99 +463,138 @@ def get_role_rate(role: str, scope: str = "arqon") -> float:
 
 
 def close_day(closed_by: str, scope: str = "arqon") -> dict:
-    """Kunni yopadi (bir marta hisoblanadi — "computed once").
+    """Kunni yopadi — har bir ishlab chiqarish liniyasi uchun alohida (idempotent).
 
-    Bugungi ROLE_BASED_KG ishlab chiqaruvchilar jami kg sini (partiya snapshot
-    usuli bo'yicha) hisoblab, biriktirilgan (active) tayyorlovchi/upakovkachilarga
-    (kg × rol stavkasi) 'daily_shared' maosh yozuvlarini yozadi va kunni
-    daily_payroll_runs'da qayd etadi. Sana Asia/Tashkent bo'yicha.
+    Har liniya uchun bugungi ROLE_BASED_KG partiyalar jami kg (liniya snapshot
+    bo'yicha) hisoblanadi; tayyorlash va upakovka POOL'lari liniyadagi shu roldagi
+    xodimlar soniga BO'LINADI:
+        tayyorlash:  (jami_kg × stavka) ÷ tayyorlovchilar_soni
+        upakovka:    (jami_kg × stavka) ÷ upakovkachilar_soni
+    Ishlab chiqaruvchilar har partiyada darhol to'lanadi (bu yerda qayta yozilmaydi).
+    Sana Asia/Tashkent. Liniya bo'yicha kun yopilgach yozuvlar MUZLATILADI: qayta
+    chaqirilsa snapshot o'zgarmaydi va xodimlar qayta xabardor qilinmaydi.
 
-    Kun yopilgach yozuvlar MUZLATILADI: qayta chaqirilsa stavka/summa snapshot'i
-    o'zgarmaydi va xodimlar qayta xabardor qilinmaydi — mavjud yozuvlar qaytariladi.
-
-    Returns: {"work_date", "total_kg", "entries":[{worker,role,rate,amount}], "already_closed"}
+    Returns: {
+        "work_date", "total_kg", "already_closed",
+        "lines": [{"line_id","line_name","total_kg","already_closed",
+                   "entries":[{worker,role,rate,amount}]}],
+        "new_entries": [{line_id,line_name,worker,role,rate,amount}],  # xabar uchun
+    }
     """
     with get_conn() as (conn, cur):
         cur.execute("SELECT (NOW() AT TIME ZONE 'Asia/Tashkent')::date AS d")
         work_date = cur.fetchone()["d"]
 
-        # Bir vaqtda ikkita "Kunni yopish" bosilsa — ketma-ket bajariladi (ikki marta
-        # hisoblash/xabar yuborishning oldini oladi). Lock tranzaksiya oxirida ozod bo'ladi.
-        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"close_day:{scope}:{work_date}",))
-
-        cur.execute(
-            "SELECT total_kg FROM daily_payroll_runs WHERE scope=%s AND work_date=%s",
-            (scope, work_date),
-        )
-        existing_run = cur.fetchone()
-
-        # ── Kun avval yopilgan — muzlatilgan snapshot'ni qaytaramiz (qayta hisoblamaymiz) ──
-        if existing_run is not None:
-            cur.execute(
-                """SELECT worker, role, rate, amount FROM salary_entries
-                   WHERE scope=%s AND work_date=%s AND source_type='daily_shared'
-                   ORDER BY role, worker""",
-                (scope, work_date),
-            )
-            entries = [
-                {"worker": r["worker"], "role": r["role"],
-                 "rate": float(r["rate"]), "amount": float(r["amount"])}
-                for r in cur.fetchall()
-            ]
-            return {
-                "work_date": work_date,
-                "total_kg": float(existing_run["total_kg"]),
-                "entries": entries,
-                "already_closed": True,
-            }
-
-        # ── Birinchi yopilish — partiya snapshot usuli bo'yicha umumiy kg ──
-        cur.execute(
-            """SELECT COALESCE(SUM(b.weight_kg), 0) AS total_kg
-               FROM batches b
-               WHERE b.payroll_method = 'ROLE_BASED_KG'
-                 AND (b.created_at AT TIME ZONE 'Asia/Tashkent')::date = %s""",
-            (work_date,),
-        )
-        total_kg = float(cur.fetchone()["total_kg"])
-
-        cur.execute(
-            """SELECT worker_name, role FROM kg_payroll_workers
-               WHERE scope=%s AND active=TRUE ORDER BY role, worker_name""",
-            (scope,),
-        )
-        assigned = cur.fetchall()
-
         cur.execute("SELECT role, rate FROM payroll_role_rates WHERE scope=%s", (scope,))
         rates = {r["role"]: float(r["rate"]) for r in cur.fetchall()}
 
-        entries = []
-        for a in assigned:
-            role = a["role"]
-            rate = rates.get(role, 0.0)
-            amount = total_kg * rate
+        cur.execute("SELECT id, name FROM production_lines ORDER BY id")
+        lines = cur.fetchall()
+
+        result_lines: list[dict] = []
+        new_entries: list[dict] = []
+        grand_total = 0.0
+
+        for ln in lines:
+            line_id = ln["id"]
+            line_name = ln["name"]
+
+            # Liniya bo'yicha bir vaqtda ikki yopishni ketma-ket qilamiz
             cur.execute(
-                """INSERT INTO salary_entries
-                       (scope, worker, role, source_type, work_date, kg, rate, amount)
-                   VALUES (%s,%s,%s,'daily_shared',%s,%s,%s,%s)
-                   ON CONFLICT (scope, worker, role, work_date) WHERE source_type='daily_shared'
-                   DO NOTHING""",
-                (scope, a["worker_name"], role, work_date, total_kg, rate, amount),
+                "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                (f"close_day:{scope}:{line_id}:{work_date}",),
             )
-            entries.append({"worker": a["worker_name"], "role": role, "rate": rate, "amount": amount})
 
-        cur.execute(
-            """INSERT INTO daily_payroll_runs (scope, work_date, total_kg, status, closed_by)
-               VALUES (%s,%s,%s,'closed',%s)
-               ON CONFLICT (scope, work_date) DO NOTHING""",
-            (scope, work_date, total_kg, closed_by),
-        )
+            cur.execute(
+                "SELECT total_kg FROM daily_payroll_runs WHERE scope=%s AND line_id=%s AND work_date=%s",
+                (scope, line_id, work_date),
+            )
+            existing = cur.fetchone()
 
+            # ── Liniya avval yopilgan — muzlatilgan snapshot'ni qaytaramiz ──
+            if existing is not None:
+                cur.execute(
+                    """SELECT worker, role, rate, amount FROM salary_entries
+                       WHERE scope=%s AND line_id=%s AND work_date=%s AND source_type='daily_shared'
+                       ORDER BY role, worker""",
+                    (scope, line_id, work_date),
+                )
+                entries = [
+                    {"worker": r["worker"], "role": r["role"],
+                     "rate": float(r["rate"]), "amount": float(r["amount"])}
+                    for r in cur.fetchall()
+                ]
+                result_lines.append({
+                    "line_id": line_id, "line_name": line_name,
+                    "total_kg": float(existing["total_kg"]),
+                    "already_closed": True, "entries": entries,
+                })
+                grand_total += float(existing["total_kg"])
+                continue
+
+            # ── Birinchi yopilish — liniya bo'yicha bugungi jami kg ──
+            cur.execute(
+                """SELECT COALESCE(SUM(b.weight_kg), 0) AS total_kg
+                   FROM batches b
+                   WHERE b.payroll_method = 'ROLE_BASED_KG'
+                     AND b.production_line_id = %s
+                     AND (b.created_at AT TIME ZONE 'Asia/Tashkent')::date = %s""",
+                (line_id, work_date),
+            )
+            total_kg = float(cur.fetchone()["total_kg"])
+            grand_total += total_kg
+
+            # Liniyadagi tayyorlash/upakovka xodimlari (POOL bo'linadi)
+            cur.execute(
+                """SELECT worker_name, role FROM production_line_workers
+                   WHERE line_id=%s AND role IN ('preparation','packaging')
+                   ORDER BY role, worker_name""",
+                (line_id,),
+            )
+            members = cur.fetchall()
+            counts: dict[str, int] = {"preparation": 0, "packaging": 0}
+            for m in members:
+                counts[m["role"]] = counts.get(m["role"], 0) + 1
+
+            entries = []
+            for m in members:
+                role = m["role"]
+                rate = rates.get(role, 0.0)
+                n = counts.get(role, 0)
+                amount = (total_kg * rate) / n if n > 0 else 0.0
+                cur.execute(
+                    """INSERT INTO salary_entries
+                           (scope, line_id, worker, role, source_type, work_date, kg, rate, amount)
+                       VALUES (%s,%s,%s,%s,'daily_shared',%s,%s,%s,%s)
+                       ON CONFLICT (scope, worker, role, work_date) WHERE source_type='daily_shared'
+                       DO NOTHING""",
+                    (scope, line_id, m["worker_name"], role, work_date, total_kg, rate, amount),
+                )
+                entries.append({"worker": m["worker_name"], "role": role, "rate": rate, "amount": amount})
+                new_entries.append({
+                    "line_id": line_id, "line_name": line_name,
+                    "worker": m["worker_name"], "role": role, "rate": rate, "amount": amount,
+                })
+
+            cur.execute(
+                """INSERT INTO daily_payroll_runs (scope, line_id, work_date, total_kg, status, closed_by)
+                   VALUES (%s,%s,%s,%s,'closed',%s)
+                   ON CONFLICT (scope, work_date, line_id) DO NOTHING""",
+                (scope, line_id, work_date, total_kg, closed_by),
+            )
+
+            result_lines.append({
+                "line_id": line_id, "line_name": line_name,
+                "total_kg": total_kg, "already_closed": False, "entries": entries,
+            })
+
+    already_closed = all(l["already_closed"] for l in result_lines) if result_lines else True
     return {
         "work_date": work_date,
-        "total_kg": total_kg,
-        "entries": entries,
-        "already_closed": False,
+        "total_kg": grand_total,
+        "already_closed": already_closed,
+        "lines": result_lines,
+        "new_entries": new_entries,
     }
 
 
@@ -616,6 +736,15 @@ def create_batch_session(worker: str, prefix: str, items: list[dict]) -> dict:
         wh = cur.fetchone()
         wh_id = wh["id"] if wh else None
 
+        # Ishlab chiqaruvchining liniyasini snapshot qilamiz (kun yopilganda liniya
+        # bo'yicha jami kg shu orqali hisoblanadi). Biriktirilmagan bo'lsa NULL.
+        cur.execute(
+            "SELECT line_id FROM production_line_workers WHERE worker_name=%s AND role='producer' LIMIT 1",
+            (worker,),
+        )
+        _lrow = cur.fetchone()
+        line_id = _lrow["line_id"] if _lrow else None
+
         for it in items:
             product   = it["product"]
             quantity  = int(it["quantity"])
@@ -634,9 +763,9 @@ def create_batch_session(worker: str, prefix: str, items: list[dict]) -> dict:
                 method = (_prow["payroll_method"] if _prow and _prow["payroll_method"] else "PRODUCT_RATE")
 
             cur.execute(
-                """INSERT INTO batches (batch_code, worker, product, quantity, weight_kg, earnings, payroll_method)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s)""",
-                (batch_code, worker, product, quantity, weight_kg, earnings, method),
+                """INSERT INTO batches (batch_code, worker, product, quantity, weight_kg, earnings, payroll_method, production_line_id)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (batch_code, worker, product, quantity, weight_kg, earnings, method, line_id),
             )
 
             # Tayyor mahsulotni faol omborga "Kirim" qilib yozamiz

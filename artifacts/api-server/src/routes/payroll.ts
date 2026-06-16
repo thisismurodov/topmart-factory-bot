@@ -11,12 +11,39 @@ import {
   RemoveKgPayrollWorkerResponse,
   GetPayrollWorkerEarningsResponse,
   GetPayrollDayStatusResponse,
+  GetProductionLinesResponse,
+  CreateProductionLineBody,
+  CreateProductionLineResponse,
+  DeleteProductionLineParams,
+  DeleteProductionLineResponse,
+  AddProductionLineWorkerParams,
+  AddProductionLineWorkerBody,
+  AddProductionLineWorkerResponse,
+  RemoveProductionLineWorkerParams,
+  RemoveProductionLineWorkerResponse,
+  ClosePayrollDayResponse,
 } from "@workspace/api-zod";
 
 const router: IRouter = Router();
 
+const SCOPE = "arqon";
+
+// Per-line maximum workers by role (minimums are surfaced as warnings, not enforced on add)
+const ROLE_MAX: Record<string, number> = {
+  producer: 5,
+  preparation: 3,
+  packaging: 5,
+};
+
+const ROLE_UZ: Record<string, string> = {
+  producer: "Ishlab chiqaruvchi",
+  preparation: "Tayyorlovchi",
+  packaging: "Upakovkachi",
+  packer: "Upakovkachi",
+};
+
 const toIso = (v: unknown): string | null =>
-  v instanceof Date ? v.toISOString() : (typeof v === "string" ? v : null);
+  v instanceof Date ? v.toISOString() : typeof v === "string" ? v : null;
 
 // ── GET /payroll/role-rates — list global role rates ──────────────────────────
 router.get("/payroll/role-rates", async (_req, res): Promise<void> => {
@@ -42,7 +69,7 @@ router.put("/payroll/role-rates", async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  const scope = parsed.data.scope ?? "arqon";
+  const scope = parsed.data.scope ?? SCOPE;
   const { role, rate } = parsed.data;
 
   const { rows } = await pool.query(
@@ -63,7 +90,7 @@ router.put("/payroll/role-rates", async (req, res): Promise<void> => {
   );
 });
 
-// ── GET /payroll/workers — list assigned kg-payroll workers ───────────────────
+// ── GET /payroll/workers — list assigned kg-payroll workers (legacy pool) ──────
 router.get("/payroll/workers", async (_req, res): Promise<void> => {
   const { rows } = await pool.query(
     `SELECT id, scope, worker_name, role, active
@@ -83,14 +110,14 @@ router.get("/payroll/workers", async (_req, res): Promise<void> => {
   );
 });
 
-// ── POST /payroll/workers — assign a worker to the kg-payroll pool ─────────────
+// ── POST /payroll/workers — assign a worker to the legacy kg-payroll pool ──────
 router.post("/payroll/workers", async (req, res): Promise<void> => {
   const parsed = AssignKgPayrollWorkerBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  const scope = parsed.data.scope ?? "arqon";
+  const scope = parsed.data.scope ?? SCOPE;
   const { workerName, role } = parsed.data;
 
   const { rows } = await pool.query(
@@ -112,7 +139,7 @@ router.post("/payroll/workers", async (req, res): Promise<void> => {
   );
 });
 
-// ── DELETE /payroll/workers/:id — remove an assignment ────────────────────────
+// ── DELETE /payroll/workers/:id — remove a legacy assignment ──────────────────
 router.delete("/payroll/workers/:id", async (req, res): Promise<void> => {
   const parsed = RemoveKgPayrollWorkerParams.safeParse(req.params);
   if (!parsed.success) {
@@ -129,8 +156,200 @@ router.delete("/payroll/workers/:id", async (req, res): Promise<void> => {
   res.json(RemoveKgPayrollWorkerResponse.parse({ status: "ok" }));
 });
 
-// ── GET /payroll/worker-earnings — per-worker today/month/lifetime + kg ───────
-// Producers come from batches.earnings; shared (prep/packer) from salary_entries
+// ── GET /payroll/lines — list production lines ────────────────────────────────
+router.get("/payroll/lines", async (_req, res): Promise<void> => {
+  const { rows } = await pool.query(
+    `SELECT id, name, created_at FROM production_lines ORDER BY id`
+  );
+  res.json(
+    GetProductionLinesResponse.parse(
+      rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        createdAt: toIso(r.created_at),
+      }))
+    )
+  );
+});
+
+// ── POST /payroll/lines — create a production line ────────────────────────────
+router.post("/payroll/lines", async (req, res): Promise<void> => {
+  const parsed = CreateProductionLineBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  const name = parsed.data.name.trim();
+  if (!name) {
+    res.status(400).json({ error: "Liniya nomi bo'sh bo'lishi mumkin emas" });
+    return;
+  }
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO production_lines (name) VALUES ($1) RETURNING id, name, created_at`,
+      [name]
+    );
+    const r = rows[0];
+    res.json(
+      CreateProductionLineResponse.parse({
+        id: r.id,
+        name: r.name,
+        createdAt: toIso(r.created_at),
+      })
+    );
+  } catch (e) {
+    if ((e as { code?: string }).code === "23505") {
+      res.status(409).json({ error: "Bu nomli liniya allaqachon mavjud" });
+      return;
+    }
+    throw e;
+  }
+});
+
+// ── DELETE /payroll/lines/:id — delete a production line ───────────────────────
+// Refused when the line is referenced by batches / payroll history, otherwise
+// the line's kg snapshot (batches.production_line_id is a plain int, not an FK)
+// would be orphaned and silently excluded from payroll.
+router.delete("/payroll/lines/:id", async (req, res): Promise<void> => {
+  const parsed = DeleteProductionLineParams.safeParse(req.params);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  const lineId = parsed.data.id;
+
+  const { rows: refRows } = await pool.query(
+    `SELECT
+       (SELECT COUNT(*) FROM batches WHERE production_line_id = $1)::int AS batches,
+       (SELECT COUNT(*) FROM daily_payroll_runs WHERE line_id = $1)::int AS runs,
+       (SELECT COUNT(*) FROM salary_entries WHERE line_id = $1)::int AS entries`,
+    [lineId]
+  );
+  const ref = refRows[0];
+  if (ref.batches > 0 || ref.runs > 0 || ref.entries > 0) {
+    res.status(409).json({
+      error: "Bu liniyada partiyalar yoki hisoblangan maoshlar mavjud — o'chirib bo'lmaydi",
+    });
+    return;
+  }
+
+  const result = await pool.query("DELETE FROM production_lines WHERE id = $1", [lineId]);
+  if ((result.rowCount ?? 0) === 0) {
+    res.status(404).json({ error: "Liniya topilmadi" });
+    return;
+  }
+  res.json(DeleteProductionLineResponse.parse({ status: "ok" }));
+});
+
+// ── POST /payroll/lines/:id/workers — add a worker (enforces per-role max) ─────
+router.post("/payroll/lines/:id/workers", async (req, res): Promise<void> => {
+  const paramsParsed = AddProductionLineWorkerParams.safeParse(req.params);
+  const bodyParsed = AddProductionLineWorkerBody.safeParse(req.body);
+  if (!paramsParsed.success) {
+    res.status(400).json({ error: paramsParsed.error.message });
+    return;
+  }
+  if (!bodyParsed.success) {
+    res.status(400).json({ error: bodyParsed.error.message });
+    return;
+  }
+  const lineId = paramsParsed.data.id;
+  const workerName = bodyParsed.data.workerName.trim();
+  const role = bodyParsed.data.role;
+
+  const max = ROLE_MAX[role];
+  if (max === undefined) {
+    res.status(400).json({ error: `Noma'lum rol: ${role}` });
+    return;
+  }
+  if (!workerName) {
+    res.status(400).json({ error: "Ishchi ismi bo'sh bo'lishi mumkin emas" });
+    return;
+  }
+
+  // Serialize the count+insert per (line, role) so concurrent requests can't
+  // exceed the per-role maximum (COUNT-then-INSERT is otherwise racy).
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+      `add_worker:${lineId}:${role}`,
+    ]);
+
+    const { rows: lineRows } = await client.query(
+      "SELECT 1 FROM production_lines WHERE id = $1",
+      [lineId]
+    );
+    if (lineRows.length === 0) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "Liniya topilmadi" });
+      return;
+    }
+
+    const { rows: cntRows } = await client.query(
+      "SELECT COUNT(*)::int AS c FROM production_line_workers WHERE line_id = $1 AND role = $2",
+      [lineId, role]
+    );
+    if (cntRows[0].c >= max) {
+      await client.query("ROLLBACK");
+      res.status(400).json({
+        error: `${ROLE_UZ[role] ?? role} uchun maksimal soni (${max}) to'ldi`,
+      });
+      return;
+    }
+
+    const { rows } = await client.query(
+      `INSERT INTO production_line_workers (line_id, worker_name, role)
+       VALUES ($1, $2, $3)
+       RETURNING id, line_id, worker_name, role`,
+      [lineId, workerName, role]
+    );
+    await client.query("COMMIT");
+    const r = rows[0];
+    res.json(
+      AddProductionLineWorkerResponse.parse({
+        id: r.id,
+        lineId: r.line_id,
+        workerName: r.worker_name,
+        role: r.role,
+      })
+    );
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    if ((e as { code?: string }).code === "23505") {
+      const msg =
+        role === "producer"
+          ? "Bu ishlab chiqaruvchi allaqachon bir liniyaga biriktirilgan"
+          : "Bu xodim allaqachon ushbu rol bilan biror liniyaga biriktirilgan";
+      res.status(409).json({ error: msg });
+      return;
+    }
+    throw e;
+  } finally {
+    client.release();
+  }
+});
+
+// ── DELETE /payroll/line-workers/:id — remove a worker from a line ─────────────
+router.delete("/payroll/line-workers/:id", async (req, res): Promise<void> => {
+  const parsed = RemoveProductionLineWorkerParams.safeParse(req.params);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  const result = await pool.query(
+    "DELETE FROM production_line_workers WHERE id = $1",
+    [parsed.data.id]
+  );
+  if ((result.rowCount ?? 0) === 0) {
+    res.status(404).json({ error: "Xodim topilmadi" });
+    return;
+  }
+  res.json(RemoveProductionLineWorkerResponse.parse({ status: "ok" }));
+});
+
+// ── GET /payroll/worker-earnings — per-worker today/month/lifetime + kg + line ─
+// Producers come from batches.earnings; shared (prep/packaging) from salary_entries
 // daily_shared rows. Periods are computed in Asia/Tashkent.
 router.get("/payroll/worker-earnings", async (_req, res): Promise<void> => {
   const { rows } = await pool.query(
@@ -151,6 +370,15 @@ router.get("/payroll/worker-earnings", async (_req, res): Promise<void> => {
        WHERE source_type = 'daily_shared'
      )
      SELECT ev.worker,
+       (SELECT pl.name FROM production_line_workers plw
+          JOIN production_lines pl ON pl.id = plw.line_id
+          WHERE plw.worker_name = ev.worker
+          ORDER BY CASE plw.role WHEN 'producer' THEN 0 WHEN 'preparation' THEN 1 ELSE 2 END
+          LIMIT 1)                                                                AS "lineName",
+       (SELECT plw.role FROM production_line_workers plw
+          WHERE plw.worker_name = ev.worker
+          ORDER BY CASE plw.role WHEN 'producer' THEN 0 WHEN 'preparation' THEN 1 ELSE 2 END
+          LIMIT 1)                                                                AS "role",
        COALESCE(SUM(amt) FILTER (WHERE d = b.today), 0)                          AS "todayEarnings",
        COALESCE(SUM(amt) FILTER (WHERE d >= b.m_start AND d < b.m_end), 0)       AS "monthEarnings",
        COALESCE(SUM(amt), 0)                                                     AS "lifetimeEarnings",
@@ -165,6 +393,8 @@ router.get("/payroll/worker-earnings", async (_req, res): Promise<void> => {
     GetPayrollWorkerEarningsResponse.parse(
       rows.map((r) => ({
         worker: r.worker,
+        lineName: r.lineName ?? null,
+        role: r.role ?? null,
         todayEarnings: Number(r.todayEarnings),
         monthEarnings: Number(r.monthEarnings),
         lifetimeEarnings: Number(r.lifetimeEarnings),
@@ -176,30 +406,283 @@ router.get("/payroll/worker-earnings", async (_req, res): Promise<void> => {
   );
 });
 
-// ── GET /payroll/day-status — today's close status + producer volume ──────────
+// ── GET /payroll/day-status — per-line today snapshot + pool previews ──────────
 router.get("/payroll/day-status", async (_req, res): Promise<void> => {
-  const { rows } = await pool.query(
-    `WITH d AS (SELECT (NOW() AT TIME ZONE 'Asia/Tashkent')::date AS today)
-     SELECT
-       d.today AS work_date,
-       COALESCE((
-         SELECT SUM(b.weight_kg)
-         FROM batches b
-         WHERE b.payroll_method = 'ROLE_BASED_KG'
-           AND (b.created_at AT TIME ZONE 'Asia/Tashkent')::date = d.today
-       ), 0) AS total_kg,
-       (SELECT closed_at FROM daily_payroll_runs r
-        WHERE r.scope = 'arqon' AND r.work_date = d.today) AS closed_at
-     FROM d`
+  const { rows: dRows } = await pool.query(
+    `SELECT to_char((NOW() AT TIME ZONE 'Asia/Tashkent')::date, 'YYYY-MM-DD') AS today`
   );
-  const r = rows[0];
-  const closedAt = toIso(r.closed_at);
+  const today: string = dRows[0].today;
+
+  const [rateRes, lineRes, memberRes, kgRes, runRes] = await Promise.all([
+    pool.query(`SELECT role, rate FROM payroll_role_rates WHERE scope = $1`, [SCOPE]),
+    pool.query(`SELECT id, name FROM production_lines ORDER BY id`),
+    pool.query(
+      `SELECT id, line_id, worker_name, role FROM production_line_workers
+       ORDER BY line_id, role, worker_name`
+    ),
+    pool.query(
+      `SELECT production_line_id, COALESCE(SUM(weight_kg), 0) AS kg
+       FROM batches
+       WHERE payroll_method = 'ROLE_BASED_KG'
+         AND (created_at AT TIME ZONE 'Asia/Tashkent')::date = $1
+       GROUP BY production_line_id`,
+      [today]
+    ),
+    pool.query(
+      `SELECT line_id, closed_at FROM daily_payroll_runs
+       WHERE scope = $1 AND work_date = $2`,
+      [SCOPE, today]
+    ),
+  ]);
+
+  const rates: Record<string, number> = {};
+  for (const r of rateRes.rows) rates[r.role] = Number(r.rate);
+  const producerRate = rates.producer ?? 0;
+  const prepRate = rates.preparation ?? 0;
+  const packagingRate = rates.packaging ?? 0;
+
+  const lineIdSet = new Set<number>(lineRes.rows.map((ln) => Number(ln.id)));
+  const kgByLine = new Map<number, number>();
+  let unassignedKg = 0;
+  for (const r of kgRes.rows) {
+    // NULL = never assigned; a non-null id missing from production_lines means
+    // the line was deleted while keeping its batch snapshot — fold both into
+    // "unassigned" so the kg stays visible instead of silently disappearing.
+    if (r.production_line_id === null || !lineIdSet.has(Number(r.production_line_id))) {
+      unassignedKg += Number(r.kg);
+    } else {
+      kgByLine.set(Number(r.production_line_id), Number(r.kg));
+    }
+  }
+
+  const closedByLine = new Map<number, string | null>();
+  for (const r of runRes.rows) closedByLine.set(Number(r.line_id), toIso(r.closed_at));
+
+  type Member = { id: number; workerName: string; role: string };
+  const membersByLine = new Map<number, Member[]>();
+  for (const r of memberRes.rows) {
+    const arr = membersByLine.get(Number(r.line_id)) ?? [];
+    arr.push({ id: r.id, workerName: r.worker_name, role: r.role });
+    membersByLine.set(Number(r.line_id), arr);
+  }
+
+  let grandTotal = 0;
+  const lines = lineRes.rows.map((ln) => {
+    const lineId = Number(ln.id);
+    const totalKg = kgByLine.get(lineId) ?? 0;
+    grandTotal += totalKg;
+    const members = membersByLine.get(lineId) ?? [];
+    const producers = members.filter((m) => m.role === "producer");
+    const preparation = members.filter((m) => m.role === "preparation");
+    const packaging = members.filter((m) => m.role === "packaging");
+    const prepPool = totalKg * prepRate;
+    const packagingPool = totalKg * packagingRate;
+    return {
+      lineId,
+      lineName: ln.name,
+      totalKg,
+      closed: closedByLine.has(lineId),
+      closedAt: closedByLine.get(lineId) ?? null,
+      producers,
+      preparation,
+      packaging,
+      producerRate,
+      prepRate,
+      packagingRate,
+      prepPool,
+      prepPerWorker: preparation.length > 0 ? prepPool / preparation.length : 0,
+      packagingPool,
+      packagingPerWorker: packaging.length > 0 ? packagingPool / packaging.length : 0,
+    };
+  });
+
+  const closed = lines.length > 0 && lines.every((l) => l.closed);
+
   res.json(
     GetPayrollDayStatusResponse.parse({
-      workDate: toIso(r.work_date) ?? String(r.work_date),
-      totalKg: Number(r.total_kg),
-      closed: closedAt !== null,
-      closedAt,
+      workDate: today,
+      totalKg: grandTotal,
+      unassignedKg,
+      closed,
+      lines,
+    })
+  );
+});
+
+// ── POST /payroll/close-day — close all lines for today (idempotent) ──────────
+type NewEntry = { worker: string; role: string; rate: number; amount: number; lineName: string };
+
+async function notifyWorkers(newEntries: NewEntry[]): Promise<void> {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token || newEntries.length === 0) return;
+  const names = [...new Set(newEntries.map((e) => e.worker))];
+  const { rows } = await pool.query(
+    `SELECT worker_name, chat_id FROM user_roles WHERE worker_name = ANY($1)`,
+    [names]
+  );
+  const chatByWorker = new Map<string, string>();
+  for (const r of rows) chatByWorker.set(r.worker_name, String(r.chat_id));
+
+  for (const e of newEntries) {
+    const chatId = chatByWorker.get(e.worker);
+    if (!chatId) continue;
+    const text =
+      `💰 Kunlik ulush hisoblandi\n` +
+      `📦 Liniya: ${e.lineName}\n` +
+      `👷 Rol: ${ROLE_UZ[e.role] ?? e.role}\n` +
+      `💵 Summa: ${Math.round(e.amount).toLocaleString("ru-RU")} so'm`;
+    try {
+      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: chatId, text }),
+      });
+    } catch {
+      // notifications are best-effort; never fail the close because of Telegram
+    }
+  }
+}
+
+router.post("/payroll/close-day", async (_req, res): Promise<void> => {
+  const closedBy = "dashboard";
+  const client = await pool.connect();
+  const newEntries: NewEntry[] = [];
+  type ResultLine = {
+    lineId: number;
+    lineName: string;
+    totalKg: number;
+    alreadyClosed: boolean;
+    entries: { worker: string; role: string; rate: number; amount: number }[];
+  };
+  const resultLines: ResultLine[] = [];
+  let grandTotal = 0;
+  let workDate = "";
+
+  try {
+    await client.query("BEGIN");
+
+    const { rows: dRows } = await client.query(
+      `SELECT to_char((NOW() AT TIME ZONE 'Asia/Tashkent')::date, 'YYYY-MM-DD') AS d`
+    );
+    workDate = dRows[0].d;
+
+    const { rows: rateRows } = await client.query(
+      `SELECT role, rate FROM payroll_role_rates WHERE scope = $1`,
+      [SCOPE]
+    );
+    const rates: Record<string, number> = {};
+    for (const r of rateRows) rates[r.role] = Number(r.rate);
+
+    const { rows: lineRows } = await client.query(
+      `SELECT id, name FROM production_lines ORDER BY id`
+    );
+
+    for (const ln of lineRows) {
+      const lineId = Number(ln.id);
+      const lineName: string = ln.name;
+
+      await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+        `close_day:${SCOPE}:${lineId}:${workDate}`,
+      ]);
+
+      const { rows: ex } = await client.query(
+        `SELECT total_kg FROM daily_payroll_runs WHERE scope = $1 AND line_id = $2 AND work_date = $3`,
+        [SCOPE, lineId, workDate]
+      );
+
+      if (ex[0]) {
+        const { rows: ents } = await client.query(
+          `SELECT worker, role, rate, amount FROM salary_entries
+           WHERE scope = $1 AND line_id = $2 AND work_date = $3 AND source_type = 'daily_shared'
+           ORDER BY role, worker`,
+          [SCOPE, lineId, workDate]
+        );
+        const totalKg = Number(ex[0].total_kg);
+        grandTotal += totalKg;
+        resultLines.push({
+          lineId,
+          lineName,
+          totalKg,
+          alreadyClosed: true,
+          entries: ents.map((r) => ({
+            worker: r.worker,
+            role: r.role,
+            rate: Number(r.rate),
+            amount: Number(r.amount),
+          })),
+        });
+        continue;
+      }
+
+      const { rows: kgRows } = await client.query(
+        `SELECT COALESCE(SUM(b.weight_kg), 0) AS total_kg
+         FROM batches b
+         WHERE b.payroll_method = 'ROLE_BASED_KG'
+           AND b.production_line_id = $1
+           AND (b.created_at AT TIME ZONE 'Asia/Tashkent')::date = $2`,
+        [lineId, workDate]
+      );
+      const totalKg = Number(kgRows[0].total_kg);
+      grandTotal += totalKg;
+
+      const { rows: members } = await client.query(
+        `SELECT worker_name, role FROM production_line_workers
+         WHERE line_id = $1 AND role IN ('preparation', 'packaging')
+         ORDER BY role, worker_name`,
+        [lineId]
+      );
+      const counts: Record<string, number> = { preparation: 0, packaging: 0 };
+      for (const m of members) counts[m.role] = (counts[m.role] ?? 0) + 1;
+
+      const entries: ResultLine["entries"] = [];
+      for (const m of members) {
+        const role: string = m.role;
+        const rate = rates[role] ?? 0;
+        const n = counts[role] ?? 0;
+        const amount = n > 0 ? (totalKg * rate) / n : 0;
+        await client.query(
+          `INSERT INTO salary_entries
+             (scope, line_id, worker, role, source_type, work_date, kg, rate, amount)
+           VALUES ($1, $2, $3, $4, 'daily_shared', $5, $6, $7, $8)
+           ON CONFLICT (scope, worker, role, work_date) WHERE source_type = 'daily_shared'
+           DO NOTHING`,
+          [SCOPE, lineId, m.worker_name, role, workDate, totalKg, rate, amount]
+        );
+        entries.push({ worker: m.worker_name, role, rate, amount });
+        newEntries.push({ worker: m.worker_name, role, rate, amount, lineName });
+      }
+
+      await client.query(
+        `INSERT INTO daily_payroll_runs (scope, line_id, work_date, total_kg, status, closed_by)
+         VALUES ($1, $2, $3, $4, 'closed', $5)
+         ON CONFLICT (scope, work_date, line_id) DO NOTHING`,
+        [SCOPE, lineId, workDate, totalKg, closedBy]
+      );
+
+      resultLines.push({ lineId, lineName, totalKg, alreadyClosed: false, entries });
+    }
+
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+
+  // Best-effort Telegram notification — only for newly created entries.
+  await notifyWorkers(newEntries);
+
+  const alreadyClosed =
+    resultLines.length > 0 && resultLines.every((l) => l.alreadyClosed);
+
+  res.json(
+    ClosePayrollDayResponse.parse({
+      workDate,
+      totalKg: grandTotal,
+      alreadyClosed,
+      newEntryCount: newEntries.length,
+      lines: resultLines,
     })
   );
 });

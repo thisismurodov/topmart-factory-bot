@@ -5,11 +5,12 @@
  * TopMart ERP API
  * OpenAPI spec version: 0.1.0
  */
+import type { ProductionLineStatus } from './productionLineStatus';
 
 export interface PayrollDayStatus {
   workDate: string;
   totalKg: number;
+  unassignedKg: number;
   closed: boolean;
-  /** @nullable */
-  closedAt: string | null;
+  lines: ProductionLineStatus[];
 }

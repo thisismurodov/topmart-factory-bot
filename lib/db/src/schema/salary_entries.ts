@@ -5,6 +5,7 @@ import { z } from "zod/v4";
 export const salaryEntriesTable = pgTable("salary_entries", {
   id: serial("id").primaryKey(),
   scope: text("scope").notNull().default("arqon"),
+  lineId: integer("line_id"),
   worker: text("worker").notNull(),
   role: text("role").notNull(),
   sourceType: text("source_type").notNull(),

@@ -4,4 +4,4 @@
 - [Deploy DB topology + cold-start auth](deploy-db-topology.md) — runtime DB is RAILWAY_DATABASE_URL; apply schema via idempotent ALTER (not drizzle push); cold-start 5xx must not force logout.
 - [Product profitability cost model](product-cost-model.md) — labor = rate/rate_type (kg→rate×weight, else rate), salary_cost deprecated; sale/elec/other ×weight; BOM absolute; revenue = sale_items.line_total.
 - [Worker name denormalization](worker-name-denormalization.md) — name copied into 7 tables; rename = copy→repoint→delete; NEVER put worker name in URL path (junk names ./empty// break it) — identify via JSON body.
-- [Role-based kg payroll engine](role-kg-payroll.md) — ROLE_BASED_KG is kg-only (DB CHECK backstop, multiple write paths); day-close freezes once; shared-kg basis = batch method snapshot, not current product method.
+- [Role-based kg payroll engine (per-line)](role-kg-payroll.md) — shared pools DIVIDED by worker count per LINE; each (worker,role) in exactly one line; line-delete blocked when referenced; day-close freezes once per (line,date); kg-only DB CHECK.

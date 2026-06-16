@@ -38,12 +38,17 @@ import type {
   KgPayrollWorkerInput,
   LoginInput,
   LoginResult,
+  PayrollCloseResult,
   PayrollDayStatus,
   PayrollRoleRate,
   PayrollRoleRateInput,
   PayrollWorkerEarnings,
   Product,
   ProductInput,
+  ProductionLine,
+  ProductionLineInput,
+  ProductionLineWorker,
+  ProductionLineWorkerInput,
   SalaryPayInput,
   SalaryRow,
   Sale,
@@ -2017,6 +2022,436 @@ export function useGetPayrollDayStatus<TData = Awaited<ReturnType<typeof getPayr
 
 
 
+
+export const getGetProductionLinesUrl = () => {
+
+
+
+
+  return `/api/payroll/lines`
+}
+
+/**
+ * @summary List production lines
+ */
+export const getProductionLines = async ( options?: RequestInit): Promise<ProductionLine[]> => {
+
+  return customFetch<ProductionLine[]>(getGetProductionLinesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetProductionLinesQueryKey = () => {
+    return [
+    `/api/payroll/lines`
+    ] as const;
+    }
+
+
+export const getGetProductionLinesQueryOptions = <TData = Awaited<ReturnType<typeof getProductionLines>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getProductionLines>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetProductionLinesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getProductionLines>>> = ({ signal }) => getProductionLines({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getProductionLines>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetProductionLinesQueryResult = NonNullable<Awaited<ReturnType<typeof getProductionLines>>>
+export type GetProductionLinesQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List production lines
+ */
+
+export function useGetProductionLines<TData = Awaited<ReturnType<typeof getProductionLines>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getProductionLines>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetProductionLinesQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getCreateProductionLineUrl = () => {
+
+
+
+
+  return `/api/payroll/lines`
+}
+
+/**
+ * @summary Create a production line
+ */
+export const createProductionLine = async (productionLineInput: ProductionLineInput, options?: RequestInit): Promise<ProductionLine> => {
+
+  return customFetch<ProductionLine>(getCreateProductionLineUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      productionLineInput,)
+  }
+);}
+
+
+
+
+export const getCreateProductionLineMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createProductionLine>>, TError,{data: BodyType<ProductionLineInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createProductionLine>>, TError,{data: BodyType<ProductionLineInput>}, TContext> => {
+
+const mutationKey = ['createProductionLine'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createProductionLine>>, {data: BodyType<ProductionLineInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createProductionLine(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateProductionLineMutationResult = NonNullable<Awaited<ReturnType<typeof createProductionLine>>>
+    export type CreateProductionLineMutationBody = BodyType<ProductionLineInput>
+    export type CreateProductionLineMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Create a production line
+ */
+export const useCreateProductionLine = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createProductionLine>>, TError,{data: BodyType<ProductionLineInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createProductionLine>>,
+        TError,
+        {data: BodyType<ProductionLineInput>},
+        TContext
+      > => {
+      return useMutation(getCreateProductionLineMutationOptions(options));
+    }
+
+export const getDeleteProductionLineUrl = (id: number,) => {
+
+
+
+
+  return `/api/payroll/lines/${id}`
+}
+
+/**
+ * @summary Delete a production line
+ */
+export const deleteProductionLine = async (id: number, options?: RequestInit): Promise<HealthStatus> => {
+
+  return customFetch<HealthStatus>(getDeleteProductionLineUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getDeleteProductionLineMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteProductionLine>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteProductionLine>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['deleteProductionLine'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteProductionLine>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteProductionLine(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteProductionLineMutationResult = NonNullable<Awaited<ReturnType<typeof deleteProductionLine>>>
+
+    export type DeleteProductionLineMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Delete a production line
+ */
+export const useDeleteProductionLine = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteProductionLine>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteProductionLine>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getDeleteProductionLineMutationOptions(options));
+    }
+
+export const getAddProductionLineWorkerUrl = (id: number,) => {
+
+
+
+
+  return `/api/payroll/lines/${id}/workers`
+}
+
+/**
+ * @summary Add a worker to a production line (enforces per-role limits)
+ */
+export const addProductionLineWorker = async (id: number,
+    productionLineWorkerInput: ProductionLineWorkerInput, options?: RequestInit): Promise<ProductionLineWorker> => {
+
+  return customFetch<ProductionLineWorker>(getAddProductionLineWorkerUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      productionLineWorkerInput,)
+  }
+);}
+
+
+
+
+export const getAddProductionLineWorkerMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addProductionLineWorker>>, TError,{id: number;data: BodyType<ProductionLineWorkerInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof addProductionLineWorker>>, TError,{id: number;data: BodyType<ProductionLineWorkerInput>}, TContext> => {
+
+const mutationKey = ['addProductionLineWorker'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof addProductionLineWorker>>, {id: number;data: BodyType<ProductionLineWorkerInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  addProductionLineWorker(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AddProductionLineWorkerMutationResult = NonNullable<Awaited<ReturnType<typeof addProductionLineWorker>>>
+    export type AddProductionLineWorkerMutationBody = BodyType<ProductionLineWorkerInput>
+    export type AddProductionLineWorkerMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Add a worker to a production line (enforces per-role limits)
+ */
+export const useAddProductionLineWorker = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addProductionLineWorker>>, TError,{id: number;data: BodyType<ProductionLineWorkerInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof addProductionLineWorker>>,
+        TError,
+        {id: number;data: BodyType<ProductionLineWorkerInput>},
+        TContext
+      > => {
+      return useMutation(getAddProductionLineWorkerMutationOptions(options));
+    }
+
+export const getRemoveProductionLineWorkerUrl = (id: number,) => {
+
+
+
+
+  return `/api/payroll/line-workers/${id}`
+}
+
+/**
+ * @summary Remove a worker from a production line
+ */
+export const removeProductionLineWorker = async (id: number, options?: RequestInit): Promise<HealthStatus> => {
+
+  return customFetch<HealthStatus>(getRemoveProductionLineWorkerUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getRemoveProductionLineWorkerMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeProductionLineWorker>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof removeProductionLineWorker>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['removeProductionLineWorker'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof removeProductionLineWorker>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  removeProductionLineWorker(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RemoveProductionLineWorkerMutationResult = NonNullable<Awaited<ReturnType<typeof removeProductionLineWorker>>>
+
+    export type RemoveProductionLineWorkerMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Remove a worker from a production line
+ */
+export const useRemoveProductionLineWorker = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeProductionLineWorker>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof removeProductionLineWorker>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getRemoveProductionLineWorkerMutationOptions(options));
+    }
+
+export const getClosePayrollDayUrl = () => {
+
+
+
+
+  return `/api/payroll/close-day`
+}
+
+/**
+ * @summary Close today's payroll for all lines (idempotent per line+date)
+ */
+export const closePayrollDay = async ( options?: RequestInit): Promise<PayrollCloseResult> => {
+
+  return customFetch<PayrollCloseResult>(getClosePayrollDayUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getClosePayrollDayMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof closePayrollDay>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof closePayrollDay>>, TError,void, TContext> => {
+
+const mutationKey = ['closePayrollDay'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof closePayrollDay>>, void> = () => {
+
+
+          return  closePayrollDay(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ClosePayrollDayMutationResult = NonNullable<Awaited<ReturnType<typeof closePayrollDay>>>
+
+    export type ClosePayrollDayMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Close today's payroll for all lines (idempotent per line+date)
+ */
+export const useClosePayrollDay = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof closePayrollDay>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof closePayrollDay>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getClosePayrollDayMutationOptions(options));
+    }
 
 export const getGetCustomersUrl = () => {
 

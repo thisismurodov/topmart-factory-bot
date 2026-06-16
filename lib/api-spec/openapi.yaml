@@ -501,6 +501,114 @@ paths:
               schema:
                 $ref: "#/components/schemas/PayrollDayStatus"
 
+  /payroll/lines:
+    get:
+      operationId: getProductionLines
+      tags: [payroll]
+      summary: List production lines
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProductionLine"
+    post:
+      operationId: createProductionLine
+      tags: [payroll]
+      summary: Create a production line
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductionLineInput"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionLine"
+
+  /payroll/lines/{id}:
+    delete:
+      operationId: deleteProductionLine
+      tags: [payroll]
+      summary: Delete a production line
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /payroll/lines/{id}/workers:
+    post:
+      operationId: addProductionLineWorker
+      tags: [payroll]
+      summary: Add a worker to a production line (enforces per-role limits)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductionLineWorkerInput"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionLineWorker"
+
+  /payroll/line-workers/{id}:
+    delete:
+      operationId: removeProductionLineWorker
+      tags: [payroll]
+      summary: Remove a worker from a production line
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /payroll/close-day:
+    post:
+      operationId: closePayrollDay
+      tags: [payroll]
+      summary: Close today's payroll for all lines (idempotent per line+date)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PayrollCloseResult"
+
   # ── Customers ─────────────────────────────────────────────────────────
   /customers:
     get:
@@ -964,6 +1072,10 @@ components:
       properties:
         worker:
           type: string
+        lineName:
+          type: ["string", "null"]
+        role:
+          type: ["string", "null"]
         todayEarnings:
           type: number
         monthEarnings:
@@ -976,7 +1088,101 @@ components:
           type: number
         lifetimeKg:
           type: number
-      required: [worker, todayEarnings, monthEarnings, lifetimeEarnings, todayKg, monthKg, lifetimeKg]
+      required: [worker, lineName, role, todayEarnings, monthEarnings, lifetimeEarnings, todayKg, monthKg, lifetimeKg]
+
+    ProductionLine:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        createdAt:
+          type: ["string", "null"]
+      required: [id, name, createdAt]
+
+    ProductionLineInput:
+      type: object
+      properties:
+        name:
+          type: string
+      required: [name]
+
+    ProductionLineWorker:
+      type: object
+      properties:
+        id:
+          type: integer
+        lineId:
+          type: integer
+        workerName:
+          type: string
+        role:
+          type: string
+      required: [id, lineId, workerName, role]
+
+    ProductionLineWorkerInput:
+      type: object
+      properties:
+        workerName:
+          type: string
+        role:
+          type: string
+      required: [workerName, role]
+
+    PayrollLineMember:
+      type: object
+      properties:
+        id:
+          type: integer
+        workerName:
+          type: string
+        role:
+          type: string
+      required: [id, workerName, role]
+
+    ProductionLineStatus:
+      type: object
+      properties:
+        lineId:
+          type: integer
+        lineName:
+          type: string
+        totalKg:
+          type: number
+        closed:
+          type: boolean
+        closedAt:
+          type: ["string", "null"]
+        producers:
+          type: array
+          items:
+            $ref: "#/components/schemas/PayrollLineMember"
+        preparation:
+          type: array
+          items:
+            $ref: "#/components/schemas/PayrollLineMember"
+        packaging:
+          type: array
+          items:
+            $ref: "#/components/schemas/PayrollLineMember"
+        producerRate:
+          type: number
+        prepRate:
+          type: number
+        packagingRate:
+          type: number
+        prepPool:
+          type: number
+        prepPerWorker:
+          type: number
+        packagingPool:
+          type: number
+        packagingPerWorker:
+          type: number
+      required:
+        [lineId, lineName, totalKg, closed, closedAt, producers, preparation, packaging,
+         producerRate, prepRate, packagingRate, prepPool, prepPerWorker, packagingPool, packagingPerWorker]
 
     PayrollDayStatus:
       type: object
@@ -985,11 +1191,62 @@ components:
           type: string
         totalKg:
           type: number
+        unassignedKg:
+          type: number
         closed:
           type: boolean
-        closedAt:
-          type: ["string", "null"]
-      required: [workDate, totalKg, closed, closedAt]
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductionLineStatus"
+      required: [workDate, totalKg, unassignedKg, closed, lines]
+
+    PayrollCloseEntry:
+      type: object
+      properties:
+        worker:
+          type: string
+        role:
+          type: string
+        rate:
+          type: number
+        amount:
+          type: number
+      required: [worker, role, rate, amount]
+
+    PayrollCloseLine:
+      type: object
+      properties:
+        lineId:
+          type: integer
+        lineName:
+          type: string
+        totalKg:
+          type: number
+        alreadyClosed:
+          type: boolean
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/PayrollCloseEntry"
+      required: [lineId, lineName, totalKg, alreadyClosed, entries]
+
+    PayrollCloseResult:
+      type: object
+      properties:
+        workDate:
+          type: string
+        totalKg:
+          type: number
+        alreadyClosed:
+          type: boolean
+        newEntryCount:
+          type: integer
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/PayrollCloseLine"
+      required: [workDate, totalKg, alreadyClosed, newEntryCount, lines]
 
     # ── Customers ───────────────────────────────────────────────────
     Customer:

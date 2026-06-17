@@ -301,8 +301,10 @@ function CostSummary({
   const saleRate  = currencyType === "USD" ? (usdRate > 0 ? usdRate : 1) : 1;
   const effSale   = salePrice * saleRate * (isKg ? w : 1);
   const effSalary = isRolePay ? 0 : (rateType === "kg" ? rate * w : rate);
-  const effElec   = electricityCost * w;
-  const effOther  = otherCost * w;
+  // dona: elektr/boshqa = 1 dona narxi (og'irlikka ko'paytirilmaydi)
+  // kg:   elektr/boshqa = narx/kg × og'irlik
+  const effElec   = isKg ? electricityCost * w : electricityCost;
+  const effOther  = isKg ? otherCost * w : otherCost;
   const totalCost = rawMaterialCost + effSalary + effElec + effOther;
   const profit    = effSale - totalCost;
   const marginPct = effSale > 0 ? (profit / effSale) * 100 : 0;
@@ -332,11 +334,11 @@ function CostSummary({
         </div>
       )}
       <div className="flex justify-between text-muted-foreground">
-        <span>Elektr xarajati (×{w})</span>
+        <span>Elektr xarajati{isKg ? ` (×${w})` : ""}</span>
         <span className="font-mono">{fmt(effElec)}</span>
       </div>
       <div className="flex justify-between text-muted-foreground">
-        <span>Boshqa xarajatlar (×{w})</span>
+        <span>Boshqa xarajatlar{isKg ? ` (×${w})` : ""}</span>
         <span className="font-mono">{fmt(effOther)}</span>
       </div>
       <div className="flex justify-between font-semibold border-t pt-1.5">

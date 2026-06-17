@@ -40,7 +40,8 @@ router.get("/products", async (_req, res): Promise<void> => {
     // kg uchun: narx/kg × og'irlik = 1 birlik narxi. Elektr/boshqa hali ham × og'irlik.
     const isKg            = String(row.unit_type) === "kg";
     const effectiveSale   = salePriceBase * saleRate * (isKg ? w : 1);
-    const totalCost       = rawCost + laborCost + (elecBase + otherBase) * w;
+    // dona: elektr/boshqa = sabit (og'irlikka ko'paytirilmaydi); kg: ×og'irlik
+    const totalCost       = rawCost + laborCost + (isKg ? (elecBase + otherBase) * w : (elecBase + otherBase));
     const profit          = effectiveSale - totalCost;
     const marginPct       = effectiveSale > 0
       ? Math.round((profit / effectiveSale) * 10000) / 100
@@ -215,14 +216,13 @@ router.get("/products/:name/profitability", async (req, res): Promise<void> => {
   const s = salesRes.rows[0];
   const w         = Number(p.weight) > 0 ? Number(p.weight) : 1;
   const rawCost   = Number(p.raw_material_cost);
-  // mehnat stavkadan (kg → rate×og'irlik, dona → rate); elektr/boshqa × og'irlik; xom ashyo mutlaq.
+  const isKg            = String(p.unit_type) === "kg";
+  // mehnat: kg → rate×og'irlik, dona → rate; elektr/boshqa: kg → ×og'irlik, dona → sabit
   const laborCost       = String(p.rate_type) === "kg" ? Number(p.rate) * w : Number(p.rate);
-  const electricityCost = Number(p.electricity_cost) * w;
-  const otherCost       = Number(p.other_cost) * w;
+  const electricityCost = isKg ? Number(p.electricity_cost) * w : Number(p.electricity_cost);
+  const otherCost       = isKg ? Number(p.other_cost) * w : Number(p.other_cost);
   // USD narx jonli kursda UZS'ga aylantiriladi (xarajatlar UZS'da — izchillik uchun).
   const saleRate        = String(p.currency_type) === "USD" ? rate : 1;
-  // dona uchun 1 dona narxi; kg uchun narx/kg × og'irlik. Elektr/boshqa hali ham × og'irlik.
-  const isKg            = String(p.unit_type) === "kg";
   const salePrice       = Number(p.default_sale_price) * saleRate * (isKg ? w : 1);
   const totalCost       = rawCost + laborCost + electricityCost + otherCost;
   const profit          = salePrice - totalCost;

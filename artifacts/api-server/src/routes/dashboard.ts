@@ -261,7 +261,9 @@ router.get("/dashboard/v2", async (_req, res): Promise<void> => {
             ELSE p.default_sale_price END
             * CASE WHEN UPPER(p.currency_type)='USD' THEN $1::numeric ELSE 1 END AS sale_price,
           ((CASE WHEN p.rate_type='kg' THEN p.rate * COALESCE(NULLIF(p.weight, 0), 1) ELSE p.rate END)
-            + (p.electricity_cost + p.other_cost) * COALESCE(NULLIF(p.weight, 0), 1)) +
+            + CASE WHEN p.unit_type='kg'
+                THEN (p.electricity_cost + p.other_cost) * COALESCE(NULLIF(p.weight, 0), 1)
+                ELSE (p.electricity_cost + p.other_cost) END) +
             COALESCE((
               SELECT SUM(rm.default_cost * pm.quantity_required * CASE WHEN UPPER(rm.currency)='USD' THEN $1::numeric ELSE 1 END)
               FROM product_materials pm
@@ -374,7 +376,9 @@ router.get("/dashboard/product-highlights", async (_req, res): Promise<void> => 
         ELSE p.default_sale_price END
         * CASE WHEN UPPER(p.currency_type)='USD' THEN $1::numeric ELSE 1 END AS sale_price,
       ((CASE WHEN p.rate_type='kg' THEN p.rate * COALESCE(NULLIF(p.weight, 0), 1) ELSE p.rate END)
-        + (p.electricity_cost + p.other_cost) * COALESCE(NULLIF(p.weight, 0), 1)) +
+        + CASE WHEN p.unit_type='kg'
+            THEN (p.electricity_cost + p.other_cost) * COALESCE(NULLIF(p.weight, 0), 1)
+            ELSE (p.electricity_cost + p.other_cost) END) +
         COALESCE((
           SELECT SUM(rm.default_cost * pm.quantity_required * CASE WHEN UPPER(rm.currency)='USD' THEN $1::numeric ELSE 1 END)
           FROM product_materials pm

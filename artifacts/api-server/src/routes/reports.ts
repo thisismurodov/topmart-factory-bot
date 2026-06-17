@@ -225,14 +225,16 @@ router.get("/reports/product-profitability", async (req, res): Promise<void> => 
         (CASE WHEN unit_type='kg' THEN default_sale_price * weight ELSE default_sale_price END
           * CASE WHEN UPPER(currency_type)='USD' THEN $1::numeric ELSE 1 END
           - (CASE WHEN rate_type='kg' THEN rate * weight ELSE rate END)
-          - (electricity_cost + other_cost) * weight
+          - CASE WHEN unit_type='kg' THEN (electricity_cost + other_cost) * weight
+                                     ELSE (electricity_cost + other_cost) END
           - raw_material_cost) AS profit,
         CASE WHEN CASE WHEN unit_type='kg' THEN default_sale_price * weight ELSE default_sale_price END
                   * CASE WHEN UPPER(currency_type)='USD' THEN $1::numeric ELSE 1 END > 0
           THEN (CASE WHEN unit_type='kg' THEN default_sale_price * weight ELSE default_sale_price END
                   * CASE WHEN UPPER(currency_type)='USD' THEN $1::numeric ELSE 1 END
                   - (CASE WHEN rate_type='kg' THEN rate * weight ELSE rate END)
-                  - (electricity_cost + other_cost) * weight
+                  - CASE WHEN unit_type='kg' THEN (electricity_cost + other_cost) * weight
+                                             ELSE (electricity_cost + other_cost) END
                   - raw_material_cost)
                / (CASE WHEN unit_type='kg' THEN default_sale_price * weight ELSE default_sale_price END
                     * CASE WHEN UPPER(currency_type)='USD' THEN $1::numeric ELSE 1 END) * 100
@@ -245,11 +247,11 @@ router.get("/reports/product-profitability", async (req, res): Promise<void> => 
   res.json(rows.map(r => {
     const w         = Number(r.weight) > 0 ? Number(r.weight) : 1;
     const rawCost   = Number(r.raw_material_cost);
-    const laborCost       = String(r.rate_type) === "kg" ? Number(r.rate) * w : Number(r.rate);
-    const electricityCost = Number(r.electricity_cost) * w;
-    const otherCost       = Number(r.other_cost) * w;
-    const saleRate        = String(r.currency_type) === "USD" ? rate : 1;
     const isKg            = String(r.unit_type) === "kg";
+    const laborCost       = String(r.rate_type) === "kg" ? Number(r.rate) * w : Number(r.rate);
+    const electricityCost = isKg ? Number(r.electricity_cost) * w : Number(r.electricity_cost);
+    const otherCost       = isKg ? Number(r.other_cost) * w : Number(r.other_cost);
+    const saleRate        = String(r.currency_type) === "USD" ? rate : 1;
     const salePrice       = Number(r.default_sale_price) * saleRate * (isKg ? w : 1);
     const totalCost = rawCost + laborCost + electricityCost + otherCost;
     const profit    = salePrice - totalCost;

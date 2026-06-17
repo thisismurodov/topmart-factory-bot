@@ -823,7 +823,12 @@ function ProductDialog({
                       name="electricityCost"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Elektr xarajati</FormLabel>
+                          <FormLabel>
+                            Elektr xarajati
+                            <span className="text-muted-foreground font-normal ml-1 text-xs">
+                              (so'm/{watchedUnitType === "kg" ? "kg" : "dona"})
+                            </span>
+                          </FormLabel>
                           <FormControl>
                             <Input type="number" step="0.01" min={0} {...field} />
                           </FormControl>
@@ -835,7 +840,12 @@ function ProductDialog({
                       name="otherCost"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Boshqa xarajat</FormLabel>
+                          <FormLabel>
+                            Boshqa xarajat
+                            <span className="text-muted-foreground font-normal ml-1 text-xs">
+                              (so'm/{watchedUnitType === "kg" ? "kg" : "dona"})
+                            </span>
+                          </FormLabel>
                           <FormControl>
                             <Input type="number" step="0.01" min={0} {...field} />
                           </FormControl>

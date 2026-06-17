@@ -1,0 +1,321 @@
+Men bo'lsam hozir ERPga yangi modul qo'shishni to'xtatib, Ombor yadrosini tugataman. Chunki hozir sizda:
+
+✅ Ishlab chiqarish bor
+
+✅ Maosh bor
+
+✅ Mahsulot tannarxi bor
+
+✅ Savdo bor
+
+✅ Nasiya bor
+
+✅ Hisobot bor
+
+Lekin bularning markazida turgan **ombor harakati** hali to'liq yopilmagan.
+
+---
+
+# 1-BOSQICH (birinchi qilinadigan ish)
+
+## Ombor harakatlari jadvali
+
+Barcha harakatlar bitta joyga yoziladi.
+
+```text
+inventory_movements
+```
+
+Har safar:
+
+```text
+Xom ashyo keldi
+```
+
+yoki
+
+```text
+Partiya yopildi
+```
+
+yoki
+
+```text
+Savdo qilindi
+```
+
+shu jadvalga yoziladi.
+
+---
+
+# 2-BOSQICH
+
+## Partiya yopilganda
+
+Masalan:
+
+```text
+Aziza
+
+Arqon 5 kg
+
+100 dona
+
+400 kg
+```
+
+Bot:
+
+```text
+Partiya yaratadi
+```
+
+va avtomatik:
+
+```text
+📦 Tayyor mahsulot omboriga
+
++100 dona
+
++400 kg
+```
+
+kirim qiladi.
+
+Operator qo'lda omborga kiritmaydi.
+
+---
+
+# 3-BOSQICH
+
+## Savdo qilinganda
+
+Misol:
+
+```text
+Arqon 5 kg
+
+20 dona sotildi
+```
+
+ERP:
+
+```text
+-20 dona
+```
+
+ombordan chiqaradi.
+
+---
+
+# 4-BOSQICH
+
+## Xom ashyo kirimi
+
+Yangi menyu:
+
+```text
+Ombor
+  ├── Xom ashyo kirimi
+  ├── Harakatlar
+  ├── Qoldiqlar
+```
+
+Misol:
+
+```text
+PP BSF
+
+5000 kg
+
+1.30$
+```
+
+keldi.
+
+ERP:
+
+```text
++5000 kg
+```
+
+yozadi.
+
+---
+
+# 5-BOSQICH
+
+## BOM (eng muhim qism)
+
+Har mahsulot tarkibi bo'ladi.
+
+Masalan:
+
+### Arqon 5 kg
+
+```text
+PP 2x1500 oq
+
+1 kg mahsulotga
+0.92 kg
+```
+
+### Reja ip 50
+
+```text
+PP BSF
+
+0.95 kg
+```
+
+---
+
+# 6-BOSQICH
+
+## Ishlab chiqarish xom ashyoni yeydi
+
+Partiya yopildi:
+
+```text
+400 kg Arqon
+```
+
+ERP hisoblaydi:
+
+```text
+PP kerak
+
+368 kg
+```
+
+va:
+
+```text
+PP omboridan
+
+-368 kg
+```
+
+yozadi.
+
+Mana shu ERPning yuragi.
+
+---
+
+# 7-BOSQICH
+
+## Ombor bosh sahifasi
+
+Tepada:
+
+```text
+Xom ashyo qiymati
+
+4.2 mlrd
+```
+
+```text
+Tayyor mahsulot qiymati
+
+1.8 mlrd
+```
+
+```text
+Jami aktiv
+
+6.0 mlrd
+```
+
+---
+
+# 8-BOSQICH
+
+## Kam qolganlar
+
+```text
+PP BSF
+
+4 kunlik qoldiq
+```
+
+🔴 qizil
+
+---
+
+```text
+Polyamide
+
+2 kunlik qoldiq
+```
+
+🔴 qizil
+
+---
+
+# 9-BOSQICH
+
+## Konteynerlar
+
+Hozircha qo'shmaymiz.
+
+Buni ERP 4.0 ga qoldiramiz.
+
+Hozir:
+
+```text
+Mahsulot
+
+Qoldiq
+
+Qiymat
+```
+
+yetarli.
+
+---
+
+# 10-BOSQICH
+
+## Keyin TopMart moduli
+
+Ombor bitgach:
+
+```text
+Agentlar
+```
+
+keladi.
+
+Keyin:
+
+```text
+Top Location
+
+Top Product
+
+Repeat %
+
+Coverage %
+```
+
+keladi.
+
+---
+
+Agar men sizning o'rningizda bo'lsam, keyingi 30 kunlik roadmap:
+
+```text
+1-hafta
+✅ Ombor harakatlari
+
+2-hafta
+✅ BOM (mahsulot tarkibi)
+
+3-hafta
+✅ Avtomatik xom ashyo sarfi
+
+4-hafta
+✅ Ombor dashboardi
+```
+
+Shundan keyin TopMart ERP amalda zavodning barcha pul oqimini, ishlab chiqarishni va savdoni bitta tizimda bog'lab qo'yadi. Shu nuqtadan keyin agentlar va TopMart distribyutor tarmog'ini qo'shish ancha osonlashadi. 🚀

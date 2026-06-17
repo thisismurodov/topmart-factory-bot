@@ -20,6 +20,7 @@ import exchangeRateRouter from "./exchange-rate";
 import rawMaterialsRouter from "./raw-materials";
 import productMaterialsRouter from "./product-materials";
 import packerProductAssignmentsRouter from "./packer-product-assignments";
+import omborRouter from "./ombor";
 
 const router: IRouter = Router();
 
@@ -48,5 +49,6 @@ router.use(exchangeRateRouter);
 router.use(rawMaterialsRouter);
 router.use(productMaterialsRouter);
 router.use(packerProductAssignmentsRouter);
+router.use(omborRouter);
 
 export default router;

@@ -269,6 +269,32 @@ router.post("/sales", async (req, res): Promise<void> => {
       );
     }
 
+    // ── Tayyor mahsulot omboridan kamaytirish ──────────────────────────────
+    try {
+      const whRes = await client.query(
+        "SELECT id FROM warehouses WHERE active=TRUE ORDER BY id LIMIT 1",
+      );
+      const whId = whRes.rows[0]?.id ?? null;
+      for (const it of resolvedItems) {
+        const qty = Math.round(it.quantity);
+        if (qty <= 0) continue;
+        await client.query(
+          `UPDATE inventory
+           SET quantity = GREATEST(0, quantity - $1), updated_at = NOW()
+           WHERE product = $2 AND warehouse_id = $3`,
+          [qty, it.productName, whId],
+        );
+        if (whId) {
+          await client.query(
+            `INSERT INTO stock_movements
+               (product, quantity, movement_type, from_warehouse_id, note, created_by, product_type)
+             VALUES ($1,$2,'OUT',$3,$4,'system','finished')`,
+            [it.productName, qty, whId, `Savdo #${saleId}`],
+          );
+        }
+      }
+    } catch (_) {}
+
     await client.query("COMMIT");
 
     // Audit

@@ -421,11 +421,14 @@ router.get("/payroll/day-status", async (_req, res): Promise<void> => {
        ORDER BY line_id, role, worker_name`
     ),
     pool.query(
-      `SELECT production_line_id, COALESCE(SUM(weight_kg), 0) AS kg
-       FROM batches
-       WHERE payroll_method = 'ROLE_BASED_KG'
-         AND (created_at AT TIME ZONE 'Asia/Tashkent')::date = $1
-       GROUP BY production_line_id`,
+      `SELECT COALESCE(b.production_line_id, plw.line_id) AS production_line_id,
+              COALESCE(SUM(b.weight_kg), 0) AS kg
+       FROM batches b
+       LEFT JOIN production_line_workers plw
+         ON plw.worker_name = b.worker AND plw.role = 'producer'
+         AND b.production_line_id IS NULL
+       WHERE (b.created_at AT TIME ZONE 'Asia/Tashkent')::date = $1
+       GROUP BY COALESCE(b.production_line_id, plw.line_id)`,
       [today]
     ),
     pool.query(
@@ -617,8 +620,10 @@ router.post("/payroll/close-day", async (_req, res): Promise<void> => {
       const { rows: kgRows } = await client.query(
         `SELECT COALESCE(SUM(b.weight_kg), 0) AS total_kg
          FROM batches b
-         WHERE b.payroll_method = 'ROLE_BASED_KG'
-           AND b.production_line_id = $1
+         LEFT JOIN production_line_workers plw
+           ON plw.worker_name = b.worker AND plw.role = 'producer'
+           AND b.production_line_id IS NULL
+         WHERE COALESCE(b.production_line_id, plw.line_id) = $1
            AND (b.created_at AT TIME ZONE 'Asia/Tashkent')::date = $2`,
         [lineId, workDate]
       );

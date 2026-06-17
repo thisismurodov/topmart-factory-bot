@@ -256,7 +256,9 @@ router.get("/dashboard/v2", async (_req, res): Promise<void> => {
         -- USD narx/xom ashyo jonli kursda ($1) UZS'ga aylantiriladi — foyda/margin UZS'da izchil.
         SELECT
           p.name,
-          p.default_sale_price * COALESCE(NULLIF(p.weight, 0), 1)
+          CASE WHEN p.unit_type='kg'
+            THEN p.default_sale_price * COALESCE(NULLIF(p.weight, 0), 1)
+            ELSE p.default_sale_price END
             * CASE WHEN UPPER(p.currency_type)='USD' THEN $1::numeric ELSE 1 END AS sale_price,
           ((CASE WHEN p.rate_type='kg' THEN p.rate * COALESCE(NULLIF(p.weight, 0), 1) ELSE p.rate END)
             + (p.electricity_cost + p.other_cost) * COALESCE(NULLIF(p.weight, 0), 1)) +
@@ -271,7 +273,7 @@ router.get("/dashboard/v2", async (_req, res): Promise<void> => {
         FROM products p
         LEFT JOIN sale_items si ON si.product_name = p.name
         WHERE p.active = TRUE AND p.default_sale_price > 0
-        GROUP BY p.name, p.default_sale_price, p.weight, p.rate, p.rate_type, p.electricity_cost, p.other_cost, p.currency_type
+        GROUP BY p.name, p.unit_type, p.default_sale_price, p.weight, p.rate, p.rate_type, p.electricity_cost, p.other_cost, p.currency_type
       )
       SELECT name, sale_price, total_cost,
              (sale_price - total_cost) AS profit,
@@ -367,7 +369,9 @@ router.get("/dashboard/product-highlights", async (_req, res): Promise<void> => 
   const { rows } = await pool.query(`
     SELECT
       p.name,
-      p.default_sale_price * COALESCE(NULLIF(p.weight, 0), 1)
+      CASE WHEN p.unit_type='kg'
+        THEN p.default_sale_price * COALESCE(NULLIF(p.weight, 0), 1)
+        ELSE p.default_sale_price END
         * CASE WHEN UPPER(p.currency_type)='USD' THEN $1::numeric ELSE 1 END AS sale_price,
       ((CASE WHEN p.rate_type='kg' THEN p.rate * COALESCE(NULLIF(p.weight, 0), 1) ELSE p.rate END)
         + (p.electricity_cost + p.other_cost) * COALESCE(NULLIF(p.weight, 0), 1)) +
@@ -383,7 +387,7 @@ router.get("/dashboard/product-highlights", async (_req, res): Promise<void> => 
     FROM products p
     LEFT JOIN sale_items si ON si.product_name = p.name
     WHERE p.active = TRUE AND p.default_sale_price > 0
-    GROUP BY p.name, p.default_sale_price, p.weight,
+    GROUP BY p.name, p.unit_type, p.default_sale_price, p.weight,
              p.rate, p.rate_type, p.electricity_cost, p.other_cost, p.currency_type
   `, [rate]);
 

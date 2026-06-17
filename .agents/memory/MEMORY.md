@@ -2,6 +2,6 @@
 - [PostgreSQL migration from SQLite](pg-migration.md) — Bot uses psycopg2; table names workers/products (not workers_config/products_config); salary_payments.worker not worker_name; db_meta created by bot not Drizzle.
 - [TopMart batch & raw-material flow](topmart-batch-flow.md) — batches created ONLY via bot (api batches.ts has no POST); BOM deduction lives in bot create_batch, not API.
 - [Deploy DB topology + cold-start auth](deploy-db-topology.md) — runtime DB is RAILWAY_DATABASE_URL; apply schema via idempotent ALTER (not drizzle push); cold-start 5xx must not force logout.
-- [Product profitability cost model](product-cost-model.md) — labor = rate/rate_type, salary_cost deprecated; sale/elec/other ×weight; BOM absolute; profit/cost ALWAYS UZS (USD×live rate) on every endpoint; revenue+original raw/tier prices stay native; cast `$n::numeric` in CASE.
+- [Product profitability cost model](product-cost-model.md) — dona: revenue=price (no ×weight); kg: revenue=price×weight; elec/other ×weight for both; BOM absolute; profit ALWAYS UZS; cast `$n::numeric` in CASE.
 - [Worker name denormalization](worker-name-denormalization.md) — name copied into 7 tables; rename = copy→repoint→delete; NEVER put worker name in URL path (junk names ./empty// break it) — identify via JSON body.
 - [Role-based kg payroll engine (per-line)](role-kg-payroll.md) — shared pools DIVIDED by worker count per LINE; each (worker,role) in exactly one line; line-delete blocked when referenced; day-close freezes once per (line,date); kg-only DB CHECK.

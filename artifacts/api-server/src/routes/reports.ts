@@ -219,19 +219,23 @@ router.get("/reports/product-profitability", async (req, res): Promise<void> => 
     ),
     enriched AS (
       -- mehnat stavkadan (kg → rate×og'irlik, dona → rate); elektr/boshqa × og'irlik; xom ashyo mutlaq
-      -- USD narxli mahsulot sotuv narxi jonli kursda ($1) UZS'ga aylantiriladi;
-      -- barcha xarajatlar UZS'da, foyda/margin izchil UZS'da hisoblanadi.
+      -- dona (piece) uchun sotuv narxi og'irlikka ko'paytirilmaydi — 1 dona narxi.
+      -- kg uchun: narx/kg × og'irlik. USD narx jonli kursda ($1) UZS'ga aylantiriladi.
       SELECT *,
-        (default_sale_price * weight * CASE WHEN UPPER(currency_type)='USD' THEN $1::numeric ELSE 1 END
+        (CASE WHEN unit_type='kg' THEN default_sale_price * weight ELSE default_sale_price END
+          * CASE WHEN UPPER(currency_type)='USD' THEN $1::numeric ELSE 1 END
           - (CASE WHEN rate_type='kg' THEN rate * weight ELSE rate END)
           - (electricity_cost + other_cost) * weight
           - raw_material_cost) AS profit,
-        CASE WHEN default_sale_price * weight * CASE WHEN UPPER(currency_type)='USD' THEN $1::numeric ELSE 1 END > 0
-          THEN (default_sale_price * weight * CASE WHEN UPPER(currency_type)='USD' THEN $1::numeric ELSE 1 END
-                - (CASE WHEN rate_type='kg' THEN rate * weight ELSE rate END)
-                - (electricity_cost + other_cost) * weight
-                - raw_material_cost)
-               / (default_sale_price * weight * CASE WHEN UPPER(currency_type)='USD' THEN $1::numeric ELSE 1 END) * 100
+        CASE WHEN CASE WHEN unit_type='kg' THEN default_sale_price * weight ELSE default_sale_price END
+                  * CASE WHEN UPPER(currency_type)='USD' THEN $1::numeric ELSE 1 END > 0
+          THEN (CASE WHEN unit_type='kg' THEN default_sale_price * weight ELSE default_sale_price END
+                  * CASE WHEN UPPER(currency_type)='USD' THEN $1::numeric ELSE 1 END
+                  - (CASE WHEN rate_type='kg' THEN rate * weight ELSE rate END)
+                  - (electricity_cost + other_cost) * weight
+                  - raw_material_cost)
+               / (CASE WHEN unit_type='kg' THEN default_sale_price * weight ELSE default_sale_price END
+                    * CASE WHEN UPPER(currency_type)='USD' THEN $1::numeric ELSE 1 END) * 100
           ELSE 0 END AS margin_pct
       FROM base
     )
@@ -245,7 +249,8 @@ router.get("/reports/product-profitability", async (req, res): Promise<void> => 
     const electricityCost = Number(r.electricity_cost) * w;
     const otherCost       = Number(r.other_cost) * w;
     const saleRate        = String(r.currency_type) === "USD" ? rate : 1;
-    const salePrice       = Number(r.default_sale_price) * saleRate * w;
+    const isKg            = String(r.unit_type) === "kg";
+    const salePrice       = Number(r.default_sale_price) * saleRate * (isKg ? w : 1);
     const totalCost = rawCost + laborCost + electricityCost + otherCost;
     const profit    = salePrice - totalCost;
     const marginPct = salePrice > 0 ? Math.round((profit / salePrice) * 10000) / 100 : 0;

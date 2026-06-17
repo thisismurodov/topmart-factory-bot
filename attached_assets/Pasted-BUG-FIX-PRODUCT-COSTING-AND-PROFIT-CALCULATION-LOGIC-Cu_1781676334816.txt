@@ -1,0 +1,192 @@
+BUG FIX: PRODUCT COSTING AND PROFIT CALCULATION LOGIC
+
+Current implementation is incorrect.
+
+Problem:
+
+When unit_type = "piece" (dona), the system is multiplying sales price by weight.
+
+Example:
+
+Product:
+Cord Maloshni
+
+Unit Type:
+piece
+
+Sales Price:
+1500 UZS
+
+Weight:
+0.04 kg
+
+Current calculation:
+
+1500 × 0.04 = 60 UZS
+
+This is wrong.
+
+The system is treating the sales price as if it were a price per kilogram.
+
+==================================================
+CORRECT BUSINESS LOGIC
+======================
+
+CASE 1:
+
+unit_type = piece (dona)
+
+Sales price represents:
+
+PRICE PER PIECE
+
+Example:
+
+Sales Price = 1500 UZS
+
+Revenue from one piece:
+
+1500 UZS
+
+Weight must NOT affect revenue.
+
+Weight is only used for:
+
+* raw material calculations
+* electricity calculations
+* BOM calculations
+* production analytics
+
+Formula:
+
+Revenue = sales_price
+
+NOT
+
+Revenue = sales_price × weight
+
+==================================================
+
+CASE 2:
+
+unit_type = kilogram (kg)
+
+Example:
+
+Sales Price = 2.5 USD/kg
+
+Weight = 100 kg
+
+Formula:
+
+Revenue = sales_price × weight
+
+This multiplication is only valid for kilogram-based products.
+
+==================================================
+PROFIT PREVIEW FIX
+==================
+
+Current preview incorrectly shows:
+
+Sales price × weight
+
+For piece products.
+
+Replace with:
+
+If unit_type = piece:
+
+Revenue = sales_price
+
+If unit_type = kg:
+
+Revenue = sales_price × weight
+
+==================================================
+PAYROLL LOGIC FIX
+=================
+
+The product form currently contains:
+
+"Maosh stavkasi"
+
+This conflicts with the new payroll architecture.
+
+Implement:
+
+Payroll Method
+
+Options:
+
+1. PRODUCT_RATE
+2. ROLE_BASED_KG
+
+For PRODUCT_RATE:
+
+Salary cost comes from product payroll rate.
+
+For ROLE_BASED_KG:
+
+Salary cost must NOT be entered manually.
+
+It comes from Production Line Payroll:
+
+Producer = 1125/kg
+Preparation Pool = 375/kg
+Packaging Pool = 750/kg
+
+calculated automatically by the payroll engine.
+
+==================================================
+PRODUCT FORM RESTRUCTURE
+========================
+
+Split the form into sections:
+
+SECTION 1
+Basic Information
+
+* Product Name
+* SKU
+* Unit Type
+* Currency
+* Sales Price
+
+SECTION 2
+Cost Structure
+
+* Weight
+* Electricity Cost
+* Other Costs
+* BOM / Raw Materials
+
+SECTION 3
+Payroll
+
+Payroll Method:
+
+○ Product Rate
+○ Role Based KG
+
+SECTION 4
+Profit Preview
+
+* Revenue
+* Total Cost
+* Profit
+* Margin
+
+==================================================
+VALIDATION
+==========
+
+When unit_type = piece:
+
+DO NOT multiply sales price by weight.
+
+When unit_type = kilogram:
+
+Multiply sales price by entered kg amount.
+
+This fix is critical because current profit reports are incorrect and piece-based products show artificially negative margins.

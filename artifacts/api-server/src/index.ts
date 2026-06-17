@@ -47,6 +47,28 @@ async function initDb() {
       ADD COLUMN IF NOT EXISTS weight NUMERIC(12,3) NOT NULL DEFAULT 1
   `);
 
+  // raw_materials.currency — xom ashyo valyutasi (UZS yoki USD)
+  await pool.query(`
+    ALTER TABLE IF EXISTS raw_materials
+      ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'UZS'
+  `);
+
+  // product_price_tiers — hajm bo'yicha tier narxlash
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS product_price_tiers (
+      id           SERIAL PRIMARY KEY,
+      product_id   INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+      min_quantity NUMERIC(12,3) NOT NULL DEFAULT 0 CHECK (min_quantity >= 0),
+      max_quantity NUMERIC(12,3) NOT NULL DEFAULT 0 CHECK (max_quantity >= min_quantity),
+      price        NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (price >= 0),
+      currency     TEXT NOT NULL DEFAULT 'UZS' CHECK (currency IN ('UZS','USD')),
+      created_at   TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_ppt_product ON product_price_tiers(product_id)
+  `);
+
   // Admin userni seed qilish (mavjud bo'lmasa)
   const existing = await db.select().from(adminUsersTable).where(eq(adminUsersTable.username, "thisismurodov"));
   if (existing.length === 0) {

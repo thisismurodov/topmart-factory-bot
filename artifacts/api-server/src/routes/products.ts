@@ -36,7 +36,10 @@ router.get("/products", async (_req, res): Promise<void> => {
     const elecBase        = Number(row.electricity_cost);
     const otherBase       = Number(row.other_cost);
     const rawCost         = Number(row.raw_material_cost);
-    const effectiveSale   = salePriceBase * saleRate * w;
+    // dona (piece) uchun sotuv narxi 1 dona narxi — og'irlikka ko'paytirish noto'g'ri.
+    // kg uchun: narx/kg × og'irlik = 1 birlik narxi. Elektr/boshqa hali ham × og'irlik.
+    const isKg            = String(row.unit_type) === "kg";
+    const effectiveSale   = salePriceBase * saleRate * (isKg ? w : 1);
     const totalCost       = rawCost + laborCost + (elecBase + otherBase) * w;
     const profit          = effectiveSale - totalCost;
     const marginPct       = effectiveSale > 0
@@ -212,13 +215,15 @@ router.get("/products/:name/profitability", async (req, res): Promise<void> => {
   const s = salesRes.rows[0];
   const w         = Number(p.weight) > 0 ? Number(p.weight) : 1;
   const rawCost   = Number(p.raw_material_cost);
-  // mehnat stavkadan (kg → rate×og'irlik, dona → rate); elektr/boshqa/narx × og'irlik; xom ashyo mutlaq.
+  // mehnat stavkadan (kg → rate×og'irlik, dona → rate); elektr/boshqa × og'irlik; xom ashyo mutlaq.
   const laborCost       = String(p.rate_type) === "kg" ? Number(p.rate) * w : Number(p.rate);
   const electricityCost = Number(p.electricity_cost) * w;
   const otherCost       = Number(p.other_cost) * w;
   // USD narx jonli kursda UZS'ga aylantiriladi (xarajatlar UZS'da — izchillik uchun).
   const saleRate        = String(p.currency_type) === "USD" ? rate : 1;
-  const salePrice       = Number(p.default_sale_price) * saleRate * w;
+  // dona uchun 1 dona narxi; kg uchun narx/kg × og'irlik. Elektr/boshqa hali ham × og'irlik.
+  const isKg            = String(p.unit_type) === "kg";
+  const salePrice       = Number(p.default_sale_price) * saleRate * (isKg ? w : 1);
   const totalCost       = rawCost + laborCost + electricityCost + otherCost;
   const profit          = salePrice - totalCost;
   const marginPct       = salePrice > 0 ? (profit / salePrice) * 100 : 0;

@@ -34,6 +34,7 @@ type Product = {
   effectiveSalePrice: number;
   rate: number;
   rateType: string;
+  payrollMethod?: string;
   electricityCost: number;
   otherCost: number;
   rawMaterialCost: number;
@@ -87,6 +88,7 @@ const productSchema = z.object({
   otherCost: z.coerce.number().min(0),
   minimumStock: z.coerce.number().min(0).int(),
   active: z.boolean().default(true),
+  payrollMethod: z.enum(["PRODUCT_RATE", "ROLE_BASED_KG"]).default("PRODUCT_RATE"),
 });
 type ProductForm = z.infer<typeof productSchema>;
 
@@ -275,7 +277,7 @@ function useDeleteTier() {
 
 // ── Cost summary ──────────────────────────────────────────────────────────────
 function CostSummary({
-  rawMaterialCost, rate, rateType, electricityCost, otherCost, salePrice, weight, currencyType, usdRate,
+  rawMaterialCost, rate, rateType, electricityCost, otherCost, salePrice, weight, currencyType, usdRate, unitType, payrollMethod,
 }: {
   rawMaterialCost: number;
   rate: number;
@@ -286,25 +288,29 @@ function CostSummary({
   weight: number;
   currencyType: string;
   usdRate: number;
+  unitType: string;
+  payrollMethod?: string;
 }) {
-  // mehnat (maosh) stavkadan: kg → rate×og'irlik, dona → rate; elektr/boshqa/narx × og'irlik; xom ashyo mutlaq.
-  // Barcha qiymatlar UZS'da ko'rsatiladi — USD narx jonli kursda UZS'ga aylantiriladi.
-  const w        = weight > 0 ? weight : 1;
+  // dona: sotuv narxi = 1 dona narxi (og'irlikka ko'paytirilmaydi).
+  // kg: sotuv narxi = narx/kg × og'irlik.
+  // ROLE_BASED_KG: maosh ishlab chiqarish liniyasidan keladi (bu yerda 0).
+  // Barcha qiymatlar UZS'da — USD jonli kursda aylantiriladi.
+  const isKg      = unitType === "kg";
+  const isRolePay = payrollMethod === "ROLE_BASED_KG";
+  const w         = weight > 0 ? weight : 1;
   const saleRate  = currencyType === "USD" ? (usdRate > 0 ? usdRate : 1) : 1;
-  const effSalary = rateType === "kg" ? rate * w : rate;
+  const effSale   = salePrice * saleRate * (isKg ? w : 1);
+  const effSalary = isRolePay ? 0 : (rateType === "kg" ? rate * w : rate);
   const effElec   = electricityCost * w;
   const effOther  = otherCost * w;
-  const effSale   = salePrice * saleRate * w;
   const totalCost = rawMaterialCost + effSalary + effElec + effOther;
   const profit    = effSale - totalCost;
   const marginPct = effSale > 0 ? (profit / effSale) * 100 : 0;
-  const scaled    = w !== 1;
-  const salaryScaled = scaled && rateType === "kg";
   const fmt = (v: number) => formatCurrency(v);
 
   return (
     <div className="rounded-lg border bg-muted/30 p-3 space-y-1.5 text-xs">
-      {scaled && (
+      {isKg && w !== 1 && (
         <div className="flex justify-between font-medium text-foreground border-b pb-1.5">
           <span>Og'irlik</span>
           <span className="font-mono">{w} kg</span>
@@ -314,16 +320,23 @@ function CostSummary({
         <span>Xom ashyo xarajati</span>
         <span className="font-mono">{fmt(rawMaterialCost)}</span>
       </div>
+      {isRolePay ? (
+        <div className="flex justify-between text-muted-foreground">
+          <span>Maosh (rol bo'yicha, liniyadan)</span>
+          <span className="font-mono text-amber-600">—</span>
+        </div>
+      ) : (
+        <div className="flex justify-between text-muted-foreground">
+          <span>Maosh{rateType === "kg" ? ` (×${w})` : ""}</span>
+          <span className="font-mono">{fmt(effSalary)}</span>
+        </div>
+      )}
       <div className="flex justify-between text-muted-foreground">
-        <span>Maosh (mehnat){salaryScaled && ` (×${w})`}</span>
-        <span className="font-mono">{fmt(effSalary)}</span>
-      </div>
-      <div className="flex justify-between text-muted-foreground">
-        <span>Elektr xarajati{scaled && ` (×${w})`}</span>
+        <span>Elektr xarajati (×{w})</span>
         <span className="font-mono">{fmt(effElec)}</span>
       </div>
       <div className="flex justify-between text-muted-foreground">
-        <span>Boshqa xarajatlar{scaled && ` (×${w})`}</span>
+        <span>Boshqa xarajatlar (×{w})</span>
         <span className="font-mono">{fmt(effOther)}</span>
       </div>
       <div className="flex justify-between font-semibold border-t pt-1.5">
@@ -331,7 +344,7 @@ function CostSummary({
         <span className="font-mono">{fmt(totalCost)}</span>
       </div>
       <div className="flex justify-between text-muted-foreground">
-        <span>Sotuv narxi{scaled && ` (×${w})`}</span>
+        <span>Sotuv narxi{isKg && w !== 1 ? ` (×${w})` : ""}</span>
         <span className="font-mono">{fmt(effSale)}</span>
       </div>
       <div
@@ -479,6 +492,8 @@ function BomTab({
         weight={product.weight}
         currencyType={product.currencyType}
         usdRate={exRate?.rate ?? 0}
+        unitType={product.unitType}
+        payrollMethod={product.payrollMethod}
       />
     </div>
   );
@@ -627,6 +642,7 @@ function ProductDialog({
       defaultSalePrice: product?.defaultSalePrice ?? 0,
       weight: product?.weight ?? 1,
       rate: product?.rate ?? 0,
+      payrollMethod: (product?.payrollMethod as "PRODUCT_RATE" | "ROLE_BASED_KG") ?? "PRODUCT_RATE",
       electricityCost: product?.electricityCost ?? 0,
       otherCost: product?.otherCost ?? 0,
       minimumStock: product?.minimumStock ?? 0,
@@ -639,8 +655,9 @@ function ProductDialog({
   const watchedRate      = form.watch("rate");
   const watchedUnitType  = form.watch("unitType");
   const watchedElec      = form.watch("electricityCost");
-  const watchedOther     = form.watch("otherCost");
-  const watchedCurrency  = form.watch("currencyType");
+  const watchedOther          = form.watch("otherCost");
+  const watchedCurrency       = form.watch("currencyType");
+  const watchedPayrollMethod  = form.watch("payrollMethod");
   const { data: exRate } = useExchangeRate();
 
   function onSubmit(values: ProductForm) {
@@ -691,6 +708,10 @@ function ProductDialog({
         {(!isEdit || tab === "info") && (
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+              {/* ─── 1. Asosiy ma'lumot ─── */}
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground border-b pb-1">
+                1 · Asosiy ma'lumot
+              </p>
               <FormField
                 control={form.control}
                 name="name"
@@ -708,7 +729,6 @@ function ProductDialog({
                   </FormItem>
                 )}
               />
-
               <FormField
                 control={form.control}
                 name="sku"
@@ -721,7 +741,6 @@ function ProductDialog({
                   </FormItem>
                 )}
               />
-
               <div className="grid grid-cols-2 gap-3">
                 <FormField
                   control={form.control}
@@ -760,123 +779,176 @@ function ProductDialog({
                   )}
                 />
               </div>
-
-              <div className="grid grid-cols-3 gap-3">
-                <FormField
-                  control={form.control}
-                  name="defaultSalePrice"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Sotuv narxi</FormLabel>
-                      <FormControl>
-                        <Input type="number" step="0.01" min={0} {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="weight"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Og'irlik (kg)</FormLabel>
-                      <FormControl>
-                        <Input type="number" step="0.001" min={0} {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="rate"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Maosh stavkasi</FormLabel>
-                      <FormControl>
-                        <Input type="number" step="0.01" min={0} {...field} />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <p className="text-xs text-muted-foreground -mt-1">
-                Sotuv narxi, elektr va boshqa xarajatlar 1 birlik (kg/dona) uchun.
-                Maosh = stavka (kg uchun × og'irlik). Jami = og'irlik × narx.
-                Xom ashyo (BOM) bundan mustasno.
-              </p>
-
-              <div className="grid grid-cols-2 gap-3">
-                <FormField
-                  control={form.control}
-                  name="electricityCost"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Elektr xarajati</FormLabel>
-                      <FormControl>
-                        <Input type="number" step="0.01" min={0} {...field} />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="otherCost"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Boshqa xarajat</FormLabel>
-                      <FormControl>
-                        <Input type="number" step="0.01" min={0} {...field} />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <FormField
-                  control={form.control}
-                  name="minimumStock"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Minimal qoldiq</FormLabel>
-                      <FormControl>
-                        <Input type="number" step="1" min={0} {...field} />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="active"
-                  render={({ field }) => (
-                    <FormItem className="flex flex-col justify-end pb-1">
-                      <FormLabel>Faol</FormLabel>
-                      <div className="flex items-center gap-2 mt-1">
-                        <FormControl>
-                          <Switch checked={field.value} onCheckedChange={field.onChange} />
-                        </FormControl>
-                        <span className="text-sm text-muted-foreground">
-                          {field.value ? "Ha" : "Yo'q"}
-                        </span>
-                      </div>
-                    </FormItem>
-                  )}
-                />
-              </div>
-
-              <CostSummary
-                rawMaterialCost={isEdit ? (product?.rawMaterialCost ?? 0) : 0}
-                rate={Number(watchedRate) || 0}
-                rateType={watchedUnitType}
-                electricityCost={Number(watchedElec) || 0}
-                otherCost={Number(watchedOther) || 0}
-                salePrice={Number(watchedSalePrice) || 0}
-                weight={Number(watchedWeight) || 1}
-                currencyType={watchedCurrency}
-                usdRate={exRate?.rate ?? 0}
+              <FormField
+                control={form.control}
+                name="defaultSalePrice"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>
+                      Sotuv narxi
+                      <span className="text-muted-foreground font-normal ml-1 text-xs">
+                        ({watchedUnitType === "kg" ? "1 kg uchun" : "1 dona uchun"}, {watchedCurrency})
+                      </span>
+                    </FormLabel>
+                    <FormControl>
+                      <Input type="number" step="0.01" min={0} {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
               />
+
+              {/* ─── 2. Xarajat tuzilishi ─── */}
+              <div className="pt-2 border-t">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground border-b pb-1 mb-3">
+                  2 · Xarajat tuzilishi
+                </p>
+                <div className="space-y-3">
+                  <FormField
+                    control={form.control}
+                    name="weight"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Og'irlik (kg)</FormLabel>
+                        <FormControl>
+                          <Input type="number" step="0.001" min={0} {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <div className="grid grid-cols-2 gap-3">
+                    <FormField
+                      control={form.control}
+                      name="electricityCost"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Elektr xarajati</FormLabel>
+                          <FormControl>
+                            <Input type="number" step="0.01" min={0} {...field} />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="otherCost"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Boshqa xarajat</FormLabel>
+                          <FormControl>
+                            <Input type="number" step="0.01" min={0} {...field} />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <FormField
+                      control={form.control}
+                      name="minimumStock"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Minimal qoldiq</FormLabel>
+                          <FormControl>
+                            <Input type="number" step="1" min={0} {...field} />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="active"
+                      render={({ field }) => (
+                        <FormItem className="flex flex-col justify-end pb-1">
+                          <FormLabel>Faol</FormLabel>
+                          <div className="flex items-center gap-2 mt-1">
+                            <FormControl>
+                              <Switch checked={field.value} onCheckedChange={field.onChange} />
+                            </FormControl>
+                            <span className="text-sm text-muted-foreground">
+                              {field.value ? "Ha" : "Yo'q"}
+                            </span>
+                          </div>
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* ─── 3. Maosh ─── */}
+              <div className="pt-2 border-t">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground border-b pb-1 mb-3">
+                  3 · Maosh
+                </p>
+                <div className="space-y-3">
+                  <FormField
+                    control={form.control}
+                    name="payrollMethod"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Maosh usuli</FormLabel>
+                        <Select onValueChange={field.onChange} value={field.value}>
+                          <FormControl>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="PRODUCT_RATE">Mahsulot stavkasi</SelectItem>
+                            <SelectItem value="ROLE_BASED_KG" disabled={watchedUnitType !== "kg"}>
+                              Rol bo'yicha kg{watchedUnitType !== "kg" ? " (faqat kg)" : ""}
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                        {watchedPayrollMethod === "ROLE_BASED_KG" && (
+                          <p className="text-xs text-amber-700 mt-1">
+                            Maosh ishlab chiqarish liniyasidan avtomatik: Produktor 1125/kg · Tayyorlash 375/kg · Qadoqlash 750/kg
+                          </p>
+                        )}
+                      </FormItem>
+                    )}
+                  />
+                  {watchedPayrollMethod !== "ROLE_BASED_KG" && (
+                    <FormField
+                      control={form.control}
+                      name="rate"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>
+                            Maosh stavkasi
+                            <span className="text-muted-foreground font-normal ml-1 text-xs">
+                              ({watchedUnitType === "kg" ? "so'm/kg" : "so'm/dona"})
+                            </span>
+                          </FormLabel>
+                          <FormControl>
+                            <Input type="number" step="0.01" min={0} {...field} />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                  )}
+                </div>
+              </div>
+
+              {/* ─── 4. Foyda ko'rinishi ─── */}
+              <div className="pt-2 border-t">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground border-b pb-1 mb-3">
+                  4 · Foyda ko'rinishi
+                </p>
+                <CostSummary
+                  rawMaterialCost={isEdit ? (product?.rawMaterialCost ?? 0) : 0}
+                  rate={Number(watchedRate) || 0}
+                  rateType={watchedUnitType}
+                  electricityCost={Number(watchedElec) || 0}
+                  otherCost={Number(watchedOther) || 0}
+                  salePrice={Number(watchedSalePrice) || 0}
+                  weight={Number(watchedWeight) || 1}
+                  currencyType={watchedCurrency}
+                  usdRate={exRate?.rate ?? 0}
+                  unitType={watchedUnitType}
+                  payrollMethod={watchedPayrollMethod}
+                />
+              </div>
 
               <DialogFooter>
                 <Button type="submit" disabled={isPending}>

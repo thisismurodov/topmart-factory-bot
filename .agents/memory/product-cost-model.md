@@ -11,12 +11,16 @@ For every profitability/cost calculation (api-server `products.ts`, `reports.ts`
 - **Labor is computed from `rate`/`rate_type` — the single source of truth.** Formula:
   `labor_per_unit = rate_type == 'kg' ? rate * weight : rate`. The `salary_cost` column is
   **deprecated** (kept in DB, defaults to 0, never dropped); never use it as the labor input.
-- `default_sale_price`, `electricity_cost`, `other_cost` are entered **per unit** (per kg/dona)
-  and MUST be multiplied by the product's `weight`.
+- `default_sale_price` behavior is **unit_type-dependent**:
+  - `unit_type = 'kg'`: revenue = `default_sale_price × weight` (price entered per kg).
+  - `unit_type = 'dona'` (piece): revenue = `default_sale_price` only — weight is **NOT** multiplied.
+    Weight still applies to electricity_cost, other_cost, and labor (if rate_type='kg').
+- `electricity_cost`, `other_cost` are entered per unit and MUST be multiplied by `weight`
+  for **both** dona and kg products.
 - Raw-material (BOM) cost — `SUM(raw_materials.default_cost * product_materials.quantity_required)`
   — is already an **absolute** amount for the whole batch and MUST NOT be scaled by weight.
-- `effective sale = default_sale_price * weight`;
-  `total = BOM + labor + (elec+other) * weight`;
+- `effective_sale = default_sale_price * weight` (kg) OR `= default_sale_price` (dona);
+  `total = BOM + labor + (elec+other) * weight` (weight applies to costs for both unit types);
   `profit = effective_sale - total`; `margin = profit / effective_sale`.
 - In SQL, labor is `CASE WHEN rate_type='kg' THEN rate*weight ELSE rate END`; any GROUP BY that
   used to list `salary_cost` must list `rate, rate_type` instead.

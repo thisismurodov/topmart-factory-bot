@@ -1,11 +1,12 @@
 import { authFetch } from "@/App";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ChevronDown, ChevronRight, HardHat, Save, Package } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { ChevronDown, ChevronRight, HardHat, Save, Package, Search } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type PackerProduct = {
@@ -91,6 +92,7 @@ function PackerCard({
     new Set(packer.products.map(p => p.productName)),
   );
   const [dirty, setDirty] = useState(false);
+  const [search, setSearch] = useState("");
   const saveMut = useSetPackerAssignments();
 
   const initials = packer.packerName
@@ -99,6 +101,12 @@ function PackerCard({
     .join("")
     .toUpperCase()
     .slice(0, 2);
+
+  const filteredProducts = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return allProducts;
+    return allProducts.filter(p => p.name.toLowerCase().includes(q));
+  }, [allProducts, search]);
 
   function toggle(productName: string) {
     setSelected(prev => {
@@ -152,46 +160,60 @@ function PackerCard({
       </button>
 
       {expanded && (
-        <div className="border-t px-5 py-4 space-y-4">
-          {allProducts.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-4">
-              <Package className="w-6 h-6 mx-auto mb-1 opacity-30" />
-              Mahsulotlar yo'q
-            </p>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {allProducts.map(product => {
-                const checked = selected.has(product.name);
-                return (
-                  <label
-                    key={product.name}
-                    className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                      checked
-                        ? "bg-[#0B5D2A]/5 border-[#0B5D2A]/30"
-                        : "border-border hover:bg-muted/30"
-                    } ${!product.active ? "opacity-50" : ""}`}
-                  >
-                    <Checkbox
-                      checked={checked}
-                      onCheckedChange={() => toggle(product.name)}
-                      className={checked ? "data-[state=checked]:bg-[#0B5D2A] data-[state=checked]:border-[#0B5D2A]" : ""}
-                    />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium truncate">{product.name}</div>
-                      <div className="text-xs text-muted-foreground">{product.unitType}</div>
-                    </div>
-                    {!product.active && (
-                      <Badge variant="secondary" className="text-xs shrink-0">Nofaol</Badge>
-                    )}
-                  </label>
-                );
-              })}
-            </div>
-          )}
+        <div className="border-t px-5 py-4 space-y-3">
+          {/* Search bar */}
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+            <Input
+              placeholder={`${allProducts.length} ta mahsulotda qidirish…`}
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="pl-8 h-8 text-sm"
+            />
+          </div>
 
-          <div className="flex items-center justify-between pt-2 border-t">
+          {/* Scroll container — max 420px, scrollable inside */}
+          <div className="max-h-[420px] overflow-y-auto rounded-lg border border-border pr-1">
+            {filteredProducts.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-6">
+                <Package className="w-6 h-6 mx-auto mb-1 opacity-30" />
+                Mahsulot topilmadi
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 p-2">
+                {filteredProducts.map(product => {
+                  const checked = selected.has(product.name);
+                  return (
+                    <label
+                      key={product.name}
+                      className={`flex items-center gap-3 p-2.5 rounded-lg border cursor-pointer transition-colors ${
+                        checked
+                          ? "bg-[#0B5D2A]/5 border-[#0B5D2A]/30"
+                          : "border-border hover:bg-muted/30"
+                      } ${!product.active ? "opacity-50" : ""}`}
+                    >
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={() => toggle(product.name)}
+                        className={checked ? "data-[state=checked]:bg-[#0B5D2A] data-[state=checked]:border-[#0B5D2A]" : ""}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium truncate">{product.name}</div>
+                        <div className="text-xs text-muted-foreground">{product.unitType}</div>
+                      </div>
+                      {!product.active && (
+                        <Badge variant="secondary" className="text-xs shrink-0">Nofaol</Badge>
+                      )}
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center justify-between pt-1 border-t">
             <p className="text-xs text-muted-foreground">
-              {selected.size} ta mahsulot tanlangan
+              {selected.size} ta tanlangan · {allProducts.length} ta jami
             </p>
             <Button
               size="sm"

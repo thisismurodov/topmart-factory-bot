@@ -69,6 +69,17 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_ppt_product ON product_price_tiers(product_id)
   `);
 
+  // packer_product_assignments — packer ishchilari uchun mahsulot biriktirishlar
+  // (bot init_db ham yaratadi, lekin API cold-start da mavjudligini kafolatlaymiz)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS packer_product_assignments (
+      id           SERIAL PRIMARY KEY,
+      packer_name  TEXT NOT NULL,
+      product_name TEXT NOT NULL,
+      UNIQUE (packer_name, product_name)
+    )
+  `);
+
   // Admin userni seed qilish (mavjud bo'lmasa)
   const existing = await db.select().from(adminUsersTable).where(eq(adminUsersTable.username, "thisismurodov"));
   if (existing.length === 0) {

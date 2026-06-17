@@ -3,6 +3,7 @@ export * from "./workers";
 export * from "./products";
 export * from "./raw_materials";
 export * from "./product_materials";
+export * from "./product_price_tiers";
 export * from "./packer_product_assignments";
 export * from "./salary_payments";
 export * from "./payroll_role_rates";

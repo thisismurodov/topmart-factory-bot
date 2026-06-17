@@ -60,8 +60,18 @@ type BomItem = {
   rawMaterialName: string;
   unitType: string;
   defaultCost: number;
+  currency: string;
   quantityRequired: number;
   lineCost: number;
+  calculatedUzsLineCost: number;
+};
+
+type Tier = {
+  id: number;
+  minQty: number;
+  maxQty: number;
+  price: number;
+  currency: string;
 };
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
@@ -84,6 +94,7 @@ type ProductForm = z.infer<typeof productSchema>;
 const PRODUCTS_KEY = ["v3-products"];
 const RAW_MATERIALS_KEY = ["raw-materials"];
 const bomKey = (name: string) => ["bom", name];
+const tierKey = (productId: number) => ["product-tiers", productId];
 
 // ── Hooks ─────────────────────────────────────────────────────────────────────
 function useProducts() {
@@ -94,6 +105,18 @@ function useProducts() {
       if (!res.ok) throw new Error("Yuklashda xato");
       return res.json();
     },
+  });
+}
+
+function useExchangeRate() {
+  return useQuery<{ rate: number }>({
+    queryKey: ["exchange-rate"],
+    queryFn: async () => {
+      const res = await authFetch("/api/exchange-rate");
+      if (!res.ok) throw new Error("Kursni olishda xato");
+      return res.json();
+    },
+    staleTime: 5 * 60 * 1000,
   });
 }
 
@@ -204,9 +227,55 @@ function useDeleteBomItem() {
   });
 }
 
+function useTiers(productId: number | null) {
+  return useQuery<Tier[]>({
+    queryKey: tierKey(productId ?? 0),
+    queryFn: async () => {
+      if (!productId) return [];
+      const res = await authFetch(`/api/sales-products/${productId}/tiers`);
+      if (!res.ok) throw new Error("Yuklashda xato");
+      return res.json();
+    },
+    enabled: !!productId,
+  });
+}
+
+type AddTierVars = { productId: number; minQuantity: number; maxQuantity: number; price: number; currency: string };
+type DeleteTierVars = { productId: number; tierId: number };
+
+function useAddTier() {
+  const qc = useQueryClient();
+  return useMutation<unknown, Error, AddTierVars>({
+    mutationFn: async ({ productId, ...body }) => {
+      const res = await authFetch(`/api/sales-products/${productId}/tiers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Qo'shishda xato");
+      }
+      return res.json();
+    },
+    onSuccess: (_data, vars) => qc.invalidateQueries({ queryKey: tierKey(vars.productId) }),
+  });
+}
+
+function useDeleteTier() {
+  const qc = useQueryClient();
+  return useMutation<unknown, Error, DeleteTierVars>({
+    mutationFn: async ({ productId, tierId }) => {
+      const res = await authFetch(`/api/sales-products/${productId}/tiers/${tierId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("O'chirishda xato");
+    },
+    onSuccess: (_data, vars) => qc.invalidateQueries({ queryKey: tierKey(vars.productId) }),
+  });
+}
+
 // ── Cost summary ──────────────────────────────────────────────────────────────
 function CostSummary({
-  rawMaterialCost, rate, rateType, electricityCost, otherCost, salePrice, weight, currencyType,
+  rawMaterialCost, rate, rateType, electricityCost, otherCost, salePrice, weight, currencyType, usdRate,
 }: {
   rawMaterialCost: number;
   rate: number;
@@ -216,23 +285,22 @@ function CostSummary({
   salePrice: number;
   weight: number;
   currencyType: string;
+  usdRate: number;
 }) {
-  // mehnat (maosh) stavkadan: kg → rate×og'irlik, dona → rate; elektr/boshqa/narx × og'irlik; xom ashyo mutlaq
+  // mehnat (maosh) stavkadan: kg → rate×og'irlik, dona → rate; elektr/boshqa/narx × og'irlik; xom ashyo mutlaq.
+  // Barcha qiymatlar UZS'da ko'rsatiladi — USD narx jonli kursda UZS'ga aylantiriladi.
   const w        = weight > 0 ? weight : 1;
+  const saleRate  = currencyType === "USD" ? (usdRate > 0 ? usdRate : 1) : 1;
   const effSalary = rateType === "kg" ? rate * w : rate;
   const effElec   = electricityCost * w;
   const effOther  = otherCost * w;
-  const effSale   = salePrice * w;
+  const effSale   = salePrice * saleRate * w;
   const totalCost = rawMaterialCost + effSalary + effElec + effOther;
   const profit    = effSale - totalCost;
   const marginPct = effSale > 0 ? (profit / effSale) * 100 : 0;
   const scaled    = w !== 1;
   const salaryScaled = scaled && rateType === "kg";
-  const isUsd = currencyType === "USD";
-  const fmt = (v: number) =>
-    isUsd
-      ? `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-      : formatCurrency(v);
+  const fmt = (v: number) => formatCurrency(v);
 
   return (
     <div className="rounded-lg border bg-muted/30 p-3 space-y-1.5 text-xs">
@@ -282,6 +350,12 @@ function CostSummary({
         <span>Margin</span>
         <span className="font-mono">{marginPct.toFixed(1)}%</span>
       </div>
+      {currencyType === "USD" && (
+        <div className="flex justify-between text-[10px] text-muted-foreground pt-1.5 border-t">
+          <span>Kurs (jonli, cbu.uz)</span>
+          <span className="font-mono">1$ = {formatCurrency(saleRate)}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -293,12 +367,14 @@ function BomTab({
   product: Product; rawMaterials: RawMaterial[];
 }) {
   const { data: bom = [], isLoading } = useBom(product.name);
+  const { data: exRate } = useExchangeRate();
   const addBom = useAddBomItem();
   const deleteBom = useDeleteBomItem();
   const [selMat, setSelMat] = useState<string>("");
   const [qty, setQty] = useState<string>("");
 
-  const rawMatCost = bom.reduce((s, b) => s + b.lineCost, 0);
+  // Xom ashyo jami UZS ekvivalentida (USD xom ashyo jonli kursda aylantirilgan).
+  const rawMatCost = bom.reduce((s, b) => s + b.calculatedUzsLineCost, 0);
   const usedIds = new Set(bom.map(b => b.rawMaterialId));
   const available = rawMaterials.filter(m => m.active && !usedIds.has(m.id));
 
@@ -340,7 +416,7 @@ function BomTab({
               <span className="font-mono text-xs">{formatCurrency(item.defaultCost)}</span>
               <span className="font-mono text-xs">
                 {item.quantityRequired} →{" "}
-                <strong>{formatCurrency(item.lineCost)}</strong>
+                <strong>{formatCurrency(item.calculatedUzsLineCost)}</strong>
               </span>
               <Button
                 variant="ghost"
@@ -402,7 +478,126 @@ function BomTab({
         salePrice={product.defaultSalePrice}
         weight={product.weight}
         currencyType={product.currencyType}
+        usdRate={exRate?.rate ?? 0}
       />
+    </div>
+  );
+}
+
+// ── Tier pricing tab ──────────────────────────────────────────────────────────
+function TierTab({ product }: { product: Product }) {
+  const { data: tiers = [], isLoading } = useTiers(product.id);
+  const addTier = useAddTier();
+  const deleteTier = useDeleteTier();
+  const [minQ, setMinQ] = useState<string>("");
+  const [maxQ, setMaxQ] = useState<string>("");
+  const [price, setPrice] = useState<string>("");
+  const [currency, setCurrency] = useState<string>(product.currencyType || "UZS");
+  const [error, setError] = useState<string>("");
+
+  const fmt = (v: number, cur: string) =>
+    cur === "USD"
+      ? `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      : formatCurrency(v);
+
+  function handleAdd() {
+    setError("");
+    const mn = Number(minQ), mx = Number(maxQ), pr = Number(price);
+    if (!minQ || !maxQ || !price || isNaN(mn) || isNaN(mx) || isNaN(pr)) {
+      setError("Barcha maydonlarni to'g'ri kiriting"); return;
+    }
+    if (mx < mn) { setError("Maksimal miqdor minimaldan kichik bo'lmasligi kerak"); return; }
+    addTier.mutate(
+      { productId: product.id, minQuantity: mn, maxQuantity: mx, price: pr, currency },
+      {
+        onSuccess: () => { setMinQ(""); setMaxQ(""); setPrice(""); },
+        onError: (e) => setError(e.message),
+      },
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-muted-foreground">
+        Hajm bo'yicha narx bosqichlari. Sotuvda miqdorga mos bosqich avtomatik tanlanadi
+        (min ≤ miqdor ≤ maks). Mos bosqich bo'lmasa standart sotuv narxi ishlatiladi.
+      </p>
+
+      {isLoading ? (
+        <div className="space-y-2">
+          {[1, 2, 3].map(i => <Skeleton key={i} className="h-9 w-full" />)}
+        </div>
+      ) : tiers.length === 0 ? (
+        <div className="text-center py-8 text-sm text-muted-foreground border rounded-lg">
+          <Package className="w-8 h-8 mx-auto mb-2 opacity-30" />
+          Narx bosqichi qo'shilmagan
+        </div>
+      ) : (
+        <div className="rounded-lg border overflow-hidden text-sm">
+          <div className="grid grid-cols-[1.5fr_1.5fr_auto] text-xs text-muted-foreground px-3 py-2 bg-muted/40 font-medium">
+            <span>Miqdor oralig'i ({product.unitType})</span>
+            <span>Narx/birlik</span>
+            <span />
+          </div>
+          {tiers.map(t => (
+            <div
+              key={t.id}
+              className="grid grid-cols-[1.5fr_1.5fr_auto] items-center px-3 py-2 border-t"
+            >
+              <span className="font-mono text-xs">
+                {t.minQty.toLocaleString()} – {t.maxQty.toLocaleString()}
+              </span>
+              <span className="font-mono text-xs font-medium">{fmt(t.price, t.currency)}</span>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-destructive hover:text-destructive"
+                onClick={() => deleteTier.mutate({ productId: product.id, tierId: t.id })}
+                disabled={deleteTier.isPending}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="rounded-lg border p-3 bg-muted/10 space-y-2">
+        <p className="text-xs font-medium text-muted-foreground">Bosqich qo'shish</p>
+        <div className="flex gap-2 flex-wrap">
+          <Input
+            type="number" min={0} step="1" placeholder="Min"
+            value={minQ} onChange={e => setMinQ(e.target.value)}
+            className="w-20 h-8 text-sm"
+          />
+          <Input
+            type="number" min={0} step="1" placeholder="Maks"
+            value={maxQ} onChange={e => setMaxQ(e.target.value)}
+            className="w-20 h-8 text-sm"
+          />
+          <Input
+            type="number" min={0} step="0.01" placeholder="Narx"
+            value={price} onChange={e => setPrice(e.target.value)}
+            className="flex-1 min-w-[6rem] h-8 text-sm"
+          />
+          <Select value={currency} onValueChange={setCurrency}>
+            <SelectTrigger className="w-24 h-8 text-sm"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="UZS">UZS</SelectItem>
+              <SelectItem value="USD">USD</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button
+            size="sm"
+            className="h-8 shrink-0"
+            onClick={handleAdd}
+            disabled={!minQ || !maxQ || !price || addTier.isPending}
+          >
+            <Plus className="w-3.5 h-3.5" />
+          </Button>
+        </div>
+        {error && <p className="text-xs text-destructive">{error}</p>}
+      </div>
     </div>
   );
 }
@@ -416,7 +611,7 @@ function ProductDialog({
   product?: Product | null;
   rawMaterials: RawMaterial[];
 }) {
-  const [tab, setTab] = useState<"info" | "bom">("info");
+  const [tab, setTab] = useState<"info" | "bom" | "tiers">("info");
   const isEdit = !!product;
   const createProd = useCreateProduct();
   const updateProd = useUpdateProduct();
@@ -446,6 +641,7 @@ function ProductDialog({
   const watchedElec      = form.watch("electricityCost");
   const watchedOther     = form.watch("otherCost");
   const watchedCurrency  = form.watch("currencyType");
+  const { data: exRate } = useExchangeRate();
 
   function onSubmit(values: ProductForm) {
     if (isEdit) {
@@ -475,7 +671,7 @@ function ProductDialog({
 
         {isEdit && (
           <div className="flex gap-1 border-b">
-            {(["info", "bom"] as const).map(t => (
+            {(["info", "bom", "tiers"] as const).map(t => (
               <button
                 key={t}
                 type="button"
@@ -486,7 +682,7 @@ function ProductDialog({
                     : "border-transparent text-muted-foreground hover:text-foreground"
                 }`}
               >
-                {t === "info" ? "Asosiy ma'lumot" : "Xarajatlar (BOM)"}
+                {t === "info" ? "Asosiy ma'lumot" : t === "bom" ? "Xarajatlar (BOM)" : "Narx bosqichlari"}
               </button>
             ))}
           </div>
@@ -679,6 +875,7 @@ function ProductDialog({
                 salePrice={Number(watchedSalePrice) || 0}
                 weight={Number(watchedWeight) || 1}
                 currencyType={watchedCurrency}
+                usdRate={exRate?.rate ?? 0}
               />
 
               <DialogFooter>
@@ -692,6 +889,10 @@ function ProductDialog({
 
         {isEdit && tab === "bom" && (
           <BomTab product={product!} rawMaterials={rawMaterials} />
+        )}
+
+        {isEdit && tab === "tiers" && (
+          <TierTab product={product!} />
         )}
       </DialogContent>
     </Dialog>
@@ -708,13 +909,10 @@ export default function Products() {
   const { data: rawMaterials = [] }        = useRawMaterials();
   const deleteProd = useDeleteProduct();
 
-  const isUsd      = (p: Product) => p.currencyType === "USD";
-  const fmtPrice   = (p: Product) =>
-    isUsd(p) ? `$${p.effectiveSalePrice.toFixed(2)}` : formatCurrency(p.effectiveSalePrice);
-  const fmtCost    = (p: Product) =>
-    isUsd(p) ? `$${p.totalCost.toFixed(2)}` : formatCurrency(p.totalCost);
-  const fmtProfit  = (p: Product) =>
-    isUsd(p) ? `$${p.profit.toFixed(2)}` : formatCurrency(p.profit);
+  // Jami narx/xarajat/foyda API'da UZS'ga normallashtirilgan (USD jonli kursda) — UZS'da ko'rsatamiz.
+  const fmtPrice   = (p: Product) => formatCurrency(p.effectiveSalePrice);
+  const fmtCost    = (p: Product) => formatCurrency(p.totalCost);
+  const fmtProfit  = (p: Product) => formatCurrency(p.profit);
 
   return (
     <>

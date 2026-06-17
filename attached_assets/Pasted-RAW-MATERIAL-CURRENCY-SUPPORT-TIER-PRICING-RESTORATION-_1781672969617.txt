@@ -1,0 +1,194 @@
+RAW MATERIAL CURRENCY SUPPORT + TIER PRICING RESTORATION
+
+==================================
+
+1. RAW MATERIAL CURRENCY SUPPORT
+   ==================================
+
+Current implementation is incorrect.
+
+Raw materials only support:
+
+Price per unit (UZS)
+
+This is not sufficient.
+
+Many factory raw materials are purchased in USD.
+
+Examples:
+
+PP BSF
+PP CF
+Polyamide
+FDY
+BCF
+
+must support USD pricing.
+
+Add:
+
+Currency field
+
+Options:
+
+* UZS
+* USD
+
+Database:
+
+raw_materials
+
+currency
+price_per_unit
+
+Example:
+
+PP BSF
+
+Currency:
+USD
+
+Price:
+1.25
+
+Unit:
+kg
+
+==================================
+COST CALCULATIONS
+=================
+
+If raw material currency = USD
+
+Convert using system exchange rate.
+
+Store:
+
+original_currency
+original_price
+
+and
+
+calculated_uzs_cost
+
+for reporting.
+
+==================================
+2. RESTORE PRODUCT TIER PRICING
+===============================
+
+The previous Tier Pricing feature was removed.
+
+It must be restored.
+
+Purpose:
+
+Sales price changes depending on order volume.
+
+Example:
+
+Product:
+Ikki Qavatli Arqon
+
+Tier 1:
+
+1 kg - 999 kg
+
+2.40 USD/kg
+
+Tier 2:
+
+1000 kg - 2999 kg
+
+2.30 USD/kg
+
+Tier 3:
+
+3000 kg+
+
+2.20 USD/kg
+
+==================================
+DATABASE
+========
+
+Create:
+
+product_price_tiers
+
+id
+product_id
+min_quantity
+max_quantity
+price
+currency
+
+==================================
+PRODUCT FORM
+============
+
+Add section:
+
+Tier Pricing
+
+Button:
+
+* Add Tier
+
+Fields:
+
+Minimum Quantity
+Maximum Quantity
+Price
+Currency
+
+Example:
+
+1
+999
+2.40 USD
+
+1000
+2999
+2.30 USD
+
+3000
+999999
+2.20 USD
+
+==================================
+SALES LOGIC
+===========
+
+When creating a sale:
+
+1. Product selected
+2. Quantity entered
+
+System automatically selects correct tier.
+
+Example:
+
+Quantity:
+
+1500 kg
+
+System applies:
+
+1000-2999 tier
+
+2.30 USD/kg
+
+automatically.
+
+User should NOT manually choose tier.
+
+==================================
+PROFIT REPORTS
+==============
+
+Profit calculations must use the actual tier price used during sale.
+
+Store selected tier price in sale records for historical accuracy.
+
+This feature is critical because wholesale customers receive different prices based on volume.

@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import { pool } from "@workspace/db";
+import { getUsdToUzsRate } from "../lib/exchangeRate";
 import {
   GetDashboardTodayResponse,
   GetDashboardMonthlyQueryParams,
@@ -148,6 +149,7 @@ router.get("/dashboard/daily-chart", async (_req, res): Promise<void> => {
 router.get("/dashboard/v2", async (_req, res): Promise<void> => {
   const now = new Date();
   const period = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const { rate } = await getUsdToUzsRate();
 
   const [
     todaySalesRes,
@@ -250,14 +252,16 @@ router.get("/dashboard/v2", async (_req, res): Promise<void> => {
     ),
     pool.query(`
       WITH enriched AS (
-        -- narx/xarajatlar 1 birlik uchun → og'irlikka ko'paytiramiz; xom ashyo (BOM) mutlaq
+        -- narx/xarajatlar 1 birlik uchun → og'irlikka ko'paytiramiz; xom ashyo (BOM) mutlaq.
+        -- USD narx/xom ashyo jonli kursda ($1) UZS'ga aylantiriladi — foyda/margin UZS'da izchil.
         SELECT
           p.name,
-          p.default_sale_price * COALESCE(NULLIF(p.weight, 0), 1) AS sale_price,
+          p.default_sale_price * COALESCE(NULLIF(p.weight, 0), 1)
+            * CASE WHEN UPPER(p.currency_type)='USD' THEN $1::numeric ELSE 1 END AS sale_price,
           ((CASE WHEN p.rate_type='kg' THEN p.rate * COALESCE(NULLIF(p.weight, 0), 1) ELSE p.rate END)
             + (p.electricity_cost + p.other_cost) * COALESCE(NULLIF(p.weight, 0), 1)) +
             COALESCE((
-              SELECT SUM(rm.default_cost * pm.quantity_required)
+              SELECT SUM(rm.default_cost * pm.quantity_required * CASE WHEN UPPER(rm.currency)='USD' THEN $1::numeric ELSE 1 END)
               FROM product_materials pm
               JOIN raw_materials rm ON rm.id = pm.raw_material_id
               WHERE pm.product_name = p.name
@@ -267,7 +271,7 @@ router.get("/dashboard/v2", async (_req, res): Promise<void> => {
         FROM products p
         LEFT JOIN sale_items si ON si.product_name = p.name
         WHERE p.active = TRUE AND p.default_sale_price > 0
-        GROUP BY p.name, p.default_sale_price, p.weight, p.rate, p.rate_type, p.electricity_cost, p.other_cost
+        GROUP BY p.name, p.default_sale_price, p.weight, p.rate, p.rate_type, p.electricity_cost, p.other_cost, p.currency_type
       )
       SELECT name, sale_price, total_cost,
              (sale_price - total_cost) AS profit,
@@ -277,7 +281,7 @@ router.get("/dashboard/v2", async (_req, res): Promise<void> => {
              revenue_uzs, revenue_usd
       FROM enriched
       ORDER BY profit DESC
-    `),
+    `, [rate]),
   ]);
 
   // Inventory: merge produced vs sold
@@ -358,14 +362,17 @@ router.get("/dashboard/v2", async (_req, res): Promise<void> => {
 });
 
 router.get("/dashboard/product-highlights", async (_req, res): Promise<void> => {
+  const { rate } = await getUsdToUzsRate();
+  // USD narx/xom ashyo jonli kursda ($1) UZS'ga aylantiriladi — foyda/margin UZS'da izchil.
   const { rows } = await pool.query(`
     SELECT
       p.name,
-      p.default_sale_price * COALESCE(NULLIF(p.weight, 0), 1) AS sale_price,
+      p.default_sale_price * COALESCE(NULLIF(p.weight, 0), 1)
+        * CASE WHEN UPPER(p.currency_type)='USD' THEN $1::numeric ELSE 1 END AS sale_price,
       ((CASE WHEN p.rate_type='kg' THEN p.rate * COALESCE(NULLIF(p.weight, 0), 1) ELSE p.rate END)
         + (p.electricity_cost + p.other_cost) * COALESCE(NULLIF(p.weight, 0), 1)) +
         COALESCE((
-          SELECT SUM(rm.default_cost * pm.quantity_required)
+          SELECT SUM(rm.default_cost * pm.quantity_required * CASE WHEN UPPER(rm.currency)='USD' THEN $1::numeric ELSE 1 END)
           FROM product_materials pm
           JOIN raw_materials rm ON rm.id = pm.raw_material_id
           WHERE pm.product_name = p.name
@@ -377,8 +384,8 @@ router.get("/dashboard/product-highlights", async (_req, res): Promise<void> => 
     LEFT JOIN sale_items si ON si.product_name = p.name
     WHERE p.active = TRUE AND p.default_sale_price > 0
     GROUP BY p.name, p.default_sale_price, p.weight,
-             p.rate, p.rate_type, p.electricity_cost, p.other_cost
-  `);
+             p.rate, p.rate_type, p.electricity_cost, p.other_cost, p.currency_type
+  `, [rate]);
 
   if (!rows.length) {
     res.json({ mostProfitable: null, highestRevenue: null, highestMargin: null, lowestMargin: null });

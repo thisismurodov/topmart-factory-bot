@@ -37,3 +37,32 @@ Scaling the BOM too (or forgetting to scale per-kg values) gave wildly wrong mar
 **How to apply:** any new endpoint, report, or UI that shows product cost/profit/margin must
 follow this split. Existing rows default to `weight=1` (backward compatible); kg-named products
 were back-filled (e.g. "Shakar 2.8 kg" → 2.8).
+
+## Currency normalization (USD/UZS) — profit/cost are ALWAYS UZS
+
+Both `products.currency_type` and `raw_materials.currency` can be USD or UZS. Profitability must
+be computed in a single currency or it is meaningless. The rule:
+
+- **Normalize everything to UZS before subtracting.** Multiply a USD `default_sale_price` and any
+  USD raw-material `default_cost` by the live `getUsdToUzsRate()` (cbu.uz, cached, stale-fallback)
+  before computing `total`, `profit`, `margin`. Labor/electricity/other are already UZS.
+- This applies to EVERY profitability path: `products.ts` (list + `/:name/profitability`),
+  `reports.ts` (`/product-profitability`), AND `dashboard.ts` (`/dashboard/v2` enriched CTE +
+  `/dashboard/product-highlights`). Missing even one endpoint reintroduces the mixed-currency bug.
+- **What stays in native currency (do NOT normalize):** `sale_items` revenue/unit_price (stored at
+  sale time for historical accuracy), the raw-material *original* price display, and tier prices.
+  So API profit/cost/margin = UZS; revenue + original raw/tier prices = their own currency.
+- **UI contract:** dashboard formats sale/cost/profit/margin with `formatCurrency` (UZS) only —
+  never a `$` branch on these. Revenue and original raw-material/tier prices keep `$` for USD.
+
+**Why:** subtracting UZS costs from an unconverted USD sale price gave absurd margins (~100% for a
+$1.85 product) and a `$`-labeled UZS number in the UI. This was found and re-found across 4 review
+rounds because each endpoint/UI spot had its own copy of the calc.
+
+## Gotcha: Postgres infers a `$n` param as integer from a sibling integer literal
+
+`CASE WHEN ... THEN $1 ELSE 1 END` makes Postgres type `$1` as **integer** (from the `ELSE 1`
+literal), so passing a non-integer rate (e.g. `12012.12`) throws
+`invalid input syntax for type integer`. **Always cast: `THEN $1::numeric ELSE 1 END`.** This bit
+both the raw-material CASE and the sale-price CASE; it was latent because the affected endpoints
+weren't curl-tested until late.

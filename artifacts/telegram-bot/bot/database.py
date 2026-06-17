@@ -173,6 +173,7 @@ def init_db() -> None:
                 unit          TEXT NOT NULL DEFAULT 'kg',
                 unit_type     TEXT NOT NULL DEFAULT 'kg',
                 default_cost  NUMERIC(12,2) NOT NULL DEFAULT 0,
+                currency      TEXT NOT NULL DEFAULT 'UZS',
                 current_stock NUMERIC(12,3) NOT NULL DEFAULT 0,
                 minimum_stock NUMERIC(12,3) NOT NULL DEFAULT 0,
                 active        BOOLEAN NOT NULL DEFAULT true,
@@ -184,8 +185,16 @@ def init_db() -> None:
             ALTER TABLE raw_materials
               ADD COLUMN IF NOT EXISTS unit_type     TEXT NOT NULL DEFAULT 'kg',
               ADD COLUMN IF NOT EXISTS default_cost  NUMERIC(12,2) NOT NULL DEFAULT 0,
+              ADD COLUMN IF NOT EXISTS currency      TEXT NOT NULL DEFAULT 'UZS',
               ADD COLUMN IF NOT EXISTS current_stock NUMERIC(12,3) NOT NULL DEFAULT 0,
               ADD COLUMN IF NOT EXISTS minimum_stock NUMERIC(12,3) NOT NULL DEFAULT 0
+        """)
+        cur.execute("""
+            DO $$ BEGIN
+              IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'raw_materials_currency_check') THEN
+                ALTER TABLE raw_materials ADD CONSTRAINT raw_materials_currency_check CHECK (currency IN ('UZS','USD'));
+              END IF;
+            END $$;
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS product_materials (
@@ -195,6 +204,24 @@ def init_db() -> None:
                 quantity_required NUMERIC(12,3) NOT NULL,
                 UNIQUE (product_name, raw_material_id)
             )
+        """)
+        # Tier (hajm bo'yicha) narxlash — product_price_tiers
+        cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_products_id ON products(id)
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS product_price_tiers (
+                id           SERIAL PRIMARY KEY,
+                product_id   INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+                min_quantity NUMERIC(12,3) NOT NULL DEFAULT 0 CHECK (min_quantity >= 0),
+                max_quantity NUMERIC(12,3) NOT NULL DEFAULT 0 CHECK (max_quantity >= min_quantity),
+                price        NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (price >= 0),
+                currency     TEXT NOT NULL DEFAULT 'UZS' CHECK (currency IN ('UZS','USD')),
+                created_at   TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_ppt_product ON product_price_tiers(product_id)
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS packer_product_assignments (
@@ -1077,8 +1104,19 @@ def get_sale_product_by_id(prod_id: int) -> dict | None:
 
 
 def get_price_for_qty(product_id: int, qty: float) -> tuple[float, str]:
-    """V3: products jadvalidan default_sale_price va currency_type qaytaradi."""
+    """V3: hajm bo'yicha mos bosqichni (product_price_tiers, min<=qty<=max) tanlaydi;
+    mos bosqich bo'lmasa products.default_sale_price / currency_type qaytaradi."""
     with get_conn() as (conn, cur):
+        if qty and qty > 0:
+            cur.execute(
+                """SELECT price, currency FROM product_price_tiers
+                   WHERE product_id = %s AND min_quantity <= %s AND max_quantity >= %s
+                   ORDER BY min_quantity LIMIT 1""",
+                (product_id, qty, qty),
+            )
+            tier = cur.fetchone()
+            if tier:
+                return float(tier["price"] or 0), tier["currency"] or "UZS"
         cur.execute(
             """SELECT default_sale_price AS price, currency_type AS currency
                FROM products WHERE id = %s AND active = TRUE""",

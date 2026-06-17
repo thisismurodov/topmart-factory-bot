@@ -143,7 +143,7 @@ function SearchCombobox({
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type Tier      = { id: number; minQty: number; price: number; currency: string };
+type Tier      = { id: number; minQty: number; maxQty: number; price: number; currency: string };
 type SalesProd = { id: number; name: string; saleType: string; defaultPrice: number; currency: string; tiers: Tier[] };
 type DraftItem = { key: string; productName: string; saleType: string; quantity: number; unitPrice: number; currency: string; lineTotal: number };
 type SaleItem  = { id: number; productName: string; saleType: string; quantity: number; unitPrice: number; currency: string; lineTotal: number };
@@ -156,24 +156,26 @@ type Sale = {
 };
 type PaymentType = "naqd" | "nasiya" | "aralash";
 
-// ── Tier price helpers ─────────────────────────────────────────────────────────
+// ── Tier price helpers (inclusive min<=qty<=max range) ──────────────────────────
+function getTier(prod: SalesProd, qty: number): Tier | null {
+  if (!prod.tiers || prod.tiers.length === 0 || qty <= 0) return null;
+  const sorted = [...prod.tiers].sort((a, b) => a.minQty - b.minQty);
+  return sorted.find(t => qty >= t.minQty && qty <= t.maxQty) ?? null;
+}
 function getTierPrice(prod: SalesProd, qty: number): number {
-  if (!prod.tiers || prod.tiers.length === 0) return prod.defaultPrice;
-  const sorted = [...prod.tiers].sort((a, b) => b.minQty - a.minQty);
-  const match = sorted.find(t => qty >= t.minQty);
-  return match ? match.price : prod.defaultPrice;
+  const t = getTier(prod, qty);
+  return t ? t.price : prod.defaultPrice;
+}
+function getTierCurrency(prod: SalesProd, qty: number): string {
+  const t = getTier(prod, qty);
+  return t ? t.currency : prod.currency;
 }
 function getTierLabel(prod: SalesProd, qty: number): string | null {
-  if (!prod.tiers || prod.tiers.length === 0) return null;
-  const sorted = [...prod.tiers].sort((a, b) => a.minQty - b.minQty);
-  const idx = sorted.findIndex((t, i) => {
-    const next = sorted[i + 1];
-    return qty >= t.minQty && (!next || qty < next.minQty);
-  });
-  if (idx === -1) return null;
-  const t = sorted[idx], next = sorted[idx + 1];
-  if (next) return `Tier: ${t.minQty.toLocaleString()}–${(next.minQty - 1).toLocaleString()} ${prod.saleType}`;
-  return `Tier: ${t.minQty.toLocaleString()}+ ${prod.saleType}`;
+  if (qty <= 0) return null;
+  const t = getTier(prod, qty);
+  if (t) return `Bosqich: ${t.minQty.toLocaleString()}–${t.maxQty.toLocaleString()} ${prod.saleType}`;
+  if (prod.tiers && prod.tiers.length > 0) return "Standart narx ishlatildi (mos bosqich yo'q)";
+  return null;
 }
 
 const SALES_Q_KEY    = ["sales-v2"];
@@ -397,9 +399,10 @@ function NewSaleDialog({
   const watchQty    = itemForm.watch("quantity");
   const selProd     = salesProducts.find(p => p.name === watchProd);
   const currentQty  = Number(watchQty) || 0;
-  const unitPrice   = selProd ? getTierPrice(selProd, currentQty) : 0;
-  const lineTotal   = unitPrice * currentQty;
-  const tierLabel   = selProd && currentQty > 0 ? getTierLabel(selProd, currentQty) : null;
+  const unitPrice       = selProd ? getTierPrice(selProd, currentQty) : 0;
+  const currentCurrency = selProd ? getTierCurrency(selProd, currentQty) : "UZS";
+  const lineTotal       = unitPrice * currentQty;
+  const tierLabel       = selProd && currentQty > 0 ? getTierLabel(selProd, currentQty) : null;
 
   // Totals
   const totalAmt = draftItems.reduce((s, it) => s + it.lineTotal, 0);
@@ -419,7 +422,7 @@ function NewSaleDialog({
 
     if (editKey) {
       setDraftItems(prev => prev.map(it =>
-        it.key === editKey ? { ...it, quantity: qty, unitPrice: price, lineTotal: qty * price } : it
+        it.key === editKey ? { ...it, quantity: qty, unitPrice: price, currency: getTierCurrency(selProd, qty), lineTotal: qty * price } : it
       ));
       setEditKey(null);
     } else {
@@ -429,7 +432,7 @@ function NewSaleDialog({
         saleType: selProd.saleType,
         quantity: qty,
         unitPrice: price,
-        currency: selProd.currency,
+        currency: getTierCurrency(selProd, qty),
         lineTotal: qty * price,
       }]);
     }
@@ -550,14 +553,14 @@ function NewSaleDialog({
               <div className="flex items-center gap-3 text-sm bg-background rounded p-2 border flex-wrap">
                 <span className="text-muted-foreground">Narx:</span>
                 <span className="font-semibold text-emerald-700">
-                  {selProd.currency === "USD" ? `$${unitPrice}` : `${unitPrice.toLocaleString()} so'm`} / {selProd.saleType}
+                  {currentCurrency === "USD" ? `$${unitPrice}` : `${unitPrice.toLocaleString()} so'm`} / {selProd.saleType}
                 </span>
                 {tierLabel && (
                   <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">{tierLabel}</span>
                 )}
                 <span className="text-muted-foreground ml-auto">Jami:</span>
                 <span className="font-bold text-primary">
-                  {selProd.currency === "USD" ? `${lineTotal.toFixed(2)} $` : `${lineTotal.toLocaleString()} so'm`}
+                  {currentCurrency === "USD" ? `${lineTotal.toFixed(2)} $` : `${lineTotal.toLocaleString()} so'm`}
                 </span>
               </div>
             )}

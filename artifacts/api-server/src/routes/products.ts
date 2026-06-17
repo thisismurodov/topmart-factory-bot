@@ -1,10 +1,12 @@
 import { Router, type IRouter } from "express";
 import { pool } from "@workspace/db";
+import { getUsdToUzsRate } from "../lib/exchangeRate";
 
 const router: IRouter = Router();
 
 // ── GET /products — list all ──────────────────────────────────────────────────
 router.get("/products", async (_req, res): Promise<void> => {
+  const { rate } = await getUsdToUzsRate();
   const { rows } = await pool.query(`
     SELECT
       p.id, p.name, p.sku, p.unit_type, p.currency_type,
@@ -12,26 +14,29 @@ router.get("/products", async (_req, res): Promise<void> => {
       p.salary_cost, p.electricity_cost, p.other_cost,
       p.minimum_stock, p.active, p.created_at, p.payroll_method,
       COALESCE(
-        (SELECT SUM(rm.default_cost * pm.quantity_required)
+        (SELECT SUM(rm.default_cost * pm.quantity_required * CASE WHEN UPPER(rm.currency)='USD' THEN $1::numeric ELSE 1 END)
          FROM product_materials pm
          JOIN raw_materials rm ON rm.id = pm.raw_material_id
          WHERE pm.product_name = p.name), 0
       ) AS raw_material_cost
     FROM products p
     ORDER BY p.name
-  `);
+  `, [rate]);
 
   res.json(rows.map(row => {
     // weight (og'irlik) — narx va xarajatlar 1 birlik (kg/dona) uchun kiritiladi,
     // jami = og'irlik × narx. Xom ashyo (BOM) allaqachon mutlaq miqdor bo'yicha.
     const w               = Number(row.weight) > 0 ? Number(row.weight) : 1;
     const salePriceBase   = Number(row.default_sale_price);
+    // USD narxli mahsulot sotuv narxini jonli kursda UZS'ga aylantiramiz — barcha
+    // xarajatlar (maosh/elektr/xom ashyo) UZS'da, shuning uchun foyda izchil UZS'da chiqadi.
+    const saleRate        = String(row.currency_type) === "USD" ? rate : 1;
     // mehnat (maosh) stavkadan hisoblanadi (yagona manba): kg → rate×og'irlik, dona → rate
     const laborCost       = String(row.rate_type) === "kg" ? Number(row.rate) * w : Number(row.rate);
     const elecBase        = Number(row.electricity_cost);
     const otherBase       = Number(row.other_cost);
     const rawCost         = Number(row.raw_material_cost);
-    const effectiveSale   = salePriceBase * w;
+    const effectiveSale   = salePriceBase * saleRate * w;
     const totalCost       = rawCost + laborCost + (elecBase + otherBase) * w;
     const profit          = effectiveSale - totalCost;
     const marginPct       = effectiveSale > 0
@@ -178,17 +183,18 @@ router.delete("/products/:name", async (req, res): Promise<void> => {
 // ── GET /products/:name/profitability ─────────────────────────────────────────
 router.get("/products/:name/profitability", async (req, res): Promise<void> => {
   const productName = decodeURIComponent(req.params.name);
+  const { rate } = await getUsdToUzsRate();
 
   const [prodRes, salesRes] = await Promise.all([
     pool.query(
       `SELECT p.*,
         COALESCE((
-          SELECT SUM(rm.default_cost * pm.quantity_required)
+          SELECT SUM(rm.default_cost * pm.quantity_required * CASE WHEN UPPER(rm.currency)='USD' THEN $2::numeric ELSE 1 END)
           FROM product_materials pm
           JOIN raw_materials rm ON rm.id = pm.raw_material_id
           WHERE pm.product_name = p.name
         ), 0) AS raw_material_cost
-       FROM products p WHERE p.name=$1`, [productName]
+       FROM products p WHERE p.name=$1`, [productName, rate]
     ),
     pool.query(
       `SELECT
@@ -210,7 +216,9 @@ router.get("/products/:name/profitability", async (req, res): Promise<void> => {
   const laborCost       = String(p.rate_type) === "kg" ? Number(p.rate) * w : Number(p.rate);
   const electricityCost = Number(p.electricity_cost) * w;
   const otherCost       = Number(p.other_cost) * w;
-  const salePrice       = Number(p.default_sale_price) * w;
+  // USD narx jonli kursda UZS'ga aylantiriladi (xarajatlar UZS'da — izchillik uchun).
+  const saleRate        = String(p.currency_type) === "USD" ? rate : 1;
+  const salePrice       = Number(p.default_sale_price) * saleRate * w;
   const totalCost       = rawCost + laborCost + electricityCost + otherCost;
   const profit          = salePrice - totalCost;
   const marginPct       = salePrice > 0 ? (profit / salePrice) * 100 : 0;

@@ -640,11 +640,8 @@ export default function Reports() {
                 </thead>
                 <tbody className="divide-y">
                   {profitRows.map((row, i) => {
-                    const isUsd = row.currencyType === "USD";
-                    const fmtVal = (v: number) =>
-                      isUsd
-                        ? `$${v.toFixed(2)}`
-                        : fmtUzs(v);
+                    // Xarajat/foyda API'da UZS'ga normallashtirilgan (USD jonli kursda) — UZS'da ko'rsatamiz.
+                    const fmtVal = (v: number) => fmtUzs(v);
                     const revenueDisplay = row.revenueUsd > 0
                       ? fmtUsd(row.revenueUsd)
                       : fmtUzs(row.revenueUzs);
@@ -709,7 +706,7 @@ export default function Reports() {
                 <StatCard
                   label="Eng foydali mahsulot"
                   value={topProfit.name}
-                  sub={`Foyda: ${topProfit.currencyType === "USD" ? `$${topProfit.profit.toFixed(2)}` : fmtUzs(topProfit.profit)}`}
+                  sub={`Foyda: ${fmtUzs(topProfit.profit)}`}
                   color="green"
                 />
                 <StatCard

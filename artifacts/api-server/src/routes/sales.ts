@@ -4,6 +4,7 @@ import {
   DeleteSaleParams,
   HealthCheckResponse,
 } from "@workspace/api-zod";
+import { resolveProductPrice } from "../lib/pricing";
 
 const router: IRouter = Router();
 
@@ -173,10 +174,8 @@ router.post("/sales", async (req, res): Promise<void> => {
     if (!it.productName || typeof it.productName !== "string") {
       res.status(400).json({ error: "Each item needs productName" }); return;
     }
-    const qty   = Number(it.quantity);
-    const price = Number(it.unitPrice);
-    if (isNaN(qty) || qty <= 0)    { res.status(400).json({ error: "quantity must be > 0" }); return; }
-    if (isNaN(price) || price < 0) { res.status(400).json({ error: "unitPrice must be >= 0" }); return; }
+    const qty = Number(it.quantity);
+    if (isNaN(qty) || qty <= 0) { res.status(400).json({ error: "quantity must be > 0" }); return; }
   }
 
   const customerRes = await pool.query(
@@ -188,12 +187,32 @@ router.post("/sales", async (req, res): Promise<void> => {
   }
   const customerName = customerRes.rows[0].name;
 
-  const allCurrencies = items.map((it: any) => ((it.currency ?? "USD") as string).toUpperCase());
-  const primaryCurrency = allCurrencies.every((c: string) => c === "UZS") ? "UZS" : "USD";
-  const totalAmount = items.reduce(
-    (sum: number, it: any) => sum + Number(it.quantity) * Number(it.unitPrice),
-    0,
-  );
+  // Server-authoritative pricing: recompute unit_price + currency from the matching
+  // volume tier (inclusive min<=qty<=max) or product default, so clients cannot
+  // tamper with tier prices. Resolved values are what get stored on sale_items.
+  const resolvedItems: Array<{
+    productName: string; saleType: string; quantity: number;
+    unitPrice: number; currency: string; lineTotal: number;
+  }> = [];
+  for (const it of items) {
+    const qty = Number(it.quantity);
+    const resolved = await resolveProductPrice(String(it.productName), qty);
+    if (!resolved.found) {
+      res.status(400).json({ error: `Mahsulot topilmadi: ${it.productName}` }); return;
+    }
+    resolvedItems.push({
+      productName: String(it.productName).slice(0, 120),
+      saleType:    resolved.saleType,
+      quantity:    qty,
+      unitPrice:   resolved.unitPrice,
+      currency:    String(resolved.currency).toUpperCase(),
+      lineTotal:   qty * resolved.unitPrice,
+    });
+  }
+
+  const allCurrencies   = resolvedItems.map(it => it.currency);
+  const primaryCurrency = allCurrencies.every(c => c === "UZS") ? "UZS" : "USD";
+  const totalAmount     = resolvedItems.reduce((sum, it) => sum + it.lineTotal, 0);
 
   // ── Payment amounts (server-side, not trusted from client) ──
   let paidAmt: number;
@@ -233,15 +252,12 @@ router.post("/sales", async (req, res): Promise<void> => {
     );
     const saleId = saleRes.rows[0].id;
 
-    for (const it of items) {
-      const lineTotal = Number(it.quantity) * Number(it.unitPrice);
+    for (const it of resolvedItems) {
       await client.query(
         `INSERT INTO sale_items (sale_id, product_name, sale_type, quantity, unit_price, currency, line_total)
          VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-        [saleId, String(it.productName).slice(0, 120),
-         it.saleType ?? "dona",
-         Number(it.quantity), Number(it.unitPrice),
-         it.currency ?? "USD", lineTotal],
+        [saleId, it.productName, it.saleType,
+         it.quantity, it.unitPrice, it.currency, it.lineTotal],
       );
     }
 

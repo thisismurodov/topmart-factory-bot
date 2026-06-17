@@ -28,6 +28,8 @@ type RawMaterial = {
   name: string;
   unitType: string;
   defaultCost: number;
+  currency: string;
+  calculatedUzsCost: number;
   currentStock: number;
   minimumStock: number;
   active: boolean;
@@ -40,6 +42,7 @@ const UNIT_OPTIONS = ["kg", "dona", "litr", "metr", "rulon", "m²"] as const;
 const rawMaterialSchema = z.object({
   name: z.string().min(1, "Nomi kiritilishi shart"),
   unitType: z.string().min(1),
+  currency: z.enum(["UZS", "USD"]).default("UZS"),
   defaultCost: z.coerce.number().min(0),
   currentStock: z.coerce.number().min(0),
   minimumStock: z.coerce.number().min(0),
@@ -129,12 +132,15 @@ function RawMaterialDialog({
     values: {
       name: material?.name ?? "",
       unitType: material?.unitType ?? "kg",
+      currency: (material?.currency as "UZS" | "USD") ?? "UZS",
       defaultCost: material?.defaultCost ?? 0,
       currentStock: material?.currentStock ?? 0,
       minimumStock: material?.minimumStock ?? 0,
       active: material?.active ?? true,
     },
   });
+
+  const watchedCurrency = form.watch("currency");
 
   function onSubmit(values: RawMaterialForm) {
     if (isEdit) {
@@ -195,17 +201,41 @@ function RawMaterialDialog({
               />
               <FormField
                 control={form.control}
-                name="defaultCost"
+                name="currency"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Narx/birlik (so'm)</FormLabel>
-                    <FormControl>
-                      <Input type="number" step="0.01" min={0} {...field} />
-                    </FormControl>
+                    <FormLabel>Valyuta</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value}>
+                      <FormControl>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="UZS">UZS (so'm)</SelectItem>
+                        <SelectItem value="USD">USD ($)</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </FormItem>
                 )}
               />
             </div>
+
+            <FormField
+              control={form.control}
+              name="defaultCost"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Narx/birlik ({watchedCurrency === "USD" ? "$" : "so'm"})</FormLabel>
+                  <FormControl>
+                    <Input type="number" step="0.01" min={0} {...field} />
+                  </FormControl>
+                  {watchedCurrency === "USD" && (
+                    <p className="text-xs text-muted-foreground">
+                      Hisob-kitoblarda joriy kursda so'mga aylantiriladi.
+                    </p>
+                  )}
+                </FormItem>
+              )}
+            />
 
             <div className="grid grid-cols-2 gap-3">
               <FormField
@@ -298,7 +328,7 @@ export default function RawMaterials() {
     [materials],
   );
   const totalValue = useMemo(
-    () => materials.reduce((sum, m) => sum + m.currentStock * m.defaultCost, 0),
+    () => materials.reduce((sum, m) => sum + m.currentStock * m.calculatedUzsCost, 0),
     [materials],
   );
 
@@ -354,6 +384,7 @@ export default function RawMaterials() {
               <TableHead>Nomi</TableHead>
               <TableHead>Birlik</TableHead>
               <TableHead className="text-right">Narx/birlik</TableHead>
+              <TableHead className="text-right">UZS ekvivalenti</TableHead>
               <TableHead className="text-right">Hozirgi zahira</TableHead>
               <TableHead className="text-right">Minimal zahira</TableHead>
               <TableHead className="text-center">Holat</TableHead>
@@ -364,14 +395,14 @@ export default function RawMaterials() {
             {isLoading ? (
               [1, 2, 3, 4].map(i => (
                 <TableRow key={i}>
-                  {[1, 2, 3, 4, 5, 6, 7].map(j => (
+                  {[1, 2, 3, 4, 5, 6, 7, 8].map(j => (
                     <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
                   ))}
                 </TableRow>
               ))
             ) : materials.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
+                <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">
                   <Boxes className="w-10 h-10 mx-auto mb-2 opacity-20" />
                   Xom ashyolar yo'q. "Qo'shish" tugmasini bosing.
                 </TableCell>
@@ -388,7 +419,14 @@ export default function RawMaterials() {
                       </div>
                     </TableCell>
                     <TableCell className="text-muted-foreground">{m.unitType}</TableCell>
-                    <TableCell className="text-right">{formatCurrency(m.defaultCost)}</TableCell>
+                    <TableCell className="text-right">
+                      {m.currency === "USD"
+                        ? `$${m.defaultCost.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                        : formatCurrency(m.defaultCost)}
+                    </TableCell>
+                    <TableCell className="text-right text-muted-foreground">
+                      {m.currency === "USD" ? formatCurrency(m.calculatedUzsCost) : "—"}
+                    </TableCell>
                     <TableCell className={`text-right font-medium ${low ? "text-red-600" : ""}`}>
                       {m.currentStock.toLocaleString("ru-RU")} {m.unitType}
                     </TableCell>

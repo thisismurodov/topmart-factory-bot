@@ -7,17 +7,17 @@ from telegram.ext import (
 from ..keyboards import (
     workers_inline_keyboard, products_inline_keyboard, cancel_keyboard,
     main_menu_keyboard, packer_menu_keyboard, weight_confirm_keyboard,
-    batch_cart_keyboard,
+    batch_cart_keyboard, containers_inline_keyboard,
 )
 from ..database import (
     create_batch_session, get_worker_chat_id, get_workers,
     get_products, get_product_weight, get_user_role, get_worker_monthly,
-    get_product_method,
+    get_product_method, get_containers,
 )
 from ..config import calc_earnings, SUPERADMIN_CHAT_ID
 from ..label_generator import generate_batch_session_pdf
 
-CHOOSE_WORKER, CHOOSE_PRODUCT, ENTER_QUANTITY, ENTER_WEIGHT, AFTER_ITEM = range(5)
+CHOOSE_WORKER, CHOOSE_PRODUCT, ENTER_QUANTITY, ENTER_WEIGHT, AFTER_ITEM, CHOOSE_CONTAINER = range(6)
 
 # Profil og'irligidan ruxsat etilgan chetlanish (±kg)
 WEIGHT_TOLERANCE_KG = 0.2
@@ -228,13 +228,54 @@ async def add_more_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 async def finalize_batches(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """[✅ Tugatish] — savatdagi barcha mahsulotlardan bitta partiya yaratadi."""
+    """[✅ Tugatish] — konteyner tanlash bosqichini ko'rsatadi."""
     query = update.callback_query
     await query.answer()
     try:
         await query.edit_message_reply_markup(reply_markup=None)
     except Exception:
         pass
+
+    containers = get_containers()
+    if not containers:
+        # Konteynerlar yo'q bo'lsa to'g'ridan-to'g'ri saqlash
+        return await _finalize(update, context)
+
+    items = context.user_data.get("items", [])
+    total = sum(it["earnings"] for it in items)
+    lines = "\n".join(
+        f"{i+1}. {it['product']} — {_item_detail(it)}"
+        for i, it in enumerate(items)
+    )
+
+    await query.message.reply_text(
+        f"🧾 *Partiya:* {len(items)} ta mahsulot\n"
+        f"{lines}\n"
+        f"💰 Jami: *{total:,.0f} so'm*\n\n"
+        f"📦 *Qaysi konteynerga joylashtirasiz?*",
+        parse_mode="Markdown",
+        reply_markup=containers_inline_keyboard(containers),
+    )
+    return CHOOSE_CONTAINER
+
+
+async def choose_container(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Konteyner tanlanadi va partiya saqlanadi."""
+    query = update.callback_query
+    await query.answer()
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+    # callback_data = "container:{id}:{name}"
+    parts = query.data.split(":", 2)
+    wh_id   = int(parts[1])
+    wh_name = parts[2] if len(parts) > 2 else f"Konteyner #{wh_id}"
+
+    context.user_data["warehouse_id"]   = wh_id
+    context.user_data["warehouse_name"] = wh_name
+
     return await _finalize(update, context)
 
 
@@ -255,11 +296,13 @@ async def _finalize(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         context.user_data.clear()
         return ConversationHandler.END
 
-    workers = get_workers()
-    prefix  = workers.get(worker, worker[:2].upper())
-    created = datetime.now()
+    workers      = get_workers()
+    prefix       = workers.get(worker, worker[:2].upper())
+    created      = datetime.now()
+    warehouse_id = context.user_data.get("warehouse_id")
+    wh_name      = context.user_data.get("warehouse_name", "")
 
-    result        = create_batch_session(worker, prefix, items)
+    result        = create_batch_session(worker, prefix, items, warehouse_id=warehouse_id)
     batch_code    = result["batch_code"]
     total         = result["total_earnings"]
     low_materials = result["low_materials"]
@@ -288,12 +331,15 @@ async def _finalize(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         )
         low_line = f"\n\n⚠️ *Xom ashyo kam qoldi — to'ldiring!*\n{mtxt}"
 
+    container_line = f"\n📦 Konteyner: *{wh_name}*" if wh_name else ""
+
     await message.reply_text(
         f"✅ *Partiya yaratildi!*\n\n"
         f"📌 Partiya: `{batch_code}`\n"
         f"👷 Ishchi: {worker}\n"
-        f"📅 Sana: {today_str}\n"
-        f"📦 Mahsulotlar: *{len(items)} ta*\n\n"
+        f"📅 Sana: {today_str}"
+        + container_line
+        + f"\n📦 Mahsulotlar: *{len(items)} ta*\n\n"
         + "\n".join(lines)
         + f"\n\n💰 *Jami haq: {total:,.0f} so'm*"
         + low_line,
@@ -317,7 +363,7 @@ async def _finalize(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await gen_msg.delete()
 
     await _notify_worker(context, worker, batch_code, items, total)
-    await _notify_admin(context, worker, batch_code, items, total)
+    await _notify_admin(context, worker, batch_code, items, total, wh_name)
 
     context.user_data.clear()
     return ConversationHandler.END
@@ -356,16 +402,19 @@ async def _notify_worker(
 async def _notify_admin(
     context: ContextTypes.DEFAULT_TYPE,
     worker: str, batch_code: str, items: list[dict], total: float,
+    wh_name: str = "",
 ) -> None:
     prod_lines = "\n".join(f"• {it['product']} — {_item_detail(it)}" for it in items)
+    container_line = f"\n📦 Konteyner: *{wh_name}*" if wh_name else ""
     try:
         await context.bot.send_message(
             chat_id=SUPERADMIN_CHAT_ID,
             text=(
                 f"🏭 *Yangi partiya kiritildi*\n\n"
                 f"👷 Ishchi: *{worker}*\n"
-                f"📌 `{batch_code}`  ({len(items)} ta mahsulot)\n\n"
-                f"{prod_lines}\n\n"
+                f"📌 `{batch_code}`  ({len(items)} ta mahsulot)"
+                + container_line
+                + f"\n\n{prod_lines}\n\n"
                 f"💰 Jami haq: *{total:,.0f} so'm*"
             ),
             parse_mode="Markdown",
@@ -415,6 +464,10 @@ def build_conversation_handler() -> ConversationHandler:
             AFTER_ITEM: [
                 CallbackQueryHandler(add_more_product, pattern=r"^add_more$"),
                 CallbackQueryHandler(finalize_batches, pattern=r"^finish$"),
+                CallbackQueryHandler(cancel_callback, pattern=r"^cancel$"),
+            ],
+            CHOOSE_CONTAINER: [
+                CallbackQueryHandler(choose_container, pattern=r"^container:"),
                 CallbackQueryHandler(cancel_callback, pattern=r"^cancel$"),
             ],
         },

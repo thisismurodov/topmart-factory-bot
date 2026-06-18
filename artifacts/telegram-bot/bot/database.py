@@ -738,7 +738,9 @@ def next_batch_code(worker_prefix: str) -> str:
     return f"{prefix}{seq:02d}"
 
 
-def create_batch_session(worker: str, prefix: str, items: list[dict]) -> dict:
+def create_batch_session(
+    worker: str, prefix: str, items: list[dict], warehouse_id: int | None = None
+) -> dict:
     """Bitta sessiya = bitta batch_code ostida bir nechta mahsulot (batch items).
 
     Hammasi BITTA tranzaksiyada bajariladi: bitta kod generatsiya qilinadi, har bir
@@ -747,6 +749,8 @@ def create_batch_session(worker: str, prefix: str, items: list[dict]) -> dict:
     bo'lsa, butun sessiya bekor qilinadi (yarim partiya qolmaydi).
 
     items: [{"product", "quantity", "weight_kg", "earnings"}]
+    warehouse_id: tayyor mahsulot qaysi konteynerga tushishini belgilaydi.
+                  None bo'lsa birinchi faol ombor tanlanadi (orqaga mos).
     Returns: {"batch_code", "total_earnings", "low_materials"}
       low_materials — minimal zahiradan kam qolgan xom ashyolar (nom bo'yicha dedup).
     """
@@ -767,10 +771,15 @@ def create_batch_session(worker: str, prefix: str, items: list[dict]) -> dict:
         seq = (cur.fetchone()["cnt"] or 0) + 1
         batch_code = f"{code_prefix}{seq:02d}"
 
-        # Tayyor mahsulot uchun faol ombor (barcha itemlar uchun bir marta)
-        cur.execute("SELECT id FROM warehouses WHERE active=TRUE ORDER BY id LIMIT 1")
-        wh = cur.fetchone()
-        wh_id = wh["id"] if wh else None
+        # Tayyor mahsulot uchun ombor: berilgan konteyner yoki birinchi faol ombor
+        if warehouse_id:
+            cur.execute("SELECT id FROM warehouses WHERE id=%s AND active=TRUE", (warehouse_id,))
+            wh = cur.fetchone()
+            wh_id = wh["id"] if wh else None
+        else:
+            cur.execute("SELECT id FROM warehouses WHERE active=TRUE ORDER BY id LIMIT 1")
+            wh = cur.fetchone()
+            wh_id = wh["id"] if wh else None
 
         # Ishlab chiqaruvchining liniyasini snapshot qilamiz (kun yopilganda liniya
         # bo'yicha jami kg shu orqali hisoblanadi). Biriktirilmagan bo'lsa NULL.
@@ -1219,6 +1228,15 @@ def delete_sale_product(name: str) -> bool:
 def get_warehouses() -> list[dict]:
     with get_conn() as (conn, cur):
         cur.execute("SELECT id, name FROM warehouses WHERE active=TRUE ORDER BY id")
+        return cur.fetchall()
+
+
+def get_containers() -> list[dict]:
+    """Faqat konteyner turidagi omborlarni qaytaradi (C-01…C-30)."""
+    with get_conn() as (conn, cur):
+        cur.execute(
+            "SELECT id, name FROM warehouses WHERE active=TRUE AND location_type='container' ORDER BY name"
+        )
         return cur.fetchall()
 
 

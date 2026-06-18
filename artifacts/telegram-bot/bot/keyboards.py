@@ -109,6 +109,24 @@ def batch_cart_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
+def containers_inline_keyboard(containers: list[dict]) -> InlineKeyboardMarkup:
+    """C-01…C-30 konteynerlar uchun inline klaviatura (3 ta ustun)."""
+    buttons: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for c in containers:
+        row.append(InlineKeyboardButton(
+            f"📦 {c['name']}",
+            callback_data=f"container:{c['id']}:{c['name']}",
+        ))
+        if len(row) == 3:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    buttons.append([InlineKeyboardButton("❌ Bekor qilish", callback_data="cancel")])
+    return InlineKeyboardMarkup(buttons)
+
+
 def admin_main_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ Hodim qo'shish",        callback_data="adm:add_worker")],

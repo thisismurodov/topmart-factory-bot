@@ -10,8 +10,9 @@ import {
 } from "recharts";
 import {
   TrendingUp, Package, Banknote, Users, ShoppingBag, Award, BarChart2,
-  DollarSign, TrendingDown,
+  DollarSign, TrendingDown, Download,
 } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type SalesMonth = {
@@ -104,6 +105,76 @@ function PeriodBtn({ active, onClick, label }: { active: boolean; onClick: () =>
     >
       {label}
     </button>
+  );
+}
+
+// ── Export helpers ────────────────────────────────────────────────────────────
+function ExportSection() {
+  const { toast } = useToast();
+  const today = new Date().toISOString().slice(0, 10);
+  const monthAgo = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
+  const [from, setFrom] = useState(monthAgo);
+  const [to, setTo]     = useState(today);
+  const [loading, setLoading] = useState(false);
+
+  async function doExport(fmt: "csv" | "xlsx") {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ from, to, format: fmt });
+      const res = await authFetch(`/api/reports/sales-export?${params}`);
+      if (!res.ok) throw new Error("Serverdan xato keldi");
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href     = url;
+      a.download = `savdolar-${from}-${to}.${fmt}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: unknown) {
+      toast({ variant: "destructive", description: (e as Error).message ?? "Xato" });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="rounded-xl border bg-card p-5 flex flex-wrap items-end gap-4">
+      <div>
+        <p className="text-xs font-medium text-muted-foreground mb-1.5 uppercase tracking-wide">Savdo eksporti</p>
+        <div className="flex gap-3 flex-wrap">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-muted-foreground">Dan</label>
+            <input
+              type="date" value={from} onChange={e => setFrom(e.target.value)}
+              className="h-9 px-3 rounded-md border bg-background text-sm w-36"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-muted-foreground">Gacha</label>
+            <input
+              type="date" value={to} onChange={e => setTo(e.target.value)}
+              className="h-9 px-3 rounded-md border bg-background text-sm w-36"
+            />
+          </div>
+        </div>
+      </div>
+      <div className="flex gap-2 pb-0.5">
+        <button
+          disabled={loading}
+          onClick={() => doExport("csv")}
+          className="inline-flex items-center gap-2 h-9 px-4 rounded-md border bg-muted text-sm font-medium hover:bg-muted/80 disabled:opacity-50"
+        >
+          <Download className="w-4 h-4" /> CSV
+        </button>
+        <button
+          disabled={loading}
+          onClick={() => doExport("xlsx")}
+          className="inline-flex items-center gap-2 h-9 px-4 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
+        >
+          <Download className="w-4 h-4" /> Excel
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -218,6 +289,9 @@ export default function Reports() {
           ))}
         </div>
       </div>
+
+      {/* Export section */}
+      <ExportSection />
 
       {/* Tabs */}
       <Tabs defaultValue="sales">

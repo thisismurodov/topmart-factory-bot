@@ -5,7 +5,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCurrency, formatNumber, formatDate } from "@/lib/format";
-import { Trash2, Search, X } from "lucide-react";
+import { Trash2, Search, X, Archive, ArchiveRestore } from "lucide-react";
+import { authFetch } from "@/App";
+import { useToast } from "@/hooks/use-toast";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -22,8 +24,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 export default function Batches() {
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [page, setPage] = useState(0);
   const limit = 50;
+  const [showArchived, setShowArchived] = useState(false);
   
   const [filters, setFilters] = useState({ date: "", worker: "", product: "" });
   const [activeFilters, setActiveFilters] = useState({ date: "", worker: "", product: "" });
@@ -34,9 +38,9 @@ export default function Batches() {
       offset: page * limit,
       ...(activeFilters.date ? { date: activeFilters.date } : {}),
       ...(activeFilters.worker ? { worker: activeFilters.worker } : {}),
-      ...(activeFilters.product ? { product: activeFilters.product } : {})
+      ...(activeFilters.product ? { product: activeFilters.product } : {}),
     },
-    { query: { queryKey: getGetBatchesQueryKey({ limit, offset: page * limit, ...activeFilters }) } }
+    { query: { queryKey: [...getGetBatchesQueryKey({ limit, offset: page * limit, ...activeFilters }), showArchived] } }
   );
 
   const deleteBatch = useDeleteBatch({
@@ -46,6 +50,20 @@ export default function Batches() {
       }
     }
   });
+
+  async function toggleArchive(id: number, currentlyArchived: boolean) {
+    try {
+      await authFetch(`/api/batches/${id}/archive`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archived: !currentlyArchived }),
+      });
+      queryClient.invalidateQueries({ queryKey: getGetBatchesQueryKey() });
+      toast({ description: currentlyArchived ? "Partiya tiklandi" : "Partiya arxivlandi" });
+    } catch {
+      toast({ variant: "destructive", description: "Amal bajarilmadi" });
+    }
+  }
 
   const applyFilters = () => {
     setPage(0);
@@ -100,6 +118,14 @@ export default function Batches() {
               <Button variant="outline" onClick={clearFilters} data-testid="btn-clear-filters">
                 <X className="w-4 h-4 mr-2" /> Tozalash
               </Button>
+              <Button
+                variant={showArchived ? "default" : "outline"}
+                onClick={() => { setShowArchived(s => !s); setPage(0); }}
+                data-testid="btn-toggle-archived"
+              >
+                <Archive className="w-4 h-4 mr-2" />
+                {showArchived ? "Faollarni ko'rsatish" : "Arxivlanganlar"}
+              </Button>
             </div>
           </div>
         </CardContent>
@@ -117,7 +143,7 @@ export default function Batches() {
                 <TableHead className="text-right">Miqdor</TableHead>
                 <TableHead className="text-right">Og'irlik</TableHead>
                 <TableHead className="text-right">Maosh</TableHead>
-                <TableHead className="text-right w-[80px]"></TableHead>
+                <TableHead className="text-right w-[100px]"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -151,31 +177,44 @@ export default function Batches() {
                     <TableCell className="text-right font-mono">{formatNumber(batch.weightKg)} kg</TableCell>
                     <TableCell className="text-right font-mono font-medium">{formatCurrency(batch.earnings)}</TableCell>
                     <TableCell className="text-right">
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10" data-testid={`btn-delete-${batch.id}`}>
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>Partiyani o'chirish?</AlertDialogTitle>
-                            <AlertDialogDescription>
-                              Bu amalni qaytarib bo'lmaydi. {batch.batchCode} partiyasi va unga tegishli maosh ma'lumotlari o'chiriladi.
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>Bekor qilish</AlertDialogCancel>
-                            <AlertDialogAction 
-                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                              onClick={() => deleteBatch.mutate({ id: batch.id })}
-                              data-testid="btn-confirm-delete"
-                            >
-                              {deleteBatch.isPending ? "O'chirilmoqda..." : "O'chirish"}
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
+                      <div className="flex items-center justify-end gap-1">
+                        <Button
+                          variant="ghost" size="icon"
+                          className="h-8 w-8 text-amber-600 hover:text-amber-700 hover:bg-amber-50"
+                          title={(batch as unknown as { archived?: boolean }).archived ? "Tiklash" : "Arxivlash"}
+                          onClick={() => toggleArchive(batch.id, !!(batch as unknown as { archived?: boolean }).archived)}
+                          data-testid={`btn-archive-${batch.id}`}
+                        >
+                          {(batch as unknown as { archived?: boolean }).archived
+                            ? <ArchiveRestore className="w-4 h-4" />
+                            : <Archive className="w-4 h-4" />}
+                        </Button>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10" data-testid={`btn-delete-${batch.id}`}>
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Partiyani o'chirish?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                Bu amalni qaytarib bo'lmaydi. {batch.batchCode} partiyasi va unga tegishli maosh ma'lumotlari o'chiriladi.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Bekor qilish</AlertDialogCancel>
+                              <AlertDialogAction 
+                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                onClick={() => deleteBatch.mutate({ id: batch.id })}
+                                data-testid="btn-confirm-delete"
+                              >
+                                {deleteBatch.isPending ? "O'chirilmoqda..." : "O'chirish"}
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))

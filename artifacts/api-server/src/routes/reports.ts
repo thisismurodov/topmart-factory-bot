@@ -277,4 +277,87 @@ router.get("/reports/product-profitability", async (req, res): Promise<void> => 
   }));
 });
 
+// ── GET /reports/sales-export?from=&to=&format=csv|xlsx ───────────────────────
+router.get("/reports/sales-export", async (req, res): Promise<void> => {
+  const from   = (req.query.from as string) || "";
+  const to     = (req.query.to   as string) || "";
+  const format = ((req.query.format as string) || "csv").toLowerCase();
+
+  const conditions: string[] = [];
+  const vals: unknown[] = [];
+
+  if (from) { vals.push(from); conditions.push(`s.created_at::date >= $${vals.length}`); }
+  if (to)   { vals.push(to);   conditions.push(`s.created_at::date <= $${vals.length}`); }
+  const where = conditions.length ? `AND ${conditions.join(" AND ")}` : "";
+
+  const { rows } = await pool.query(`
+    SELECT
+      s.id,
+      s.created_at::date                     AS sana,
+      s.customer_name                        AS mijoz,
+      COALESCE(s.note, '')                   AS izoh,
+      s.status                               AS holat,
+      s.payment_type                         AS tolov_turi,
+      COALESCE(si.product_name, '')          AS mahsulot,
+      COALESCE(si.sale_type, '')             AS birlik,
+      COALESCE(si.quantity::text, '0')       AS miqdor,
+      COALESCE(si.unit_price::text, '0')     AS birlik_narxi,
+      COALESCE(si.currency, s.currency, 'UZS') AS valyuta,
+      COALESCE(si.line_total::text, '0')     AS jami
+    FROM sales s
+    LEFT JOIN sale_items si ON si.sale_id = s.id
+    WHERE 1=1 ${where}
+    ORDER BY s.created_at DESC, s.id, si.id
+  `, vals);
+
+  if (format === "xlsx") {
+    // Dynamic import — exceljs is a large dep, only load when needed
+    const ExcelJS = (await import("exceljs")).default;
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Savdolar");
+
+    ws.columns = [
+      { header: "ID",        key: "id",          width: 8  },
+      { header: "Sana",      key: "sana",         width: 12 },
+      { header: "Mijoz",     key: "mijoz",         width: 22 },
+      { header: "Mahsulot",  key: "mahsulot",      width: 20 },
+      { header: "Birlik",    key: "birlik",         width: 8  },
+      { header: "Miqdor",    key: "miqdor",         width: 10 },
+      { header: "Narx",      key: "birlik_narxi",   width: 14 },
+      { header: "Valyuta",   key: "valyuta",        width: 8  },
+      { header: "Jami",      key: "jami",           width: 14 },
+      { header: "Holat",     key: "holat",          width: 10 },
+      { header: "To'lov",    key: "tolov_turi",     width: 10 },
+      { header: "Izoh",      key: "izoh",           width: 20 },
+    ];
+
+    ws.getRow(1).font = { bold: true };
+    rows.forEach(r => ws.addRow(r));
+
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="savdolar-${from || "all"}-${to || "all"}.xlsx"`);
+    await wb.xlsx.write(res);
+    res.end();
+    return;
+  }
+
+  // Default: CSV
+  const header = ["ID","Sana","Mijoz","Mahsulot","Birlik","Miqdor","Narx","Valyuta","Jami","Holat","To'lov","Izoh"];
+  const escape = (v: unknown) => {
+    const s = String(v ?? "").replace(/"/g, '""');
+    return /[,"\n]/.test(s) ? `"${s}"` : s;
+  };
+  const csvLines = [
+    header.join(","),
+    ...rows.map(r =>
+      [r.id, r.sana, r.mijoz, r.mahsulot, r.birlik, r.miqdor, r.birlik_narxi, r.valyuta, r.jami, r.holat, r.tolov_turi, r.izoh]
+        .map(escape).join(",")
+    ),
+  ];
+
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="savdolar-${from || "all"}-${to || "all"}.csv"`);
+  res.send("\uFEFF" + csvLines.join("\n")); // BOM — Excel UTF-8 tanishi uchun
+});
+
 export default router;

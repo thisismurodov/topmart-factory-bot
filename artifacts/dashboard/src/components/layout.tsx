@@ -18,6 +18,7 @@ import {
   HardHat,
   Boxes,
   Scale,
+  ClipboardList,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -35,6 +36,7 @@ const NAV_ITEMS = [
   { href: "/debts",      label: "Nasiya",      icon: CreditCard },
   { href: "/reports",    label: "Hisobotlar",  icon: BarChart2 },
   { href: "/inventory",  label: "Ombor",       icon: Warehouse },
+  { href: "/audit",      label: "Audit log",   icon: ClipboardList },
 ];
 
 export function Layout({ children }: { children: ReactNode }) {

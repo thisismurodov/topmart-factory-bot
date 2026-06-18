@@ -2,6 +2,7 @@ import express, { type Express } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
 import session from "express-session";
+import rateLimit from "express-rate-limit";
 import router from "./routes";
 import { logger } from "./lib/logger";
 
@@ -57,6 +58,26 @@ app.use(
   })
 );
 
+// ── Rate limiting ─────────────────────────────────────────────────────────────
+// Umumiy limit: 200 so'rov/daqiqa per IP
+const generalLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Juda ko'p so'rov. Bir daqiqadan so'ng qayta urinib ko'ring." },
+});
+// Auth endpointlari uchun qattiqroq limit: 15 urinish/daqiqa (brute-force himoyasi)
+const authLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 15,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Juda ko'p urinish. Bir daqiqadan so'ng qayta urinib ko'ring." },
+});
+
+app.use("/api/auth", authLimiter);
+app.use("/api", generalLimiter);
 app.use("/api", router);
 
 app.get("/", (_req, res) => {

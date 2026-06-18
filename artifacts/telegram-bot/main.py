@@ -1,11 +1,13 @@
 import os
 import logging
+import traceback
 import warnings
 from telegram.warnings import PTBUserWarning
 
 warnings.filterwarnings("ignore", message="If 'per_message=False'", category=PTBUserWarning)
 
-from telegram.ext import ApplicationBuilder, PicklePersistence
+from telegram import Update
+from telegram.ext import ApplicationBuilder, PicklePersistence, ContextTypes
 
 from bot.database import init_db
 from bot.handlers.input_handler import build_conversation_handler
@@ -18,12 +20,32 @@ from bot.handlers.salary import register as register_salary_handlers
 from bot.handlers.sales import register as register_sales_handlers
 from bot.handlers.inventory import build_inventory_handler
 from bot.handlers.debts import register as register_debt_handlers
+from bot.scheduler import start_scheduler
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
+
+ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID", "")
+
+
+async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Barcha ushlanshmagan xatolarni log qiladi va admin'ga xabar yuboradi."""
+    tb = "".join(traceback.format_exception(None, context.error, context.error.__traceback__))
+    logger.error("Unhandled exception:\n%s", tb)
+
+    if ADMIN_CHAT_ID:
+        short = tb[-3000:] if len(tb) > 3000 else tb
+        try:
+            await context.bot.send_message(
+                chat_id=ADMIN_CHAT_ID,
+                text=f"⚠️ *Bot xatosi*\n\n```\n{short}\n```",
+                parse_mode="Markdown",
+            )
+        except Exception as notify_err:
+            logger.warning("Admin bildirishnomasi yuborilmadi: %s", notify_err)
 
 
 def main() -> None:
@@ -44,6 +66,8 @@ def main() -> None:
         .build()
     )
 
+    app.add_error_handler(global_error_handler)
+
     register_cleardata(app)
     register_salary_handlers(app)
     register_sales_handlers(app)
@@ -55,6 +79,8 @@ def main() -> None:
     register_label_handlers(app)
     register_kpi_handlers(app)
     register_start_handlers(app)
+
+    start_scheduler(app.bot, ADMIN_CHAT_ID)
 
     logger.info("TopMart Factory Bot started (polling) …")
     app.run_polling(drop_pending_updates=True)

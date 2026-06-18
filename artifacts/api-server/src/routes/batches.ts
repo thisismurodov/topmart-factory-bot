@@ -34,6 +34,12 @@ router.get("/batches", async (req, res): Promise<void> => {
     conditions.push(`product = $${params.length}`);
   }
 
+  // archived=true ko'rsatilmasa, faqat faol partiyalar ko'rsatiladi
+  const showArchived = (req.query.archived as string) === "true";
+  if (!showArchived) {
+    conditions.push(`(archived = FALSE OR archived IS NULL)`);
+  }
+
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
   const filterParams = [...params];
 
@@ -86,6 +92,18 @@ router.delete("/batches/:id", async (req, res): Promise<void> => {
   }
 
   res.json(HealthCheckResponse.parse({ status: "ok" }));
+});
+
+// ── PATCH /batches/:id/archive — yumshoq arxivlash ───────────────────────────
+router.patch("/batches/:id/archive", async (req, res): Promise<void> => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const archived = req.body?.archived !== false; // default: true (arxivlash)
+  const result = await pool.query(
+    "UPDATE batches SET archived=$1 WHERE id=$2", [archived, id]
+  );
+  if ((result.rowCount ?? 0) === 0) { res.status(404).json({ error: "Batch not found" }); return; }
+  res.json({ ok: true, archived });
 });
 
 export default router;

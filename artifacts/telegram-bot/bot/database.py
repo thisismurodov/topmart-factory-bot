@@ -1,4 +1,6 @@
 import os
+import time
+import logging
 from datetime import date
 from contextlib import contextmanager
 
@@ -7,10 +9,28 @@ import psycopg2.extras
 
 from .config import DATABASE_URL, SEED_WORKERS, SEED_PRODUCTS
 
+_log = logging.getLogger(__name__)
+_MAX_RETRIES = 5
+
+
+def _connect_with_retry() -> psycopg2.extensions.connection:
+    """psycopg2.connect + exponential backoff (1 2 4 8 16 s)."""
+    delay = 1
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            return psycopg2.connect(DATABASE_URL)
+        except psycopg2.OperationalError as exc:
+            if attempt == _MAX_RETRIES:
+                raise
+            _log.warning("DB ulanish xatosi (urinish %d/%d): %s — %ds dan so'ng qayta uriniladi",
+                         attempt, _MAX_RETRIES, exc, delay)
+            time.sleep(delay)
+            delay = min(delay * 2, 16)
+
 
 @contextmanager
 def get_conn():
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = _connect_with_retry()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     try:
         yield conn, cur

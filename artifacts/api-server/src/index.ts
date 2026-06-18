@@ -80,6 +80,44 @@ async function initDb() {
     )
   `);
 
+  // batches.archived — yumshoq o'chirish (soft delete)
+  await pool.query(`
+    ALTER TABLE IF EXISTS batches
+      ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT FALSE
+  `);
+
+  // audit_logs — kim, qachon, nima o'zgartirdi
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id          SERIAL PRIMARY KEY,
+      table_name  TEXT NOT NULL,
+      action      TEXT NOT NULL,
+      record_id   TEXT,
+      changed_by  TEXT NOT NULL DEFAULT 'api',
+      old_data    JSONB,
+      new_data    JSONB,
+      created_at  TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at DESC)
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_table ON audit_logs(table_name)
+  `);
+
+  // DB darajasida CHECK constraint'lar (idempotent)
+  await pool.query(`
+    DO $$ BEGIN
+      ALTER TABLE sale_items ADD CONSTRAINT chk_sale_items_qty CHECK (quantity > 0);
+    EXCEPTION WHEN duplicate_object THEN NULL; END $$
+  `);
+  await pool.query(`
+    DO $$ BEGIN
+      ALTER TABLE sales ADD CONSTRAINT chk_sales_total CHECK (total_amount >= 0);
+    EXCEPTION WHEN duplicate_object THEN NULL; END $$
+  `);
+
   // Admin userni seed qilish (mavjud bo'lmasa)
   const existing = await db.select().from(adminUsersTable).where(eq(adminUsersTable.username, "thisismurodov"));
   if (existing.length === 0) {

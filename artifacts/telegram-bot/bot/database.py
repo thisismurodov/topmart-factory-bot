@@ -1221,6 +1221,133 @@ def delete_sale_product(name: str) -> bool:
         return cur.rowcount > 0
 
 
+# ── Debt / nasiya funksiyalari ─────────────────────────────────────────────
+
+def get_debt_totals() -> dict:
+    """Jami nasiya summalarini (USD va UZS) va qarzdor mijozlar sonini qaytaradi."""
+    with get_conn() as (conn, cur):
+        cur.execute("""
+            SELECT
+                COUNT(DISTINCT customer_id)::int AS customer_count,
+                COALESCE(SUM(debt_amount) FILTER (
+                    WHERE UPPER(COALESCE(currency,'USD')) = 'USD'
+                ), 0) AS total_usd,
+                COALESCE(SUM(debt_amount) FILTER (
+                    WHERE UPPER(COALESCE(currency,'USD')) = 'UZS'
+                ), 0) AS total_uzs
+            FROM sales
+            WHERE status IN ('pending', 'partial')
+              AND COALESCE(debt_amount, 0) > 0
+        """)
+        row = cur.fetchone()
+        return {
+            "customer_count": int(row["customer_count"] or 0),
+            "total_usd":      float(row["total_usd"] or 0),
+            "total_uzs":      float(row["total_uzs"] or 0),
+        }
+
+
+def get_debt_customers() -> list[dict]:
+    """Nasiyasi bor mijozlar ro'yxatini qaytaradi.
+
+    Har bir satrda: customer_id, customer_name, phone,
+    debt_usd, debt_uzs, sale_count, oldest_sale.
+    """
+    with get_conn() as (conn, cur):
+        cur.execute("""
+            SELECT
+                s.customer_id,
+                s.customer_name,
+                COALESCE(c.phone, '') AS phone,
+                COALESCE(SUM(s.debt_amount) FILTER (
+                    WHERE UPPER(COALESCE(s.currency,'USD')) = 'USD'
+                ), 0) AS debt_usd,
+                COALESCE(SUM(s.debt_amount) FILTER (
+                    WHERE UPPER(COALESCE(s.currency,'USD')) = 'UZS'
+                ), 0) AS debt_uzs,
+                COUNT(*)::int     AS sale_count,
+                MIN(s.created_at) AS oldest_sale
+            FROM sales s
+            LEFT JOIN customers c ON c.id = s.customer_id
+            WHERE s.status IN ('pending', 'partial')
+              AND COALESCE(s.debt_amount, 0) > 0
+            GROUP BY s.customer_id, s.customer_name, c.phone
+            ORDER BY MIN(s.created_at) ASC
+        """)
+        return cur.fetchall()
+
+
+def get_customer_debt_sales(customer_id: int) -> list[dict]:
+    """Bitta mijozning barcha nasiyali savdolarini qaytaradi."""
+    with get_conn() as (conn, cur):
+        cur.execute("""
+            SELECT
+                id,
+                customer_name,
+                total_amount,
+                COALESCE(paid_amount, 0)  AS paid_amount,
+                COALESCE(debt_amount, 0)  AS debt_amount,
+                UPPER(COALESCE(currency, 'USD')) AS currency,
+                status,
+                note,
+                created_at
+            FROM sales
+            WHERE customer_id = %s
+              AND status IN ('pending', 'partial')
+              AND COALESCE(debt_amount, 0) > 0
+            ORDER BY created_at DESC
+        """, (customer_id,))
+        return cur.fetchall()
+
+
+def add_debt_payment(
+    sale_id: int, amount: float, currency: str = "USD", note: str = ""
+) -> dict:
+    """Savdoga to'lov qo'shadi: paid_amount oshadi, debt_amount kamayadi.
+
+    Returns:
+        ok=True  → {ok, paid, new_debt, status}
+        ok=False → {ok, error}
+    """
+    with get_conn() as (conn, cur):
+        cur.execute(
+            "SELECT id, total_amount, paid_amount, debt_amount, status FROM sales WHERE id = %s",
+            (sale_id,),
+        )
+        sale = cur.fetchone()
+        if not sale:
+            return {"ok": False, "error": "Savdo topilmadi"}
+
+        current_debt = float(sale["debt_amount"] or 0)
+        if current_debt <= 0:
+            return {"ok": False, "error": "Bu savdoda nasiya yo'q"}
+        if amount > current_debt + 0.01:
+            return {"ok": False, "error": f"Summa nasiyadan ko'p ({current_debt:,.2f})"}
+
+        new_paid = float(sale["paid_amount"] or 0) + amount
+        new_debt = max(0.0, round(current_debt - amount, 2))
+        new_status = "paid" if new_debt < 0.01 else "partial"
+
+        cur.execute("""
+            UPDATE sales
+               SET paid_amount = %s,
+                   debt_amount = %s,
+                   status      = %s
+             WHERE id = %s
+        """, (new_paid, new_debt, new_status, sale_id))
+
+        # sale_payments jadvaliga yozamiz (agar jadval mavjud bo'lsa)
+        try:
+            cur.execute("""
+                INSERT INTO sale_payments (sale_id, amount, currency, note)
+                VALUES (%s, %s, %s, %s)
+            """, (sale_id, amount, currency, note))
+        except Exception:
+            pass  # jadval hali yaratilmagan bo'lsa (eski muhit), o'tkazib yuboramiz
+
+        return {"ok": True, "paid": amount, "new_debt": new_debt, "status": new_status}
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # OMBOR (INVENTORY) FUNCTIONS
 # ══════════════════════════════════════════════════════════════════════════════

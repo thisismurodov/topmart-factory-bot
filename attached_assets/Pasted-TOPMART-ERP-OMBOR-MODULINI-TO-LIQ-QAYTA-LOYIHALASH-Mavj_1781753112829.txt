@@ -1,0 +1,311 @@
+TOPMART ERP – OMBOR MODULINI TO'LIQ QAYTA LOYIHALASH
+
+Mavjud ombor sahifasini to'liq qayta qurish kerak.
+
+MUAMMO:
+Hozirgi ombor sahifasi oddiy SKU va qoldiq jadvali ko'rinishida ishlayapti. Bu professional Warehouse Management System (WMS) darajasida emas.
+
+TopMart ERP uchun BoxHero, Zoho Inventory va Odoo Inventory uslubidagi zamonaviy ombor logikasi kerak.
+
+---
+
+ASOSIY LOGIKA
+
+Bizda 30 ta konteyner mavjud.
+
+Har bir konteyner alohida ombor sifatida ishlaydi.
+
+Misol:
+
+C-01
+C-02
+C-03
+...
+C-30
+
+Har bir konteynerda:
+
+* Xom ashyo bo'lishi mumkin
+* Tayyor mahsulot bo'lishi mumkin
+* Aralash mahsulot bo'lishi mumkin
+
+ERP konteynerlarni alohida Warehouse Location sifatida boshqarishi kerak.
+
+---
+
+OMBOR DASHBOARD
+
+Yuqori qismda KPI kartalar:
+
+📦 Jami konteynerlar
+30
+
+📦 Band konteynerlar
+28
+
+📦 Bo'sh konteynerlar
+2
+
+💰 Jami aktiv qiymati
+6.2 mlrd so'm
+
+⚠️ Kam qolgan SKU
+5 ta
+
+---
+
+KONTEYNERLAR RO'YXATI
+
+Jadval emas.
+
+Card ko'rinishida.
+
+Misol:
+
+📦 Konteyner C-01
+
+12 SKU
+5,000 kg
+450 mln so'm
+
+Bandlik:
+78%
+
+Status:
+Faol
+
+---
+
+📦 Konteyner C-02
+
+8 SKU
+2,500 kg
+220 mln so'm
+
+Bandlik:
+42%
+
+Status:
+Faol
+
+---
+
+KONTEYNER PROFILI
+
+Konteyner bosilganda alohida sahifa ochiladi.
+
+Misol:
+
+📦 Konteyner C-01
+
+Yuqorida:
+
+Jami SKU
+12
+
+Jami kg
+5,000 kg
+
+Jami qiymat
+450 mln so'm
+
+Bandlik
+78%
+
+Status
+Faol
+
+---
+
+Pastda konteyner ichidagi mahsulotlar:
+
+Nomi
+Miqdor
+Birlik
+Narx
+Qiymati
+
+PP BSF
+5000 kg
+
+PP OQ
+3000 kg
+
+Polyamide
+1200 kg
+
+va hokazo.
+
+---
+
+OMBOR HARAKATLARI
+
+Har bir mahsulot bo'yicha to'liq tarix saqlansin.
+
+Misol:
+
+17.06.2026
+
++5000 kg
+
+PP BSF
+
+Kirim
+
+---
+
+17.06.2026
+
+-368 kg
+
+PP BSF
+
+RI-260617-01 partiyaga sarflandi
+
+---
+
+17.06.2026
+
++400 kg
+
+Arqon 4 kg
+
+Ishlab chiqarishdan keldi
+
+---
+
+17.06.2026
+
+-20 dona
+
+Arqon 4 kg
+
+Savdo qilindi
+
+---
+
+Har bir harakat audit log sifatida saqlansin.
+
+O'chirib bo'lmasin.
+
+---
+
+TRANSFER TIZIMI
+
+Konteynerlar orasida mahsulot ko'chirish.
+
+Misol:
+
+C-01
+↓
+C-15
+
+500 kg
+
+PP BSF
+
+Sabab:
+Ishlab chiqarishga berildi
+
+Tarixda saqlansin.
+
+---
+
+LOKATSIYA
+
+Har bir SKU joylashuvga ega bo'lsin.
+
+Misol:
+
+PP BSF
+
+Joylashuv:
+C-01
+
+Polyamide
+
+Joylashuv:
+C-02
+
+Arqon 5 kg
+
+Joylashuv:
+C-15
+
+---
+
+QIDIRUV
+
+Global search qo'shish.
+
+Qidirganda:
+
+PP BSF
+
+chiqsa:
+
+Qaysi konteynerda borligi
+Qancha borligi
+Qiymati
+
+birdan ko'rinsin.
+
+---
+
+DIZAYN TALABLARI
+
+Muhim:
+
+Jadvalga o'xshamasin.
+
+Dashboard ko'rinishi bo'lsin.
+
+Apple + Linear + Notion + BoxHero uslubida.
+
+Talablar:
+
+* Minimalistik
+* Ko'p oq joy
+* Katta raqamlar
+* Katta kartalar
+* Hover effektlar
+* Soft shadow
+* Rounded corners (16px)
+* Responsive
+* Dark mode tayyor bo'lsin
+* Mobile friendly
+
+TopMart ranglari:
+
+Primary:
+#0B6B3A
+
+Secondary:
+#F4F7F5
+
+Accent:
+#F7C948
+
+Success:
+#16A34A
+
+Danger:
+#DC2626
+
+---
+
+Maqsad:
+
+Oddiy ombor emas.
+
+TopMart ERP uchun professional Warehouse Management System yaratish.
+
+Foydalanuvchi bir qarashda:
+
+* Nima qayerda turganini
+* Nima kirganini
+* Nima chiqqanini
+* Nima ishlab chiqarishga ketganini
+* Nima sotilganini
+
+darhol tushunishi kerak.

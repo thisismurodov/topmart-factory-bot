@@ -1,13 +1,16 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { authFetch } from "@/App";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { formatNumber, formatCurrency } from "@/lib/format";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Package, Search, ArrowLeftRight, Plus, RefreshCw, ArrowLeft,
+  TrendingUp, Boxes, AlertTriangle, Container, LayoutGrid,
+  Clock, ArrowRight, X, ChevronRight,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Package, Boxes, TrendingUp, AlertTriangle, Plus, ArrowDownToLine, ArrowUpFromLine, RefreshCw } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -19,30 +22,38 @@ type Summary = {
   finishedGoodsSkuCount: number;
   lowStockRawCount: number;
   usdRate: number;
+  totalContainers: number;
+  occupiedContainers: number;
+  emptyContainers: number;
 };
 
-type RawMaterial = {
+type ContainerSummary = {
   id: number;
   name: string;
-  unit: string;
-  defaultCost: number;
-  currency: string;
-  uzsCostPerUnit: number;
-  currentStock: number;
-  minimumStock: number;
+  capacityKg: number;
+  active: boolean;
+  skuCount: number;
+  totalQty: number;
   totalValueUzs: number;
-  avgDailyConsumption: number;
-  daysRemaining: number | null;
+  occupancyPct: number;
 };
 
-type FinishedGood = {
+type ContainerItem = {
+  id: number;
   product: string;
-  stockQty: number;
-  unitType: string;
+  quantity: number;
+  productType: "raw" | "finished";
+  unit: string;
   salePrice: number;
   currency: string;
   priceUzs: number;
   totalValueUzs: number;
+  updatedAt: string;
+};
+
+type ContainerDetail = {
+  warehouse: { id: number; name: string; capacityKg: number };
+  items: ContainerItem[];
 };
 
 type Movement = {
@@ -58,6 +69,19 @@ type Movement = {
   createdAt: string;
 };
 
+type SearchResult = {
+  product: string;
+  quantity: number;
+  productType: string;
+  warehouseId: number;
+  warehouseName: string;
+  locationType: string;
+  unit: string;
+};
+
+type Product = { name: string; unit_type?: string };
+type RawMaterial = { id: number; name: string; unit: string };
+
 // ── Hooks ─────────────────────────────────────────────────────────────────────
 
 function useSummary() {
@@ -67,592 +91,1121 @@ function useSummary() {
     refetchInterval: 30_000,
   });
 }
+
+function useContainers() {
+  return useQuery<ContainerSummary[]>({
+    queryKey: ["ombor-containers"],
+    queryFn: () => authFetch("/api/ombor/containers").then((r) => r.json()),
+    refetchInterval: 30_000,
+  });
+}
+
+function useContainerDetail(id: number | null) {
+  return useQuery<ContainerDetail>({
+    queryKey: ["ombor-container-detail", id],
+    queryFn: () => authFetch(`/api/ombor/containers/${id}/items`).then((r) => r.json()),
+    enabled: id !== null,
+  });
+}
+
+function useMovements() {
+  return useQuery<Movement[]>({
+    queryKey: ["ombor-movements"],
+    queryFn: () => authFetch("/api/ombor/movements?limit=60").then((r) => r.json()),
+    refetchInterval: 30_000,
+  });
+}
+
+function useProducts() {
+  return useQuery<Product[]>({
+    queryKey: ["products-list"],
+    queryFn: () => authFetch("/api/products").then((r) => r.json()),
+    staleTime: 60_000,
+  });
+}
+
 function useRawMaterials() {
   return useQuery<RawMaterial[]>({
     queryKey: ["ombor-raw-materials"],
     queryFn: () => authFetch("/api/ombor/raw-materials").then((r) => r.json()),
-    refetchInterval: 60_000,
-  });
-}
-function useFinishedGoods() {
-  return useQuery<FinishedGood[]>({
-    queryKey: ["ombor-finished-goods"],
-    queryFn: () => authFetch("/api/ombor/finished-goods").then((r) => r.json()),
-    refetchInterval: 30_000,
-  });
-}
-function useMovements(type?: "raw" | "finished") {
-  return useQuery<Movement[]>({
-    queryKey: ["ombor-movements", type],
-    queryFn: () => authFetch(`/api/ombor/movements?limit=40${type ? `&type=${type}` : ""}`).then((r) => r.json()),
-    refetchInterval: 30_000,
+    staleTime: 60_000,
   });
 }
 
-// ── Main Page ─────────────────────────────────────────────────────────────────
+function useSearch(q: string) {
+  return useQuery<SearchResult[]>({
+    queryKey: ["ombor-search", q],
+    queryFn: () => authFetch(`/api/ombor/search?q=${encodeURIComponent(q)}`).then((r) => r.json()),
+    enabled: q.trim().length >= 1,
+    staleTime: 10_000,
+  });
+}
 
-export default function Inventory() {
-  const qc = useQueryClient();
-  const [activeTab, setActiveTab] = useState<"raw" | "finished" | "movements">("raw");
-  const [showRawIn, setShowRawIn] = useState(false);
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-  const { data: summary, isLoading: loadSummary } = useSummary();
+function fmt(n: number) { return formatNumber(n); }
+function fmtVal(n: number) {
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)} mlrd`;
+  if (n >= 1_000_000)     return `${(n / 1_000_000).toFixed(0)} mln`;
+  return formatCurrency(n);
+}
 
-  const refreshAll = () => {
-    qc.invalidateQueries({ queryKey: ["ombor-summary"] });
-    qc.invalidateQueries({ queryKey: ["ombor-raw-materials"] });
-    qc.invalidateQueries({ queryKey: ["ombor-finished-goods"] });
-    qc.invalidateQueries({ queryKey: ["ombor-movements"] });
-  };
+function timeAgo(iso: string) {
+  const d = new Date(iso);
+  const diff = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (diff < 60)    return "hozirgina";
+  if (diff < 3600)  return `${Math.floor(diff / 60)} daq oldin`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)} soat oldin`;
+  return d.toLocaleDateString("uz-UZ", { day: "numeric", month: "short" });
+}
+
+function occupancyColor(pct: number) {
+  if (pct === 0)  return "#E5E7EB";
+  if (pct < 30)   return "#16A34A";
+  if (pct < 70)   return "#F7C948";
+  if (pct < 90)   return "#F97316";
+  return "#DC2626";
+}
+
+// ── KPI Card ──────────────────────────────────────────────────────────────────
+
+type KpiProps = {
+  icon: React.ReactNode;
+  label: string;
+  value?: string | number;
+  sub?: string;
+  accent?: boolean;
+  warn?: boolean;
+  loading?: boolean;
+};
+
+function KpiCard({ icon, label, value, sub, accent, warn, loading }: KpiProps) {
+  return (
+    <div
+      style={{
+        background: accent ? "#0B6B3A" : "#fff",
+        borderRadius: 16,
+        padding: "20px 22px",
+        boxShadow: "0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04)",
+        border: warn ? "1.5px solid #FCA5A5" : "1px solid rgba(0,0,0,0.06)",
+        display: "flex",
+        flexDirection: "column" as const,
+        gap: 6,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8, opacity: 0.7 }}>
+        <span style={{ color: accent ? "#A7F3D0" : "#0B6B3A" }}>{icon}</span>
+        <span style={{ fontSize: 12, fontWeight: 500, color: accent ? "#D1FAE5" : "#6B7280", letterSpacing: "0.02em" }}>
+          {label}
+        </span>
+      </div>
+      {loading ? (
+        <Skeleton className="h-7 w-28 mt-1" />
+      ) : (
+        <div style={{ fontSize: 22, fontWeight: 700, color: accent ? "#fff" : "#111827", lineHeight: 1.2 }}>
+          {value ?? "—"}
+        </div>
+      )}
+      {sub && !loading && (
+        <div style={{ fontSize: 12, color: warn ? "#DC2626" : accent ? "#A7F3D0" : "#9CA3AF" }}>
+          {sub}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Container Card ────────────────────────────────────────────────────────────
+
+function ContainerCard({ c, onClick }: { c: ContainerSummary; onClick: () => void }) {
+  const isEmpty = c.skuCount === 0;
+  const color   = occupancyColor(c.occupancyPct);
 
   return (
-    <div className="space-y-6">
-      {/* ── Header ── */}
-      <div className="flex items-center justify-between">
+    <button
+      onClick={onClick}
+      style={{
+        background: "#fff",
+        borderRadius: 16,
+        padding: "18px 20px",
+        boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
+        border: isEmpty ? "1px dashed #E5E7EB" : "1px solid rgba(0,0,0,0.06)",
+        textAlign: "left",
+        cursor: "pointer",
+        transition: "all 0.15s ease",
+        width: "100%",
+        display: "flex",
+        flexDirection: "column" as const,
+        gap: 12,
+      }}
+      onMouseEnter={(e) => {
+        (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 4px 12px rgba(0,0,0,0.12)";
+        (e.currentTarget as HTMLButtonElement).style.transform = "translateY(-2px)";
+      }}
+      onMouseLeave={(e) => {
+        (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 1px 3px rgba(0,0,0,0.06)";
+        (e.currentTarget as HTMLButtonElement).style.transform = "translateY(0)";
+      }}
+    >
+      {/* Name row */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 18 }}>📦</span>
+          <span style={{ fontWeight: 700, fontSize: 15, color: "#111827" }}>{c.name}</span>
+        </div>
+        {!isEmpty && (
+          <ChevronRight style={{ width: 16, height: 16, color: "#9CA3AF" }} />
+        )}
+      </div>
+
+      {/* Stats */}
+      <div style={{ display: "flex", gap: 16 }}>
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Ombor</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Xom ashyo · Tayyor mahsulot · Harakatlar
-          </p>
+          <div style={{ fontSize: 20, fontWeight: 700, color: isEmpty ? "#D1D5DB" : "#0B6B3A", lineHeight: 1 }}>
+            {isEmpty ? "—" : c.skuCount}
+          </div>
+          <div style={{ fontSize: 11, color: "#9CA3AF", marginTop: 2 }}>SKU</div>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={refreshAll}>
-            <RefreshCw className="w-4 h-4 mr-1.5" /> Yangilash
-          </Button>
-          <Button size="sm" onClick={() => setShowRawIn(true)}>
-            <Plus className="w-4 h-4 mr-1.5" /> Xom ashyo kirimi
-          </Button>
+        <div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: isEmpty ? "#D1D5DB" : "#111827", lineHeight: 1 }}>
+            {isEmpty ? "—" : fmt(c.totalQty)}
+          </div>
+          <div style={{ fontSize: 11, color: "#9CA3AF", marginTop: 2 }}>dona/kg</div>
         </div>
+        {!isEmpty && (
+          <div style={{ marginLeft: "auto", textAlign: "right" }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "#374151", lineHeight: 1 }}>
+              {fmtVal(c.totalValueUzs)}
+            </div>
+            <div style={{ fontSize: 11, color: "#9CA3AF", marginTop: 2 }}>so'm</div>
+          </div>
+        )}
       </div>
 
-      {/* ── KPI Row ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <KpiCard
-          icon={<Package className="w-5 h-5" />}
-          label="Xom ashyo qiymati"
-          value={loadSummary ? undefined : formatCurrency(summary?.rawMaterialValueUzs ?? 0)}
-          sub={loadSummary ? undefined : `${summary?.rawMaterialCount ?? 0} ta material`}
-          warn={(summary?.lowStockRawCount ?? 0) > 0}
-          warnText={`${summary?.lowStockRawCount} ta kam qolgan`}
-          loading={loadSummary}
-        />
-        <KpiCard
-          icon={<Boxes className="w-5 h-5" />}
-          label="Tayyor mahsulot qiymati"
-          value={loadSummary ? undefined : formatCurrency(summary?.finishedGoodsValueUzs ?? 0)}
-          sub={loadSummary ? undefined : `${summary?.finishedGoodsSkuCount ?? 0} ta SKU`}
-          loading={loadSummary}
-        />
-        <KpiCard
-          icon={<TrendingUp className="w-5 h-5" />}
-          label="Jami aktiv"
-          value={loadSummary ? undefined : formatCurrency(summary?.totalValueUzs ?? 0)}
-          sub={loadSummary ? undefined : summary?.usdRate ? `1 USD = ${formatNumber(summary.usdRate)} so'm` : undefined}
-          highlight
-          loading={loadSummary}
-        />
+      {/* Occupancy bar */}
+      <div>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+          <span style={{ fontSize: 11, color: "#9CA3AF" }}>Bandlik</span>
+          <span style={{ fontSize: 11, fontWeight: 600, color: isEmpty ? "#D1D5DB" : color }}>
+            {isEmpty ? "Bo'sh" : `${c.occupancyPct}%`}
+          </span>
+        </div>
+        <div style={{ height: 4, background: "#F3F4F6", borderRadius: 4, overflow: "hidden" }}>
+          <div
+            style={{
+              height: "100%",
+              width: `${c.occupancyPct}%`,
+              background: color,
+              borderRadius: 4,
+              transition: "width 0.4s ease",
+            }}
+          />
+        </div>
       </div>
+    </button>
+  );
+}
 
-      {/* ── Raw Material Receipt Modal ── */}
-      {showRawIn && (
-        <RawInForm onClose={() => { setShowRawIn(false); refreshAll(); }} />
-      )}
+// ── Container Grid ────────────────────────────────────────────────────────────
 
-      {/* ── Tabs ── */}
-      <div className="flex gap-1 border-b">
-        {(["raw", "finished", "movements"] as const).map((t) => (
-          <button
-            key={t}
-            onClick={() => setActiveTab(t)}
-            className={`px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px ${
-              activeTab === t
-                ? "border-[#0B5D2A] text-[#0B5D2A]"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            {t === "raw" ? "Xom ashyo" : t === "finished" ? "Tayyor mahsulot" : "Harakatlar"}
-          </button>
+function ContainerGrid({
+  containers,
+  loading,
+  onSelect,
+}: {
+  containers: ContainerSummary[];
+  loading: boolean;
+  onSelect: (c: ContainerSummary) => void;
+}) {
+  if (loading) {
+    return (
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12 }}>
+        {Array.from({ length: 12 }).map((_, i) => (
+          <Skeleton key={i} style={{ height: 150, borderRadius: 16 }} />
         ))}
       </div>
+    );
+  }
 
-      {activeTab === "raw"      && <RawMaterialsTab />}
-      {activeTab === "finished" && <FinishedGoodsTab />}
-      {activeTab === "movements" && <MovementsTab />}
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12 }}>
+      {containers.map((c) => (
+        <ContainerCard key={c.id} c={c} onClick={() => onSelect(c)} />
+      ))}
     </div>
   );
 }
 
-// ── Raw Materials Tab ─────────────────────────────────────────────────────────
+// ── Container Detail ──────────────────────────────────────────────────────────
 
-function RawMaterialsTab() {
-  const { data, isLoading } = useRawMaterials();
-  const [search, setSearch] = useState("");
+function ContainerDetailView({
+  containerId,
+  containerName,
+  onBack,
+  onTransfer,
+  onReceive,
+}: {
+  containerId: number;
+  containerName: string;
+  onBack: () => void;
+  onTransfer: (product: string, qty: number) => void;
+  onReceive: () => void;
+}) {
+  const { data, isLoading } = useContainerDetail(containerId);
 
-  const filtered = (data ?? []).filter((r) =>
-    r.name.toLowerCase().includes(search.toLowerCase()),
-  );
-
-  const lowStock = (data ?? []).filter(
-    (r) => r.minimumStock > 0 && r.currentStock <= r.minimumStock,
-  );
-  const criticalDays = (data ?? []).filter(
-    (r) => r.daysRemaining !== null && r.daysRemaining <= 3,
-  );
-  const warnings = [...new Map([...lowStock, ...criticalDays].map((r) => [r.id, r])).values()];
+  const totalValue = data?.items.reduce((s, i) => s + i.totalValueUzs, 0) ?? 0;
+  const totalQty   = data?.items.reduce((s, i) => s + i.quantity, 0) ?? 0;
 
   return (
-    <div className="space-y-4">
-      {/* ── Low stock alerts ── */}
-      {warnings.length > 0 && (
-        <div className="rounded-xl border border-red-200 bg-red-50 p-4">
-          <div className="flex items-center gap-2 mb-3 text-red-700 font-semibold text-sm">
-            <AlertTriangle className="w-4 h-4" /> Kam qolgan xom ashyolar
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-            {warnings.map((r) => (
-              <div key={r.id} className="flex items-center justify-between bg-white rounded-lg border border-red-100 px-3 py-2">
-                <span className="text-sm font-medium text-red-800 truncate mr-2">{r.name}</span>
-                <div className="flex flex-col items-end shrink-0">
-                  <span className="text-xs font-bold text-red-600">
-                    {formatNumber(r.currentStock)} {r.unit}
-                  </span>
-                  {r.daysRemaining !== null && (
-                    <span className="text-xs text-red-500">{r.daysRemaining} kun</span>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {/* Back + header */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <button
+          onClick={onBack}
+          style={{
+            background: "#F4F7F5", border: "none", borderRadius: 10,
+            padding: "8px 12px", cursor: "pointer", display: "flex",
+            alignItems: "center", gap: 6, color: "#374151", fontSize: 14, fontWeight: 500,
+          }}
+        >
+          <ArrowLeft style={{ width: 16, height: 16 }} /> Orqaga
+        </button>
+        <div>
+          <h2 style={{ fontSize: 20, fontWeight: 700, color: "#111827", margin: 0 }}>
+            📦 {containerName}
+          </h2>
         </div>
-      )}
-
-      {/* ── Search ── */}
-      <div className="relative">
-        <Input
-          placeholder="Xom ashyo qidirish..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="pr-4"
-        />
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          <Button variant="outline" size="sm" onClick={onReceive}>
+            <Plus style={{ width: 14, height: 14, marginRight: 6 }} /> Qabul qilish
+          </Button>
+          <Button size="sm" onClick={() => onTransfer("", 0)}>
+            <ArrowLeftRight style={{ width: 14, height: 14, marginRight: 6 }} /> Transfer
+          </Button>
+        </div>
       </div>
 
-      {/* ── Table ── */}
-      <Card className="border-border">
-        <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b bg-muted/50">
-                  <th className="text-left px-4 py-3 text-xs font-bold uppercase tracking-wider text-muted-foreground">Nomi</th>
-                  <th className="text-right px-4 py-3 text-xs font-bold uppercase tracking-wider text-muted-foreground">Qoldiq</th>
-                  <th className="text-right px-4 py-3 text-xs font-bold uppercase tracking-wider text-muted-foreground">Minimal</th>
-                  <th className="text-right px-4 py-3 text-xs font-bold uppercase tracking-wider text-muted-foreground">Narx/birlik</th>
-                  <th className="text-right px-4 py-3 text-xs font-bold uppercase tracking-wider text-muted-foreground">Jami qiymat</th>
-                  <th className="text-right px-4 py-3 text-xs font-bold uppercase tracking-wider text-muted-foreground">Kunlar</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {isLoading ? (
-                  Array.from({ length: 6 }).map((_, i) => (
-                    <tr key={i}>
-                      {Array.from({ length: 6 }).map((__, j) => (
-                        <td key={j} className="px-4 py-3"><Skeleton className="h-4 w-full" /></td>
-                      ))}
-                    </tr>
-                  ))
-                ) : filtered.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="text-center py-10 text-muted-foreground text-sm">
-                      {search ? "Topilmadi" : "Xom ashyo yo'q"}
-                    </td>
-                  </tr>
-                ) : (
-                  filtered.map((r) => {
-                    const isLow = r.minimumStock > 0 && r.currentStock <= r.minimumStock;
-                    const isCritical = r.daysRemaining !== null && r.daysRemaining <= 3;
-                    const isWarn = r.daysRemaining !== null && r.daysRemaining <= 7 && !isCritical;
-                    return (
-                      <tr key={r.id} className={`hover:bg-muted/30 transition-colors ${isLow || isCritical ? "bg-red-50/50" : ""}`}>
-                        <td className="px-4 py-3 font-medium">{r.name}</td>
-                        <td className="px-4 py-3 text-right font-mono">
-                          <span className={isLow ? "text-red-600 font-bold" : ""}>
-                            {formatNumber(r.currentStock)} {r.unit}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-right font-mono text-muted-foreground text-xs">
-                          {r.minimumStock > 0 ? `${formatNumber(r.minimumStock)} ${r.unit}` : "—"}
-                        </td>
-                        <td className="px-4 py-3 text-right font-mono text-xs">
-                          {r.currency === "USD"
-                            ? `$${r.defaultCost.toFixed(2)} (${formatCurrency(r.uzsCostPerUnit)})`
-                            : formatCurrency(r.uzsCostPerUnit)}
-                        </td>
-                        <td className="px-4 py-3 text-right font-mono font-semibold text-xs">
-                          {formatCurrency(r.totalValueUzs)}
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          {r.daysRemaining === null ? (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          ) : (
-                            <Badge
-                              variant="outline"
-                              className={`text-xs font-bold ${
-                                isCritical
-                                  ? "border-red-300 bg-red-100 text-red-700"
-                                  : isWarn
-                                  ? "border-yellow-300 bg-yellow-100 text-yellow-700"
-                                  : "border-green-300 bg-green-100 text-green-700"
-                              }`}
-                            >
-                              {r.daysRemaining} kun
-                            </Badge>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-              {!isLoading && filtered.length > 0 && (
-                <tfoot>
-                  <tr className="border-t bg-muted/30">
-                    <td className="px-4 py-2.5 text-xs font-bold text-muted-foreground" colSpan={4}>Jami</td>
-                    <td className="px-4 py-2.5 text-right font-mono font-bold text-xs">
-                      {formatCurrency(filtered.reduce((s, r) => s + r.totalValueUzs, 0))}
-                    </td>
-                    <td />
-                  </tr>
-                </tfoot>
-              )}
-            </table>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-// ── Finished Goods Tab ────────────────────────────────────────────────────────
-
-function FinishedGoodsTab() {
-  const { data, isLoading } = useFinishedGoods();
-  const [search, setSearch] = useState("");
-
-  const filtered = (data ?? []).filter((r) =>
-    r.product.toLowerCase().includes(search.toLowerCase()),
-  );
-
-  return (
-    <div className="space-y-4">
-      <div className="relative">
-        <Input
-          placeholder="Mahsulot qidirish..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
+      {/* Container stats */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+        <KpiCard icon={<Boxes style={{ width: 18, height: 18 }} />} label="SKU soni"
+          value={isLoading ? undefined : data?.items.length ?? 0} loading={isLoading} />
+        <KpiCard icon={<Package style={{ width: 18, height: 18 }} />} label="Jami miqdor"
+          value={isLoading ? undefined : fmt(totalQty)} loading={isLoading} />
+        <KpiCard icon={<TrendingUp style={{ width: 18, height: 18 }} />} label="Jami qiymat"
+          value={isLoading ? undefined : fmtVal(totalValue)} accent loading={isLoading} />
       </div>
 
-      <Card className="border-border">
-        <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+      {/* Items table */}
+      <div style={{
+        background: "#fff", borderRadius: 16, overflow: "hidden",
+        boxShadow: "0 1px 3px rgba(0,0,0,0.06)", border: "1px solid rgba(0,0,0,0.06)",
+      }}>
+        <div style={{ padding: "16px 20px", borderBottom: "1px solid #F3F4F6" }}>
+          <span style={{ fontWeight: 600, fontSize: 15, color: "#111827" }}>Konteyner ichidagi mahsulotlar</span>
+        </div>
+        {isLoading ? (
+          <div style={{ padding: 24 }}>
+            {[1, 2, 3].map((i) => <Skeleton key={i} style={{ height: 44, marginBottom: 8, borderRadius: 8 }} />)}
+          </div>
+        ) : !data?.items.length ? (
+          <div style={{ textAlign: "center", padding: "48px 24px", color: "#9CA3AF" }}>
+            <span style={{ fontSize: 40 }}>📭</span>
+            <div style={{ marginTop: 12, fontWeight: 500 }}>Konteyner bo'sh</div>
+            <div style={{ fontSize: 13, marginTop: 4 }}>Mahsulot qabul qilish uchun yuqoridagi tugmani bosing</div>
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
-                <tr className="border-b bg-muted/50">
-                  <th className="text-left px-4 py-3 text-xs font-bold uppercase tracking-wider text-muted-foreground">Mahsulot</th>
-                  <th className="text-right px-4 py-3 text-xs font-bold uppercase tracking-wider text-muted-foreground">Qoldiq</th>
-                  <th className="text-right px-4 py-3 text-xs font-bold uppercase tracking-wider text-muted-foreground">Narx/dona</th>
-                  <th className="text-right px-4 py-3 text-xs font-bold uppercase tracking-wider text-muted-foreground">Jami qiymat</th>
+                <tr style={{ background: "#F9FAFB" }}>
+                  {["Mahsulot", "Miqdor", "Birlik", "Narx (so'm)", "Qiymat", "Tur", ""].map((h) => (
+                    <th key={h} style={{
+                      padding: "10px 16px", textAlign: "left", fontSize: 12,
+                      fontWeight: 600, color: "#6B7280", letterSpacing: "0.04em",
+                    }}>{h}</th>
+                  ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-border">
-                {isLoading ? (
-                  Array.from({ length: 5 }).map((_, i) => (
-                    <tr key={i}>
-                      {Array.from({ length: 4 }).map((__, j) => (
-                        <td key={j} className="px-4 py-3"><Skeleton className="h-4 w-full" /></td>
-                      ))}
-                    </tr>
-                  ))
-                ) : filtered.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} className="text-center py-10 text-muted-foreground text-sm">
-                      {search ? "Topilmadi" : "Tayyor mahsulot ombori bo'sh"}
+              <tbody>
+                {data.items.map((item) => (
+                  <tr key={item.id} style={{ borderTop: "1px solid #F3F4F6" }}
+                    onMouseEnter={(e) => { (e.currentTarget as HTMLTableRowElement).style.background = "#F9FAFB"; }}
+                    onMouseLeave={(e) => { (e.currentTarget as HTMLTableRowElement).style.background = ""; }}>
+                    <td style={{ padding: "12px 16px", fontWeight: 500, color: "#111827", fontSize: 14 }}>
+                      {item.product}
+                    </td>
+                    <td style={{ padding: "12px 16px", color: "#374151", fontWeight: 600 }}>
+                      {fmt(item.quantity)}
+                    </td>
+                    <td style={{ padding: "12px 16px", color: "#6B7280", fontSize: 13 }}>{item.unit}</td>
+                    <td style={{ padding: "12px 16px", color: "#374151" }}>
+                      {formatCurrency(item.priceUzs)}
+                    </td>
+                    <td style={{ padding: "12px 16px", fontWeight: 600, color: "#0B6B3A" }}>
+                      {fmtVal(item.totalValueUzs)}
+                    </td>
+                    <td style={{ padding: "12px 16px" }}>
+                      <span style={{
+                        fontSize: 11, padding: "3px 8px", borderRadius: 6, fontWeight: 500,
+                        background: item.productType === "raw" ? "#FEF3C7" : "#DCFCE7",
+                        color: item.productType === "raw" ? "#92400E" : "#166534",
+                      }}>
+                        {item.productType === "raw" ? "Xom" : "Tayyor"}
+                      </span>
+                    </td>
+                    <td style={{ padding: "12px 16px" }}>
+                      <button
+                        onClick={() => onTransfer(item.product, item.quantity)}
+                        style={{
+                          border: "none", background: "none", cursor: "pointer",
+                          color: "#6B7280", padding: "4px 8px", borderRadius: 6,
+                          fontSize: 12, display: "flex", alignItems: "center", gap: 4,
+                        }}
+                      >
+                        <ArrowLeftRight style={{ width: 12, height: 12 }} /> Transfer
+                      </button>
                     </td>
                   </tr>
-                ) : (
-                  filtered.map((r) => (
-                    <tr key={r.product} className="hover:bg-muted/30 transition-colors">
-                      <td className="px-4 py-3 font-medium">{r.product}</td>
-                      <td className="px-4 py-3 text-right font-mono font-semibold">
-                        {formatNumber(r.stockQty)} {r.unitType}
-                      </td>
-                      <td className="px-4 py-3 text-right font-mono text-xs text-muted-foreground">
-                        {r.currency === "USD"
-                          ? `$${r.salePrice.toFixed(2)}`
-                          : formatCurrency(r.salePrice)}
-                      </td>
-                      <td className="px-4 py-3 text-right font-mono font-semibold text-xs">
-                        {formatCurrency(r.totalValueUzs)}
-                      </td>
-                    </tr>
-                  ))
-                )}
+                ))}
               </tbody>
-              {!isLoading && filtered.length > 0 && (
-                <tfoot>
-                  <tr className="border-t bg-muted/30">
-                    <td className="px-4 py-2.5 text-xs font-bold text-muted-foreground" colSpan={3}>Jami</td>
-                    <td className="px-4 py-2.5 text-right font-mono font-bold text-xs">
-                      {formatCurrency(filtered.reduce((s, r) => s + r.totalValueUzs, 0))}
-                    </td>
-                  </tr>
-                </tfoot>
-              )}
             </table>
           </div>
-        </CardContent>
-      </Card>
+        )}
+      </div>
     </div>
   );
 }
 
-// ── Movements Tab ─────────────────────────────────────────────────────────────
+// ── Transfer Modal ─────────────────────────────────────────────────────────────
 
-function MovementsTab() {
-  const { data, isLoading } = useMovements();
+function TransferModal({
+  fromId,
+  fromName,
+  containers,
+  preProduct,
+  preQty,
+  onClose,
+  onDone,
+}: {
+  fromId: number;
+  fromName: string;
+  containers: ContainerSummary[];
+  preProduct?: string;
+  preQty?: number;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const qc = useQueryClient();
+  const [product, setProduct]   = useState(preProduct ?? "");
+  const [toId, setToId]         = useState<number>(0);
+  const [qty, setQty]           = useState(preQty ? String(preQty) : "");
+  const [note, setNote]         = useState("");
+  const [err, setErr]           = useState("");
+
+  const { data: detailData } = useContainerDetail(fromId);
+  const products = detailData?.items.map((i) => i.product) ?? [];
+
+  const mut = useMutation({
+    mutationFn: () =>
+      authFetch("/api/ombor/transfer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fromId, toId, product, qty: Number(qty), note }),
+      }).then((r) => r.json()),
+    onSuccess: (d) => {
+      if (d.error) { setErr(d.error); return; }
+      qc.invalidateQueries({ queryKey: ["ombor-containers"] });
+      qc.invalidateQueries({ queryKey: ["ombor-container-detail"] });
+      qc.invalidateQueries({ queryKey: ["ombor-movements"] });
+      qc.invalidateQueries({ queryKey: ["ombor-summary"] });
+      onDone();
+    },
+    onError: () => setErr("Xatolik yuz berdi"),
+  });
+
+  const others = containers.filter((c) => c.id !== fromId);
 
   return (
-    <Card className="border-border">
-      <CardContent className="p-0">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b bg-muted/50">
-                <th className="text-left px-4 py-3 text-xs font-bold uppercase tracking-wider text-muted-foreground">Tur</th>
-                <th className="text-left px-4 py-3 text-xs font-bold uppercase tracking-wider text-muted-foreground">Tovar</th>
-                <th className="text-right px-4 py-3 text-xs font-bold uppercase tracking-wider text-muted-foreground">Miqdor</th>
-                <th className="text-left px-4 py-3 text-xs font-bold uppercase tracking-wider text-muted-foreground">Yo'nalish</th>
-                <th className="text-left px-4 py-3 text-xs font-bold uppercase tracking-wider text-muted-foreground">Izoh</th>
-                <th className="text-left px-4 py-3 text-xs font-bold uppercase tracking-wider text-muted-foreground">Vaqt</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {isLoading ? (
-                Array.from({ length: 8 }).map((_, i) => (
-                  <tr key={i}>
-                    {Array.from({ length: 6 }).map((__, j) => (
-                      <td key={j} className="px-4 py-3"><Skeleton className="h-4 w-full" /></td>
-                    ))}
-                  </tr>
-                ))
-              ) : !data?.length ? (
-                <tr>
-                  <td colSpan={6} className="text-center py-10 text-muted-foreground text-sm">
-                    Hali harakat yo'q
-                  </td>
-                </tr>
-              ) : (
-                data.map((m) => <MovementRow key={m.id} m={m} />)
-              )}
-            </tbody>
-          </table>
+    <ModalOverlay onClose={onClose}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "#111827" }}>
+          Transfer: {fromName}
+        </h3>
+        <p style={{ margin: 0, fontSize: 13, color: "#6B7280" }}>
+          <ArrowLeftRight style={{ width: 12, height: 12, display: "inline", marginRight: 4 }} />
+          Mahsulotni boshqa konteynerga ko'chirish
+        </p>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <label style={labelStyle}>
+            Mahsulot
+            <select style={selectStyle} value={product} onChange={(e) => setProduct(e.target.value)}>
+              <option value="">Tanlang…</option>
+              {products.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </label>
+
+          <label style={labelStyle}>
+            Qayerga (konteyner)
+            <select style={selectStyle} value={toId} onChange={(e) => setToId(Number(e.target.value))}>
+              <option value={0}>Tanlang…</option>
+              {others.map((c) => (
+                <option key={c.id} value={c.id}>{c.name} ({c.skuCount} SKU)</option>
+              ))}
+            </select>
+          </label>
+
+          <label style={labelStyle}>
+            Miqdor
+            <Input
+              type="number" min="0.001" step="0.001" placeholder="0"
+              value={qty} onChange={(e) => setQty(e.target.value)}
+              style={{ borderRadius: 10 }}
+            />
+          </label>
+
+          <label style={labelStyle}>
+            Izoh (ixtiyoriy)
+            <Input
+              placeholder="Sabab…"
+              value={note} onChange={(e) => setNote(e.target.value)}
+              style={{ borderRadius: 10 }}
+            />
+          </label>
         </div>
-      </CardContent>
-    </Card>
+
+        {err && <div style={{ color: "#DC2626", fontSize: 13 }}>{err}</div>}
+
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <Button variant="outline" onClick={onClose}>Bekor</Button>
+          <Button
+            onClick={() => { setErr(""); mut.mutate(); }}
+            disabled={!product || !toId || !qty || mut.isPending}
+            style={{ background: "#0B6B3A", color: "#fff" }}
+          >
+            {mut.isPending ? "Ko'chirilmoqda…" : "Transfer qilish"}
+          </Button>
+        </div>
+      </div>
+    </ModalOverlay>
   );
 }
 
-// ── Raw In Form ───────────────────────────────────────────────────────────────
+// ── Receive (Finished-In) Modal ───────────────────────────────────────────────
 
-function RawInForm({ onClose }: { onClose: () => void }) {
-  const { data: materials } = useRawMaterials();
-  const [materialId, setMaterialId] = useState<number | "">("");
-  const [qty, setQty] = useState("");
-  const [note, setNote] = useState("");
-  const [error, setError] = useState("");
+function ReceiveModal({
+  warehouseId,
+  warehouseName,
+  containers,
+  onClose,
+  onDone,
+}: {
+  warehouseId: number;
+  warehouseName: string;
+  containers: ContainerSummary[];
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const qc = useQueryClient();
+  const [product, setProduct]   = useState("");
+  const [wId, setWId]           = useState(warehouseId);
+  const [qty, setQty]           = useState("");
+  const [note, setNote]         = useState("");
+  const [err, setErr]           = useState("");
 
-  const sel = materials?.find((m) => m.id === materialId);
+  const { data: products = [] } = useProducts();
 
-  const mutation = useMutation({
+  const mut = useMutation({
+    mutationFn: () =>
+      authFetch("/api/ombor/finished-in", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ warehouseId: wId, product, qty: Number(qty), note }),
+      }).then((r) => r.json()),
+    onSuccess: (d) => {
+      if (d.error) { setErr(d.error); return; }
+      qc.invalidateQueries({ queryKey: ["ombor-containers"] });
+      qc.invalidateQueries({ queryKey: ["ombor-container-detail"] });
+      qc.invalidateQueries({ queryKey: ["ombor-summary"] });
+      qc.invalidateQueries({ queryKey: ["ombor-movements"] });
+      onDone();
+    },
+    onError: () => setErr("Xatolik yuz berdi"),
+  });
+
+  return (
+    <ModalOverlay onClose={onClose}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "#111827" }}>
+          Tayyor mahsulot qabul
+        </h3>
+        <p style={{ margin: 0, fontSize: 13, color: "#6B7280" }}>
+          Ishlab chiqarishdan konteynerga mahsulot kiriting
+        </p>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <label style={labelStyle}>
+            Mahsulot
+            <select style={selectStyle} value={product} onChange={(e) => setProduct(e.target.value)}>
+              <option value="">Tanlang…</option>
+              {Array.isArray(products) && products.map((p: any) => (
+                <option key={p.name} value={p.name}>{p.name}</option>
+              ))}
+            </select>
+          </label>
+
+          <label style={labelStyle}>
+            Konteyner
+            <select style={selectStyle} value={wId} onChange={(e) => setWId(Number(e.target.value))}>
+              {containers.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </label>
+
+          <label style={labelStyle}>
+            Miqdor (dona)
+            <Input
+              type="number" min="1" step="1" placeholder="0"
+              value={qty} onChange={(e) => setQty(e.target.value)}
+              style={{ borderRadius: 10 }}
+            />
+          </label>
+
+          <label style={labelStyle}>
+            Izoh (ixtiyoriy)
+            <Input
+              placeholder="Masalan: Partiya № dan keldi"
+              value={note} onChange={(e) => setNote(e.target.value)}
+              style={{ borderRadius: 10 }}
+            />
+          </label>
+        </div>
+
+        {err && <div style={{ color: "#DC2626", fontSize: 13 }}>{err}</div>}
+
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <Button variant="outline" onClick={onClose}>Bekor</Button>
+          <Button
+            onClick={() => { setErr(""); mut.mutate(); }}
+            disabled={!product || !qty || mut.isPending}
+            style={{ background: "#0B6B3A", color: "#fff" }}
+          >
+            {mut.isPending ? "Saqlanmoqda…" : "Qabul qilish"}
+          </Button>
+        </div>
+      </div>
+    </ModalOverlay>
+  );
+}
+
+// ── Raw In Modal ───────────────────────────────────────────────────────────────
+
+function RawInModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+  const qc = useQueryClient();
+  const [matId, setMatId]   = useState<number>(0);
+  const [qty, setQty]       = useState("");
+  const [note, setNote]     = useState("");
+  const [err, setErr]       = useState("");
+
+  const { data: raws = [] } = useRawMaterials();
+
+  const mut = useMutation({
     mutationFn: () =>
       authFetch("/api/ombor/raw-in", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          materialId: Number(materialId),
-          qty: Number(qty),
-          note,
-        }),
-      }).then(async (r) => {
-        if (!r.ok) throw new Error((await r.json()).error);
-        return r.json();
-      }),
-    onSuccess: () => onClose(),
-    onError: (e: any) => setError(e.message),
+        body: JSON.stringify({ materialId: matId, qty: Number(qty), note }),
+      }).then((r) => r.json()),
+    onSuccess: (d) => {
+      if (d.error) { setErr(d.error); return; }
+      qc.invalidateQueries({ queryKey: ["ombor-raw-materials"] });
+      qc.invalidateQueries({ queryKey: ["ombor-summary"] });
+      qc.invalidateQueries({ queryKey: ["ombor-movements"] });
+      onDone();
+    },
+    onError: () => setErr("Xatolik"),
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle className="text-base font-semibold flex items-center gap-2">
-            <ArrowDownToLine className="w-4 h-4 text-[#0B5D2A]" /> Xom ashyo kirimi
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {error && (
-            <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-              {error}
-            </div>
-          )}
+    <ModalOverlay onClose={onClose}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "#111827" }}>
+          Xom ashyo kirimi
+        </h3>
 
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              Xom ashyo
-            </label>
-            <select
-              className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background"
-              value={materialId}
-              onChange={(e) => setMaterialId(e.target.value ? Number(e.target.value) : "")}
-            >
-              <option value="">Tanlang...</option>
-              {(materials ?? []).map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name} ({formatNumber(m.currentStock)} {m.unit} bor)
-                </option>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <label style={labelStyle}>
+            Material
+            <select style={selectStyle} value={matId} onChange={(e) => setMatId(Number(e.target.value))}>
+              <option value={0}>Tanlang…</option>
+              {Array.isArray(raws) && raws.map((r: any) => (
+                <option key={r.id} value={r.id}>{r.name} ({r.unit})</option>
               ))}
             </select>
-          </div>
-
-          {sel && (
-            <div className="text-xs text-muted-foreground bg-muted/40 rounded-lg px-3 py-2">
-              Hozirgi zahira: <span className="font-semibold">{formatNumber(sel.currentStock)} {sel.unit}</span>
-              {" · "}Narx: <span className="font-semibold">
-                {sel.currency === "USD" ? `$${sel.defaultCost.toFixed(2)}` : formatCurrency(sel.uzsCostPerUnit)}/{sel.unit}
-              </span>
-            </div>
-          )}
-
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              Miqdor ({sel?.unit ?? "birlik"})
-            </label>
+          </label>
+          <label style={labelStyle}>
+            Miqdor
             <Input
-              type="number"
-              min={0.001}
-              step="any"
-              placeholder="masalan: 5000"
-              value={qty}
-              onChange={(e) => setQty(e.target.value)}
+              type="number" min="0.001" step="0.001" placeholder="0"
+              value={qty} onChange={(e) => setQty(e.target.value)}
+              style={{ borderRadius: 10 }}
             />
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              Izoh (ixtiyoriy)
-            </label>
-            <Input
-              placeholder="masalan: Konteyner №3"
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
+          </label>
+          <label style={labelStyle}>
+            Izoh (ixtiyoriy)
+            <Input placeholder="Yetkazib beruvchi, hujjat №…"
+              value={note} onChange={(e) => setNote(e.target.value)}
+              style={{ borderRadius: 10 }}
             />
-          </div>
+          </label>
+        </div>
 
-          <div className="flex gap-2 pt-2">
-            <Button
-              className="flex-1"
-              disabled={!materialId || !qty || Number(qty) <= 0 || mutation.isPending}
-              onClick={() => mutation.mutate()}
-            >
-              {mutation.isPending ? "Saqlanmoqda..." : "Qabul qilish"}
-            </Button>
-            <Button variant="outline" onClick={onClose} disabled={mutation.isPending}>
-              Bekor
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+        {err && <div style={{ color: "#DC2626", fontSize: 13 }}>{err}</div>}
+
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <Button variant="outline" onClick={onClose}>Bekor</Button>
+          <Button
+            onClick={() => { setErr(""); mut.mutate(); }}
+            disabled={!matId || !qty || mut.isPending}
+            style={{ background: "#0B6B3A", color: "#fff" }}
+          >
+            {mut.isPending ? "Saqlanmoqda…" : "Kirish"}
+          </Button>
+        </div>
+      </div>
+    </ModalOverlay>
+  );
+}
+
+// ── Movements Panel ───────────────────────────────────────────────────────────
+
+function MovementsPanel() {
+  const { data: movements = [], isLoading } = useMovements();
+
+  const icon = (type: string) => {
+    if (type === "IN")       return { emoji: "⬇️", color: "#16A34A", label: "Kirim" };
+    if (type === "OUT")      return { emoji: "⬆️", color: "#DC2626", label: "Chiqim" };
+    return                          { emoji: "↔️", color: "#2563EB", label: "Transfer" };
+  };
+
+  return (
+    <div style={{
+      background: "#fff", borderRadius: 16, overflow: "hidden",
+      boxShadow: "0 1px 3px rgba(0,0,0,0.06)", border: "1px solid rgba(0,0,0,0.06)",
+    }}>
+      <div style={{ padding: "16px 20px", borderBottom: "1px solid #F3F4F6", display: "flex", alignItems: "center", gap: 8 }}>
+        <Clock style={{ width: 16, height: 16, color: "#0B6B3A" }} />
+        <span style={{ fontWeight: 600, fontSize: 15, color: "#111827" }}>Harakatlar tarixi</span>
+        <span style={{ marginLeft: "auto", fontSize: 12, color: "#9CA3AF" }}>{movements.length} ta yozuv</span>
+      </div>
+
+      {isLoading ? (
+        <div style={{ padding: 20 }}>
+          {[1, 2, 3, 4].map((i) => <Skeleton key={i} style={{ height: 56, marginBottom: 8, borderRadius: 10 }} />)}
+        </div>
+      ) : !movements.length ? (
+        <div style={{ textAlign: "center", padding: "40px 24px", color: "#9CA3AF" }}>
+          Hozircha harakatlar yo'q
+        </div>
+      ) : (
+        <div style={{ maxHeight: 400, overflowY: "auto" }}>
+          {movements.map((m) => {
+            const { emoji, color, label } = icon(m.movementType);
+            return (
+              <div
+                key={m.id}
+                style={{
+                  padding: "12px 20px",
+                  borderBottom: "1px solid #F9FAFB",
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: 12,
+                }}
+              >
+                <div style={{
+                  width: 36, height: 36, borderRadius: 10, flexShrink: 0,
+                  background: `${color}15`,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: 16,
+                }}>
+                  {emoji}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                    <span style={{ fontWeight: 600, fontSize: 14, color: "#111827" }}>
+                      {m.product}
+                    </span>
+                    <span style={{ fontSize: 12, color, fontWeight: 600 }}>
+                      {m.movementType === "IN" ? "+" : m.movementType === "OUT" ? "-" : "↔"}{fmt(m.quantity)}
+                    </span>
+                    <span style={{
+                      fontSize: 11, padding: "2px 7px", borderRadius: 5, fontWeight: 500,
+                      background: m.productType === "raw" ? "#FEF3C7" : "#DCFCE7",
+                      color: m.productType === "raw" ? "#92400E" : "#166534",
+                    }}>
+                      {m.productType === "raw" ? "Xom" : "Tayyor"}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 12, color: "#6B7280", marginTop: 2 }}>
+                    {m.fromWarehouse && <span>{m.fromWarehouse} <ArrowRight style={{ width: 10, height: 10, display: "inline" }} /> </span>}
+                    {m.toWarehouse && <span>{m.toWarehouse}</span>}
+                    {m.note && <span> · {m.note}</span>}
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, color: "#9CA3AF", whiteSpace: "nowrap", flexShrink: 0 }}>
+                  {timeAgo(m.createdAt)}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
 
-// ── Sub-components ─────────────────────────────────────────────────────────────
+// ── Search Results ─────────────────────────────────────────────────────────────
 
-function KpiCard({
-  icon, label, value, sub, warn, warnText, highlight, loading,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value?: string;
-  sub?: string;
-  warn?: boolean;
-  warnText?: string;
-  highlight?: boolean;
-  loading?: boolean;
-}) {
-  return (
-    <Card className={`border-border ${highlight ? "bg-[#0B5D2A]/5 border-[#0B5D2A]/20" : warn ? "bg-red-50 border-red-200" : ""}`}>
-      <CardContent className="p-5">
-        <div className={`flex items-center gap-2 text-xs font-bold uppercase tracking-wider mb-2 ${highlight ? "text-[#0B5D2A]" : warn ? "text-red-600" : "text-muted-foreground"}`}>
-          {icon} {label}
+function SearchResults({ q, onContainerClick }: { q: string; onContainerClick: (id: number, name: string) => void }) {
+  const { data: results = [], isLoading } = useSearch(q);
+
+  if (isLoading) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {[1, 2, 3].map((i) => <Skeleton key={i} style={{ height: 60, borderRadius: 12 }} />)}
+      </div>
+    );
+  }
+
+  if (!results.length) {
+    return (
+      <div style={{
+        background: "#fff", borderRadius: 16, padding: "40px 24px",
+        textAlign: "center", color: "#9CA3AF",
+        boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
+      }}>
+        <div style={{ fontSize: 32 }}>🔍</div>
+        <div style={{ marginTop: 12, fontWeight: 500 }}>
+          "{q}" bo'yicha hech narsa topilmadi
         </div>
-        {loading ? (
-          <Skeleton className="h-7 w-32 mb-1" />
-        ) : (
-          <div className={`text-2xl font-bold ${highlight ? "text-[#0B5D2A]" : warn ? "text-red-600" : ""}`}>
-            {value ?? "—"}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ fontSize: 13, color: "#6B7280", marginBottom: 4 }}>
+        {results.length} ta natija topildi
+      </div>
+      {results.map((r, i) => (
+        <button
+          key={i}
+          onClick={() => onContainerClick(r.warehouseId, r.warehouseName)}
+          style={{
+            background: "#fff", borderRadius: 12, padding: "14px 18px",
+            border: "1px solid rgba(0,0,0,0.06)",
+            boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
+            textAlign: "left", cursor: "pointer", width: "100%",
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            transition: "all 0.15s",
+          }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 4px 12px rgba(0,0,0,0.1)"; }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 1px 3px rgba(0,0,0,0.06)"; }}
+        >
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 15, color: "#111827" }}>{r.product}</div>
+            <div style={{ fontSize: 12, color: "#6B7280", marginTop: 2 }}>
+              📦 {r.warehouseName} ·{" "}
+              <span style={{ fontWeight: 600, color: "#0B6B3A" }}>{fmt(r.quantity)} {r.unit}</span>
+            </div>
           </div>
-        )}
-        {!loading && (sub || warnText) && (
-          <div className="text-xs text-muted-foreground mt-1 flex items-center gap-1.5">
-            {warnText && <span className="text-red-500 font-semibold">⚠ {warnText}</span>}
-            {sub && <span>{sub}</span>}
-          </div>
-        )}
-      </CardContent>
-    </Card>
+          <ChevronRight style={{ width: 16, height: 16, color: "#9CA3AF" }} />
+        </button>
+      ))}
+    </div>
   );
 }
 
-function MovementRow({ m }: { m: Movement }) {
-  const typeConfig = {
-    IN: { label: "Kirim", bg: "bg-green-100 text-green-700", icon: <ArrowDownToLine className="w-3 h-3" /> },
-    OUT: { label: "Chiqim", bg: "bg-red-100 text-red-700", icon: <ArrowUpFromLine className="w-3 h-3" /> },
-    TRANSFER: { label: "O'tkazma", bg: "bg-blue-100 text-blue-700", icon: <RefreshCw className="w-3 h-3" /> },
-  }[m.movementType] ?? { label: m.movementType, bg: "bg-muted text-muted-foreground", icon: null };
+// ── Modal Overlay ─────────────────────────────────────────────────────────────
 
-  const direction =
-    m.movementType === "IN"
-      ? `→ ${m.toWarehouse ?? "Ombor"}`
-      : m.movementType === "OUT"
-      ? `← ${m.fromWarehouse ?? "Ombor"}`
-      : `${m.fromWarehouse ?? "?"} → ${m.toWarehouse ?? "?"}`;
+function ModalOverlay({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+  return (
+    <div
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        zIndex: 100, padding: 16,
+      }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div style={{
+        background: "#fff", borderRadius: 20, padding: 28,
+        width: "100%", maxWidth: 480,
+        boxShadow: "0 20px 60px rgba(0,0,0,0.2)",
+        maxHeight: "90vh", overflowY: "auto",
+      }}>
+        {children}
+      </div>
+    </div>
+  );
+}
 
-  const date = new Date(m.createdAt);
-  const timeStr =
-    date.toLocaleDateString("uz-UZ", { day: "2-digit", month: "2-digit" }) +
-    " " +
-    date.toLocaleTimeString("uz-UZ", { hour: "2-digit", minute: "2-digit" });
+// ── Style constants ────────────────────────────────────────────────────────────
 
-  const isRaw = m.productType === "raw";
+const labelStyle: React.CSSProperties = {
+  display: "flex", flexDirection: "column", gap: 6,
+  fontSize: 13, fontWeight: 500, color: "#374151",
+};
+
+const selectStyle: React.CSSProperties = {
+  border: "1px solid #E5E7EB", borderRadius: 10, padding: "8px 12px",
+  fontSize: 14, color: "#111827", background: "#fff",
+  outline: "none", cursor: "pointer", width: "100%",
+};
+
+// ── Main Page ─────────────────────────────────────────────────────────────────
+
+type Modal =
+  | { kind: "transfer"; fromId: number; fromName: string; product?: string; qty?: number }
+  | { kind: "receive"; warehouseId: number; warehouseName: string }
+  | { kind: "rawin" };
+
+export default function Inventory() {
+  const qc = useQueryClient();
+  const [selectedContainer, setSelectedContainer] = useState<ContainerSummary | null>(null);
+  const [modal, setModal]       = useState<Modal | null>(null);
+  const [searchQ, setSearchQ]   = useState("");
+  const [activeTab, setActiveTab] = useState<"containers" | "movements">("containers");
+
+  const { data: summary, isLoading: loadSummary } = useSummary();
+  const { data: containers = [], isLoading: loadContainers } = useContainers();
+
+  const refreshAll = useCallback(() => {
+    qc.invalidateQueries({ queryKey: ["ombor-summary"] });
+    qc.invalidateQueries({ queryKey: ["ombor-containers"] });
+    qc.invalidateQueries({ queryKey: ["ombor-movements"] });
+    if (selectedContainer) {
+      qc.invalidateQueries({ queryKey: ["ombor-container-detail", selectedContainer.id] });
+    }
+  }, [qc, selectedContainer]);
+
+  const isSearching = searchQ.trim().length >= 1;
 
   return (
-    <tr className="hover:bg-muted/30 transition-colors">
-      <td className="px-4 py-2.5">
-        <div className="flex items-center gap-1.5">
-          <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${typeConfig.bg}`}>
-            {typeConfig.icon} {typeConfig.label}
-          </span>
-          <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${isRaw ? "bg-orange-100 text-orange-700" : "bg-blue-100 text-blue-700"}`}>
-            {isRaw ? "Xom" : "Tayyor"}
-          </span>
+    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+      {/* ── Header ── */}
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          {selectedContainer ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <button
+                onClick={() => setSelectedContainer(null)}
+                style={{ border: "none", background: "none", cursor: "pointer", color: "#6B7280", padding: 0 }}
+              >
+                <ArrowLeft style={{ width: 18, height: 18 }} />
+              </button>
+              <div>
+                <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: "#111827" }}>
+                  📦 {selectedContainer.name}
+                </h1>
+                <p style={{ margin: "2px 0 0", fontSize: 13, color: "#6B7280" }}>Konteyner profili</p>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: "#111827" }}>
+                🏭 Ombor
+              </h1>
+              <p style={{ margin: "2px 0 0", fontSize: 13, color: "#6B7280" }}>
+                Warehouse Management System
+              </p>
+            </div>
+          )}
         </div>
-      </td>
-      <td className="px-4 py-2.5 font-medium text-sm max-w-[180px] truncate">{m.product}</td>
-      <td className="px-4 py-2.5 text-right font-mono font-semibold">{formatNumber(m.quantity)}</td>
-      <td className="px-4 py-2.5 text-muted-foreground text-xs">{direction}</td>
-      <td className="px-4 py-2.5 text-muted-foreground text-xs max-w-[160px] truncate">{m.note || "—"}</td>
-      <td className="px-4 py-2.5 text-muted-foreground text-xs font-mono">{timeStr}</td>
-    </tr>
+
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          {!selectedContainer && (
+            <>
+              {/* Search */}
+              <div style={{ position: "relative" }}>
+                <Search style={{
+                  position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)",
+                  width: 15, height: 15, color: "#9CA3AF", pointerEvents: "none",
+                }} />
+                <Input
+                  placeholder="SKU qidirish…"
+                  value={searchQ}
+                  onChange={(e) => setSearchQ(e.target.value)}
+                  style={{ paddingLeft: 32, width: 200, borderRadius: 10, height: 36 }}
+                />
+                {searchQ && (
+                  <button
+                    onClick={() => setSearchQ("")}
+                    style={{
+                      position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
+                      border: "none", background: "none", cursor: "pointer", color: "#9CA3AF", padding: 0,
+                    }}
+                  >
+                    <X style={{ width: 14, height: 14 }} />
+                  </button>
+                )}
+              </div>
+              <Button variant="outline" size="sm" onClick={refreshAll}>
+                <RefreshCw style={{ width: 14, height: 14, marginRight: 6 }} /> Yangilash
+              </Button>
+              <Button size="sm" onClick={() => setModal({ kind: "rawin" })}
+                style={{ background: "#0B6B3A", color: "#fff" }}>
+                <Plus style={{ width: 14, height: 14, marginRight: 6 }} /> Xom ashyo
+              </Button>
+            </>
+          )}
+          {selectedContainer && (
+            <>
+              <Button variant="outline" size="sm" onClick={() => setModal({
+                kind: "receive", warehouseId: selectedContainer.id, warehouseName: selectedContainer.name,
+              })}>
+                <Plus style={{ width: 14, height: 14, marginRight: 6 }} /> Qabul
+              </Button>
+              <Button size="sm" onClick={() => setModal({
+                kind: "transfer", fromId: selectedContainer.id, fromName: selectedContainer.name,
+              })} style={{ background: "#0B6B3A", color: "#fff" }}>
+                <ArrowLeftRight style={{ width: 14, height: 14, marginRight: 6 }} /> Transfer
+              </Button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* ── KPI Row ── */}
+      {!selectedContainer && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 12 }}>
+          <KpiCard
+            icon={<Container style={{ width: 18, height: 18 }} />}
+            label="Jami konteynerlar"
+            value={loadSummary ? undefined : summary?.totalContainers ?? 0}
+            loading={loadSummary}
+          />
+          <KpiCard
+            icon={<Boxes style={{ width: 18, height: 18 }} />}
+            label="Band"
+            value={loadSummary ? undefined : summary?.occupiedContainers ?? 0}
+            sub={loadSummary ? undefined : `${summary?.emptyContainers ?? 0} ta bo'sh`}
+            loading={loadSummary}
+          />
+          <KpiCard
+            icon={<TrendingUp style={{ width: 18, height: 18 }} />}
+            label="Jami aktiv"
+            value={loadSummary ? undefined : fmtVal(summary?.totalValueUzs ?? 0)}
+            accent
+            loading={loadSummary}
+          />
+          <KpiCard
+            icon={<Package style={{ width: 18, height: 18 }} />}
+            label="Tayyor mahsulot"
+            value={loadSummary ? undefined : fmtVal(summary?.finishedGoodsValueUzs ?? 0)}
+            sub={loadSummary ? undefined : `${summary?.finishedGoodsSkuCount ?? 0} ta SKU`}
+            loading={loadSummary}
+          />
+          <KpiCard
+            icon={<AlertTriangle style={{ width: 18, height: 18 }} />}
+            label="Kam qolgan"
+            value={loadSummary ? undefined : summary?.lowStockRawCount ?? 0}
+            sub={loadSummary ? undefined : "xom ashyo turi"}
+            warn={(summary?.lowStockRawCount ?? 0) > 0}
+            loading={loadSummary}
+          />
+        </div>
+      )}
+
+      {/* ── Search results ── */}
+      {isSearching && !selectedContainer && (
+        <SearchResults
+          q={searchQ}
+          onContainerClick={(id, name) => {
+            const c = containers.find((x) => x.id === id);
+            if (c) { setSelectedContainer(c); setSearchQ(""); }
+          }}
+        />
+      )}
+
+      {/* ── Container Detail ── */}
+      {selectedContainer && !isSearching && (
+        <ContainerDetailView
+          containerId={selectedContainer.id}
+          containerName={selectedContainer.name}
+          onBack={() => setSelectedContainer(null)}
+          onTransfer={(product, qty) =>
+            setModal({ kind: "transfer", fromId: selectedContainer.id, fromName: selectedContainer.name, product, qty })
+          }
+          onReceive={() =>
+            setModal({ kind: "receive", warehouseId: selectedContainer.id, warehouseName: selectedContainer.name })
+          }
+        />
+      )}
+
+      {/* ── Main tabs (Containers / Movements) ── */}
+      {!selectedContainer && !isSearching && (
+        <>
+          {/* Tab bar */}
+          <div style={{ display: "flex", gap: 4, background: "#F4F7F5", padding: 4, borderRadius: 12, width: "fit-content" }}>
+            {(["containers", "movements"] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                style={{
+                  padding: "7px 18px", borderRadius: 9, border: "none", cursor: "pointer",
+                  fontSize: 13, fontWeight: 600, transition: "all 0.15s",
+                  background: activeTab === tab ? "#fff" : "transparent",
+                  color: activeTab === tab ? "#0B6B3A" : "#6B7280",
+                  boxShadow: activeTab === tab ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
+                }}
+              >
+                {tab === "containers" ? (
+                  <span><LayoutGrid style={{ width: 13, height: 13, display: "inline", marginRight: 6 }} />Konteynerlar</span>
+                ) : (
+                  <span><Clock style={{ width: 13, height: 13, display: "inline", marginRight: 6 }} />Harakatlar</span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {activeTab === "containers" ? (
+            <ContainerGrid
+              containers={containers}
+              loading={loadContainers}
+              onSelect={(c) => setSelectedContainer(c)}
+            />
+          ) : (
+            <MovementsPanel />
+          )}
+        </>
+      )}
+
+      {/* ── Modals ── */}
+      {modal?.kind === "transfer" && (
+        <TransferModal
+          fromId={modal.fromId}
+          fromName={modal.fromName}
+          containers={containers}
+          preProduct={modal.product}
+          preQty={modal.qty}
+          onClose={() => setModal(null)}
+          onDone={() => setModal(null)}
+        />
+      )}
+      {modal?.kind === "receive" && (
+        <ReceiveModal
+          warehouseId={modal.warehouseId}
+          warehouseName={modal.warehouseName}
+          containers={containers}
+          onClose={() => setModal(null)}
+          onDone={() => setModal(null)}
+        />
+      )}
+      {modal?.kind === "rawin" && (
+        <RawInModal onClose={() => setModal(null)} onDone={() => setModal(null)} />
+      )}
+    </div>
   );
 }

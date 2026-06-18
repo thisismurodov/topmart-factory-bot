@@ -242,6 +242,15 @@ def init_db() -> None:
             ALTER TABLE stock_movements
             ADD COLUMN IF NOT EXISTS product_type TEXT NOT NULL DEFAULT 'finished'
         """)
+        # WMS: warehouses jadvaliga location_type va capacity_kg qo'shamiz
+        cur.execute("""
+            ALTER TABLE warehouses
+            ADD COLUMN IF NOT EXISTS location_type TEXT NOT NULL DEFAULT 'general'
+        """)
+        cur.execute("""
+            ALTER TABLE warehouses
+            ADD COLUMN IF NOT EXISTS capacity_kg NUMERIC DEFAULT 20000
+        """)
         cur.execute("""
             ALTER TABLE inventory
             ADD COLUMN IF NOT EXISTS product_type TEXT NOT NULL DEFAULT 'finished'

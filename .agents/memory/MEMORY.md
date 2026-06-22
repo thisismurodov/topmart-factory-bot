@@ -5,3 +5,4 @@
 - [Product profitability cost model](product-cost-model.md) — dona: revenue=price (no ×weight); kg: revenue=price×weight; elec/other ×weight for both; BOM absolute; profit ALWAYS UZS; cast `$n::numeric` in CASE.
 - [Worker name denormalization](worker-name-denormalization.md) — name copied into 7 tables; rename = copy→repoint→delete; NEVER put worker name in URL path (junk names ./empty// break it) — identify via JSON body.
 - [Role-based kg payroll engine (per-line)](role-kg-payroll.md) — shared pools DIVIDED by worker count per LINE; each (worker,role) in exactly one line; line-delete blocked when referenced; day-close freezes once per (line,date); kg-only DB CHECK.
+- [Per-line role config (line_role_config)](line-role-config.md) — table stores N roles per line (rate+maxWorkers+label); day-status skips Zod parse to include extra `roles[]` field; close-day uses ALL non-producer roles from config (not hardcoded prep+packaging).

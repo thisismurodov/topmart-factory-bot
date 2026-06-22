@@ -381,6 +381,22 @@ def init_db() -> None:
             CREATE UNIQUE INDEX IF NOT EXISTS production_line_workers_worker_role_uniq
               ON production_line_workers (worker_name, role)
         """)
+        # Har bir liniya uchun alohida rol konfiguratsiyasi
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS line_role_config (
+                id          SERIAL PRIMARY KEY,
+                line_id     INTEGER NOT NULL REFERENCES production_lines(id) ON DELETE CASCADE,
+                role_key    TEXT NOT NULL,
+                label       TEXT NOT NULL DEFAULT '',
+                rate        NUMERIC(12,2) NOT NULL DEFAULT 0,
+                max_workers INTEGER NOT NULL DEFAULT 5,
+                UNIQUE (line_id, role_key)
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_line_role_config_line
+              ON line_role_config(line_id)
+        """)
         # Partiya yaratilganda liniya snapshot — kun yopilganda liniya bo'yicha jami kg
         cur.execute("ALTER TABLE batches ADD COLUMN IF NOT EXISTS production_line_id INTEGER")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_batches_line_created ON batches (production_line_id, created_at)")

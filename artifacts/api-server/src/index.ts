@@ -86,6 +86,24 @@ async function initDb() {
     )
   `);
 
+  // line_role_config — har bir liniya uchun alohida rol konfiguratsiyasi
+  // (qaysi rollar, qanday stavka, necha kishi max)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS line_role_config (
+      id          SERIAL PRIMARY KEY,
+      line_id     INTEGER NOT NULL REFERENCES production_lines(id) ON DELETE CASCADE,
+      role_key    TEXT NOT NULL,
+      label       TEXT NOT NULL DEFAULT '',
+      rate        NUMERIC(12,2) NOT NULL DEFAULT 0,
+      max_workers INTEGER NOT NULL DEFAULT 5,
+      UNIQUE (line_id, role_key)
+    )
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_line_role_config_line
+      ON line_role_config(line_id)
+  `);
+
   // batches.archived — yumshoq o'chirish (soft delete)
   await pool.query(`
     ALTER TABLE IF EXISTS batches

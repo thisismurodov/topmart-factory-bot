@@ -257,11 +257,6 @@ router.post("/payroll/lines/:id/workers", async (req, res): Promise<void> => {
   const workerName = bodyParsed.data.workerName.trim();
   const role = bodyParsed.data.role;
 
-  const max = ROLE_MAX[role];
-  if (max === undefined) {
-    res.status(400).json({ error: `Noma'lum rol: ${role}` });
-    return;
-  }
   if (!workerName) {
     res.status(400).json({ error: "Ishchi ismi bo'sh bo'lishi mumkin emas" });
     return;
@@ -283,6 +278,22 @@ router.post("/payroll/lines/:id/workers", async (req, res): Promise<void> => {
     if (lineRows.length === 0) {
       await client.query("ROLLBACK");
       res.status(404).json({ error: "Liniya topilmadi" });
+      return;
+    }
+
+    // Per-line max_workers from line_role_config; fallback to hardcoded ROLE_MAX
+    const { rows: cfgRows } = await client.query(
+      `SELECT max_workers FROM line_role_config WHERE line_id = $1 AND role_key = $2`,
+      [lineId, role]
+    );
+    let max: number;
+    if (cfgRows.length > 0) {
+      max = Number(cfgRows[0].max_workers);
+    } else if (ROLE_MAX[role] !== undefined) {
+      max = ROLE_MAX[role];
+    } else {
+      await client.query("ROLLBACK");
+      res.status(400).json({ error: `Noma'lum rol: ${role}` });
       return;
     }
 
@@ -413,7 +424,7 @@ router.get("/payroll/day-status", async (_req, res): Promise<void> => {
   );
   const today: string = dRows[0].today;
 
-  const [rateRes, lineRes, memberRes, kgRes, runRes] = await Promise.all([
+  const [rateRes, lineRes, memberRes, kgRes, runRes, roleConfigRes] = await Promise.all([
     pool.query(`SELECT role, rate FROM payroll_role_rates WHERE scope = $1`, [SCOPE]),
     pool.query(`SELECT id, name FROM production_lines ORDER BY id`),
     pool.query(
@@ -436,21 +447,33 @@ router.get("/payroll/day-status", async (_req, res): Promise<void> => {
        WHERE scope = $1 AND work_date = $2`,
       [SCOPE, today]
     ),
+    pool.query(
+      `SELECT line_id, role_key, label, rate, max_workers
+       FROM line_role_config ORDER BY line_id, role_key`
+    ),
   ]);
 
-  const rates: Record<string, number> = {};
-  for (const r of rateRes.rows) rates[r.role] = Number(r.rate);
-  const producerRate = rates.producer ?? 0;
-  const prepRate = rates.preparation ?? 0;
-  const packagingRate = rates.packaging ?? 0;
+  // Global fallback rates
+  const globalRates: Record<string, number> = {};
+  for (const r of rateRes.rows) globalRates[r.role] = Number(r.rate);
+
+  // Per-line role configs: Map<lineId, Map<roleKey, {label, rate, maxWorkers}>>
+  type RoleCfg = { label: string; rate: number; maxWorkers: number };
+  const lineRoleConfigs = new Map<number, Map<string, RoleCfg>>();
+  for (const r of roleConfigRes.rows) {
+    const lid = Number(r.line_id);
+    if (!lineRoleConfigs.has(lid)) lineRoleConfigs.set(lid, new Map());
+    lineRoleConfigs.get(lid)!.set(r.role_key, {
+      label: r.label,
+      rate: Number(r.rate),
+      maxWorkers: Number(r.max_workers),
+    });
+  }
 
   const lineIdSet = new Set<number>(lineRes.rows.map((ln) => Number(ln.id)));
   const kgByLine = new Map<number, number>();
   let unassignedKg = 0;
   for (const r of kgRes.rows) {
-    // NULL = never assigned; a non-null id missing from production_lines means
-    // the line was deleted while keeping its batch snapshot — fold both into
-    // "unassigned" so the kg stays visible instead of silently disappearing.
     if (r.production_line_id === null || !lineIdSet.has(Number(r.production_line_id))) {
       unassignedKg += Number(r.kg);
     } else {
@@ -475,11 +498,50 @@ router.get("/payroll/day-status", async (_req, res): Promise<void> => {
     const totalKg = kgByLine.get(lineId) ?? 0;
     grandTotal += totalKg;
     const members = membersByLine.get(lineId) ?? [];
+    const lineCfg = lineRoleConfigs.get(lineId);
+
+    // Effective rates: per-line config wins over global fallback
+    const effRate = (key: string) =>
+      lineCfg?.get(key)?.rate ?? globalRates[key] ?? 0;
+
+    const producerRate = effRate("producer");
+    const prepRate = effRate("preparation");
+    const packagingRate = effRate("packaging");
+
     const producers = members.filter((m) => m.role === "producer");
     const preparation = members.filter((m) => m.role === "preparation");
     const packaging = members.filter((m) => m.role === "packaging");
     const prepPool = totalKg * prepRate;
     const packagingPool = totalKg * packagingRate;
+
+    // Build dynamic roles array from per-line config (or default 3 roles)
+    type RoleStatus = {
+      roleKey: string; label: string; rate: number; maxWorkers: number;
+      members: Member[]; pool: number | null; perWorker: number | null;
+    };
+    let roles: RoleStatus[];
+    if (lineCfg && lineCfg.size > 0) {
+      roles = Array.from(lineCfg.entries()).map(([roleKey, cfg]) => {
+        const rm = members.filter((m) => m.role === roleKey);
+        const isProducer = roleKey === "producer";
+        const pool2 = isProducer ? null : totalKg * cfg.rate;
+        const perWorker = isProducer ? null : (rm.length > 0 ? pool2! / rm.length : 0);
+        return { roleKey, label: cfg.label, rate: cfg.rate, maxWorkers: cfg.maxWorkers,
+                 members: rm, pool: pool2, perWorker };
+      });
+    } else {
+      roles = [
+        { roleKey: "producer", label: "Ishlab chiqaruvchi", rate: producerRate,
+          maxWorkers: ROLE_MAX.producer ?? 5, members: producers, pool: null, perWorker: null },
+        { roleKey: "preparation", label: "Tayyorlash", rate: prepRate,
+          maxWorkers: ROLE_MAX.preparation ?? 3, members: preparation,
+          pool: prepPool, perWorker: preparation.length > 0 ? prepPool / preparation.length : 0 },
+        { roleKey: "packaging", label: "Qadoqlash", rate: packagingRate,
+          maxWorkers: ROLE_MAX.packaging ?? 5, members: packaging,
+          pool: packagingPool, perWorker: packaging.length > 0 ? packagingPool / packaging.length : 0 },
+      ];
+    }
+
     return {
       lineId,
       lineName: ln.name,
@@ -496,20 +558,14 @@ router.get("/payroll/day-status", async (_req, res): Promise<void> => {
       prepPerWorker: preparation.length > 0 ? prepPool / preparation.length : 0,
       packagingPool,
       packagingPerWorker: packaging.length > 0 ? packagingPool / packaging.length : 0,
+      roles,
     };
   });
 
   const closed = lines.length > 0 && lines.every((l) => l.closed);
 
-  res.json(
-    GetPayrollDayStatusResponse.parse({
-      workDate: today,
-      totalKg: grandTotal,
-      unassignedKg,
-      closed,
-      lines,
-    })
-  );
+  // Skip Zod parse so extra `roles` field passes through
+  res.json({ workDate: today, totalKg: grandTotal, unassignedKg, closed, lines });
 });
 
 // ── POST /payroll/close-day — close all lines for today (idempotent) ──────────
@@ -573,8 +629,8 @@ router.post("/payroll/close-day", async (_req, res): Promise<void> => {
       `SELECT role, rate FROM payroll_role_rates WHERE scope = $1`,
       [SCOPE]
     );
-    const rates: Record<string, number> = {};
-    for (const r of rateRows) rates[r.role] = Number(r.rate);
+    const globalRates: Record<string, number> = {};
+    for (const r of rateRows) globalRates[r.role] = Number(r.rate);
 
     const { rows: lineRows } = await client.query(
       `SELECT id, name FROM production_lines ORDER BY id`
@@ -630,19 +686,36 @@ router.post("/payroll/close-day", async (_req, res): Promise<void> => {
       const totalKg = Number(kgRows[0].total_kg);
       grandTotal += totalKg;
 
-      const { rows: members } = await client.query(
-        `SELECT worker_name, role FROM production_line_workers
-         WHERE line_id = $1 AND role IN ('preparation', 'packaging')
-         ORDER BY role, worker_name`,
+      // Per-line non-producer roles: use line_role_config if configured, else global defaults
+      const { rows: lineRoleCfgRows } = await client.query(
+        `SELECT role_key, rate FROM line_role_config WHERE line_id = $1 AND role_key != 'producer'`,
         [lineId]
       );
-      const counts: Record<string, number> = { preparation: 0, packaging: 0 };
+      const nonProducerRoles: { role: string; rate: number }[] =
+        lineRoleCfgRows.length > 0
+          ? lineRoleCfgRows.map((r) => ({ role: r.role_key, rate: Number(r.rate) }))
+          : [
+              { role: "preparation", rate: globalRates.preparation ?? 0 },
+              { role: "packaging", rate: globalRates.packaging ?? 0 },
+            ];
+
+      const roleKeys = nonProducerRoles.map((r) => r.role);
+      const { rows: members } = await client.query(
+        `SELECT worker_name, role FROM production_line_workers
+         WHERE line_id = $1 AND role = ANY($2)
+         ORDER BY role, worker_name`,
+        [lineId, roleKeys]
+      );
+      const counts: Record<string, number> = {};
       for (const m of members) counts[m.role] = (counts[m.role] ?? 0) + 1;
+
+      const rateByRole: Record<string, number> = {};
+      for (const nr of nonProducerRoles) rateByRole[nr.role] = nr.rate;
 
       const entries: ResultLine["entries"] = [];
       for (const m of members) {
         const role: string = m.role;
-        const rate = rates[role] ?? 0;
+        const rate = rateByRole[role] ?? globalRates[role] ?? 0;
         const n = counts[role] ?? 0;
         const amount = n > 0 ? (totalKg * rate) / n : 0;
         await client.query(
@@ -690,6 +763,140 @@ router.post("/payroll/close-day", async (_req, res): Promise<void> => {
       lines: resultLines,
     })
   );
+});
+
+// ── GET /payroll/line-configs — all lines with their per-line role configs ──────
+router.get("/payroll/line-configs", async (_req, res): Promise<void> => {
+  const [lineRes, cfgRes] = await Promise.all([
+    pool.query(`SELECT id, name FROM production_lines ORDER BY id`),
+    pool.query(
+      `SELECT line_id, role_key, label, rate, max_workers
+       FROM line_role_config ORDER BY line_id, role_key`
+    ),
+  ]);
+  const cfgByLine = new Map<number, { roleKey: string; label: string; rate: number; maxWorkers: number }[]>();
+  for (const r of cfgRes.rows) {
+    const lid = Number(r.line_id);
+    const arr = cfgByLine.get(lid) ?? [];
+    arr.push({ roleKey: r.role_key, label: r.label, rate: Number(r.rate), maxWorkers: Number(r.max_workers) });
+    cfgByLine.set(lid, arr);
+  }
+  const result = lineRes.rows.map((ln) => ({
+    lineId: Number(ln.id),
+    lineName: ln.name,
+    roles: cfgByLine.get(Number(ln.id)) ?? [],
+  }));
+  res.json(result);
+});
+
+// ── POST /payroll/lines/:id/roles — add a role config to a line ───────────────
+router.post("/payroll/lines/:id/roles", async (req, res): Promise<void> => {
+  const lineId = Number(req.params.id);
+  if (!lineId || isNaN(lineId)) { res.status(400).json({ error: "Noto'g'ri liniya ID" }); return; }
+  const { roleKey, label, rate, maxWorkers } = req.body as {
+    roleKey?: string; label?: string; rate?: number; maxWorkers?: number;
+  };
+  if (!roleKey || typeof roleKey !== "string" || !roleKey.trim()) {
+    res.status(400).json({ error: "roleKey majburiy" }); return;
+  }
+  if (typeof rate !== "number" || rate < 0) {
+    res.status(400).json({ error: "rate musbat bo'lishi kerak" }); return;
+  }
+  const mw = typeof maxWorkers === "number" && maxWorkers > 0 ? maxWorkers : 5;
+  const lbl = (label ?? roleKey).trim();
+
+  const { rows: lineRows } = await pool.query("SELECT 1 FROM production_lines WHERE id = $1", [lineId]);
+  if (lineRows.length === 0) { res.status(404).json({ error: "Liniya topilmadi" }); return; }
+
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO line_role_config (line_id, role_key, label, rate, max_workers)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (line_id, role_key) DO UPDATE
+         SET label = EXCLUDED.label, rate = EXCLUDED.rate, max_workers = EXCLUDED.max_workers
+       RETURNING role_key, label, rate, max_workers`,
+      [lineId, roleKey.trim(), lbl, rate, mw]
+    );
+    const r = rows[0];
+    res.status(201).json({ roleKey: r.role_key, label: r.label, rate: Number(r.rate), maxWorkers: Number(r.max_workers) });
+  } catch (e) {
+    throw e;
+  }
+});
+
+// ── PATCH /payroll/lines/:id/roles/:roleKey — update rate/label/maxWorkers ─────
+router.patch("/payroll/lines/:id/roles/:roleKey", async (req, res): Promise<void> => {
+  const lineId = Number(req.params.id);
+  const roleKey = req.params.roleKey;
+  if (!lineId || isNaN(lineId)) { res.status(400).json({ error: "Noto'g'ri liniya ID" }); return; }
+
+  const { label, rate, maxWorkers } = req.body as {
+    label?: string; rate?: number; maxWorkers?: number;
+  };
+
+  const setClauses: string[] = [];
+  const vals: (string | number)[] = [lineId, roleKey];
+  if (typeof rate === "number" && rate >= 0) { vals.push(rate); setClauses.push(`rate = $${vals.length}`); }
+  if (typeof maxWorkers === "number" && maxWorkers > 0) { vals.push(maxWorkers); setClauses.push(`max_workers = $${vals.length}`); }
+  if (typeof label === "string" && label.trim()) { vals.push(label.trim()); setClauses.push(`label = $${vals.length}`); }
+
+  if (setClauses.length === 0) { res.status(400).json({ error: "Hech narsa o'zgartirilmadi" }); return; }
+
+  const { rows } = await pool.query(
+    `UPDATE line_role_config SET ${setClauses.join(", ")}
+     WHERE line_id = $1 AND role_key = $2
+     RETURNING role_key, label, rate, max_workers`,
+    vals
+  );
+  if (rows.length === 0) { res.status(404).json({ error: "Rol konfiguratsiyasi topilmadi" }); return; }
+  const r = rows[0];
+  res.json({ roleKey: r.role_key, label: r.label, rate: Number(r.rate), maxWorkers: Number(r.max_workers) });
+});
+
+// ── DELETE /payroll/lines/:id/roles/:roleKey — remove role config ─────────────
+router.delete("/payroll/lines/:id/roles/:roleKey", async (req, res): Promise<void> => {
+  const lineId = Number(req.params.id);
+  const roleKey = req.params.roleKey;
+  if (!lineId || isNaN(lineId)) { res.status(400).json({ error: "Noto'g'ri liniya ID" }); return; }
+
+  // Block removal if workers are still assigned to this role on this line
+  const { rows: wRows } = await pool.query(
+    `SELECT COUNT(*)::int AS c FROM production_line_workers WHERE line_id = $1 AND role = $2`,
+    [lineId, roleKey]
+  );
+  if ((wRows[0].c ?? 0) > 0) {
+    res.status(409).json({ error: "Bu rolda ishchilar bor — avval ularni olib tashlang" }); return;
+  }
+
+  const result = await pool.query(
+    `DELETE FROM line_role_config WHERE line_id = $1 AND role_key = $2`,
+    [lineId, roleKey]
+  );
+  if ((result.rowCount ?? 0) === 0) {
+    res.status(404).json({ error: "Rol konfiguratsiyasi topilmadi" }); return;
+  }
+  res.json({ status: "ok" });
+});
+
+// ── PATCH /payroll/lines/:id — rename a production line ───────────────────────
+router.patch("/payroll/lines/:id", async (req, res): Promise<void> => {
+  const lineId = Number(req.params.id);
+  if (!lineId || isNaN(lineId)) { res.status(400).json({ error: "Noto'g'ri liniya ID" }); return; }
+  const { name } = req.body as { name?: string };
+  if (!name || !name.trim()) { res.status(400).json({ error: "Nom bo'sh bo'lishi mumkin emas" }); return; }
+  try {
+    const { rows } = await pool.query(
+      `UPDATE production_lines SET name = $1 WHERE id = $2 RETURNING id, name`,
+      [name.trim(), lineId]
+    );
+    if (rows.length === 0) { res.status(404).json({ error: "Liniya topilmadi" }); return; }
+    res.json({ id: Number(rows[0].id), name: rows[0].name });
+  } catch (e) {
+    if ((e as { code?: string }).code === "23505") {
+      res.status(409).json({ error: "Bu nomli liniya allaqachon mavjud" }); return;
+    }
+    throw e;
+  }
 });
 
 export default router;

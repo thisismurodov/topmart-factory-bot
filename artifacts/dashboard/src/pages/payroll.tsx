@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { authFetch } from "@/App";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   useGetPayrollRoleRates, getGetPayrollRoleRatesQueryKey, useUpdatePayrollRoleRate,
   useGetPayrollWorkerEarnings, getGetPayrollWorkerEarningsQueryKey,
@@ -26,11 +26,14 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency, formatNumber, formatDate } from "@/lib/format";
 import {
   Lock, LockOpen, Save, Plus, Trash2, Weight, UserPlus, Factory,
-  AlertTriangle, Hammer, Boxes, PackageCheck,
+  AlertTriangle, Hammer, Boxes, PackageCheck, Settings, Pencil,
 } from "lucide-react";
 
 const ROLE_UZ: Record<string, string> = {
@@ -39,13 +42,8 @@ const ROLE_UZ: Record<string, string> = {
   packaging: "Qadoqlash",
   packer: "Qadoqlash",
 };
-// Roles shown in the rate editor (the ones that drive pay).
+
 const RATE_ROLES = ["producer", "preparation", "packaging"];
-const ROLE_LIMITS: Record<string, { min: number; max: number }> = {
-  producer: { min: 1, max: 5 },
-  preparation: { min: 1, max: 3 },
-  packaging: { min: 1, max: 5 },
-};
 
 const METHOD_UZ: Record<string, string> = {
   PRODUCT_RATE: "Dona (mahsulot stavkasi)",
@@ -62,7 +60,45 @@ function errMsg(e: unknown, fallback: string): string {
   return fallback;
 }
 
-// ── Role rate row (own input state) ─────────────────────────────────────────────
+// ── Types ──────────────────────────────────────────────────────────────────────
+type Member = { id: number; workerName: string; role: string };
+
+type LineRoleStatus = {
+  roleKey: string;
+  label: string;
+  rate: number;
+  maxWorkers: number;
+  members: Member[];
+  pool: number | null;
+  perWorker: number | null;
+};
+
+type LineStatus = {
+  lineId: number;
+  lineName: string;
+  totalKg: number;
+  closed: boolean;
+  closedAt: string | null;
+  producers: Member[];
+  preparation: Member[];
+  packaging: Member[];
+  producerRate: number;
+  prepRate: number;
+  packagingRate: number;
+  prepPool: number;
+  prepPerWorker: number;
+  packagingPool: number;
+  packagingPerWorker: number;
+  roles?: LineRoleStatus[];
+};
+
+type LineConfig = {
+  lineId: number;
+  lineName: string;
+  roles: { roleKey: string; label: string; rate: number; maxWorkers: number }[];
+};
+
+// ── Role rate row (global settings tab) ────────────────────────────────────────
 function RoleRateRow({ role, rate, updatedAt }: { role: string; rate: number; updatedAt: string | null }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -113,70 +149,43 @@ function RoleRateRow({ role, rate, updatedAt }: { role: string; rate: number; up
   );
 }
 
-type Member = { id: number; workerName: string; role: string };
-type LineStatus = {
-  lineId: number;
-  lineName: string;
-  totalKg: number;
-  closed: boolean;
-  closedAt: string | null;
-  producers: Member[];
-  preparation: Member[];
-  packaging: Member[];
-  producerRate: number;
-  prepRate: number;
-  packagingRate: number;
-  prepPool: number;
-  prepPerWorker: number;
-  packagingPool: number;
-  packagingPerWorker: number;
-};
-
-const ROLE_ICON: Record<string, typeof Hammer> = {
-  producer: Hammer,
-  preparation: Boxes,
-  packaging: PackageCheck,
-};
-
 // ── One role column inside a line card ──────────────────────────────────────────
 function RoleSection({
-  role, members, availableWorkers, closed, totalKg, pool, perWorker, rate, onAdd, onRemove, adding,
+  roleKey, label, members, availableWorkers, closed, totalKg, pool, perWorker, rate, maxWorkers, onAdd, onRemove, adding,
 }: {
-  role: string;
+  roleKey: string;
+  label: string;
   members: Member[];
   availableWorkers: string[];
   closed: boolean;
   totalKg: number;
-  pool: number | null; // null for producer (no shared pool)
+  pool: number | null;
   perWorker: number | null;
   rate: number;
+  maxWorkers: number;
   onAdd: (role: string, workerName: string) => void;
   onRemove: (memberId: number, workerName: string, role: string) => void;
   adding: boolean;
 }) {
   const [sel, setSel] = useState<string>("");
-  const limit = ROLE_LIMITS[role];
-  const atMax = members.length >= limit.max;
-  const belowMin = members.length < limit.min;
-  const Icon = ROLE_ICON[role] ?? Hammer;
-  const isPool = role !== "producer";
+  const atMax = members.length >= maxWorkers;
+  const isPool = roleKey !== "producer";
 
   return (
-    <div className="rounded-lg border border-border bg-card/40 flex flex-col" data-testid={`role-section-${role}`}>
+    <div className="rounded-lg border border-border bg-card/40 flex flex-col" data-testid={`role-section-${roleKey}`}>
       <div className="px-3 py-2.5 border-b border-border flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Icon className="w-4 h-4 text-muted-foreground" />
-          <span className="font-medium text-sm">{roleLabel(role)}</span>
+          <Hammer className="w-4 h-4 text-muted-foreground" />
+          <span className="font-medium text-sm">{label || roleLabel(roleKey)}</span>
         </div>
         <Badge
           variant="outline"
           className={members.length === 0 ? "text-amber-600 border-amber-300" : "text-muted-foreground"}
         >
-          {members.length}/{limit.max}
+          {members.length}/{maxWorkers}
         </Badge>
       </div>
 
-      {/* Pool preview */}
       <div className="px-3 py-2 text-xs border-b border-border bg-muted/20">
         {isPool ? (
           <div className="space-y-0.5">
@@ -197,7 +206,6 @@ function RoleSection({
         )}
       </div>
 
-      {/* Members */}
       <div className="flex-1 p-2 space-y-1 min-h-[60px]">
         {members.length === 0 ? (
           <div className="text-xs text-amber-600 flex items-center gap-1.5 px-1 py-2">
@@ -216,7 +224,7 @@ function RoleSection({
                   size="icon"
                   variant="ghost"
                   className="h-6 w-6 shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
-                  onClick={() => onRemove(m.id, m.workerName, role)}
+                  onClick={() => onRemove(m.id, m.workerName, roleKey)}
                   data-testid={`btn-remove-member-${m.id}`}
                 >
                   <Trash2 className="w-3.5 h-3.5" />
@@ -227,12 +235,11 @@ function RoleSection({
         )}
       </div>
 
-      {/* Add control */}
       {!closed && (
         <div className="p-2 border-t border-border flex gap-1.5">
           <Select value={sel} onValueChange={setSel} disabled={atMax}>
-            <SelectTrigger className="h-8 text-xs" data-testid={`select-add-${role}`}>
-              <SelectValue placeholder={atMax ? `Maksimal (${limit.max})` : "Ishchi tanlang"} />
+            <SelectTrigger className="h-8 text-xs" data-testid={`select-add-${roleKey}`}>
+              <SelectValue placeholder={atMax ? `Maksimal (${maxWorkers})` : "Ishchi tanlang"} />
             </SelectTrigger>
             <SelectContent>
               {availableWorkers.length === 0 ? (
@@ -248,42 +255,386 @@ function RoleSection({
             size="icon"
             className="h-8 w-8 shrink-0"
             disabled={!sel || atMax || adding}
-            onClick={() => { onAdd(role, sel); setSel(""); }}
-            data-testid={`btn-add-${role}`}
+            onClick={() => { onAdd(roleKey, sel); setSel(""); }}
+            data-testid={`btn-add-${roleKey}`}
           >
             <Plus className="w-4 h-4" />
           </Button>
         </div>
       )}
-      {belowMin && members.length > 0 && (
-        <div className="px-3 pb-2 text-[11px] text-amber-600">Tavsiya etilgan minimum: {limit.min}</div>
-      )}
     </div>
+  );
+}
+
+// ── Line Config Dialog ──────────────────────────────────────────────────────────
+function LineConfigDialog({
+  line, open, onClose, onRefresh,
+}: {
+  line: LineStatus;
+  open: boolean;
+  onClose: () => void;
+  onRefresh: () => void;
+}) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  // Current role configs from day-status (roles array)
+  const roles = line.roles ?? [];
+
+  // Edit state for existing roles
+  const [editMap, setEditMap] = useState<Record<string, { label: string; rate: string; maxWorkers: string }>>({});
+
+  const getEdit = (roleKey: string, defaults: { label: string; rate: number; maxWorkers: number }) => {
+    return editMap[roleKey] ?? {
+      label: defaults.label,
+      rate: String(defaults.rate),
+      maxWorkers: String(defaults.maxWorkers),
+    };
+  };
+
+  const setEdit = (roleKey: string, field: "label" | "rate" | "maxWorkers", value: string) => {
+    setEditMap((prev) => ({
+      ...prev,
+      [roleKey]: { ...getEdit(roleKey, { label: "", rate: 0, maxWorkers: 5 }), [field]: value },
+    }));
+  };
+
+  // New role form
+  const [newRoleKey, setNewRoleKey] = useState("");
+  const [newLabel, setNewLabel] = useState("");
+  const [newRate, setNewRate] = useState("");
+  const [newMax, setNewMax] = useState("5");
+  const [saving, setSaving] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+
+  // Line rename
+  const [editName, setEditName] = useState(line.lineName);
+  const [renamingSaving, setRenamingSaving] = useState(false);
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: getGetPayrollDayStatusQueryKey() });
+    onRefresh();
+  };
+
+  const handleSaveRole = async (roleKey: string) => {
+    const existing = roles.find((r) => r.roleKey === roleKey);
+    if (!existing) return;
+    const ed = getEdit(roleKey, existing);
+    setSaving(roleKey);
+    try {
+      const res = await authFetch(`/api/payroll/lines/${line.lineId}/roles/${encodeURIComponent(roleKey)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label: ed.label.trim() || roleKey,
+          rate: Number(ed.rate),
+          maxWorkers: Number(ed.maxWorkers),
+        }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({})) as { error?: string };
+        toast({ title: "Xato", description: d.error ?? "Saqlab bo'lmadi.", variant: "destructive" });
+        return;
+      }
+      toast({ title: "Saqlandi", description: `${ed.label || roleKey} yangilandi.` });
+      setEditMap((prev) => { const n = { ...prev }; delete n[roleKey]; return n; });
+      invalidate();
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const handleDeleteRole = async (roleKey: string) => {
+    setDeleting(roleKey);
+    try {
+      const res = await authFetch(`/api/payroll/lines/${line.lineId}/roles/${encodeURIComponent(roleKey)}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({})) as { error?: string };
+        toast({ title: "Xato", description: d.error ?? "O'chirib bo'lmadi.", variant: "destructive" });
+        return;
+      }
+      toast({ title: "O'chirildi", description: `${roleKey} roli olib tashlandi.` });
+      invalidate();
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  const handleAddRole = async () => {
+    if (!newRoleKey.trim() || !newRate.trim()) {
+      toast({ title: "Xato", description: "Rol kaliti va stavka majburiy.", variant: "destructive" });
+      return;
+    }
+    setAdding(true);
+    try {
+      const res = await authFetch(`/api/payroll/lines/${line.lineId}/roles`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          roleKey: newRoleKey.trim(),
+          label: newLabel.trim() || newRoleKey.trim(),
+          rate: Number(newRate),
+          maxWorkers: Number(newMax) || 5,
+        }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({})) as { error?: string };
+        toast({ title: "Xato", description: d.error ?? "Qo'shib bo'lmadi.", variant: "destructive" });
+        return;
+      }
+      toast({ title: "Qo'shildi", description: `${newLabel || newRoleKey} roli qo'shildi.` });
+      setNewRoleKey(""); setNewLabel(""); setNewRate(""); setNewMax("5");
+      invalidate();
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const handleRename = async () => {
+    if (!editName.trim() || editName.trim() === line.lineName) return;
+    setRenamingSaving(true);
+    try {
+      const res = await authFetch(`/api/payroll/lines/${line.lineId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: editName.trim() }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({})) as { error?: string };
+        toast({ title: "Xato", description: d.error ?? "Nom saqlab bo'lmadi.", variant: "destructive" });
+        return;
+      }
+      toast({ title: "Saqlandi", description: "Liniya nomi yangilandi." });
+      invalidate();
+    } finally {
+      setRenamingSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Settings className="w-4 h-4" /> Liniya sozlamalari
+          </DialogTitle>
+        </DialogHeader>
+
+        {/* Rename line */}
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Liniya nomi</Label>
+          <div className="flex gap-2">
+            <Input
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              className="h-9"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!editName.trim() || editName.trim() === line.lineName || renamingSaving}
+              onClick={handleRename}
+            >
+              <Save className="w-4 h-4 mr-1" /> Saqlash
+            </Button>
+          </div>
+        </div>
+
+        {/* Current roles */}
+        <div className="space-y-2">
+          <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Rollar ({roles.length > 0 ? "sozlangan" : "standart (3 ta)"})
+          </Label>
+          {roles.length === 0 && (
+            <p className="text-xs text-muted-foreground bg-muted/30 rounded-md p-3">
+              Hali maxsus rol yo'q — standart 3 ta rol ishlatilmoqda
+              (Ishlab chiqaruvchi 1125/kg · Tayyorlash 375/kg · Qadoqlash 750/kg).
+              Quyida yangi rol qo'shib, liniyani moslashtiring.
+            </p>
+          )}
+          {roles.map((r) => {
+            const ed = getEdit(r.roleKey, r);
+            const isChanged =
+              ed.label !== r.label ||
+              Number(ed.rate) !== r.rate ||
+              Number(ed.maxWorkers) !== r.maxWorkers;
+            const members = line.roles?.find((lr) => lr.roleKey === r.roleKey)?.members ?? [];
+            return (
+              <div key={r.roleKey} className="border border-border rounded-lg p-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-mono text-muted-foreground bg-muted/40 px-2 py-0.5 rounded">{r.roleKey}</span>
+                  <span className="text-xs text-muted-foreground">{members.length} ishchi</span>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Nom</Label>
+                    <Input
+                      value={ed.label}
+                      onChange={(e) => setEdit(r.roleKey, "label", e.target.value)}
+                      className="h-8 text-sm"
+                      placeholder={r.roleKey}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Stavka (so'm/kg)</Label>
+                    <Input
+                      type="number"
+                      value={ed.rate}
+                      onChange={(e) => setEdit(r.roleKey, "rate", e.target.value)}
+                      className="h-8 text-sm font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Max ishchi</Label>
+                    <Input
+                      type="number"
+                      value={ed.maxWorkers}
+                      onChange={(e) => setEdit(r.roleKey, "maxWorkers", e.target.value)}
+                      className="h-8 text-sm font-mono"
+                      min={1}
+                    />
+                  </div>
+                </div>
+                <div className="flex gap-2 justify-end">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={!isChanged || saving === r.roleKey}
+                    onClick={() => handleSaveRole(r.roleKey)}
+                  >
+                    <Save className="w-3.5 h-3.5 mr-1" />
+                    {saving === r.roleKey ? "Saqlanmoqda..." : "Saqlash"}
+                  </Button>
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                        disabled={deleting === r.roleKey}
+                      >
+                        <Trash2 className="w-3.5 h-3.5 mr-1" /> O'chirish
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Rolni o'chirish</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          <strong>{r.label || r.roleKey}</strong> roli liniyadan olib tashlanadi.
+                          Bu rolda ishchilar bo'lmasligi kerak.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Bekor</AlertDialogCancel>
+                        <AlertDialogAction
+                          onClick={() => handleDeleteRole(r.roleKey)}
+                          className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                        >
+                          O'chirish
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Add new role */}
+        <div className="space-y-2 border-t border-border pt-4">
+          <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Yangi rol qo'shish
+          </Label>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
+              <Label className="text-xs">Rol kaliti (lotin, bo'sh joysiz)</Label>
+              <Input
+                value={newRoleKey}
+                onChange={(e) => setNewRoleKey(e.target.value.replace(/\s/g, "_"))}
+                placeholder="masalan: cutting"
+                className="h-8 text-sm font-mono"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Nom (uzbekcha)</Label>
+              <Input
+                value={newLabel}
+                onChange={(e) => setNewLabel(e.target.value)}
+                placeholder="masalan: Kesish"
+                className="h-8 text-sm"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Stavka (so'm/kg)</Label>
+              <Input
+                type="number"
+                value={newRate}
+                onChange={(e) => setNewRate(e.target.value)}
+                placeholder="masalan: 500"
+                className="h-8 text-sm font-mono"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Max ishchi soni</Label>
+              <Input
+                type="number"
+                value={newMax}
+                onChange={(e) => setNewMax(e.target.value)}
+                className="h-8 text-sm font-mono"
+                min={1}
+              />
+            </div>
+          </div>
+          <Button
+            size="sm"
+            disabled={!newRoleKey.trim() || !newRate.trim() || adding}
+            onClick={handleAddRole}
+            className="w-full"
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            {adding ? "Qo'shilmoqda..." : "Rol qo'shish"}
+          </Button>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Yopish</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
 // ── A single production line card ────────────────────────────────────────────────
 function LineCard({
-  line, workers, globalProducers, globalPrep, globalPackaging, onAdd, onRemove, onDelete, adding, deleting,
+  line, workers, globalRoleMembers, onAdd, onRemove, onDelete, adding, deleting,
 }: {
   line: LineStatus;
   workers: string[];
-  globalProducers: Set<string>;
-  globalPrep: Set<string>;
-  globalPackaging: Set<string>;
+  globalRoleMembers: Map<string, Set<string>>;
   onAdd: (lineId: number, role: string, workerName: string) => void;
   onRemove: (memberId: number, workerName: string, role: string) => void;
   onDelete: (lineId: number, lineName: string) => void;
   adding: boolean;
   deleting: boolean;
 }) {
-  const producerNames = new Set(line.producers.map((m) => m.workerName));
+  const [configOpen, setConfigOpen] = useState(false);
+  const queryClient = useQueryClient();
 
-  // Each (worker, role) belongs to exactly one line — filter globally so a
-  // worker already holding a role elsewhere isn't offered for another line.
-  const producerAvail = workers.filter((w) => !globalProducers.has(w));
-  const prepAvail = workers.filter((w) => !globalPrep.has(w));
-  const packagingAvail = workers.filter((w) => !globalPackaging.has(w));
+  // Use per-line roles if configured, else build from legacy fields
+  const roles: LineRoleStatus[] = line.roles?.length
+    ? line.roles
+    : [
+        { roleKey: "producer", label: "Ishlab chiqaruvchi", rate: line.producerRate, maxWorkers: 5,
+          members: line.producers, pool: null, perWorker: null },
+        { roleKey: "preparation", label: "Tayyorlash", rate: line.prepRate, maxWorkers: 3,
+          members: line.preparation, pool: line.prepPool, perWorker: line.prepPerWorker },
+        { roleKey: "packaging", label: "Qadoqlash", rate: line.packagingRate, maxWorkers: 5,
+          members: line.packaging, pool: line.packagingPool, perWorker: line.packagingPerWorker },
+      ];
 
   return (
     <Card className="border-border overflow-hidden" data-testid={`line-card-${line.lineId}`}>
@@ -297,6 +648,9 @@ function LineCard({
             <div className="text-xs text-muted-foreground flex items-center gap-1.5 mt-0.5">
               <Weight className="w-3.5 h-3.5" />
               Bugun: <span className="font-medium text-foreground">{formatNumber(line.totalKg)} kg</span>
+              {line.roles?.length ? (
+                <span className="ml-1 text-primary/70">· {line.roles.length} rol</span>
+              ) : null}
             </div>
           </div>
         </div>
@@ -310,6 +664,16 @@ function LineCard({
               <LockOpen className="w-3 h-3 mr-1" /> Ochiq
             </Badge>
           )}
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-8 w-8 text-muted-foreground hover:text-foreground"
+            onClick={() => setConfigOpen(true)}
+            data-testid={`btn-config-line-${line.lineId}`}
+            title="Liniya sozlamalari"
+          >
+            <Settings className="w-4 h-4" />
+          </Button>
           <AlertDialog>
             <AlertDialogTrigger asChild>
               <Button
@@ -346,48 +710,39 @@ function LineCard({
       </div>
 
       <CardContent className="p-4">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <RoleSection
-            role="producer"
-            members={line.producers}
-            availableWorkers={producerAvail.filter((w) => !producerNames.has(w))}
-            closed={line.closed}
-            totalKg={line.totalKg}
-            pool={null}
-            perWorker={null}
-            rate={line.producerRate}
-            onAdd={(role, w) => onAdd(line.lineId, role, w)}
-            onRemove={onRemove}
-            adding={adding}
-          />
-          <RoleSection
-            role="preparation"
-            members={line.preparation}
-            availableWorkers={prepAvail}
-            closed={line.closed}
-            totalKg={line.totalKg}
-            pool={line.prepPool}
-            perWorker={line.prepPerWorker}
-            rate={line.prepRate}
-            onAdd={(role, w) => onAdd(line.lineId, role, w)}
-            onRemove={onRemove}
-            adding={adding}
-          />
-          <RoleSection
-            role="packaging"
-            members={line.packaging}
-            availableWorkers={packagingAvail}
-            closed={line.closed}
-            totalKg={line.totalKg}
-            pool={line.packagingPool}
-            perWorker={line.packagingPerWorker}
-            rate={line.packagingRate}
-            onAdd={(role, w) => onAdd(line.lineId, role, w)}
-            onRemove={onRemove}
-            adding={adding}
-          />
+        <div className={`grid gap-3 ${roles.length <= 2 ? "grid-cols-1 sm:grid-cols-2" : roles.length === 3 ? "grid-cols-1 md:grid-cols-3" : "grid-cols-1 sm:grid-cols-2 xl:grid-cols-4"}`}>
+          {roles.map((roleStatus) => {
+            const roleWorkers = new Set(roleStatus.members.map((m) => m.workerName));
+            const globalSet = globalRoleMembers.get(roleStatus.roleKey) ?? new Set<string>();
+            const available = workers.filter((w) => !globalSet.has(w) && !roleWorkers.has(w));
+            return (
+              <RoleSection
+                key={roleStatus.roleKey}
+                roleKey={roleStatus.roleKey}
+                label={roleStatus.label}
+                members={roleStatus.members}
+                availableWorkers={available}
+                closed={line.closed}
+                totalKg={line.totalKg}
+                pool={roleStatus.pool}
+                perWorker={roleStatus.perWorker}
+                rate={roleStatus.rate}
+                maxWorkers={roleStatus.maxWorkers}
+                onAdd={(rk, w) => onAdd(line.lineId, rk, w)}
+                onRemove={onRemove}
+                adding={adding}
+              />
+            );
+          })}
         </div>
       </CardContent>
+
+      <LineConfigDialog
+        line={line}
+        open={configOpen}
+        onClose={() => setConfigOpen(false)}
+        onRefresh={() => queryClient.invalidateQueries({ queryKey: getGetPayrollDayStatusQueryKey() })}
+      />
     </Card>
   );
 }
@@ -485,21 +840,38 @@ export default function Payroll() {
 
   const lines = (dayStatus?.lines ?? []) as LineStatus[];
   const workerNames = (workers ?? []).map((w) => w.name).filter((n): n is string => !!n);
-  const globalProducers = new Set<string>();
-  const globalPrep = new Set<string>();
-  const globalPackaging = new Set<string>();
+
+  // Build global member sets per role (to prevent same worker in same role on two lines)
+  const globalRoleMembers = new Map<string, Set<string>>();
   for (const l of lines) {
-    for (const p of l.producers) globalProducers.add(p.workerName);
-    for (const p of l.preparation) globalPrep.add(p.workerName);
-    for (const p of l.packaging) globalPackaging.add(p.workerName);
+    const roles: LineRoleStatus[] = l.roles?.length
+      ? l.roles
+      : [
+          { roleKey: "producer", label: "", rate: 0, maxWorkers: 5, members: l.producers, pool: null, perWorker: null },
+          { roleKey: "preparation", label: "", rate: 0, maxWorkers: 3, members: l.preparation, pool: 0, perWorker: 0 },
+          { roleKey: "packaging", label: "", rate: 0, maxWorkers: 5, members: l.packaging, pool: 0, perWorker: 0 },
+        ];
+    for (const rs of roles) {
+      const s = globalRoleMembers.get(rs.roleKey) ?? new Set<string>();
+      for (const m of rs.members) s.add(m.workerName);
+      globalRoleMembers.set(rs.roleKey, s);
+    }
   }
 
   const unassignedKg = dayStatus?.unassignedKg ?? 0;
   const allClosed = dayStatus?.closed ?? false;
-  // Lines that have production today but are missing a shared role.
-  const emptyRoleLines = lines.filter(
-    (l) => l.totalKg > 0 && (l.preparation.length === 0 || l.packaging.length === 0)
-  );
+
+  // Warning: lines with production but missing non-producer roles
+  const emptyRoleLines = lines.filter((l) => {
+    if (l.totalKg === 0) return false;
+    const roles: LineRoleStatus[] = l.roles?.length
+      ? l.roles
+      : [
+          { roleKey: "preparation", label: "Tayyorlash", rate: 0, maxWorkers: 3, members: l.preparation, pool: 0, perWorker: 0 },
+          { roleKey: "packaging", label: "Qadoqlash", rate: 0, maxWorkers: 5, members: l.packaging, pool: 0, perWorker: 0 },
+        ];
+    return roles.some((r) => r.roleKey !== "producer" && r.members.length === 0);
+  });
   const hasWarnings = unassignedKg > 0 || emptyRoleLines.length > 0;
 
   const totalToday = (earnings ?? []).reduce((a, r) => a + r.todayEarnings, 0);
@@ -511,7 +883,7 @@ export default function Payroll() {
       <div>
         <h1 className="text-xl font-semibold tracking-tight">Ishlab chiqarish liniyalari</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Har bir liniya o'z ishchilari va kunlik kg hajmiga ega. Tayyorlash/qadoqlash fondi liniya ishchilari soniga bo'linadi.
+          Har bir liniya o'z rollari, stavkalari va ishchilariga ega. ⚙️ tugmasi orqali liniyani sozlang.
         </p>
       </div>
 
@@ -562,7 +934,7 @@ export default function Payroll() {
                 <AlertDialogDescription asChild>
                   <div className="space-y-2">
                     <p>
-                      Barcha liniyalar uchun bugungi tayyorlash/qadoqlash ulushi hisoblanadi va ishchilarga Telegram orqali xabar yuboriladi.
+                      Barcha liniyalar uchun bugungi ulush hisoblanadi va ishchilarga Telegram orqali xabar yuboriladi.
                       Bu amal har bir liniya uchun kuniga bir marta bajariladi.
                     </p>
                     {hasWarnings && (
@@ -575,9 +947,7 @@ export default function Payroll() {
                         )}
                         {emptyRoleLines.map((l) => (
                           <p key={l.lineId}>
-                            <strong>{l.lineName}</strong>: {l.preparation.length === 0 ? "tayyorlovchi" : ""}
-                            {l.preparation.length === 0 && l.packaging.length === 0 ? " va " : ""}
-                            {l.packaging.length === 0 ? "qadoqlovchi" : ""} yo'q — ushbu fond hisoblanmaydi.
+                            <strong>{l.lineName}</strong>: ba'zi rollarda ishchi yo'q — ushbu fond hisoblanmaydi.
                           </p>
                         ))}
                       </div>
@@ -605,7 +975,6 @@ export default function Payroll() {
 
         {/* ── Lines tab ── */}
         <TabsContent value="lines" className="space-y-5">
-          {/* Create line */}
           <Card className="border-border">
             <CardContent className="p-4 flex flex-col sm:flex-row gap-3 sm:items-end">
               <div className="flex-1 space-y-1.5">
@@ -649,9 +1018,7 @@ export default function Payroll() {
                   key={line.lineId}
                   line={line}
                   workers={workerNames}
-                  globalProducers={globalProducers}
-                  globalPrep={globalPrep}
-                  globalPackaging={globalPackaging}
+                  globalRoleMembers={globalRoleMembers}
                   onAdd={(lineId, role, workerName) => addWorker.mutate({ id: lineId, data: { workerName, role } })}
                   onRemove={(memberId) => removeWorker.mutate({ id: memberId })}
                   onDelete={(lineId) => deleteLine.mutate({ id: lineId })}
@@ -745,12 +1112,13 @@ export default function Payroll() {
 
         {/* ── Settings tab ── */}
         <TabsContent value="settings" className="space-y-6">
-          {/* Role rates */}
           <Card className="border-border">
             <CardContent className="p-0">
               <div className="px-5 py-4 border-b border-border">
-                <h2 className="font-semibold">Rol stavkalari</h2>
-                <p className="text-sm text-muted-foreground mt-0.5">Har bir rol uchun 1 kg ga to'lanadigan summa (barcha liniyalar uchun umumiy).</p>
+                <h2 className="font-semibold">Global rol stavkalari</h2>
+                <p className="text-sm text-muted-foreground mt-0.5">
+                  Liniya sozlamalarida (⚙️) o'ziga xos stavka yo'q liniyalar uchun zaxira stavkalar.
+                </p>
               </div>
               <Table>
                 <TableHeader className="bg-muted/50">

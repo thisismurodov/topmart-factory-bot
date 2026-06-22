@@ -306,59 +306,18 @@ async def product_rate_received(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("⚠️ To'g'ri narx kiriting (masalan: 1500):")
         return PRODUCT_RATE
 
-    context.user_data["new_product"]["rate"] = rate
-    d = context.user_data["new_product"]
-    unit = "kg" if d["rate_type"] == "kg" else "dona"
-    await update.message.reply_text(
-        f"📦 *{d['name']}* uchun qutidagi dona soni:\n"
-        f"_(masalan: 100 — 100 dona = 1 quti; 1 = donabay etiketika)_",
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("1️⃣  Donabay (har dona uchun)", callback_data="np_box:1")],
-            [InlineKeyboardButton("5️⃣0️⃣  50 dona/quti",          callback_data="np_box:50")],
-            [InlineKeyboardButton("8️⃣0️⃣  80 dona/quti",          callback_data="np_box:80")],
-            [InlineKeyboardButton("💯  100 dona/quti",            callback_data="np_box:100")],
-        ]),
-    )
-    return PRODUCT_BOX_QTY
-
-
-async def product_box_qty_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Inline button orqali qutidagi dona sonini tanlash."""
-    query = update.callback_query
-    await query.answer()
-    ppb = int(query.data.split(":", 1)[1])
-    return await _save_new_product(query.message, context, ppb, edit=False)
-
-
-async def product_box_qty_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Matn orqali maxsus dona soni kiritish."""
-    text = update.message.text.strip().replace(" ", "")
-    try:
-        ppb = int(text)
-        if ppb < 1:
-            raise ValueError
-    except ValueError:
-        await update.message.reply_text("⚠️ Musbat butun son kiriting (masalan: 100):")
-        return PRODUCT_BOX_QTY
-    return await _save_new_product(update.message, context, ppb, edit=False)
-
-
-async def _save_new_product(msg, context, ppb: int, edit: bool) -> int:
     d = context.user_data.pop("new_product")
-    ok = add_product(d["name"], d["rate_type"], d["rate"])
-    if ok and ppb > 1:
-        set_product_pieces_per_box(d["name"], ppb)
-    ppb_txt = f"{ppb} dona/quti" if ppb > 1 else "donabay"
+    ok = add_product(d["name"], d["rate_type"], rate)
     if ok:
-        txt = (
+        await update.message.reply_text(
             f"✅ *{d['name']}* qo'shildi!\n"
-            f"{d['rate']:,.0f} so'm/{d['rate_type']} · {ppb_txt}"
+            f"{rate:,.0f} so'm/{d['rate_type']}\n"
+            f"_(Qutidagi dona sonini dashboard → Mahsulotlar → tahrirlashdan o'rnating)_",
+            parse_mode="Markdown",
         )
     else:
-        txt = f"⚠️ *{d['name']}* allaqachon mavjud."
-    await msg.reply_text(txt, parse_mode="Markdown")
-    await msg.reply_text("⚙️ Admin paneli:", reply_markup=admin_main_keyboard())
+        await update.message.reply_text(f"⚠️ *{d['name']}* allaqachon mavjud.")
+    await update.message.reply_text("⚙️ Admin paneli:", reply_markup=admin_main_keyboard())
     return ADM_HOME
 
 
@@ -551,10 +510,6 @@ def build_admin_handler() -> ConversationHandler:
             ],
             PRODUCT_RATE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, product_rate_received),
-            ],
-            PRODUCT_BOX_QTY: [
-                CallbackQueryHandler(product_box_qty_callback, pattern=r"^np_box:"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, product_box_qty_text),
             ],
             PACKER_SELECT: [
                 CallbackQueryHandler(packer_selected,      pattern=r"^pk_sel:"),

@@ -1,12 +1,19 @@
-"""Kunlik low-stock bildirisnomasi va boshqa scheduled tasklar."""
+"""Kunlik low-stock bildirisnomasi, backup va boshqa scheduled tasklar."""
 import asyncio
+import gzip
+import io
 import logging
-from datetime import datetime
+import os
+import subprocess
+from datetime import datetime, timedelta
 
 from .database import get_conn
+from .config import SUPERADMIN_CHAT_ID
 
 _log = logging.getLogger(__name__)
 
+
+# ── Low-stock ─────────────────────────────────────────────────────────────────
 
 def _get_low_stock_items() -> list[dict]:
     """Minimal zahiradan kam bo'lgan faol xom ashyolar ro'yxati."""
@@ -54,36 +61,118 @@ async def _send_low_stock_report(bot, admin_chat_id: str) -> None:
         _log.warning("Low-stock xabarni yuborishda xato: %s", exc)
 
 
-def _schedule_loop(bot, admin_chat_id: str, hour: int = 8) -> None:
+# ── Database backup ───────────────────────────────────────────────────────────
+
+def create_db_backup() -> tuple[bytes, str]:
+    """pg_dump → gzip — muvaffaqiyatli bo'lsa (bytes, filename) qaytaradi."""
+    db_url = os.environ.get("DATABASE_URL", "")
+    if not db_url:
+        raise RuntimeError("DATABASE_URL topilmadi")
+
+    stamp    = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"topmart-backup-{stamp}.sql.gz"
+
+    result = subprocess.run(
+        ["pg_dump", "--no-password", "--format=plain", db_url],
+        capture_output=True,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        err = result.stderr.decode("utf-8", errors="replace")[:500]
+        raise RuntimeError(f"pg_dump xatosi: {err}")
+
+    sql_bytes  = result.stdout
+    gz_bytes   = gzip.compress(sql_bytes, compresslevel=6)
+    _log.info("Backup yaratildi: %s (%d KB)", filename, len(gz_bytes) // 1024)
+    return gz_bytes, filename
+
+
+async def send_backup_to_telegram(bot, chat_id: int | str) -> None:
+    """Backup faylni Telegram'ga hujjat sifatida yuboradi."""
+    now_str = datetime.now().strftime("%d.%m.%Y %H:%M")
+    try:
+        await bot.send_message(
+            chat_id=chat_id,
+            text=f"⏳ *Backup tayyorlanmoqda…*\n🕐 {now_str}",
+            parse_mode="Markdown",
+        )
+        gz_bytes, filename = create_db_backup()
+        size_kb = len(gz_bytes) // 1024
+        await bot.send_document(
+            chat_id=chat_id,
+            document=io.BytesIO(gz_bytes),
+            filename=filename,
+            caption=(
+                f"✅ *TopMart DB Backup*\n"
+                f"📅 {now_str}\n"
+                f"📦 Hajm: {size_kb} KB\n"
+                f"🗄 Fayl: `{filename}`\n\n"
+                f"_Tiklash uchun: psql DATABASE\\_URL < fayl.sql_"
+            ),
+            parse_mode="Markdown",
+        )
+        _log.info("Backup Telegram'ga yuborildi: %s", filename)
+    except Exception as exc:
+        _log.error("Backup yuborishda xato: %s", exc)
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f"❌ *Backup xatosi*\n`{exc}`",
+                parse_mode="Markdown",
+            )
+        except Exception:
+            pass
+
+
+# ── Scheduler loop ────────────────────────────────────────────────────────────
+
+def _schedule_loop(bot, admin_chat_id: str, low_stock_hour: int = 8, backup_hour: int = 3) -> None:
     """Blocking loop — alohida threadda ishga tushiriladi."""
     import time
 
-    _log.info("Scheduler ishga tushdi (har kuni %02d:00 da hisobot).", hour)
-    while True:
+    _log.info(
+        "Scheduler ishga tushdi (low-stock: %02d:00, backup: %02d:00).",
+        low_stock_hour, backup_hour,
+    )
+
+    def _next_run_at(hour: int) -> datetime:
         now = datetime.now()
-        # Keyingi keladigan soatni hisoblash
-        next_run = now.replace(minute=0, second=0, microsecond=0)
-        if now.hour >= hour:
-            from datetime import timedelta
-            next_run = next_run.replace(hour=hour) + timedelta(days=1)
-        else:
-            next_run = next_run.replace(hour=hour)
+        t   = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+        if now >= t:
+            t += timedelta(days=1)
+        return t
 
-        sleep_secs = (next_run - now).total_seconds()
-        _log.debug("Keyingi hisobot: %s (%.0f soniyadan keyin)", next_run, sleep_secs)
-        time.sleep(max(sleep_secs, 1))
+    while True:
+        now      = datetime.now()
+        next_ls  = _next_run_at(low_stock_hour)
+        next_bkp = _next_run_at(backup_hour)
+        sleep_secs = min(
+            (next_ls  - now).total_seconds(),
+            (next_bkp - now).total_seconds(),
+        )
+        time.sleep(max(sleep_secs, 30))
 
-        # Async funksiyani yangi event loop'da ishlatamiz (threading muhiti)
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(_send_low_stock_report(bot, admin_chat_id))
-            loop.close()
-        except Exception as exc:
-            _log.error("Scheduler xato: %s", exc)
+        now = datetime.now()
+        tasks = []
+
+        if abs((now - next_ls.replace(second=0, microsecond=0)).total_seconds()) < 90:
+            tasks.append(_send_low_stock_report(bot, admin_chat_id))
+
+        if abs((now - next_bkp.replace(second=0, microsecond=0)).total_seconds()) < 90:
+            tasks.append(send_backup_to_telegram(bot, SUPERADMIN_CHAT_ID))
+
+        if tasks:
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                for coro in tasks:
+                    loop.run_until_complete(coro)
+                loop.close()
+            except Exception as exc:
+                _log.error("Scheduler xato: %s", exc)
 
 
-def start_scheduler(bot, admin_chat_id: str, hour: int = 8) -> None:
+def start_scheduler(bot, admin_chat_id: str, low_stock_hour: int = 8, backup_hour: int = 3) -> None:
     """Scheduler'ni daemon threadda ishga tushiradi."""
     if not admin_chat_id:
         _log.info("ADMIN_CHAT_ID o'rnatilmagan — scheduler o'chirildi.")
@@ -92,9 +181,9 @@ def start_scheduler(bot, admin_chat_id: str, hour: int = 8) -> None:
     import threading
     t = threading.Thread(
         target=_schedule_loop,
-        args=(bot, admin_chat_id, hour),
+        args=(bot, admin_chat_id, low_stock_hour, backup_hour),
         daemon=True,
-        name="low-stock-scheduler",
+        name="topmart-scheduler",
     )
     t.start()
-    _log.info("Low-stock scheduler thread ishga tushdi.")
+    _log.info("Scheduler thread ishga tushdi.")

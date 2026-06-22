@@ -387,8 +387,19 @@ async def pdf_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await query.message.reply_text(f"❌ PDF yaratishda xatolik: {e}")
 
 
+async def cmd_backup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Qo'lda backup yaratish — faqat superadmin uchun."""
+    chat_id = update.effective_chat.id
+    if chat_id != SUPERADMIN_CHAT_ID:
+        await update.message.reply_text("❌ Faqat superadmin uchun.")
+        return
+    from ..scheduler import send_backup_to_telegram
+    await send_backup_to_telegram(context.bot, chat_id)
+
+
 def register(app) -> None:
     app.add_handler(CommandHandler("hisobot", cmd_hisobot))
+    app.add_handler(CommandHandler("backup",  cmd_backup))
     app.add_handler(MessageHandler(
         filters.Regex(r"^📊 Savdo Hisobot$"),
         cmd_hisobot,

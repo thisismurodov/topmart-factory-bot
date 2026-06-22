@@ -74,7 +74,8 @@ def init_db() -> None:
               ADD COLUMN IF NOT EXISTS minimum_stock    INTEGER NOT NULL DEFAULT 0,
               ADD COLUMN IF NOT EXISTS active           BOOLEAN NOT NULL DEFAULT TRUE,
               ADD COLUMN IF NOT EXISTS weight           NUMERIC(12,3) NOT NULL DEFAULT 1,
-              ADD COLUMN IF NOT EXISTS created_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+              ADD COLUMN IF NOT EXISTS created_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+              ADD COLUMN IF NOT EXISTS pieces_per_box   INTEGER NOT NULL DEFAULT 1
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS batches (
@@ -891,21 +892,39 @@ def get_today_batches(worker_filter: list[str] | None = None) -> list[dict]:
         if worker_filter:
             placeholders = ",".join(["%s"] * len(worker_filter))
             cur.execute(
-                f"""SELECT batch_code, worker, product, quantity, weight_kg, earnings, created_at
-                    FROM batches
-                    WHERE created_at::date = CURRENT_DATE
-                      AND worker IN ({placeholders})
-                    ORDER BY id""",
+                f"""SELECT b.batch_code, b.worker, b.product, b.quantity,
+                           b.weight_kg, b.earnings, b.created_at,
+                           COALESCE(p.pieces_per_box, 1) AS pieces_per_box
+                    FROM batches b
+                    LEFT JOIN products p ON p.name = b.product
+                    WHERE b.created_at::date = CURRENT_DATE
+                      AND b.worker IN ({placeholders})
+                    ORDER BY b.id""",
                 worker_filter,
             )
         else:
             cur.execute(
-                """SELECT batch_code, worker, product, quantity, weight_kg, earnings, created_at
-                   FROM batches
-                   WHERE created_at::date = CURRENT_DATE
-                   ORDER BY id"""
+                """SELECT b.batch_code, b.worker, b.product, b.quantity,
+                          b.weight_kg, b.earnings, b.created_at,
+                          COALESCE(p.pieces_per_box, 1) AS pieces_per_box
+                   FROM batches b
+                   LEFT JOIN products p ON p.name = b.product
+                   WHERE b.created_at::date = CURRENT_DATE
+                   ORDER BY b.id"""
             )
         return cur.fetchall()
+
+
+def set_product_pieces_per_box(name: str, pieces_per_box: int) -> bool:
+    """Mahsulot uchun qutidagi dona sonini o'rnatadi."""
+    if pieces_per_box < 1:
+        pieces_per_box = 1
+    with get_conn() as (conn, cur):
+        cur.execute(
+            "UPDATE products SET pieces_per_box=%s WHERE name=%s",
+            (pieces_per_box, name),
+        )
+        return (cur.rowcount or 0) > 0
 
 
 def get_monthly_kpi(year: int, month: int) -> list[dict]:

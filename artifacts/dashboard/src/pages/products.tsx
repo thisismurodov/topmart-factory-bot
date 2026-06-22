@@ -42,6 +42,7 @@ type Product = {
   profit: number;
   marginPct: number;
   minimumStock: number;
+  piecesPerBox: number;
   active: boolean;
   createdAt: string;
 };
@@ -87,6 +88,7 @@ const productSchema = z.object({
   electricityCost: z.coerce.number().min(0),
   otherCost: z.coerce.number().min(0),
   minimumStock: z.coerce.number().min(0).int(),
+  piecesPerBox: z.coerce.number().int().min(1).default(1),
   active: z.boolean().default(true),
   payrollMethod: z.enum(["PRODUCT_RATE", "ROLE_BASED_KG"]).default("PRODUCT_RATE"),
 });
@@ -648,6 +650,7 @@ function ProductDialog({
       electricityCost: product?.electricityCost ?? 0,
       otherCost: product?.otherCost ?? 0,
       minimumStock: product?.minimumStock ?? 0,
+      piecesPerBox: product?.piecesPerBox ?? 1,
       active: product?.active ?? true,
     },
   });
@@ -868,6 +871,24 @@ function ProductDialog({
                         </FormItem>
                       )}
                     />
+                    <FormField
+                      control={form.control}
+                      name="piecesPerBox"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>
+                            Dona/quti
+                            <span className="text-muted-foreground font-normal ml-1 text-xs">(etiketika)</span>
+                          </FormLabel>
+                          <FormControl>
+                            <Input type="number" step="1" min={1} {...field} />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div />
                     <FormField
                       control={form.control}
                       name="active"

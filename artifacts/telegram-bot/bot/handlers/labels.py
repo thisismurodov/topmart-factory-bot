@@ -53,18 +53,26 @@ async def send_label_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text("❌ Partiya topilmadi.")
         return
 
+    import math
     worker = items[0]["worker"]
     total_qty = sum(int(i["quantity"]) for i in items)
+    # Etiketika soni: qutili mahsulotlarda dona emas, quti soni chiqadi
+    total_labels = sum(
+        math.ceil(int(i["quantity"]) / max(1, int(i.get("pieces_per_box") or 1)))
+        for i in items
+    )
+    label_note = "" if total_labels == total_qty else f" ({total_labels} ta etiketika)"
     await query.edit_message_text(
-        f"🖨️ *{batch_code}* — {total_qty} ta stiker tayyorlanmoqda…",
+        f"🖨️ *{batch_code}* — {total_qty} dona{label_note}, tayyorlanmoqda…",
         parse_mode="Markdown",
     )
 
     pdf_items = [
         {
-            "product":   r["product"],
-            "quantity":  r["quantity"],
-            "weight_kg": r["weight_kg"] or 0.0,
+            "product":       r["product"],
+            "quantity":      r["quantity"],
+            "weight_kg":     r["weight_kg"] or 0.0,
+            "pieces_per_box": int(r.get("pieces_per_box") or 1),
         }
         for r in items
     ]

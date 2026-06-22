@@ -47,6 +47,12 @@ async function initDb() {
       ADD COLUMN IF NOT EXISTS weight NUMERIC(12,3) NOT NULL DEFAULT 1
   `);
 
+  // products.pieces_per_box — qutidagi dona soni (etiketika: 1 quti = N dona)
+  await pool.query(`
+    ALTER TABLE IF EXISTS products
+      ADD COLUMN IF NOT EXISTS pieces_per_box INTEGER NOT NULL DEFAULT 1
+  `);
+
   // raw_materials.currency — xom ashyo valyutasi (UZS yoki USD)
   await pool.query(`
     ALTER TABLE IF EXISTS raw_materials

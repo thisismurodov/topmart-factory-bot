@@ -91,6 +91,7 @@ def _build_single(
     total_units: int,
     unit_weight: float,
     ts: datetime,
+    per_box: int = 1,
 ) -> Image.Image:
     date_str   = ts.strftime("%d.%m.%Y")
     time_str   = ts.strftime("%H:%M")
@@ -130,7 +131,15 @@ def _build_single(
     for line in prod_lines:
         draw.text((PAD_L, y), line, font=F_PROD, fill="black")
         y += _text_h(draw, line, F_PROD) + 3
-    y += 2
+
+    # ── Satır 3b: Qutidagi dona (faqat qutili mahsulotlar uchun) ──
+    if per_box > 1:
+        box_txt = f"📦 {per_box} dona/quti"
+        F_BOX = _font(21, bold=False)
+        draw.text((PAD_L, y), box_txt, font=F_BOX, fill="#444444")
+        y += _text_h(draw, box_txt, F_BOX) + 4
+    else:
+        y += 2
 
     # ── Satır 4: Ishchi ───────────────────────────────────────────
     draw.text((PAD_L, y), f"Ishchi: {worker}", font=F_INFO, fill="black")
@@ -184,22 +193,39 @@ def generate_batch_session_pdf(
     created_at: datetime | None = None,
 ) -> io.BytesIO:
     """Bitta batch_code ostidagi BARCHA mahsulotlar uchun yagona PDF.
-    Har bir mahsulot o'z stikerlariga ega (quantity dona, N/M raqamlash mahsulot ichida).
+    Har bir mahsulot o'z stikerlariga ega.
+    pieces_per_box > 1 bo'lsa: N/M = quti raqami, og'irlik = quti og'irligi.
 
-    items: [{"product", "quantity", "weight_kg"}]
+    items: [{"product", "quantity", "weight_kg", "pieces_per_box"}]
     """
+    import math
     ts = created_at or datetime.now()
     png_pages: list[bytes] = []
     for it in items:
-        product   = it["product"]
-        quantity  = int(it["quantity"])
-        weight_kg = float(it.get("weight_kg") or 0.0)
-        unit_weight = (weight_kg / quantity) if quantity > 0 else 0.0
-        for i in range(1, quantity + 1):
-            img = _build_single(batch_code, worker, product, i, quantity, unit_weight, ts)
-            buf = io.BytesIO()
-            img.save(buf, format="PNG", dpi=(_DPI, _DPI))
-            png_pages.append(buf.getvalue())
+        product    = it["product"]
+        quantity   = int(it["quantity"])
+        weight_kg  = float(it.get("weight_kg") or 0.0)
+        per_box    = max(1, int(it.get("pieces_per_box") or 1))
+
+        if per_box > 1:
+            # Qutili rejim: har bir qutiga 1 ta etiketika
+            num_labels  = math.ceil(quantity / per_box)
+            box_weight  = (weight_kg / num_labels) if num_labels > 0 else 0.0
+            for i in range(1, num_labels + 1):
+                img = _build_single(batch_code, worker, product, i, num_labels,
+                                    box_weight, ts, per_box=per_box)
+                buf = io.BytesIO()
+                img.save(buf, format="PNG", dpi=(_DPI, _DPI))
+                png_pages.append(buf.getvalue())
+        else:
+            # Donabay rejim (hozirgi xatti-harakat): har donaga 1 ta etiketika
+            unit_weight = (weight_kg / quantity) if quantity > 0 else 0.0
+            for i in range(1, quantity + 1):
+                img = _build_single(batch_code, worker, product, i, quantity,
+                                    unit_weight, ts, per_box=1)
+                buf = io.BytesIO()
+                img.save(buf, format="PNG", dpi=(_DPI, _DPI))
+                png_pages.append(buf.getvalue())
 
     pdf_bytes = img2pdf.convert(
         png_pages,

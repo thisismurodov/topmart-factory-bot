@@ -244,6 +244,11 @@ def init_db() -> None:
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_ppt_product ON product_price_tiers(product_id)
         """)
+        # line_id — mahsulotni ishlab chiqarish liniyasiga bog'lash (ROLE_BASED_KG uchun)
+        cur.execute("""
+            ALTER TABLE products
+              ADD COLUMN IF NOT EXISTS line_id INTEGER REFERENCES production_lines(id) ON DELETE SET NULL
+        """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS packer_product_assignments (
                 id           SERIAL PRIMARY KEY,

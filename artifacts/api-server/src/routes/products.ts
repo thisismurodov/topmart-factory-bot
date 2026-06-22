@@ -13,6 +13,8 @@ router.get("/products", async (_req, res): Promise<void> => {
       p.default_sale_price, p.weight, p.rate, p.rate_type,
       p.salary_cost, p.electricity_cost, p.other_cost,
       p.minimum_stock, p.active, p.created_at, p.payroll_method,
+      p.line_id,
+      pl.name AS line_name,
       COALESCE(p.pieces_per_box, 1) AS pieces_per_box,
       COALESCE(
         (SELECT SUM(rm.default_cost * pm.quantity_required * CASE WHEN UPPER(rm.currency)='USD' THEN $1::numeric ELSE 1 END)
@@ -21,6 +23,7 @@ router.get("/products", async (_req, res): Promise<void> => {
          WHERE pm.product_name = p.name), 0
       ) AS raw_material_cost
     FROM products p
+    LEFT JOIN production_lines pl ON pl.id = p.line_id
     ORDER BY p.name
   `, [rate]);
 
@@ -59,6 +62,8 @@ router.get("/products", async (_req, res): Promise<void> => {
       rate:               Number(row.rate),
       rateType:           row.rate_type,
       payrollMethod:      row.payroll_method ?? "PRODUCT_RATE",
+      lineId:             row.line_id ?? null,
+      lineName:           row.line_name ?? null,
       salaryCost:         laborCost,        // jami mehnat (stavkadan)
       electricityCost:    elecBase,
       otherCost:          otherBase,
@@ -81,6 +86,7 @@ router.post("/products", async (req, res): Promise<void> => {
     defaultSalePrice = 0, weight = 1, rate = 0, rateType,
     salaryCost = 0, electricityCost = 0, otherCost = 0,
     minimumStock = 0, active = true, piecesPerBox = 1,
+    lineId = null,
   } = req.body ?? {};
 
   if (!name || typeof name !== "string" || name.trim().length === 0) {
@@ -101,19 +107,21 @@ router.post("/products", async (req, res): Promise<void> => {
   }
 
   try {
+    const finalLineId = lineId != null && !isNaN(Number(lineId)) ? Number(lineId) : null;
     const { rows } = await pool.query(
       `INSERT INTO products
          (name, sku, unit_type, currency_type, default_sale_price, weight, rate, rate_type,
-          salary_cost, electricity_cost, other_cost, minimum_stock, active, pieces_per_box)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+          salary_cost, electricity_cost, other_cost, minimum_stock, active, pieces_per_box, line_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
        ON CONFLICT (name) DO UPDATE SET
          sku=$2, unit_type=$3, currency_type=$4, default_sale_price=$5, weight=$6, rate=$7, rate_type=$8,
-         salary_cost=$9, electricity_cost=$10, other_cost=$11, minimum_stock=$12, active=$13, pieces_per_box=$14
+         salary_cost=$9, electricity_cost=$10, other_cost=$11, minimum_stock=$12, active=$13,
+         pieces_per_box=$14, line_id=$15
        RETURNING id, name, sku, unit_type, currency_type, default_sale_price, weight, rate, rate_type,
-                 salary_cost, electricity_cost, other_cost, minimum_stock, active, pieces_per_box`,
+                 salary_cost, electricity_cost, other_cost, minimum_stock, active, pieces_per_box, line_id`,
       [name.trim(), sku, unitType, currencyType, Number(defaultSalePrice), finalWeight, Number(rate),
        finalRateType, Number(salaryCost), Number(electricityCost), Number(otherCost),
-       Number(minimumStock), Boolean(active), Math.max(1, Number(piecesPerBox) || 1)]
+       Number(minimumStock), Boolean(active), Math.max(1, Number(piecesPerBox) || 1), finalLineId]
     );
     const p = rows[0];
     res.status(201).json({
@@ -156,7 +164,7 @@ router.patch("/products/:name", async (req, res): Promise<void> => {
     ["default_sale_price", "defaultSalePrice"], ["weight", "weight"], ["rate", "rate"], ["rate_type", "rateType"],
     ["salary_cost", "salaryCost"], ["electricity_cost", "electricityCost"],
     ["other_cost", "otherCost"], ["minimum_stock", "minimumStock"], ["active", "active"],
-    ["payroll_method", "payrollMethod"], ["pieces_per_box", "piecesPerBox"],
+    ["payroll_method", "payrollMethod"], ["pieces_per_box", "piecesPerBox"], ["line_id", "lineId"],
   ];
 
   for (const [col, key] of allowed) {

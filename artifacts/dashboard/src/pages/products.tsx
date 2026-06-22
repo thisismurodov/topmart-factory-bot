@@ -23,6 +23,8 @@ import { Plus, Trash2, Pencil, Package } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
+type ProductionLine = { id: number; name: string };
+
 type Product = {
   id: number;
   name: string;
@@ -35,6 +37,8 @@ type Product = {
   rate: number;
   rateType: string;
   payrollMethod?: string;
+  lineId?: number | null;
+  lineName?: string | null;
   electricityCost: number;
   otherCost: number;
   rawMaterialCost: number;
@@ -91,6 +95,7 @@ const productSchema = z.object({
   piecesPerBox: z.coerce.number().int().min(1).default(1),
   active: z.boolean().default(true),
   payrollMethod: z.enum(["PRODUCT_RATE", "ROLE_BASED_KG"]).default("PRODUCT_RATE"),
+  lineId: z.coerce.number().nullable().optional(),
 });
 type ProductForm = z.infer<typeof productSchema>;
 
@@ -147,6 +152,18 @@ function useBom(productName: string | null) {
       return res.json();
     },
     enabled: !!productName,
+  });
+}
+
+function useProductionLines() {
+  return useQuery<ProductionLine[]>({
+    queryKey: ["production-lines"],
+    queryFn: async () => {
+      const res = await authFetch("/api/payroll/lines");
+      if (!res.ok) return [];
+      return res.json();
+    },
+    staleTime: 60 * 1000,
   });
 }
 
@@ -295,14 +312,15 @@ function CostSummary({
 }) {
   // dona: sotuv narxi = 1 dona narxi (og'irlikka ko'paytirilmaydi).
   // kg: sotuv narxi = narx/kg × og'irlik.
-  // ROLE_BASED_KG: maosh ishlab chiqarish liniyasidan keladi (bu yerda 0).
+  // ROLE_BASED_KG: maosh liniya umumiy summasi (rate) × og'irlik.
   // Barcha qiymatlar UZS'da — USD jonli kursda aylantiriladi.
   const isKg      = unitType === "kg";
   const isRolePay = payrollMethod === "ROLE_BASED_KG";
   const w         = weight > 0 ? weight : 1;
   const saleRate  = currencyType === "USD" ? (usdRate > 0 ? usdRate : 1) : 1;
   const effSale   = salePrice * saleRate * (isKg ? w : 1);
-  const effSalary = isRolePay ? 0 : (rateType === "kg" ? rate * w : rate);
+  // ROLE_BASED_KG: rate = kg başına umumiy liniya maoshi (×og'irlik); PRODUCT_RATE: odatiy hisob
+  const effSalary = isRolePay ? rate * w : (rateType === "kg" ? rate * w : rate);
   // dona: elektr/boshqa = 1 dona narxi (og'irlikka ko'paytirilmaydi)
   // kg:   elektr/boshqa = narx/kg × og'irlik
   const effElec   = isKg ? electricityCost * w : electricityCost;
@@ -324,17 +342,14 @@ function CostSummary({
         <span>Xom ashyo xarajati</span>
         <span className="font-mono">{fmt(rawMaterialCost)}</span>
       </div>
-      {isRolePay ? (
-        <div className="flex justify-between text-muted-foreground">
-          <span>Maosh (rol bo'yicha, liniyadan)</span>
-          <span className="font-mono text-amber-600">—</span>
-        </div>
-      ) : (
-        <div className="flex justify-between text-muted-foreground">
-          <span>Maosh{rateType === "kg" ? ` (×${w})` : ""}</span>
-          <span className="font-mono">{fmt(effSalary)}</span>
-        </div>
-      )}
+      <div className="flex justify-between text-muted-foreground">
+        <span>
+          {isRolePay ? "Liniya maoshi (×og'irlik)" : `Maosh${rateType === "kg" ? ` (×${w})` : ""}`}
+        </span>
+        <span className={`font-mono ${isRolePay && effSalary === 0 ? "text-amber-500" : ""}`}>
+          {effSalary > 0 ? fmt(effSalary) : "—"}
+        </span>
+      </div>
       <div className="flex justify-between text-muted-foreground">
         <span>Elektr xarajati{isKg ? ` (×${w})` : ""}</span>
         <span className="font-mono">{fmt(effElec)}</span>
@@ -647,6 +662,7 @@ function ProductDialog({
       weight: product?.weight ?? 1,
       rate: product?.rate ?? 0,
       payrollMethod: (product?.payrollMethod as "PRODUCT_RATE" | "ROLE_BASED_KG") ?? "PRODUCT_RATE",
+      lineId: product?.lineId ?? null,
       electricityCost: product?.electricityCost ?? 0,
       otherCost: product?.otherCost ?? 0,
       minimumStock: product?.minimumStock ?? 0,
@@ -663,7 +679,9 @@ function ProductDialog({
   const watchedOther          = form.watch("otherCost");
   const watchedCurrency       = form.watch("currencyType");
   const watchedPayrollMethod  = form.watch("payrollMethod");
+  const watchedLineId         = form.watch("lineId");
   const { data: exRate } = useExchangeRate();
+  const { data: lines = [] } = useProductionLines();
 
   function onSubmit(values: ProductForm) {
     if (isEdit) {
@@ -933,33 +951,69 @@ function ProductDialog({
                             </SelectItem>
                           </SelectContent>
                         </Select>
+                      </FormItem>
+                    )}
+                  />
+
+                  {watchedPayrollMethod === "ROLE_BASED_KG" && (
+                    <FormField
+                      control={form.control}
+                      name="lineId"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Ishlab chiqarish liniyasi</FormLabel>
+                          <Select
+                            onValueChange={v => field.onChange(v === "none" ? null : Number(v))}
+                            value={field.value != null ? String(field.value) : "none"}
+                          >
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Liniyani tanlang…" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="none">— Tanlanmagan —</SelectItem>
+                              {lines.map(l => (
+                                <SelectItem key={l.id} value={String(l.id)}>{l.name}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          {lines.length === 0 && (
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Liniyalar yo'q — avval Maosh sahifasida liniya qo'shing
+                            </p>
+                          )}
+                        </FormItem>
+                      )}
+                    />
+                  )}
+
+                  <FormField
+                    control={form.control}
+                    name="rate"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>
+                          {watchedPayrollMethod === "ROLE_BASED_KG"
+                            ? "Liniya umumiy maoshi"
+                            : "Maosh stavkasi"}
+                          <span className="text-muted-foreground font-normal ml-1 text-xs">
+                            (so'm/kg)
+                          </span>
+                        </FormLabel>
+                        <FormControl>
+                          <Input type="number" step="0.01" min={0} {...field} />
+                        </FormControl>
                         {watchedPayrollMethod === "ROLE_BASED_KG" && (
-                          <p className="text-xs text-amber-700 mt-1">
-                            Maosh ishlab chiqarish liniyasidan avtomatik: Produktor 1125/kg · Tayyorlash 375/kg · Qadoqlash 750/kg
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {watchedLineId
+                              ? `Liniya ${lines.find(l => l.id === watchedLineId)?.name ?? ""} uchun 1 kg ga to'lanadigan jami maosh`
+                              : "Har kg ishlab chiqarilganda ushbu liniyaga to'lanadigan jami maosh"}
                           </p>
                         )}
                       </FormItem>
                     )}
                   />
-                  {watchedPayrollMethod !== "ROLE_BASED_KG" && (
-                    <FormField
-                      control={form.control}
-                      name="rate"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>
-                            Maosh stavkasi
-                            <span className="text-muted-foreground font-normal ml-1 text-xs">
-                              ({watchedUnitType === "kg" ? "so'm/kg" : "so'm/dona"})
-                            </span>
-                          </FormLabel>
-                          <FormControl>
-                            <Input type="number" step="0.01" min={0} {...field} />
-                          </FormControl>
-                        </FormItem>
-                      )}
-                    />
-                  )}
                 </div>
               </div>
 

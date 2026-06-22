@@ -1597,3 +1597,70 @@ def get_stock_by_warehouse_typed() -> dict:
         pt = r["product_type"] if r["product_type"] in ("finished", "raw") else "finished"
         result[pt].append(r)
     return result
+
+
+# ── Sales report ──────────────────────────────────────────────────────────────
+
+def get_sales_report_summary(from_date: str, to_date: str) -> dict:
+    """Savdo hisoboti uchun umumiy statistika (from_date/to_date: 'YYYY-MM-DD')."""
+    with get_conn() as (conn, cur):
+        cur.execute("""
+            SELECT
+              COUNT(DISTINCT s.id)::int AS sale_count,
+              COUNT(DISTINCT s.id) FILTER (WHERE s.status='paid')::int AS paid_count,
+              COUNT(DISTINCT s.id) FILTER (WHERE s.status IN ('pending','partial'))::int AS pending_count,
+              COALESCE(SUM(si.line_total) FILTER (WHERE LOWER(si.currency)='usd'), 0) AS total_usd,
+              COALESCE(SUM(si.line_total) FILTER (WHERE LOWER(si.currency)='uzs'), 0) AS total_uzs
+            FROM sales s
+            LEFT JOIN sale_items si ON si.sale_id = s.id
+            WHERE s.created_at::date BETWEEN %s AND %s
+        """, (from_date, to_date))
+        stats = dict(cur.fetchone() or {})
+
+        cur.execute("""
+            SELECT si.product_name,
+                   ROUND(SUM(si.quantity)::numeric, 2) AS total_qty,
+                   COALESCE(SUM(si.line_total) FILTER (WHERE LOWER(si.currency)='usd'), 0) AS rev_usd,
+                   COALESCE(SUM(si.line_total) FILTER (WHERE LOWER(si.currency)='uzs'), 0) AS rev_uzs
+            FROM sales s
+            JOIN sale_items si ON si.sale_id = s.id
+            WHERE s.created_at::date BETWEEN %s AND %s
+            GROUP BY si.product_name
+            ORDER BY rev_usd DESC, rev_uzs DESC
+            LIMIT 10
+        """, (from_date, to_date))
+        products = cur.fetchall()
+
+        cur.execute("""
+            SELECT s.customer_name,
+                   COUNT(DISTINCT s.id)::int AS sale_count,
+                   COALESCE(SUM(si.line_total) FILTER (WHERE LOWER(si.currency)='usd'), 0) AS total_usd,
+                   COALESCE(SUM(si.line_total) FILTER (WHERE LOWER(si.currency)='uzs'), 0) AS total_uzs
+            FROM sales s
+            LEFT JOIN sale_items si ON si.sale_id = s.id
+            WHERE s.created_at::date BETWEEN %s AND %s
+            GROUP BY s.customer_name
+            ORDER BY total_usd DESC, total_uzs DESC
+            LIMIT 10
+        """, (from_date, to_date))
+        customers = cur.fetchall()
+
+        cur.execute("""
+            SELECT s.id, s.created_at::date AS date, s.customer_name,
+                   s.status, s.payment_type,
+                   si.product_name, si.quantity, si.sale_type,
+                   si.unit_price, si.currency, si.line_total
+            FROM sales s
+            JOIN sale_items si ON si.sale_id = s.id
+            WHERE s.created_at::date BETWEEN %s AND %s
+            ORDER BY s.created_at DESC, s.id, si.id
+            LIMIT 200
+        """, (from_date, to_date))
+        items = cur.fetchall()
+
+    return {
+        "stats": stats,
+        "products": [dict(r) for r in products],
+        "customers": [dict(r) for r in customers],
+        "items": [dict(r) for r in items],
+    }

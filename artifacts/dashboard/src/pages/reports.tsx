@@ -173,6 +173,15 @@ function ExportSection() {
         >
           <Download className="w-4 h-4" /> Excel
         </button>
+        <button
+          onClick={() => {
+            const params = new URLSearchParams({ from, to });
+            window.open(`/api/reports/sales-pdf?${params}`, "_blank");
+          }}
+          className="inline-flex items-center gap-2 h-9 px-4 rounded-md border border-red-200 bg-red-50 text-red-700 text-sm font-medium hover:bg-red-100"
+        >
+          <Download className="w-4 h-4" /> PDF
+        </button>
       </div>
     </div>
   );

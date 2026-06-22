@@ -22,6 +22,7 @@ def admin_reply_keyboard() -> ReplyKeyboardMarkup:
             ["📋 Bugungi partiyalar", "🏷️ Etiketka"],
             ["📊 KPI Hisobot", "💰 Maosh"],
             ["🛒 Savdo", "📊 Savdolar"],
+            ["📊 Savdo Hisobot"],
             ["➕ Sotuv Tovar", "📦 Tovarlar"],
             ["💳 Nasiyalar", "🏬 Ombor"],
             ["⚙️ Admin panel"],

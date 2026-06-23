@@ -46,7 +46,7 @@ def calc_earnings(
         method = get_product_method(product)
     if method == "ROLE_BASED_KG":
         # Ishchining liniya roli berilsa — shu rolning stavkasini ishlatamiz.
-        # packaging/preparation uchun bu taxminiy (kun yopilganda pool bo'linadi).
+        # Har ishchi o'z stavkasida to'liq maosh oladi (bo'linmaydi, darhol).
         role = worker_role if worker_role in ("producer", "packaging", "preparation") else "producer"
         return weight_kg * get_role_rate(role)
     for name, rate_type, rate in get_products():

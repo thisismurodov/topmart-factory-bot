@@ -203,22 +203,15 @@ async def _add_item(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     lines = []
     total = 0.0
-    has_shared_role = False
     for idx, it in enumerate(items, 1):
         total += it["earnings"]
-        role = it.get("worker_role")
-        approx = role in ("packaging", "preparation")
-        if approx:
-            has_shared_role = True
-        prefix = "~" if approx else ""
-        lines.append(f"{idx}. {it['product']} — {_item_detail(it)} · {prefix}{it['earnings']:,.0f} so'm")
+        lines.append(f"{idx}. {it['product']} — {_item_detail(it)} · {it['earnings']:,.0f} so'm")
 
-    note = "\n_~ taxminiy (kun yopilganda bo'linadi)_" if has_shared_role else ""
     await message.reply_text(
         f"➕ *Qo'shildi:* {product} ({_item_detail(items[-1])})\n\n"
         f"🧾 *Joriy partiya ({len(items)} ta mahsulot):*\n"
         + "\n".join(lines)
-        + f"\n\n💰 Jami haq: *~{total:,.0f} so'm*{note}\n\n"
+        + f"\n\n💰 Jami haq: *{total:,.0f} so'm*\n\n"
         f"Yana mahsulot qo'shasizmi yoki tugatasizmi?",
         parse_mode="Markdown",
         reply_markup=batch_cart_keyboard(),
@@ -391,6 +384,13 @@ async def _finalize(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     await _notify_worker(context, worker, batch_code, items, total)
     await _notify_admin(context, worker, batch_code, items, total, wh_name)
+    # ROLE_BASED_KG: boshqa roldagi ishchilarga ham xabarnoma
+    line_entries = result.get("line_entries", [])
+    if line_entries:
+        total_qty_str = ", ".join(
+            f"{it['product']} — {_item_detail(it)}" for it in items
+        )
+        await _notify_line_workers(context, batch_code, total_qty_str, line_entries)
 
     context.user_data.clear()
     return ConversationHandler.END
@@ -448,6 +448,48 @@ async def _notify_admin(
         )
     except Exception:
         pass
+
+
+ROLE_UZ = {
+    "producer":    "Ishlab chiqaruvchi",
+    "preparation": "Tayyorlash",
+    "packaging":   "Upakovka",
+    "packer":      "Upakovka",
+    "o'rash":      "O'rash",
+}
+
+
+async def _notify_line_workers(
+    context: ContextTypes.DEFAULT_TYPE,
+    batch_code: str,
+    prod_summary: str,
+    line_entries: list[dict],
+) -> None:
+    """Liniyaning boshqa roldagi ishchilariga darhol maosh haqida xabar yuboradi."""
+    for e in line_entries:
+        chat_id = get_worker_chat_id(e["worker"])
+        if not chat_id:
+            continue
+        role_label = ROLE_UZ.get(e["role"], e["role"])
+        qty_val  = e.get("qty_val", 0)
+        qty_unit = e.get("qty_unit", "kg")
+        rate     = e.get("rate", 0)
+        amount   = e.get("amount", 0)
+        try:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    f"💵 *Maosh hisoblandi!*\n\n"
+                    f"📌 Partiya: `{batch_code}`\n"
+                    f"📦 {prod_summary}\n"
+                    f"🧩 Rol: {role_label}\n"
+                    f"📐 {qty_val:g} {qty_unit} × {rate:,.0f} so'm\n"
+                    f"💰 Haq: *{amount:,.0f} so'm*"
+                ),
+                parse_mode="Markdown",
+            )
+        except Exception:
+            pass
 
 
 async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:

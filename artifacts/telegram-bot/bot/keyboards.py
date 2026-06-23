@@ -136,5 +136,4 @@ def admin_main_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("📋 Hodimlar ro'yxati",     callback_data="adm:list_workers")],
         [InlineKeyboardButton("📦 Mahsulotlar ro'yxati",  callback_data="adm:list_products")],
         [InlineKeyboardButton("💰 Maosh boshqaruvi",      callback_data="adm:salary")],
-        [InlineKeyboardButton("🔒 Kunni yopish",          callback_data="adm:close_day")],
     ])

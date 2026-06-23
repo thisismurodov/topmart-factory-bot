@@ -378,7 +378,7 @@ router.get("/payroll/worker-earnings", async (_req, res): Promise<void> => {
        UNION ALL
        SELECT worker, work_date AS d, kg::numeric AS kg, amount::numeric AS amt
        FROM salary_entries
-       WHERE source_type = 'daily_shared'
+       WHERE source_type IN ('daily_shared', 'batch')
      )
      SELECT ev.worker,
        (SELECT pl.name FROM production_line_workers plw

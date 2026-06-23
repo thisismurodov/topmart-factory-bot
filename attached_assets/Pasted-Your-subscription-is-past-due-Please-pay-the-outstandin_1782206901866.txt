@@ -1,0 +1,151 @@
+Your subscription is past due. Please pay the outstanding balance to avoid service disruption and continue using Railway.
+View Details
+
+sunny-expression
+
+production
+
+
+
+Agent
+
+
+topmart-factory-bot
+Deployments
+Backups
+Variables
+Metrics
+Console
+Settings
+Unexposed service
+US East
+1 Replica
+
+HISTORY
+Hide Skipped
+topmart-factory-bot
+/
+13fda2eb
+Crashed
+
+Jun 23, 2026 at 2:26 PM GMT+5
+Get Help
+Details
+Build Logs
+Deploy Logs
+Network Flow Logs
+Filter and search logs
+
+PL/pgSQL function inline_code_block line 3 at SQL statement
+    main()
+  File "/app/bot/database.py", line 272, in init_db
+  File "/app/main.py", line 35, in main
+    cur.execute("""
+    init_db()
+    return super().execute(query, vars)
+  File "/usr/local/lib/python3.11/site-packages/psycopg2/extras.py", line 236, in execute
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-06-23 09:27:31,757 | INFO | __main__ | Initialising database …
+psycopg2.errors.CheckViolation: check constraint "products_role_kg_requires_kg" of relation "products" is violated by some row
+Traceback (most recent call last):
+  File "/app/main.py", line 64, in <module>
+2026-06-23 09:27:35,116 | INFO | __main__ | Initialising database …
+Traceback (most recent call last):
+  File "/app/main.py", line 64, in <module>
+    main()
+  File "/app/main.py", line 35, in main
+    init_db()
+  File "/app/bot/database.py", line 272, in init_db
+    cur.execute("""
+  File "/usr/local/lib/python3.11/site-packages/psycopg2/extras.py", line 236, in execute
+    return super().execute(query, vars)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+psycopg2.errors.CheckViolation: check constraint "products_role_kg_requires_kg" of relation "products" is violated by some row
+CONTEXT:  SQL statement "ALTER TABLE products ADD CONSTRAINT products_role_kg_requires_kg
+                  CHECK (payroll_method <> 'ROLE_BASED_KG' OR rate_type = 'kg')"
+PL/pgSQL function inline_code_block line 3 at SQL statement
+Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/ebf3ce58-a7c9-4120-ae94-11cfacc19539/vol_e9estv8v2orsbefn
+2026-06-23 09:27:37,946 | INFO | __main__ | Initialising database …
+Traceback (most recent call last):
+  File "/app/main.py", line 64, in <module>
+    main()
+  File "/app/main.py", line 35, in main
+    init_db()
+  File "/app/bot/database.py", line 272, in init_db
+    cur.execute("""
+  File "/usr/local/lib/python3.11/site-packages/psycopg2/extras.py", line 236, in execute
+    return super().execute(query, vars)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+psycopg2.errors.CheckViolation: check constraint "products_role_kg_requires_kg" of relation "products" is violated by some row
+CONTEXT:  SQL statement "ALTER TABLE products ADD CONSTRAINT products_role_kg_requires_kg
+                  CHECK (payroll_method <> 'ROLE_BASED_KG' OR rate_type = 'kg')"
+PL/pgSQL function inline_code_block line 3 at SQL statement
+Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/ebf3ce58-a7c9-4120-ae94-11cfacc19539/vol_e9estv8v2orsbefn
+Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/ebf3ce58-a7c9-4120-ae94-11cfacc19539/vol_e9estv8v2orsbefn
+2026-06-23 09:27:41,045 | INFO | __main__ | Initialising database …
+  File "/app/bot/database.py", line 272, in init_db
+Traceback (most recent call last):
+  File "/app/main.py", line 64, in <module>
+    main()
+  File "/app/main.py", line 35, in main
+    init_db()
+    cur.execute("""
+  File "/usr/local/lib/python3.11/site-packages/psycopg2/extras.py", line 236, in execute
+    return super().execute(query, vars)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+psycopg2.errors.CheckViolation: check constraint "products_role_kg_requires_kg" of relation "products" is violated by some row
+CONTEXT:  SQL statement "ALTER TABLE products ADD CONSTRAINT products_role_kg_requires_kg
+                  CHECK (payroll_method <> 'ROLE_BASED_KG' OR rate_type = 'kg')"
+PL/pgSQL function inline_code_block line 3 at SQL statement
+                  CHECK (payroll_method <> 'ROLE_BASED_KG' OR rate_type = 'kg')"
+2026-06-23 09:27:45,751 | INFO | __main__ | Initialising database …
+PL/pgSQL function inline_code_block line 3 at SQL statement
+Traceback (most recent call last):
+  File "/app/main.py", line 64, in <module>
+    main()
+  File "/app/main.py", line 35, in main
+    init_db()
+  File "/app/bot/database.py", line 272, in init_db
+    cur.execute("""
+  File "/usr/local/lib/python3.11/site-packages/psycopg2/extras.py", line 236, in execute
+    return super().execute(query, vars)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+psycopg2.errors.CheckViolation: check constraint "products_role_kg_requires_kg" of relation "products" is violated by some row
+CONTEXT:  SQL statement "ALTER TABLE products ADD CONSTRAINT products_role_kg_requires_kg
+Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/ebf3ce58-a7c9-4120-ae94-11cfacc19539/vol_e9estv8v2orsbefn
+Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/ebf3ce58-a7c9-4120-ae94-11cfacc19539/vol_e9estv8v2orsbefn
+2026-06-23 09:27:49,300 | INFO | __main__ | Initialising database …
+Traceback (most recent call last):
+  File "/app/main.py", line 64, in <module>
+    main()
+  File "/app/main.py", line 35, in main
+    init_db()
+  File "/app/bot/database.py", line 272, in init_db
+    cur.execute("""
+  File "/usr/local/lib/python3.11/site-packages/psycopg2/extras.py", line 236, in execute
+    return super().execute(query, vars)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+psycopg2.errors.CheckViolation: check constraint "products_role_kg_requires_kg" of relation "products" is violated by some row
+CONTEXT:  SQL statement "ALTER TABLE products ADD CONSTRAINT products_role_kg_requires_kg
+                  CHECK (payroll_method <> 'ROLE_BASED_KG' OR rate_type = 'kg')"
+PL/pgSQL function inline_code_block line 3 at SQL statement
+Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/ebf3ce58-a7c9-4120-ae94-11cfacc19539/vol_e9estv8v2orsbefn
+  File "/app/main.py", line 35, in main
+    init_db()
+  File "/app/bot/database.py", line 272, in init_db
+    cur.execute("""
+Traceback (most recent call last):
+  File "/app/main.py", line 64, in <module>
+    main()
+2026-06-23 09:27:52,524 | INFO | __main__ | Initialising database …
+  File "/usr/local/lib/python3.11/site-packages/psycopg2/extras.py", line 236, in execute
+    return super().execute(query, vars)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+psycopg2.errors.CheckViolation: check constraint "products_role_kg_requires_kg" of relation "products" is violated by some row
+CONTEXT:  SQL statement "ALTER TABLE products ADD CONSTRAINT products_role_kg_requires_kg
+                  CHECK (payroll_method <> 'ROLE_BASED_KG' OR rate_type = 'kg')"
+PL/pgSQL function inline_code_block line 3 at SQL statement
+You reached the end of the range
+Jun 23, 2026 at 2:27 PM
+
+

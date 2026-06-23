@@ -6,7 +6,25 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import { ChevronDown, ChevronRight, HardHat, Save, Package, Search } from "lucide-react";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { ChevronDown, ChevronRight, HardHat, Save, Package, Search, Pencil, Trash2 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type PackerProduct = {
@@ -20,6 +38,13 @@ type Packer = {
   products: PackerProduct[];
 };
 
+type Worker = {
+  name: string;
+  prefix: string;
+  phone: string;
+  role: string;
+};
+
 type Product = {
   id: number;
   name: string;
@@ -30,6 +55,7 @@ type Product = {
 // ── Keys ──────────────────────────────────────────────────────────────────────
 const PACKER_ASSIGNMENTS_KEY = ["packer-assignments"];
 const ALL_PRODUCTS_KEY = ["v3-products"];
+const WORKERS_KEY = ["workers"];
 
 // ── Hooks ─────────────────────────────────────────────────────────────────────
 function usePackerAssignments() {
@@ -48,6 +74,17 @@ function useAllProducts() {
     queryKey: ALL_PRODUCTS_KEY,
     queryFn: async () => {
       const res = await authFetch("/api/products");
+      if (!res.ok) throw new Error("Yuklashda xato");
+      return res.json();
+    },
+  });
+}
+
+function useWorkers() {
+  return useQuery<Worker[]>({
+    queryKey: WORKERS_KEY,
+    queryFn: async () => {
+      const res = await authFetch("/api/workers");
       if (!res.ok) throw new Error("Yuklashda xato");
       return res.json();
     },
@@ -79,12 +116,196 @@ function useSetPackerAssignments() {
   });
 }
 
+function useUpdateWorker() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: {
+      currentName: string;
+      name: string;
+      prefix: string;
+      phone: string;
+      role: string;
+    }) => {
+      const res = await authFetch("/api/workers/update", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as any).error ?? "Yangilashda xato");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: WORKERS_KEY });
+      qc.invalidateQueries({ queryKey: PACKER_ASSIGNMENTS_KEY });
+    },
+  });
+}
+
+function useDeleteWorker() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (name: string) => {
+      const res = await authFetch("/api/workers/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as any).error ?? "O'chirishda xato");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: WORKERS_KEY });
+      qc.invalidateQueries({ queryKey: PACKER_ASSIGNMENTS_KEY });
+    },
+  });
+}
+
+// ── Edit Dialog ───────────────────────────────────────────────────────────────
+function EditPackerDialog({
+  open,
+  onClose,
+  worker,
+}: {
+  open: boolean;
+  onClose: () => void;
+  worker: Worker;
+}) {
+  const [name, setName] = useState(worker.name);
+  const [phone, setPhone] = useState(worker.phone ?? "");
+  const [prefix, setPrefix] = useState(worker.prefix ?? "");
+  const updateMut = useUpdateWorker();
+
+  function handleSave() {
+    if (!name.trim()) return;
+    updateMut.mutate(
+      {
+        currentName: worker.name,
+        name: name.trim(),
+        prefix: prefix.trim() || worker.prefix,
+        phone: phone.trim(),
+        role: worker.role,
+      },
+      { onSuccess: onClose },
+    );
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={v => !v && onClose()}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Packerni tahrirlash</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 py-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="edit-name">Ism</Label>
+            <Input
+              id="edit-name"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="Ism familiya"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="edit-phone">Telefon raqami</Label>
+            <Input
+              id="edit-phone"
+              value={phone}
+              onChange={e => setPhone(e.target.value)}
+              placeholder="+998901234567"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="edit-prefix">Prefiks (qisqartma)</Label>
+            <Input
+              id="edit-prefix"
+              value={prefix}
+              onChange={e => setPrefix(e.target.value.toUpperCase())}
+              placeholder="AB"
+              maxLength={4}
+            />
+          </div>
+        </div>
+        {updateMut.error && (
+          <p className="text-xs text-destructive px-0.5">
+            {(updateMut.error as Error).message}
+          </p>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={updateMut.isPending}>
+            Bekor qilish
+          </Button>
+          <Button onClick={handleSave} disabled={!name.trim() || updateMut.isPending}>
+            {updateMut.isPending ? "Saqlanmoqda..." : "Saqlash"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Delete Confirm ─────────────────────────────────────────────────────────────
+function DeletePackerDialog({
+  open,
+  onClose,
+  worker,
+}: {
+  open: boolean;
+  onClose: () => void;
+  worker: Worker;
+}) {
+  const deleteMut = useDeleteWorker();
+
+  function handleDelete() {
+    deleteMut.mutate(worker.name, { onSuccess: onClose });
+  }
+
+  return (
+    <AlertDialog open={open} onOpenChange={v => !v && onClose()}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Packerni o'chirish</AlertDialogTitle>
+          <AlertDialogDescription>
+            <strong>{worker.name}</strong> ni ro'yxatdan o'chirasizmi? Barcha
+            belgilangan mahsulotlar ham olib tashlanadi. Bu amalni qaytarib
+            bo'lmaydi.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {deleteMut.error && (
+          <p className="text-xs text-destructive px-1">
+            {(deleteMut.error as Error).message}
+          </p>
+        )}
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={deleteMut.isPending}>
+            Bekor qilish
+          </AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            onClick={handleDelete}
+            disabled={deleteMut.isPending}
+          >
+            {deleteMut.isPending ? "O'chirilmoqda..." : "O'chirish"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
 // ── Packer card ───────────────────────────────────────────────────────────────
 function PackerCard({
   packer,
+  worker,
   allProducts,
 }: {
   packer: Packer;
+  worker: Worker | undefined;
   allProducts: Product[];
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -93,6 +314,8 @@ function PackerCard({
   );
   const [dirty, setDirty] = useState(false);
   const [search, setSearch] = useState("");
+  const [editOpen, setEditOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const saveMut = useSetPackerAssignments();
 
   const initials = packer.packerName
@@ -121,113 +344,163 @@ function PackerCard({
   function handleSave() {
     saveMut.mutate(
       { packerName: packer.packerName, productNames: Array.from(selected) },
-      {
-        onSuccess: () => setDirty(false),
-      },
+      { onSuccess: () => setDirty(false) },
     );
   }
 
   const assignedCount = selected.size;
 
   return (
-    <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
-      <button
-        type="button"
-        className="w-full flex items-center gap-4 px-5 py-4 hover:bg-muted/30 transition-colors text-left"
-        onClick={() => setExpanded(e => !e)}
-      >
-        <div className="w-10 h-10 rounded-full bg-[#0B5D2A] flex items-center justify-center text-white font-bold text-sm shrink-0">
-          {initials}
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="font-semibold">{packer.packerName}</div>
-          <div className="text-xs text-muted-foreground mt-0.5">
-            {assignedCount} ta mahsulot biriktirilgan
-          </div>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {assignedCount > 0 && (
-            <Badge className="bg-green-100 text-green-700 border border-green-200 hover:bg-green-100 shadow-none text-xs">
-              {assignedCount} mahsulot
-            </Badge>
-          )}
-          {expanded ? (
-            <ChevronDown className="w-4 h-4 text-muted-foreground" />
-          ) : (
-            <ChevronRight className="w-4 h-4 text-muted-foreground" />
-          )}
-        </div>
-      </button>
-
-      {expanded && (
-        <div className="border-t px-5 py-4 space-y-3">
-          {/* Search bar */}
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
-            <Input
-              placeholder={`${allProducts.length} ta mahsulotda qidirish…`}
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="pl-8 h-8 text-sm"
-            />
-          </div>
-
-          {/* Scroll container — max 420px, scrollable inside */}
-          <div className="max-h-[420px] overflow-y-auto rounded-lg border border-border pr-1">
-            {filteredProducts.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-6">
-                <Package className="w-6 h-6 mx-auto mb-1 opacity-30" />
-                Mahsulot topilmadi
-              </p>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 p-2">
-                {filteredProducts.map(product => {
-                  const checked = selected.has(product.name);
-                  return (
-                    <label
-                      key={product.name}
-                      className={`flex items-center gap-3 p-2.5 rounded-lg border cursor-pointer transition-colors ${
-                        checked
-                          ? "bg-[#0B5D2A]/5 border-[#0B5D2A]/30"
-                          : "border-border hover:bg-muted/30"
-                      } ${!product.active ? "opacity-50" : ""}`}
-                    >
-                      <Checkbox
-                        checked={checked}
-                        onCheckedChange={() => toggle(product.name)}
-                        className={checked ? "data-[state=checked]:bg-[#0B5D2A] data-[state=checked]:border-[#0B5D2A]" : ""}
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium truncate">{product.name}</div>
-                        <div className="text-xs text-muted-foreground">{product.unitType}</div>
-                      </div>
-                      {!product.active && (
-                        <Badge variant="secondary" className="text-xs shrink-0">Nofaol</Badge>
-                      )}
-                    </label>
-                  );
-                })}
+    <>
+      <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+        <div className="w-full flex items-center gap-4 px-5 py-4">
+          {/* Avatar — click to expand */}
+          <button
+            type="button"
+            className="flex items-center gap-4 flex-1 min-w-0 text-left hover:opacity-80 transition-opacity"
+            onClick={() => setExpanded(e => !e)}
+          >
+            <div className="w-10 h-10 rounded-full bg-[#0B5D2A] flex items-center justify-center text-white font-bold text-sm shrink-0">
+              {initials}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="font-semibold">{packer.packerName}</div>
+              <div className="text-xs text-muted-foreground mt-0.5">
+                {worker?.phone
+                  ? `${worker.phone} · `
+                  : ""}
+                {assignedCount} ta mahsulot biriktirilgan
               </div>
-            )}
-          </div>
+            </div>
+          </button>
 
-          <div className="flex items-center justify-between pt-1 border-t">
-            <p className="text-xs text-muted-foreground">
-              {selected.size} ta tanlangan · {allProducts.length} ta jami
-            </p>
+          {/* Actions */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            {assignedCount > 0 && (
+              <Badge className="bg-green-100 text-green-700 border border-green-200 hover:bg-green-100 shadow-none text-xs hidden sm:inline-flex">
+                {assignedCount} mahsulot
+              </Badge>
+            )}
             <Button
-              size="sm"
-              onClick={handleSave}
-              disabled={!dirty || saveMut.isPending}
-              className={dirty ? "" : "opacity-50"}
+              size="icon"
+              variant="ghost"
+              className="w-8 h-8 text-muted-foreground hover:text-foreground"
+              onClick={e => { e.stopPropagation(); setEditOpen(true); }}
+              title="Tahrirlash"
             >
-              <Save className="w-3.5 h-3.5 mr-1.5" />
-              {saveMut.isPending ? "Saqlanmoqda..." : "Saqlash"}
+              <Pencil className="w-3.5 h-3.5" />
             </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="w-8 h-8 text-muted-foreground hover:text-destructive"
+              onClick={e => { e.stopPropagation(); setDeleteOpen(true); }}
+              title="O'chirish"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </Button>
+            <button
+              type="button"
+              className="p-1 text-muted-foreground"
+              onClick={() => setExpanded(e => !e)}
+            >
+              {expanded ? (
+                <ChevronDown className="w-4 h-4" />
+              ) : (
+                <ChevronRight className="w-4 h-4" />
+              )}
+            </button>
           </div>
         </div>
+
+        {expanded && (
+          <div className="border-t px-5 py-4 space-y-3">
+            {/* Search bar */}
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+              <Input
+                placeholder={`${allProducts.length} ta mahsulotda qidirish…`}
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="pl-8 h-8 text-sm"
+              />
+            </div>
+
+            {/* Scroll container — max 420px, scrollable inside */}
+            <div className="max-h-[420px] overflow-y-auto rounded-lg border border-border pr-1">
+              {filteredProducts.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-6">
+                  <Package className="w-6 h-6 mx-auto mb-1 opacity-30" />
+                  Mahsulot topilmadi
+                </p>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 p-2">
+                  {filteredProducts.map(product => {
+                    const checked = selected.has(product.name);
+                    return (
+                      <label
+                        key={product.name}
+                        className={`flex items-center gap-3 p-2.5 rounded-lg border cursor-pointer transition-colors ${
+                          checked
+                            ? "bg-[#0B5D2A]/5 border-[#0B5D2A]/30"
+                            : "border-border hover:bg-muted/30"
+                        } ${!product.active ? "opacity-50" : ""}`}
+                      >
+                        <Checkbox
+                          checked={checked}
+                          onCheckedChange={() => toggle(product.name)}
+                          className={checked ? "data-[state=checked]:bg-[#0B5D2A] data-[state=checked]:border-[#0B5D2A]" : ""}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-medium truncate">{product.name}</div>
+                          <div className="text-xs text-muted-foreground">{product.unitType}</div>
+                        </div>
+                        {!product.active && (
+                          <Badge variant="secondary" className="text-xs shrink-0">Nofaol</Badge>
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between pt-1 border-t">
+              <p className="text-xs text-muted-foreground">
+                {selected.size} ta tanlangan · {allProducts.length} ta jami
+              </p>
+              <Button
+                size="sm"
+                onClick={handleSave}
+                disabled={!dirty || saveMut.isPending}
+                className={dirty ? "" : "opacity-50"}
+              >
+                <Save className="w-3.5 h-3.5 mr-1.5" />
+                {saveMut.isPending ? "Saqlanmoqda..." : "Saqlash"}
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Edit dialog */}
+      {worker && (
+        <EditPackerDialog
+          open={editOpen}
+          onClose={() => setEditOpen(false)}
+          worker={worker}
+        />
       )}
-    </div>
+
+      {/* Delete confirm */}
+      {worker && (
+        <DeletePackerDialog
+          open={deleteOpen}
+          onClose={() => setDeleteOpen(false)}
+          worker={worker}
+        />
+      )}
+    </>
   );
 }
 
@@ -235,9 +508,16 @@ function PackerCard({
 export default function Packers() {
   const { data: packers = [], isLoading: packersLoading } = usePackerAssignments();
   const { data: allProducts = [], isLoading: productsLoading } = useAllProducts();
+  const { data: workers = [] } = useWorkers();
 
   const isLoading = packersLoading || productsLoading;
   const activeProducts = allProducts.filter(p => p.active);
+
+  const workerByName = useMemo(() => {
+    const map: Record<string, Worker> = {};
+    for (const w of workers) map[w.name] = w;
+    return map;
+  }, [workers]);
 
   return (
     <div>
@@ -280,6 +560,7 @@ export default function Packers() {
             <PackerCard
               key={packer.packerName}
               packer={packer}
+              worker={workerByName[packer.packerName]}
               allProducts={activeProducts}
             />
           ))}

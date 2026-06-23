@@ -21,7 +21,11 @@ router.get("/products", async (_req, res): Promise<void> => {
          FROM product_materials pm
          JOIN raw_materials rm ON rm.id = pm.raw_material_id
          WHERE pm.product_name = p.name), 0
-      ) AS raw_material_cost
+      ) AS raw_material_cost,
+      CASE WHEN p.payroll_method = 'ROLE_BASED_KG' AND p.line_id IS NOT NULL
+        THEN COALESCE((SELECT SUM(rate) FROM line_role_config WHERE line_id = p.line_id), 0)
+        ELSE 0
+      END AS line_salary_rate
     FROM products p
     LEFT JOIN production_lines pl ON pl.id = p.line_id
     ORDER BY p.name
@@ -32,19 +36,20 @@ router.get("/products", async (_req, res): Promise<void> => {
     // jami = og'irlik × narx. Xom ashyo (BOM) allaqachon mutlaq miqdor bo'yicha.
     const w               = Number(row.weight) > 0 ? Number(row.weight) : 1;
     const salePriceBase   = Number(row.default_sale_price);
-    // USD narxli mahsulot sotuv narxini jonli kursda UZS'ga aylantiramiz — barcha
-    // xarajatlar (maosh/elektr/xom ashyo) UZS'da, shuning uchun foyda izchil UZS'da chiqadi.
     const saleRate        = String(row.currency_type) === "USD" ? rate : 1;
-    // mehnat (maosh) stavkadan hisoblanadi (yagona manba): kg → rate×og'irlik, dona → rate
-    const laborCost       = String(row.rate_type) === "kg" ? Number(row.rate) * w : Number(row.rate);
+    const isKg            = String(row.unit_type) === "kg";
+    const isRoleBased     = String(row.payroll_method) === "ROLE_BASED_KG";
+    const lineSalaryRate  = Number(row.line_salary_rate) || 0;
+    // ROLE_BASED_KG: liniya rollarining umumiy stavkasi (SUM(rate)) ishlatiladi.
+    // dona: 1 dona uchun SUM(rate); kg: SUM(rate) × og'irlik.
+    // PRODUCT_RATE: mahsulot stavkasi: kg → rate×og'irlik, dona → rate.
+    const laborCost       = isRoleBased
+      ? (isKg ? lineSalaryRate * w : lineSalaryRate)
+      : (String(row.rate_type) === "kg" ? Number(row.rate) * w : Number(row.rate));
     const elecBase        = Number(row.electricity_cost);
     const otherBase       = Number(row.other_cost);
     const rawCost         = Number(row.raw_material_cost);
-    // dona (piece) uchun sotuv narxi 1 dona narxi — og'irlikka ko'paytirish noto'g'ri.
-    // kg uchun: narx/kg × og'irlik = 1 birlik narxi. Elektr/boshqa hali ham × og'irlik.
-    const isKg            = String(row.unit_type) === "kg";
     const effectiveSale   = salePriceBase * saleRate * (isKg ? w : 1);
-    // dona: elektr/boshqa = sabit (og'irlikka ko'paytirilmaydi); kg: ×og'irlik
     const totalCost       = rawCost + laborCost + (isKg ? (elecBase + otherBase) * w : (elecBase + otherBase));
     const profit          = effectiveSale - totalCost;
     const marginPct       = effectiveSale > 0
@@ -56,15 +61,16 @@ router.get("/products", async (_req, res): Promise<void> => {
       sku:                row.sku,
       unitType:           row.unit_type,
       currencyType:       row.currency_type,
-      defaultSalePrice:   salePriceBase,   // 1 birlik narxi (tahrirlash uchun)
+      defaultSalePrice:   salePriceBase,
       weight:             w,
-      effectiveSalePrice: effectiveSale,    // jami sotuv narxi = narx × og'irlik
+      effectiveSalePrice: effectiveSale,
       rate:               Number(row.rate),
       rateType:           row.rate_type,
       payrollMethod:      row.payroll_method ?? "PRODUCT_RATE",
       lineId:             row.line_id ?? null,
       lineName:           row.line_name ?? null,
-      salaryCost:         laborCost,        // jami mehnat (stavkadan)
+      lineSalaryRate,
+      salaryCost:         laborCost,
       electricityCost:    elecBase,
       otherCost:          otherBase,
       rawMaterialCost:    rawCost,
@@ -183,7 +189,11 @@ router.get("/products/:name/profitability", async (req, res): Promise<void> => {
           FROM product_materials pm
           JOIN raw_materials rm ON rm.id = pm.raw_material_id
           WHERE pm.product_name = p.name
-        ), 0) AS raw_material_cost
+        ), 0) AS raw_material_cost,
+        CASE WHEN p.payroll_method = 'ROLE_BASED_KG' AND p.line_id IS NOT NULL
+          THEN COALESCE((SELECT SUM(rate) FROM line_role_config WHERE line_id = p.line_id), 0)
+          ELSE 0
+        END AS line_salary_rate
        FROM products p WHERE p.name=$1`, [productName, rate]
     ),
     pool.query(
@@ -200,11 +210,14 @@ router.get("/products/:name/profitability", async (req, res): Promise<void> => {
 
   const p = prodRes.rows[0];
   const s = salesRes.rows[0];
-  const w         = Number(p.weight) > 0 ? Number(p.weight) : 1;
-  const rawCost   = Number(p.raw_material_cost);
+  const w               = Number(p.weight) > 0 ? Number(p.weight) : 1;
+  const rawCost         = Number(p.raw_material_cost);
   const isKg            = String(p.unit_type) === "kg";
-  // mehnat: kg → rate×og'irlik, dona → rate; elektr/boshqa: kg → ×og'irlik, dona → sabit
-  const laborCost       = String(p.rate_type) === "kg" ? Number(p.rate) * w : Number(p.rate);
+  const isRoleBased     = String(p.payroll_method) === "ROLE_BASED_KG";
+  const lineSalaryRate  = Number(p.line_salary_rate) || 0;
+  const laborCost       = isRoleBased
+    ? (isKg ? lineSalaryRate * w : lineSalaryRate)
+    : (String(p.rate_type) === "kg" ? Number(p.rate) * w : Number(p.rate));
   const electricityCost = isKg ? Number(p.electricity_cost) * w : Number(p.electricity_cost);
   const otherCost       = isKg ? Number(p.other_cost) * w : Number(p.other_cost);
   // USD narx jonli kursda UZS'ga aylantiriladi (xarajatlar UZS'da — izchillik uchun).

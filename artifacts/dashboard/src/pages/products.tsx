@@ -39,6 +39,7 @@ type Product = {
   payrollMethod?: string;
   lineId?: number | null;
   lineName?: string | null;
+  lineSalaryRate?: number;
   electricityCost: number;
   otherCost: number;
   rawMaterialCost: number;
@@ -322,7 +323,7 @@ function useDeleteTier() {
 
 // ── Cost summary ──────────────────────────────────────────────────────────────
 function CostSummary({
-  rawMaterialCost, rate, rateType, electricityCost, otherCost, salePrice, weight, currencyType, usdRate, unitType, payrollMethod,
+  rawMaterialCost, rate, rateType, electricityCost, otherCost, salePrice, weight, currencyType, usdRate, unitType, payrollMethod, lineSalaryRate,
 }: {
   rawMaterialCost: number;
   rate: number;
@@ -335,22 +336,18 @@ function CostSummary({
   usdRate: number;
   unitType: string;
   payrollMethod?: string;
+  lineSalaryRate?: number;
 }) {
-  // dona: sotuv narxi = 1 dona narxi (og'irlikka ko'paytirilmaydi).
-  // kg: sotuv narxi = narx/kg × og'irlik.
-  // ROLE_BASED_KG: maosh liniya umumiy summasi (rate) × og'irlik.
-  // Barcha qiymatlar UZS'da — USD jonli kursda aylantiriladi.
   const isKg      = unitType === "kg";
   const isRolePay = payrollMethod === "ROLE_BASED_KG";
   const w         = weight > 0 ? weight : 1;
   const saleRate  = currencyType === "USD" ? (usdRate > 0 ? usdRate : 1) : 1;
   const effSale   = salePrice * saleRate * (isKg ? w : 1);
-  // ROLE_BASED_KG: rate = umumiy liniya maoshi; kg uchun ×og'irlik, dona uchun sabit
+  // ROLE_BASED_KG: lineSalaryRate = line_role_config SUM(rate) (API dan keladi yoki formda lineRoleCfg dan).
+  // dona: 1 dona uchun SUM(rate); kg: SUM(rate) × og'irlik.
   const effSalary = isRolePay
-    ? (isKg ? rate * w : rate)
+    ? (isKg ? (lineSalaryRate ?? 0) * w : (lineSalaryRate ?? 0))
     : (rateType === "kg" ? rate * w : rate);
-  // dona: elektr/boshqa = 1 dona narxi (og'irlikka ko'paytirilmaydi)
-  // kg:   elektr/boshqa = narx/kg × og'irlik
   const effElec   = isKg ? electricityCost * w : electricityCost;
   const effOther  = isKg ? otherCost * w : otherCost;
   const totalCost = rawMaterialCost + effSalary + effElec + effOther;
@@ -372,10 +369,14 @@ function CostSummary({
       </div>
       <div className="flex justify-between text-muted-foreground">
         <span>
-          {isRolePay ? "Liniya maoshi" : `Maosh${rateType === "kg" ? ` (×${w})` : ""}`}
+          {isRolePay
+            ? `Liniya maoshi${isKg ? ` (×${w})` : ""}`
+            : `Maosh${rateType === "kg" ? ` (×${w})` : ""}`}
         </span>
-        <span className="font-mono text-amber-500">
-          {isRolePay ? "kun yopilganda" : (effSalary > 0 ? fmt(effSalary) : "—")}
+        <span className={`font-mono ${isRolePay && !lineSalaryRate ? "text-amber-500 italic" : ""}`}>
+          {isRolePay
+            ? (lineSalaryRate ? fmt(effSalary) : "stavka kiritilmagan")
+            : (effSalary > 0 ? fmt(effSalary) : "—")}
         </span>
       </div>
       <div className="flex justify-between text-muted-foreground">
@@ -541,6 +542,7 @@ function BomTab({
         usdRate={exRate?.rate ?? 0}
         unitType={product.unitType}
         payrollMethod={product.payrollMethod}
+        lineSalaryRate={product.lineSalaryRate}
       />
     </div>
   );
@@ -1077,6 +1079,7 @@ function ProductDialog({
                   usdRate={exRate?.rate ?? 0}
                   unitType={watchedUnitType}
                   payrollMethod={watchedPayrollMethod}
+                  lineSalaryRate={lineRoleCfg.length > 0 ? lineRoleCfg.reduce((s, r) => s + r.rate, 0) : undefined}
                 />
               </div>
 

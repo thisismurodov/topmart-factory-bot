@@ -84,7 +84,7 @@ def main() -> None:
 
     start_scheduler(app.bot, ADMIN_CHAT_ID)
 
-    logger.info("TopMart Factory Bot started (polling) …")
+    logger.info("TopMart Factory Bot v3.1 started (polling) …")
     app.run_polling(drop_pending_updates=True)
 
 

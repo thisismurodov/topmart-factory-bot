@@ -96,16 +96,6 @@ router.post("/products", async (req, res): Promise<void> => {
   const finalRateType = rateType || unitType;
   const finalWeight   = Number(weight) > 0 ? Number(weight) : 1;
 
-  // Upsert mavjud mahsulotni yangilashi mumkin — ROLE_BASED_KG mahsulotni kg bo'lmagan
-  // turga o'tkazish invariantni buzmasligi uchun tekshiramiz (POST yo'li ham yopiq).
-  const existingProd = (
-    await pool.query("SELECT payroll_method FROM products WHERE name=$1", [name.trim()])
-  ).rows[0];
-  if (existingProd?.payroll_method === "ROLE_BASED_KG" && finalRateType !== "kg") {
-    res.status(400).json({ error: "ROLE_BASED_KG mahsulotni kg bo'lmagan turga o'tkazib bo'lmaydi" });
-    return;
-  }
-
   try {
     const finalLineId = lineId != null && !isNaN(Number(lineId)) ? Number(lineId) : null;
     const { rows } = await pool.query(
@@ -143,21 +133,6 @@ router.patch("/products/:name", async (req, res): Promise<void> => {
   const productName = decodeURIComponent(req.params.name);
   const fields: string[] = [];
   const vals: unknown[] = [];
-
-  // ROLE_BASED_KG faqat kg (rate_type='kg') mahsulotlar uchun ruxsat etiladi.
-  // Yakuniy holatni tekshiramiz: usulni o'zgartirish HAM, rate_type'ni o'zgartirish
-  // ham invariantni buzmasligi kerak (masalan ROLE_BASED_KG mahsulotni 'dona'ga o'tkazish).
-  if (req.body.payrollMethod !== undefined || req.body.rateType !== undefined) {
-    const cur = (
-      await pool.query("SELECT rate_type, payroll_method FROM products WHERE name=$1", [productName])
-    ).rows[0];
-    const nextRateType = req.body.rateType ?? cur?.rate_type;
-    const nextMethod = req.body.payrollMethod ?? cur?.payroll_method;
-    if (nextMethod === "ROLE_BASED_KG" && nextRateType !== "kg") {
-      res.status(400).json({ error: "ROLE_BASED_KG faqat kg mahsulotlar uchun" });
-      return;
-    }
-  }
 
   const allowed = [
     ["sku", "sku"], ["unit_type", "unitType"], ["currency_type", "currencyType"],

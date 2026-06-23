@@ -47,7 +47,7 @@ const RATE_ROLES = ["producer", "preparation", "packaging"];
 
 const METHOD_UZ: Record<string, string> = {
   PRODUCT_RATE: "Dona (mahsulot stavkasi)",
-  ROLE_BASED_KG: "Kg (rol asosida)",
+  ROLE_BASED_KG: "Liniya bo'yicha",
 };
 
 function roleLabel(role: string): string {
@@ -1195,7 +1195,6 @@ export default function Payroll() {
                         <TableCell>
                           <Select
                             value={p.payrollMethod || "PRODUCT_RATE"}
-                            disabled={p.rateType !== "kg"}
                             onValueChange={(method) => updateMethod.mutate({ name: p.name, method })}
                           >
                             <SelectTrigger className="max-w-[260px]" data-testid={`select-method-${p.name}`}>
@@ -1203,16 +1202,9 @@ export default function Payroll() {
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="PRODUCT_RATE">{METHOD_UZ.PRODUCT_RATE}</SelectItem>
-                              {(p.rateType === "kg" || p.payrollMethod === "ROLE_BASED_KG") && (
-                                <SelectItem value="ROLE_BASED_KG">{METHOD_UZ.ROLE_BASED_KG}</SelectItem>
-                              )}
+                              <SelectItem value="ROLE_BASED_KG">{METHOD_UZ.ROLE_BASED_KG}</SelectItem>
                             </SelectContent>
                           </Select>
-                          {p.rateType !== "kg" && (
-                            <p className="text-xs text-muted-foreground mt-1">
-                              Kg asosida faqat kg mahsulotlar uchun
-                            </p>
-                          )}
                         </TableCell>
                       </TableRow>
                     ))

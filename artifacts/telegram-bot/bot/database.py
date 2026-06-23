@@ -293,15 +293,9 @@ def init_db() -> None:
             ALTER TABLE batches
               ADD COLUMN IF NOT EXISTS payroll_method TEXT NOT NULL DEFAULT 'PRODUCT_RATE'
         """)
-        # ROLE_BASED_KG faqat kg mahsulotlar uchun — DB darajasidagi kafolat (barcha
-        # yozuv yo'llari uchun: API PATCH/POST, bot va h.k.). Idempotent qo'shamiz.
+        # Eski ROLE_BASED_KG→kg cheklovini olib tashlaymiz (dona mahsulotlar ham liniya ishlatishi mumkin)
         cur.execute("""
-            DO $$ BEGIN
-              IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='products_role_kg_requires_kg') THEN
-                ALTER TABLE products ADD CONSTRAINT products_role_kg_requires_kg
-                  CHECK (payroll_method <> 'ROLE_BASED_KG' OR rate_type = 'kg');
-              END IF;
-            END $$;
+            ALTER TABLE products DROP CONSTRAINT IF EXISTS products_role_kg_requires_kg
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS payroll_role_rates (

@@ -319,8 +319,10 @@ function CostSummary({
   const w         = weight > 0 ? weight : 1;
   const saleRate  = currencyType === "USD" ? (usdRate > 0 ? usdRate : 1) : 1;
   const effSale   = salePrice * saleRate * (isKg ? w : 1);
-  // ROLE_BASED_KG: rate = kg başına umumiy liniya maoshi (×og'irlik); PRODUCT_RATE: odatiy hisob
-  const effSalary = isRolePay ? rate * w : (rateType === "kg" ? rate * w : rate);
+  // ROLE_BASED_KG: rate = umumiy liniya maoshi; kg uchun ×og'irlik, dona uchun sabit
+  const effSalary = isRolePay
+    ? (isKg ? rate * w : rate)
+    : (rateType === "kg" ? rate * w : rate);
   // dona: elektr/boshqa = 1 dona narxi (og'irlikka ko'paytirilmaydi)
   // kg:   elektr/boshqa = narx/kg × og'irlik
   const effElec   = isKg ? electricityCost * w : electricityCost;
@@ -946,8 +948,8 @@ function ProductDialog({
                           </FormControl>
                           <SelectContent>
                             <SelectItem value="PRODUCT_RATE">Mahsulot stavkasi</SelectItem>
-                            <SelectItem value="ROLE_BASED_KG" disabled={watchedUnitType !== "kg"}>
-                              Rol bo'yicha kg{watchedUnitType !== "kg" ? " (faqat kg)" : ""}
+                            <SelectItem value="ROLE_BASED_KG">
+                              Liniya bo'yicha
                             </SelectItem>
                           </SelectContent>
                         </Select>
@@ -998,7 +1000,9 @@ function ProductDialog({
                             ? "Liniya umumiy maoshi"
                             : "Maosh stavkasi"}
                           <span className="text-muted-foreground font-normal ml-1 text-xs">
-                            (so'm/kg)
+                            ({watchedPayrollMethod === "ROLE_BASED_KG"
+                              ? (watchedUnitType === "kg" ? "so'm/kg" : "so'm/dona")
+                              : (watchedUnitType === "kg" ? "so'm/kg" : "so'm/dona")})
                           </span>
                         </FormLabel>
                         <FormControl>

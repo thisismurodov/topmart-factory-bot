@@ -541,6 +541,21 @@ def get_role_rate(role: str, scope: str = "arqon") -> float:
     return float(row["rate"]) if row else 0.0
 
 
+def get_worker_production_role(worker_name: str, product_name: str) -> str | None:
+    """Ishchining mahsulot liniyasidagi rolini qaytaradi (producer/packaging/preparation).
+    Topilmasa None qaytaradi."""
+    with get_conn() as (conn, cur):
+        cur.execute(
+            """SELECT plw.role FROM production_line_workers plw
+               JOIN products p ON p.line_id = plw.line_id
+               WHERE plw.worker_name = %s AND p.name = %s
+               LIMIT 1""",
+            (worker_name, product_name),
+        )
+        row = cur.fetchone()
+    return row["role"] if row else None
+
+
 def close_day(closed_by: str, scope: str = "arqon") -> dict:
     """Kunni yopadi — har bir ishlab chiqarish liniyasi uchun alohida (idempotent).
 

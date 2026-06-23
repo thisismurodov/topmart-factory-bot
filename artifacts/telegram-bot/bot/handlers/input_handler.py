@@ -13,6 +13,7 @@ from ..database import (
     create_batch_session, get_worker_chat_id, get_workers,
     get_products, get_product_weight, get_user_role, get_worker_monthly,
     get_product_method, get_containers, get_product_pieces_per_box,
+    get_worker_production_role,
 )
 from ..config import calc_earnings, SUPERADMIN_CHAT_ID
 from ..label_generator import generate_batch_session_pdf
@@ -176,10 +177,12 @@ async def _add_item(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     quantity  = context.user_data["quantity"]
     weight_kg = context.user_data.get("weight_kg", 0.0)
     qc        = context.user_data.get("weight_qc")
+    worker    = context.user_data.get("worker", "")
     # Usulni daromad bilan bir paytda (bir o'qishda) qayd etamiz — keyin partiyaga
     # shu usul saqlanadi, shunda ishlab chiqaruvchi to'lovi va snapshot mos bo'ladi.
     method        = get_product_method(product)
-    earnings      = calc_earnings(product, quantity, weight_kg, method=method)
+    worker_role   = get_worker_production_role(worker, product) if method == "ROLE_BASED_KG" else None
+    earnings      = calc_earnings(product, quantity, weight_kg, method=method, worker_role=worker_role)
     pieces_per_box = get_product_pieces_per_box(product)
 
     items = context.user_data.setdefault("items", [])
@@ -189,6 +192,7 @@ async def _add_item(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         "weight_kg":      weight_kg,
         "earnings":       earnings,
         "payroll_method": method,
+        "worker_role":    worker_role,
         "qc":             qc,
         "pieces_per_box": pieces_per_box,
     })
@@ -199,15 +203,22 @@ async def _add_item(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     lines = []
     total = 0.0
+    has_shared_role = False
     for idx, it in enumerate(items, 1):
         total += it["earnings"]
-        lines.append(f"{idx}. {it['product']} — {_item_detail(it)} · {it['earnings']:,.0f} so'm")
+        role = it.get("worker_role")
+        approx = role in ("packaging", "preparation")
+        if approx:
+            has_shared_role = True
+        prefix = "~" if approx else ""
+        lines.append(f"{idx}. {it['product']} — {_item_detail(it)} · {prefix}{it['earnings']:,.0f} so'm")
 
+    note = "\n_~ taxminiy (kun yopilganda bo'linadi)_" if has_shared_role else ""
     await message.reply_text(
         f"➕ *Qo'shildi:* {product} ({_item_detail(items[-1])})\n\n"
         f"🧾 *Joriy partiya ({len(items)} ta mahsulot):*\n"
         + "\n".join(lines)
-        + f"\n\n💰 Jami haq: *{total:,.0f} so'm*\n\n"
+        + f"\n\n💰 Jami haq: *~{total:,.0f} so'm*{note}\n\n"
         f"Yana mahsulot qo'shasizmi yoki tugatasizmi?",
         parse_mode="Markdown",
         reply_markup=batch_cart_keyboard(),

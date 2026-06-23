@@ -34,15 +34,21 @@ def normalize_phone(raw: str) -> str:
     return digits
 
 
-def calc_earnings(product: str, quantity: int, weight_kg: float, method: str | None = None) -> float:
+def calc_earnings(
+    product: str,
+    quantity: int,
+    weight_kg: float,
+    method: str | None = None,
+    worker_role: str | None = None,
+) -> float:
     from .database import get_products, get_product_method, get_role_rate
-    # method berilsa, daromad va partiyaga saqlanadigan usul AYNAN bir o'qishdan
-    # kelib chiqadi (sessiya davomida usul o'zgarsa ham mos qoladi).
     if method is None:
         method = get_product_method(product)
-    # Rolga asoslangan kg model (Arqon): ishlab chiqaruvchi = kg × producer stavkasi
     if method == "ROLE_BASED_KG":
-        return weight_kg * get_role_rate("producer")
+        # Ishchining liniya roli berilsa — shu rolning stavkasini ishlatamiz.
+        # packaging/preparation uchun bu taxminiy (kun yopilganda pool bo'linadi).
+        role = worker_role if worker_role in ("producer", "packaging", "preparation") else "producer"
+        return weight_kg * get_role_rate(role)
     for name, rate_type, rate in get_products():
         if name == product:
             if rate_type == "kg":

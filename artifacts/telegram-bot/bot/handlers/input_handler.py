@@ -94,7 +94,10 @@ async def enter_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             rate_type = rt
             break
 
-    if rate_type == "kg":
+    payroll_method = get_product_method(product)
+    needs_weight = rate_type == "kg" or payroll_method == "ROLE_BASED_KG"
+
+    if needs_weight:
         await update.message.reply_text(
             "⚖️ *Jami og'irlik (kg):*\n_Masalan: 205.5_",
             parse_mode="Markdown",

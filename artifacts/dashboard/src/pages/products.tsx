@@ -141,6 +141,20 @@ function useRoleRates() {
   });
 }
 
+function useLineRoleConfig(lineId: number | null | undefined) {
+  return useQuery<Array<{ roleKey: string; label: string; rate: number; maxWorkers: number }>>({
+    queryKey: ["line-role-config", lineId],
+    queryFn: async () => {
+      if (!lineId) return [];
+      const res = await authFetch(`/api/payroll/line-role-config/${lineId}`);
+      if (!res.ok) throw new Error("Liniya stavkalarini olishda xato");
+      return res.json();
+    },
+    enabled: !!lineId,
+    staleTime: 30 * 1000,
+  });
+}
+
 function useRawMaterials() {
   return useQuery<RawMaterial[]>({
     queryKey: RAW_MATERIALS_KEY,
@@ -697,6 +711,7 @@ function ProductDialog({
   const { data: exRate } = useExchangeRate();
   const { data: lines = [] } = useProductionLines();
   const { data: roleRates = [] } = useRoleRates();
+  const { data: lineRoleCfg = [] } = useLineRoleConfig(watchedLineId ?? null);
 
   function onSubmit(values: ProductForm) {
     if (isEdit) {
@@ -1005,20 +1020,23 @@ function ProductDialog({
 
                   {watchedPayrollMethod === "ROLE_BASED_KG" ? (
                     <div className="space-y-1.5">
-                      <p className="text-sm font-medium">Liniya stavkalari (so'm/kg)</p>
-                      <div className="rounded-md border bg-muted/30 p-2.5 grid grid-cols-3 gap-2 text-xs">
-                        {(["producer","packaging","preparation"] as const).map(role => {
-                          const r = roleRates.find(x => x.role === role && x.scope === "arqon");
-                          const labels: Record<string, string> = { producer: "Ishlab chiqaruvchi", packaging: "O'rash", preparation: "Tayyorlash" };
-                          return (
-                            <div key={role} className="flex flex-col items-center gap-0.5 rounded border bg-background p-1.5">
-                              <span className="text-muted-foreground text-center leading-tight">{labels[role]}</span>
-                              <span className="font-semibold font-mono">{r ? r.rate.toLocaleString() : "—"}</span>
+                      <p className="text-sm font-medium">Liniya stavkalari</p>
+                      {!watchedLineId ? (
+                        <p className="text-xs text-muted-foreground italic">Avval ishlab chiqarish liniyasini tanlang</p>
+                      ) : lineRoleCfg.length === 0 ? (
+                        <p className="text-xs text-amber-500">Bu liniya uchun rol konfiguratsiyasi yo'q</p>
+                      ) : (
+                        <div className={`rounded-md border bg-muted/30 p-2.5 grid gap-2 text-xs`}
+                          style={{ gridTemplateColumns: `repeat(${Math.min(lineRoleCfg.length, 4)}, 1fr)` }}>
+                          {lineRoleCfg.map(cfg => (
+                            <div key={cfg.roleKey} className="flex flex-col items-center gap-0.5 rounded border bg-background p-1.5">
+                              <span className="text-muted-foreground text-center leading-tight">{cfg.label || cfg.roleKey}</span>
+                              <span className="font-semibold font-mono">{cfg.rate.toLocaleString()}</span>
                             </div>
-                          );
-                        })}
-                      </div>
-                      <p className="text-xs text-muted-foreground">Stavkalarni o'zgartirish uchun → Maosh sahifasi</p>
+                          ))}
+                        </div>
+                      )}
+                      <p className="text-xs text-muted-foreground">Stavkalarni o'zgartirish uchun → Ishlab chiqarish liniyalari</p>
                     </div>
                   ) : (
                     <FormField

@@ -62,6 +62,28 @@ router.get("/payroll/role-rates", async (_req, res): Promise<void> => {
   );
 });
 
+// ── GET /payroll/line-role-config/:lineId — line-specific roles + rates ────────
+router.get("/payroll/line-role-config/:lineId", async (req, res): Promise<void> => {
+  const lineId = Number(req.params.lineId);
+  if (!Number.isFinite(lineId)) {
+    res.status(400).json({ error: "lineId noto'g'ri" });
+    return;
+  }
+  const { rows } = await pool.query(
+    `SELECT role_key, label, rate, max_workers
+     FROM line_role_config
+     WHERE line_id = $1
+     ORDER BY role_key`,
+    [lineId]
+  );
+  res.json(rows.map((r) => ({
+    roleKey:    r.role_key as string,
+    label:      r.label as string,
+    rate:       Number(r.rate),
+    maxWorkers: Number(r.max_workers),
+  })));
+});
+
 // ── PUT /payroll/role-rates — upsert a role rate ──────────────────────────────
 router.put("/payroll/role-rates", async (req, res): Promise<void> => {
   const parsed = UpdatePayrollRoleRateBody.safeParse(req.body);

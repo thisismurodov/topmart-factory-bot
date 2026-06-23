@@ -95,9 +95,8 @@ async def enter_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             break
 
     payroll_method = get_product_method(product)
-    needs_weight = rate_type == "kg" or payroll_method == "ROLE_BASED_KG"
 
-    if needs_weight:
+    if rate_type == "kg":
         await update.message.reply_text(
             "⚖️ *Jami og'irlik (kg):*\n_Masalan: 205.5_",
             parse_mode="Markdown",
@@ -105,7 +104,13 @@ async def enter_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return ENTER_WEIGHT
 
-    context.user_data["weight_kg"] = 0.0
+    # ROLE_BASED_KG + dona: weight_kg = quantity × dona_og'irligi (avtomatik)
+    if payroll_method == "ROLE_BASED_KG":
+        unit_weight = get_product_weight(product)  # kg/dona
+        quantity = context.user_data["quantity"]
+        context.user_data["weight_kg"] = unit_weight * quantity
+    else:
+        context.user_data["weight_kg"] = 0.0
     return await _add_item(update, context)
 
 

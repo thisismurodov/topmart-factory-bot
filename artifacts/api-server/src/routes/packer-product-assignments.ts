@@ -103,4 +103,64 @@ router.delete("/packer-assignments", async (req, res): Promise<void> => {
   res.json({ ok: true });
 });
 
+// ── GET /packer-worker-assignments — each packer with assigned workers ────────
+router.get("/packer-worker-assignments", async (_req, res): Promise<void> => {
+  const { rows: packers } = await pool.query(
+    "SELECT w.name, ur.chat_id FROM workers w LEFT JOIN user_roles ur ON ur.worker_name=w.name AND ur.role='packer' WHERE w.role='packer' ORDER BY w.name"
+  );
+  const { rows: assignments } = await pool.query(
+    "SELECT pa.packer_chat_id, pa.worker_name FROM packer_assignments pa"
+  );
+
+  const byChat: Record<string, string[]> = {};
+  for (const a of assignments) {
+    const key = String(a.packer_chat_id);
+    if (!byChat[key]) byChat[key] = [];
+    byChat[key].push(a.worker_name);
+  }
+
+  res.json(packers.map(p => ({
+    packerName: p.name,
+    chatId: p.chat_id ? Number(p.chat_id) : null,
+    workers: p.chat_id ? (byChat[String(p.chat_id)] ?? []) : [],
+  })));
+});
+
+// ── PUT /packer-worker-assignments/:packerName — set workers for packer ───────
+router.put("/packer-worker-assignments/:packerName", async (req, res): Promise<void> => {
+  const packerName = decodeURIComponent(req.params.packerName);
+  const { workerNames } = req.body ?? {};
+  if (!Array.isArray(workerNames)) {
+    res.status(400).json({ error: "workerNames array is required" }); return;
+  }
+
+  const { rows: ur } = await pool.query(
+    "SELECT chat_id FROM user_roles WHERE worker_name=$1 AND role='packer'",
+    [packerName]
+  );
+  if (ur.length === 0) {
+    res.status(404).json({ error: "Packer hali botdan ro'yxatdan o'tmagan (chat_id yo'q)" }); return;
+  }
+  const chatId = Number(ur[0].chat_id);
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("DELETE FROM packer_assignments WHERE packer_chat_id=$1", [chatId]);
+    for (const wn of workerNames) {
+      await client.query(
+        "INSERT INTO packer_assignments (packer_chat_id, worker_name) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+        [chatId, wn]
+      );
+    }
+    await client.query("COMMIT");
+    res.json({ ok: true, count: workerNames.length });
+  } catch (err: any) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 export default router;

@@ -263,23 +263,20 @@ def init_db() -> None:
                 value TEXT NOT NULL
             )
         """)
-        # product_type ustunini mavjud jadvallarga qo'shamiz (agar yo'q bo'lsa)
+        # product_type ustunini mavjud jadvallarga qo'shamiz (jadval bo'lmasa xato emas)
         cur.execute("""
-            ALTER TABLE stock_movements
-            ADD COLUMN IF NOT EXISTS product_type TEXT NOT NULL DEFAULT 'finished'
-        """)
-        # WMS: warehouses jadvaliga location_type va capacity_kg qo'shamiz
-        cur.execute("""
-            ALTER TABLE warehouses
-            ADD COLUMN IF NOT EXISTS location_type TEXT NOT NULL DEFAULT 'general'
-        """)
-        cur.execute("""
-            ALTER TABLE warehouses
-            ADD COLUMN IF NOT EXISTS capacity_kg NUMERIC DEFAULT 20000
-        """)
-        cur.execute("""
-            ALTER TABLE inventory
-            ADD COLUMN IF NOT EXISTS product_type TEXT NOT NULL DEFAULT 'finished'
+            DO $$ BEGIN
+              IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='stock_movements') THEN
+                ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS product_type TEXT NOT NULL DEFAULT 'finished';
+              END IF;
+              IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='warehouses') THEN
+                ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS location_type TEXT NOT NULL DEFAULT 'general';
+                ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS capacity_kg NUMERIC DEFAULT 20000;
+              END IF;
+              IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='inventory') THEN
+                ALTER TABLE inventory ADD COLUMN IF NOT EXISTS product_type TEXT NOT NULL DEFAULT 'finished';
+              END IF;
+            END $$;
         """)
         # ── Rolga asoslangan kg maosh (Arqon bo'limi) ────────────────────
         cur.execute("""

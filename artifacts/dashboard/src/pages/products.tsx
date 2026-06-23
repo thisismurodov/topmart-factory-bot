@@ -129,6 +129,18 @@ function useExchangeRate() {
   });
 }
 
+function useRoleRates() {
+  return useQuery<Array<{ scope: string; role: string; rate: number }>>({
+    queryKey: ["payroll-role-rates"],
+    queryFn: async () => {
+      const res = await authFetch("/api/payroll/role-rates");
+      if (!res.ok) throw new Error("Stavkalarni olishda xato");
+      return res.json();
+    },
+    staleTime: 60 * 1000,
+  });
+}
+
 function useRawMaterials() {
   return useQuery<RawMaterial[]>({
     queryKey: RAW_MATERIALS_KEY,
@@ -346,10 +358,10 @@ function CostSummary({
       </div>
       <div className="flex justify-between text-muted-foreground">
         <span>
-          {isRolePay ? "Liniya maoshi (×og'irlik)" : `Maosh${rateType === "kg" ? ` (×${w})` : ""}`}
+          {isRolePay ? "Liniya maoshi" : `Maosh${rateType === "kg" ? ` (×${w})` : ""}`}
         </span>
-        <span className={`font-mono ${isRolePay && effSalary === 0 ? "text-amber-500" : ""}`}>
-          {effSalary > 0 ? fmt(effSalary) : "—"}
+        <span className="font-mono text-amber-500">
+          {isRolePay ? "kun yopilganda" : (effSalary > 0 ? fmt(effSalary) : "—")}
         </span>
       </div>
       <div className="flex justify-between text-muted-foreground">
@@ -684,6 +696,7 @@ function ProductDialog({
   const watchedLineId         = form.watch("lineId");
   const { data: exRate } = useExchangeRate();
   const { data: lines = [] } = useProductionLines();
+  const { data: roleRates = [] } = useRoleRates();
 
   function onSubmit(values: ProductForm) {
     if (isEdit) {
@@ -990,34 +1003,42 @@ function ProductDialog({
                     />
                   )}
 
-                  <FormField
-                    control={form.control}
-                    name="rate"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>
-                          {watchedPayrollMethod === "ROLE_BASED_KG"
-                            ? "Liniya umumiy maoshi"
-                            : "Maosh stavkasi"}
-                          <span className="text-muted-foreground font-normal ml-1 text-xs">
-                            ({watchedPayrollMethod === "ROLE_BASED_KG"
-                              ? (watchedUnitType === "kg" ? "so'm/kg" : "so'm/dona")
-                              : (watchedUnitType === "kg" ? "so'm/kg" : "so'm/dona")})
-                          </span>
-                        </FormLabel>
-                        <FormControl>
-                          <Input type="number" step="0.01" min={0} {...field} />
-                        </FormControl>
-                        {watchedPayrollMethod === "ROLE_BASED_KG" && (
-                          <p className="text-xs text-muted-foreground mt-1">
-                            {watchedLineId
-                              ? `Liniya ${lines.find(l => l.id === watchedLineId)?.name ?? ""} uchun 1 kg ga to'lanadigan jami maosh`
-                              : "Har kg ishlab chiqarilganda ushbu liniyaga to'lanadigan jami maosh"}
-                          </p>
-                        )}
-                      </FormItem>
-                    )}
-                  />
+                  {watchedPayrollMethod === "ROLE_BASED_KG" ? (
+                    <div className="space-y-1.5">
+                      <p className="text-sm font-medium">Liniya stavkalari (so'm/kg)</p>
+                      <div className="rounded-md border bg-muted/30 p-2.5 grid grid-cols-3 gap-2 text-xs">
+                        {(["producer","packaging","preparation"] as const).map(role => {
+                          const r = roleRates.find(x => x.role === role && x.scope === "arqon");
+                          const labels: Record<string, string> = { producer: "Ishlab chiqaruvchi", packaging: "O'rash", preparation: "Tayyorlash" };
+                          return (
+                            <div key={role} className="flex flex-col items-center gap-0.5 rounded border bg-background p-1.5">
+                              <span className="text-muted-foreground text-center leading-tight">{labels[role]}</span>
+                              <span className="font-semibold font-mono">{r ? r.rate.toLocaleString() : "—"}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <p className="text-xs text-muted-foreground">Stavkalarni o'zgartirish uchun → Maosh sahifasi</p>
+                    </div>
+                  ) : (
+                    <FormField
+                      control={form.control}
+                      name="rate"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>
+                            Maosh stavkasi
+                            <span className="text-muted-foreground font-normal ml-1 text-xs">
+                              ({watchedUnitType === "kg" ? "so'm/kg" : "so'm/dona"})
+                            </span>
+                          </FormLabel>
+                          <FormControl>
+                            <Input type="number" step="0.01" min={0} {...field} />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                  )}
                 </div>
               </div>
 

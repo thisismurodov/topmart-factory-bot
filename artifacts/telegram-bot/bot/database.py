@@ -515,6 +515,16 @@ def get_product_weight(name: str) -> float:
     return 1.0
 
 
+def get_product_pieces_per_box(name: str) -> int:
+    """Mahsulotning qutisidagi dona soni. Topilmasa 1."""
+    with get_conn() as (conn, cur):
+        cur.execute("SELECT pieces_per_box FROM products WHERE name=%s", (name,))
+        row = cur.fetchone()
+    if row and row["pieces_per_box"] and int(row["pieces_per_box"]) > 1:
+        return int(row["pieces_per_box"])
+    return 1
+
+
 # ── Rolga asoslangan kg maosh (Arqon) ────────────────────────────────────────
 
 def get_product_method(name: str) -> str:

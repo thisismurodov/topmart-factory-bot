@@ -12,7 +12,7 @@ from ..keyboards import (
 from ..database import (
     create_batch_session, get_worker_chat_id, get_workers,
     get_products, get_product_weight, get_user_role, get_worker_monthly,
-    get_product_method, get_containers,
+    get_product_method, get_containers, get_product_pieces_per_box,
 )
 from ..config import calc_earnings, SUPERADMIN_CHAT_ID
 from ..label_generator import generate_batch_session_pdf
@@ -170,8 +170,9 @@ async def _add_item(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     qc        = context.user_data.get("weight_qc")
     # Usulni daromad bilan bir paytda (bir o'qishda) qayd etamiz — keyin partiyaga
     # shu usul saqlanadi, shunda ishlab chiqaruvchi to'lovi va snapshot mos bo'ladi.
-    method    = get_product_method(product)
-    earnings  = calc_earnings(product, quantity, weight_kg, method=method)
+    method        = get_product_method(product)
+    earnings      = calc_earnings(product, quantity, weight_kg, method=method)
+    pieces_per_box = get_product_pieces_per_box(product)
 
     items = context.user_data.setdefault("items", [])
     items.append({
@@ -181,6 +182,7 @@ async def _add_item(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         "earnings":       earnings,
         "payroll_method": method,
         "qc":             qc,
+        "pieces_per_box": pieces_per_box,
     })
 
     # Faqat joriy mahsulotning vaqtinchalik maydonlarini tozalaymiz (savat saqlanadi)
@@ -347,7 +349,13 @@ async def _finalize(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         reply_markup=kb,
     )
 
-    total_stickers = sum(int(it["quantity"]) for it in items)
+    import math
+    total_stickers = sum(
+        math.ceil(int(it["quantity"]) / max(1, int(it.get("pieces_per_box") or 1)))
+        for it in items
+    )
+    total_qty = sum(int(it["quantity"]) for it in items)
+    qty_note = f" ({total_qty} dona)" if total_stickers != total_qty else ""
     gen_msg = await message.reply_text(f"🖨️ {total_stickers} ta stiker tayyorlanmoqda…")
 
     pdf_buf = generate_batch_session_pdf(batch_code, worker, items, created)
@@ -356,7 +364,7 @@ async def _finalize(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         filename=f"{batch_code}.pdf",
         caption=(
             f"🏷️ *{batch_code}* — {worker}\n"
-            f"{len(items)} ta mahsulot · {total_stickers} ta stiker"
+            f"{len(items)} ta mahsulot · {total_stickers} ta stiker{qty_note}"
         ),
         parse_mode="Markdown",
     )

@@ -454,14 +454,13 @@ router.get("/payroll/day-status", async (_req, res): Promise<void> => {
        ORDER BY line_id, role, worker_name`
     ),
     pool.query(
-      `SELECT COALESCE(b.production_line_id, plw.line_id) AS production_line_id,
-              COALESCE(SUM(b.weight_kg), 0) AS kg
+      `SELECT COALESCE(b.production_line_id, p.line_id) AS production_line_id,
+              COALESCE(SUM(CASE WHEN p.rate_type = 'kg' THEN b.weight_kg ELSE b.quantity END), 0) AS kg
        FROM batches b
-       LEFT JOIN production_line_workers plw
-         ON plw.worker_name = b.worker AND plw.role = 'producer'
-         AND b.production_line_id IS NULL
-       WHERE (b.created_at AT TIME ZONE 'Asia/Tashkent')::date = $1
-       GROUP BY COALESCE(b.production_line_id, plw.line_id)`,
+       JOIN products p ON p.name = b.product
+       WHERE b.payroll_method = 'ROLE_BASED_KG'
+         AND (b.created_at AT TIME ZONE 'Asia/Tashkent')::date = $1
+       GROUP BY COALESCE(b.production_line_id, p.line_id)`,
       [today]
     ),
     pool.query(
@@ -545,9 +544,8 @@ router.get("/payroll/day-status", async (_req, res): Promise<void> => {
     if (lineCfg && lineCfg.size > 0) {
       roles = Array.from(lineCfg.entries()).map(([roleKey, cfg]) => {
         const rm = members.filter((m) => m.role === roleKey);
-        const isProducer = roleKey === "producer";
-        const pool2 = isProducer ? null : totalKg * cfg.rate;
-        const perWorker = isProducer ? null : (rm.length > 0 ? pool2! / rm.length : 0);
+        const pool2 = totalKg * cfg.rate;
+        const perWorker = rm.length > 0 ? pool2 / rm.length : 0;
         return { roleKey, label: cfg.label, rate: cfg.rate, maxWorkers: cfg.maxWorkers,
                  members: rm, pool: pool2, perWorker };
       });
@@ -696,24 +694,24 @@ router.post("/payroll/close-day", async (_req, res): Promise<void> => {
       }
 
       const { rows: kgRows } = await client.query(
-        `SELECT COALESCE(SUM(b.weight_kg), 0) AS total_kg
+        `SELECT COALESCE(SUM(CASE WHEN p.rate_type = 'kg' THEN b.weight_kg ELSE b.quantity END), 0) AS total_kg
          FROM batches b
-         LEFT JOIN production_line_workers plw
-           ON plw.worker_name = b.worker AND plw.role = 'producer'
-           AND b.production_line_id IS NULL
-         WHERE COALESCE(b.production_line_id, plw.line_id) = $1
+         JOIN products p ON p.name = b.product
+         WHERE b.payroll_method = 'ROLE_BASED_KG'
+           AND COALESCE(b.production_line_id, p.line_id) = $1
            AND (b.created_at AT TIME ZONE 'Asia/Tashkent')::date = $2`,
         [lineId, workDate]
       );
       const totalKg = Number(kgRows[0].total_kg);
       grandTotal += totalKg;
 
-      // Per-line non-producer roles: use line_role_config if configured, else global defaults
+      // Config line → pay ALL configured roles (incl producer) at close.
+      // Legacy line (no config) → producer paid per batch; pay prep/packaging pools here.
       const { rows: lineRoleCfgRows } = await client.query(
-        `SELECT role_key, rate FROM line_role_config WHERE line_id = $1 AND role_key != 'producer'`,
+        `SELECT role_key, rate FROM line_role_config WHERE line_id = $1`,
         [lineId]
       );
-      const nonProducerRoles: { role: string; rate: number }[] =
+      const payRoles: { role: string; rate: number }[] =
         lineRoleCfgRows.length > 0
           ? lineRoleCfgRows.map((r) => ({ role: r.role_key, rate: Number(r.rate) }))
           : [
@@ -721,7 +719,7 @@ router.post("/payroll/close-day", async (_req, res): Promise<void> => {
               { role: "packaging", rate: globalRates.packaging ?? 0 },
             ];
 
-      const roleKeys = nonProducerRoles.map((r) => r.role);
+      const roleKeys = payRoles.map((r) => r.role);
       const { rows: members } = await client.query(
         `SELECT worker_name, role FROM production_line_workers
          WHERE line_id = $1 AND role = ANY($2)
@@ -732,7 +730,7 @@ router.post("/payroll/close-day", async (_req, res): Promise<void> => {
       for (const m of members) counts[m.role] = (counts[m.role] ?? 0) + 1;
 
       const rateByRole: Record<string, number> = {};
-      for (const nr of nonProducerRoles) rateByRole[nr.role] = nr.rate;
+      for (const nr of payRoles) rateByRole[nr.role] = nr.rate;
 
       const entries: ResultLine["entries"] = [];
       for (const m of members) {

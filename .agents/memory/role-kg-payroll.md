@@ -5,11 +5,37 @@ description: Durable invariants/decisions for the ROLE_BASED_KG payroll engine �
 
 # Role-based kg payroll engine (Arqon dept)
 
-Two payroll methods per product: `PRODUCT_RATE` (dona, original flow) and
-`ROLE_BASED_KG` (kg). Payroll is organized by PRODUCTION LINE: each line has its own
-producers / preparation / packaging workers and its own daily kg total. Rates are
-GLOBAL per role (editable). Producers are paid per batch (kg × producer rate,
-immediate). Shared roles are paid at day-close.
+Two payroll methods per product: `PRODUCT_RATE` (original per-product-rate flow) and
+`ROLE_BASED_KG`. Payroll is organized by PRODUCTION LINE. There are now TWO kinds of
+line — CONFIG lines (have `line_role_config` rows) and LEGACY lines (none) — and they
+pay DIFFERENTLY. Read `## Config line vs legacy line` first; it overrides the older
+"producers per batch / kg-only / shared-kg basis" sections below for config lines.
+
+## Config line vs legacy line — the unit basis and attribution (NEW, authoritative)
+At day-close, ROLE_BASED_KG work is aggregated per line as WORK-UNITS, not kg:
+`units = SUM(CASE WHEN products.rate_type='kg' THEN batches.weight_kg ELSE batches.quantity END)`
+attributed via `COALESCE(batches.production_line_id, products.line_id)`, filtered to
+`batches.payroll_method='ROLE_BASED_KG'` (JOIN batches→products on name).
+- CONFIG line: pay EVERY configured role (INCLUDING producer) that has ≥1 worker:
+  `amount = units × line_role_config.rate ÷ (#workers in that role on the line)`.
+  The entering worker's per-batch `batches.earnings` is stored as 0 (paid at close) to
+  avoid double pay. The product `rate` column is NOT used to pay anyone on a config line.
+- LEGACY line: unchanged — producer paid per batch from product rate; prep/packaging
+  global-rate pools ÷count at close.
+**Why:** dona products (e.g. Qop Ip line 9: Qopiporash=100/dona, karopkalash=60/dona)
+have weight_kg=0, so the old kg-only pool gave them 0. Bot `close_day`, API close-day,
+AND any data-fix MUST use this identical SQL or they diverge. Example: 6000 dona, one
+Qopiporash worker → 600,000.
+**How to apply:** bot `create_batch_session` sets `production_line_id` from
+`products.line_id` (fallback producer lookup) and stores earnings=0 on config-line
+ROLE_BASED_KG batches; the old per-batch "other roles" block was removed. `calc_earnings`
+shows the entering worker's role-rate estimate via `get_line_role_rate_strict`; if the
+worker holds no configured role on a config line it returns 0 (not product rate) so the
+preview never promises pay the pool won't deliver.
+
+## (Legacy-only) producers paid per batch; rates GLOBAL per role
+Applies ONLY to LEGACY lines. Producers are paid per batch (kg × producer rate,
+immediate); preparation/packaging are paid at day-close as global-rate pools.
 
 ## Shared-role pay is a per-line POOL DIVIDED by worker count in that line
 - preparation pool = `line_total_kg × prepRate ÷ (#prep workers in that line)`
@@ -46,14 +72,17 @@ into `unassignedKg` (so it stays visible). Per-(line,role) add-worker uses
 `pg_advisory_xact_lock(hashtext('add_worker:{lineId}:{role}'))` + in-txn re-count so
 concurrent adds cannot exceed role caps (producers 5 / prep 3 / packaging 5).
 
-## ROLE_BASED_KG is kg-only — enforce at the DB, not just the app
-`payroll_method='ROLE_BASED_KG'` is only valid when `products.rate_type='kg'`.
-**Why:** multiple write paths can set/break this (API PATCH, API POST upsert, bot,
-manual SQL). App-level checks on one path leave the others open.
-**How to apply:** global backstop is a DB CHECK constraint
-`products_role_kg_requires_kg = CHECK(payroll_method <> 'ROLE_BASED_KG' OR rate_type='kg')`,
-added idempotently in bot `init_db()` AND applied directly to the Railway runtime DB.
-Not mirrored in Drizzle — a fresh Drizzle-only DB won't carry it unless `init_db()` runs.
+## ROLE_BASED_KG is NOT kg-only anymore — dona config lines are valid
+Earlier this engine assumed `ROLE_BASED_KG` ⇒ `rate_type='kg'` (with a DB CHECK
+`products_role_kg_requires_kg`). That invariant is OBSOLETE: config lines legitimately
+run dona products under ROLE_BASED_KG (Qop Ip line 9 products are `rate_type='dona'`,
+`payroll_method='ROLE_BASED_KG'`), so the close/preview math keys off `rate_type`
+(kg→weight_kg, dona→quantity) rather than rejecting dona.
+**Why:** the whole Qop Ip fix depends on paying dona work; a kg-only constraint would
+forbid the data that must exist.
+**How to apply:** do NOT re-add a kg-only CHECK; the live Railway DB does not enforce
+one on these rows. Treat units by `rate_type` everywhere (close_day, day-status,
+calc_earnings, data-fixes).
 
 ## Day-close is "computed once" — freeze, don't recompute; per (line, date)
 On first close of a line, snapshot kg/rate/amount into `salary_entries` (daily_shared)
@@ -65,12 +94,15 @@ and re-notify would double-message workers.
 inserts use `ON CONFLICT DO NOTHING`; a `pg_advisory_xact_lock` keyed on the line+date
 serializes concurrent double-clicks. Close-day runs from BOTH bot and dashboard.
 
-## Shared-kg basis must match what producers were actually paid
-Daily line kg (used for shared pay) must come from each batch's snapshot of the method
-at creation time, not the product's CURRENT method at close.
-**Why:** a product's method can change between batch creation and day close; producer
-`earnings` were already locked under the method at creation, so the shared kg total must
-use the same basis or the two diverge.
-**How to apply:** `batches.payroll_method` is snapshotted at batch creation. close_day
-and API day-status SUM `batches.weight_kg WHERE batches.payroll_method='ROLE_BASED_KG'`
-grouped by `production_line_id` (no join on current product method).
+## Shared pay basis uses the batch's snapshotted method, attribution via product line
+Daily line totals (for shared/role pay) filter on each batch's snapshot
+`batches.payroll_method='ROLE_BASED_KG'` (locked at creation), NOT the product's
+current method. Attribution is `COALESCE(batches.production_line_id, products.line_id)`
+(JOIN on product name) — needed because `production_line_id` is often NULL for
+non-producer/custom-role lines, and the unit basis comes from `products.rate_type`.
+**Why:** a product's method/rate can change between batch creation and day close;
+mixing bases makes producer per-batch pay and the close-day totals diverge, and a
+producer-only line fallback can't attribute lines that have no producer (Qop Ip).
+**How to apply:** close_day, API close-day, API day-status, and data-fixes all use the
+same `units` CASE + COALESCE attribution + ROLE_BASED_KG filter (see the config-line
+section above).

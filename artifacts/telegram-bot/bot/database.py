@@ -565,6 +565,19 @@ def get_worker_line_role_rate(worker_name: str, product_name: str) -> tuple:
     return None, 0.0
 
 
+def product_line_is_config(product_name: str) -> bool:
+    """Mahsulot liniyasida line_role_config bormi (config liniyami)? Legacy
+    (config'siz) liniyalardan ajratish uchun — ROLE_BASED_KG ko'rsatuv summasi."""
+    with get_conn() as (conn, cur):
+        cur.execute(
+            """SELECT 1 FROM products p
+               JOIN line_role_config lrc ON lrc.line_id = p.line_id
+               WHERE p.name = %s LIMIT 1""",
+            (product_name,),
+        )
+        return cur.fetchone() is not None
+
+
 def get_worker_production_role(worker_name: str, product_name: str) -> str | None:
     """Ishchining mahsulot liniyasidagi rolini qaytaradi (producer/packaging/preparation).
     Topilmasa None qaytaradi."""
@@ -578,6 +591,28 @@ def get_worker_production_role(worker_name: str, product_name: str) -> str | Non
         )
         row = cur.fetchone()
     return row["role"] if row else None
+
+
+def get_line_role_rate_strict(worker_name: str, product_name: str) -> tuple:
+    """Ishchining roli + stavkasini FAQAT line_role_config'dan qaytaradi (global
+    fallback YO'Q). Mahsulot liniyasida (products.line_id) shu rol uchun config
+    bo'lmasa (None, 0.0). Config liniyalarni legacy'dan ajratish uchun."""
+    with get_conn() as (conn, cur):
+        cur.execute(
+            """SELECT plw.role, lrc.rate
+               FROM products p
+               JOIN production_line_workers plw
+                 ON plw.line_id = p.line_id AND plw.worker_name = %s
+               JOIN line_role_config lrc
+                 ON lrc.line_id = p.line_id AND lrc.role_key = plw.role
+               WHERE p.name = %s
+               LIMIT 1""",
+            (worker_name, product_name),
+        )
+        row = cur.fetchone()
+    if row:
+        return row["role"], float(row["rate"])
+    return None, 0.0
 
 
 def close_day(closed_by: str, scope: str = "arqon") -> dict:
@@ -650,34 +685,54 @@ def close_day(closed_by: str, scope: str = "arqon") -> dict:
                 grand_total += float(existing["total_kg"])
                 continue
 
-            # ── Birinchi yopilish — liniya bo'yicha bugungi jami kg ──
+            # ── Birinchi yopilish — liniya bo'yicha bugungi jami ish birligi ──
+            # kg mahsulot → weight_kg; dona mahsulot → quantity. Liniya
+            # products.line_id orqali aniqlanadi (snapshot production_line_id ustun).
             cur.execute(
-                """SELECT COALESCE(SUM(b.weight_kg), 0) AS total_kg
+                """SELECT COALESCE(
+                            SUM(CASE WHEN p.rate_type='kg' THEN b.weight_kg ELSE b.quantity END), 0
+                          ) AS total_units
                    FROM batches b
+                   JOIN products p ON p.name = b.product
                    WHERE b.payroll_method = 'ROLE_BASED_KG'
-                     AND b.production_line_id = %s
+                     AND COALESCE(b.production_line_id, p.line_id) = %s
                      AND (b.created_at AT TIME ZONE 'Asia/Tashkent')::date = %s""",
                 (line_id, work_date),
             )
-            total_kg = float(cur.fetchone()["total_kg"])
+            total_kg = float(cur.fetchone()["total_units"])
             grand_total += total_kg
 
-            # Liniyadagi tayyorlash/upakovka xodimlari (POOL bo'linadi)
+            # Config liniya → barcha sozlangan rollar (producer ham) shu yerda
+            # to'lanadi. Config bo'lmasa (legacy) → producer partiyada to'langan;
+            # bu yerda tayyorlash/upakovka POOL'lari global stavkada bo'linadi.
             cur.execute(
-                """SELECT worker_name, role FROM production_line_workers
-                   WHERE line_id=%s AND role IN ('preparation','packaging')
-                   ORDER BY role, worker_name""",
+                "SELECT role_key, rate FROM line_role_config WHERE line_id=%s",
                 (line_id,),
             )
+            cfg_rows = cur.fetchall()
+            if cfg_rows:
+                pay_roles = {r["role_key"]: float(r["rate"]) for r in cfg_rows}
+            else:
+                pay_roles = {
+                    "preparation": rates.get("preparation", 0.0),
+                    "packaging":   rates.get("packaging", 0.0),
+                }
+
+            cur.execute(
+                """SELECT worker_name, role FROM production_line_workers
+                   WHERE line_id=%s AND role = ANY(%s)
+                   ORDER BY role, worker_name""",
+                (line_id, list(pay_roles.keys())),
+            )
             members = cur.fetchall()
-            counts: dict[str, int] = {"preparation": 0, "packaging": 0}
+            counts: dict[str, int] = {}
             for m in members:
                 counts[m["role"]] = counts.get(m["role"], 0) + 1
 
             entries = []
             for m in members:
                 role = m["role"]
-                rate = rates.get(role, 0.0)
+                rate = pay_roles.get(role, rates.get(role, 0.0))
                 n = counts.get(role, 0)
                 amount = (total_kg * rate) / n if n > 0 else 0.0
                 cur.execute(
@@ -863,28 +918,13 @@ def create_batch_session(
             wh = cur.fetchone()
             wh_id = wh["id"] if wh else None
 
-        # Ishlab chiqaruvchining liniyasini snapshot qilamiz (kun yopilganda liniya
-        # bo'yicha jami kg shu orqali hisoblanadi). Biriktirilmagan bo'lsa NULL.
+        # Ishlab chiqaruvchining liniyasi — mahsulotda line_id bo'lmasa fallback.
         cur.execute(
             "SELECT line_id FROM production_line_workers WHERE worker_name=%s AND role='producer' LIMIT 1",
             (worker,),
         )
         _lrow = cur.fetchone()
-        line_id = _lrow["line_id"] if _lrow else None
-
-        # Toshkent vaqtida bugungi sana (salary_entries uchun)
-        cur.execute("SELECT (NOW() AT TIME ZONE 'Asia/Tashkent')::date AS d")
-        work_date = cur.fetchone()["d"]
-
-        # Entering worker'ning liniya roli (ROLE_BASED_KG uchun kerak)
-        entering_role: str | None = None
-        if line_id:
-            cur.execute(
-                "SELECT role FROM production_line_workers WHERE worker_name=%s AND line_id=%s LIMIT 1",
-                (worker, line_id),
-            )
-            _er = cur.fetchone()
-            entering_role = _er["role"] if _er else None
+        producer_line_id = _lrow["line_id"] if _lrow else None
 
         line_entries: list[dict] = []  # Xabarnoma uchun: [{worker, role, amount}]
 
@@ -902,59 +942,26 @@ def create_batch_session(
                 _prow = cur.fetchone()
                 method = (_prow["payroll_method"] if _prow and _prow["payroll_method"] else "PRODUCT_RATE")
 
+            # Liniyani mahsulot orqali aniqlaymiz (config liniya attribusiyasi);
+            # mahsulotda line_id bo'lmasa ishlab chiqaruvchi liniyasiga qaytamiz.
+            cur.execute("SELECT line_id FROM products WHERE name=%s", (product,))
+            _plrow = cur.fetchone()
+            prod_line_id = (_plrow["line_id"] if _plrow and _plrow["line_id"] else None) or producer_line_id
+
+            # Config liniyami? (line_role_config mavjud). Bunday liniyada ROLE_BASED_KG
+            # maoshi kun yopilganda rol bo'yicha hisoblanadi — shu bois partiya
+            # earnings = 0 (ikki marta to'lovning oldini olamiz).
+            is_config_line = False
+            if prod_line_id:
+                cur.execute("SELECT 1 FROM line_role_config WHERE line_id=%s LIMIT 1", (prod_line_id,))
+                is_config_line = cur.fetchone() is not None
+            batch_earnings = 0.0 if (method == "ROLE_BASED_KG" and is_config_line) else earnings
+
             cur.execute(
                 """INSERT INTO batches (batch_code, worker, product, quantity, weight_kg, earnings, payroll_method, production_line_id)
                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
-                (batch_code, worker, product, quantity, weight_kg, earnings, method, line_id),
+                (batch_code, worker, product, quantity, weight_kg, batch_earnings, method, prod_line_id),
             )
-
-            # ── ROLE_BASED_KG: boshqa roldagi ishchilarga darhol maosh ──────────
-            # Kiruvchi ishchi (entering worker) batchdagi earnings orqali hisoblanadi.
-            # Liniyaning BOSHQA roldagi ishchilari esa shu zahoti salary_entries'ga.
-            if method == "ROLE_BASED_KG" and line_id and entering_role:
-                # Mahsulot turi (dona/kg) → hisoblash usulini belgilaydi
-                cur.execute("SELECT rate_type FROM products WHERE name=%s", (product,))
-                _pt = cur.fetchone()
-                prod_rate_type = _pt["rate_type"] if _pt else "kg"
-
-                # Boshqa roldagi ishchilar va ularning stavkalari
-                cur.execute(
-                    """SELECT plw.worker_name, plw.role,
-                              COALESCE(lrc.rate, prr.rate, 0) AS rate
-                       FROM production_line_workers plw
-                       LEFT JOIN line_role_config lrc
-                         ON lrc.line_id = plw.line_id AND lrc.role_key = plw.role
-                       LEFT JOIN payroll_role_rates prr
-                         ON prr.scope = 'arqon' AND prr.role = plw.role
-                       WHERE plw.line_id = %s AND plw.role != %s""",
-                    (line_id, entering_role),
-                )
-                other_workers = cur.fetchall()
-
-                for ow in other_workers:
-                    ow_rate = float(ow["rate"])
-                    if prod_rate_type == "kg":
-                        ow_amount = weight_kg * ow_rate
-                        ow_kg     = weight_kg
-                    else:
-                        ow_amount = quantity * ow_rate
-                        ow_kg     = float(quantity)
-
-                    cur.execute(
-                        """INSERT INTO salary_entries
-                               (scope, line_id, worker, role, source_type, work_date, kg, rate, amount)
-                           VALUES ('arqon', %s, %s, %s, 'batch', %s, %s, %s, %s)""",
-                        (line_id, ow["worker_name"], ow["role"],
-                         work_date, ow_kg, ow_rate, ow_amount),
-                    )
-                    line_entries.append({
-                        "worker": ow["worker_name"],
-                        "role":   ow["role"],
-                        "rate":   ow_rate,
-                        "amount": ow_amount,
-                        "qty_unit": ("kg" if prod_rate_type == "kg" else "dona"),
-                        "qty_val":  (weight_kg if prod_rate_type == "kg" else float(quantity)),
-                    })
 
             # Tayyor mahsulotni faol omborga "Kirim" qilib yozamiz
             if wh_id:

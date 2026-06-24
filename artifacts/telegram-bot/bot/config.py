@@ -42,12 +42,30 @@ def calc_earnings(
     worker_role: str | None = None,
     worker_name: str | None = None,
 ) -> float:
-    from .database import get_products, get_product_method
+    from .database import (
+        get_products, get_product_method,
+        get_line_role_rate_strict, product_line_is_config,
+    )
     if method is None:
         method = get_product_method(product)
-    # PRODUCT_RATE va ROLE_BASED_KG: ishlab chiqaruvchi products.rate dan to'lanadi.
-    # ROLE_BASED_KG boshqa rollar (packaging/preparation) uchun create_batch_session da
-    # line_role_config orqali alohida salary_entries yozadi — bu yerda hisob shart emas.
+    # ROLE_BASED_KG + config liniya: kiruvchi ishchi O'Z roli stavkasi bo'yicha
+    # baholanadi (line_role_config). products.rate ishlatilmaydi. Haqiqiy to'lov
+    # kun yopilganda rol bo'yicha (POOL ÷ ishchilar soni) hisoblanadi — bu faqat
+    # ko'rsatma uchun taxmin.
+    if method == "ROLE_BASED_KG" and worker_name:
+        _role, _rrate = get_line_role_rate_strict(worker_name, product)
+        if _role is not None:
+            for name, rate_type, rate in get_products():
+                if name == product:
+                    units = weight_kg if rate_type == "kg" else float(quantity)
+                    return units * _rrate
+            return float(quantity) * _rrate
+        # Config liniya, lekin ishchi sozlangan rolda emas → to'lov kun yopilganda
+        # POOL orqali sozlangan rol ishchilariga ketadi. Bu ishchiga 0 ko'rsatamiz
+        # (products.rate yanglish summani ko'rsatmasligi uchun).
+        if product_line_is_config(product):
+            return 0.0
+    # PRODUCT_RATE va config'siz ROLE_BASED_KG (legacy producer): products.rate dan.
     for name, rate_type, rate in get_products():
         if name == product:
             if rate_type == "kg":

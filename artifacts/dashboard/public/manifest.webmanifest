@@ -1,0 +1,16 @@
+{
+  "name": "TopMart ERP",
+  "short_name": "TopMart",
+  "description": "TopMart Factory ERP — partiyalar, ombor, savdo va KPI boshqaruvi.",
+  "start_url": "/dashboard/",
+  "scope": "/dashboard/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0b0b0c",
+  "theme_color": "#FF3C00",
+  "icons": [
+    { "src": "/dashboard/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/dashboard/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/dashboard/apple-touch-icon.png", "sizes": "180x180", "type": "image/png", "purpose": "maskable" }
+  ]
+}

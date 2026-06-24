@@ -8,3 +8,4 @@
 - [Per-line role config (line_role_config)](line-role-config.md) — table stores N roles per line (rate+maxWorkers+label); day-status skips Zod parse to include extra `roles[]` field; close-day uses ALL non-producer roles from config (not hardcoded prep+packaging).
 - [Sales are single-currency at parent level](sales-currency-constraint.md) — a sale row holds ONE currency/total; mixing UZS+USD items corrupts total/debt; guard in API POST /sales + dashboard addItem.
 - [Raw-material currency + USD cost conversion](raw-material-currency.md) — raw_materials.currency (UZS/USD); default_cost is in that currency; cost/profit SQL converts USD via live cbu.uz rate (CASE WHEN UPPER(currency)='USD').
+- [Dashboard base path](dashboard-base-path.md) — dashboard runs under /dashboard/; Vite rebases index.html refs but NOT public file contents (manifest paths must hardcode /dashboard/).

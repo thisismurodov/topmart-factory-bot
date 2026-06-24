@@ -417,12 +417,19 @@ function NewSaleDialog({
     const vals = itemForm.getValues();
     const qty  = Number(vals.quantity);
     if (!qty || qty <= 0) { setItemError("Miqdorni to'g'ri kiriting"); return; }
+    const itemCurrency = getTierCurrency(selProd, qty);
+    // Aralash valyuta (UZS + USD) bitta sotuvda jami/qarzni buzadi — bloklaymiz.
+    const otherItems = editKey ? draftItems.filter(it => it.key !== editKey) : draftItems;
+    if (otherItems.length > 0 && otherItems.some(it => it.currency !== itemCurrency)) {
+      setItemError("Bitta sotuvda turli valyutadagi mahsulotlar (UZS va USD) bo'lishi mumkin emas. Ularni alohida sotuvga ajrating.");
+      return;
+    }
     setItemError("");
     const price = getTierPrice(selProd, qty);
 
     if (editKey) {
       setDraftItems(prev => prev.map(it =>
-        it.key === editKey ? { ...it, quantity: qty, unitPrice: price, currency: getTierCurrency(selProd, qty), lineTotal: qty * price } : it
+        it.key === editKey ? { ...it, quantity: qty, unitPrice: price, currency: itemCurrency, lineTotal: qty * price } : it
       ));
       setEditKey(null);
     } else {
@@ -432,7 +439,7 @@ function NewSaleDialog({
         saleType: selProd.saleType,
         quantity: qty,
         unitPrice: price,
-        currency: getTierCurrency(selProd, qty),
+        currency: itemCurrency,
         lineTotal: qty * price,
       }]);
     }

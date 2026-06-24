@@ -210,8 +210,17 @@ router.post("/sales", async (req, res): Promise<void> => {
     });
   }
 
-  const allCurrencies   = resolvedItems.map(it => it.currency);
-  const primaryCurrency = allCurrencies.every(c => c === "UZS") ? "UZS" : "USD";
+  const allCurrencies      = resolvedItems.map(it => it.currency);
+  const distinctCurrencies = [...new Set(allCurrencies)];
+  // Sotuv darajasidagi jami/qarz bitta valyutada saqlanadi. Aralash valyuta
+  // (UZS + USD) jami/qarzni buzadi, shuning uchun bunday sotuvni rad etamiz.
+  if (distinctCurrencies.length > 1) {
+    res.status(400).json({
+      error: "Bitta sotuvda turli valyutadagi mahsulotlar (UZS va USD) bo'lishi mumkin emas. Iltimos, ularni alohida sotuvlarga ajrating.",
+    });
+    return;
+  }
+  const primaryCurrency = distinctCurrencies[0] ?? "UZS";
   const totalAmount     = resolvedItems.reduce((sum, it) => sum + it.lineTotal, 0);
 
   // ── Payment amounts (server-side, not trusted from client) ──

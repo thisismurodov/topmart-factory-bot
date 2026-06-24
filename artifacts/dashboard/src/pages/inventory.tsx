@@ -116,6 +116,15 @@ function useMovements() {
   });
 }
 
+function useContainerMovements(id: number | null) {
+  return useQuery<Movement[]>({
+    queryKey: ["ombor-container-movements", id],
+    queryFn: () => authFetch(`/api/ombor/movements?warehouse=${id}&limit=40`).then((r) => r.json()),
+    enabled: id !== null,
+    refetchInterval: 30_000,
+  });
+}
+
 function useProducts() {
   return useQuery<Product[]>({
     queryKey: ["products-list"],
@@ -472,6 +481,9 @@ function ContainerDetailView({
           </div>
         )}
       </div>
+
+      {/* Per-warehouse movements */}
+      <ContainerMovementsPanel warehouseId={containerId} />
     </div>
   );
 }
@@ -517,6 +529,7 @@ function TransferModal({
       qc.invalidateQueries({ queryKey: ["ombor-containers"] });
       qc.invalidateQueries({ queryKey: ["ombor-container-detail"] });
       qc.invalidateQueries({ queryKey: ["ombor-movements"] });
+      qc.invalidateQueries({ queryKey: ["ombor-container-movements"] });
       qc.invalidateQueries({ queryKey: ["ombor-summary"] });
       onDone();
     },
@@ -628,6 +641,7 @@ function ReceiveModal({
       qc.invalidateQueries({ queryKey: ["ombor-container-detail"] });
       qc.invalidateQueries({ queryKey: ["ombor-summary"] });
       qc.invalidateQueries({ queryKey: ["ombor-movements"] });
+      qc.invalidateQueries({ queryKey: ["ombor-container-movements"] });
       onDone();
     },
     onError: () => setErr("Xatolik yuz berdi"),
@@ -722,6 +736,7 @@ function RawInModal({ onClose, onDone }: { onClose: () => void; onDone: () => vo
       qc.invalidateQueries({ queryKey: ["ombor-raw-materials"] });
       qc.invalidateQueries({ queryKey: ["ombor-summary"] });
       qc.invalidateQueries({ queryKey: ["ombor-movements"] });
+      qc.invalidateQueries({ queryKey: ["ombor-container-movements"] });
       onDone();
     },
     onError: () => setErr("Xatolik"),
@@ -780,14 +795,63 @@ function RawInModal({ onClose, onDone }: { onClose: () => void; onDone: () => vo
 
 // ── Movements Panel ───────────────────────────────────────────────────────────
 
+function movementIcon(type: string) {
+  if (type === "IN")  return { emoji: "⬇️", color: "#16A34A", label: "Kirim" };
+  if (type === "OUT") return { emoji: "⬆️", color: "#DC2626", label: "Chiqim" };
+  return                     { emoji: "↔️", color: "#2563EB", label: "Transfer" };
+}
+
+function MovementRow({ m }: { m: Movement }) {
+  const { emoji, color } = movementIcon(m.movementType);
+  return (
+    <div
+      style={{
+        padding: "12px 20px",
+        borderBottom: "1px solid #F9FAFB",
+        display: "flex",
+        alignItems: "flex-start",
+        gap: 12,
+      }}
+    >
+      <div style={{
+        width: 36, height: 36, borderRadius: 10, flexShrink: 0,
+        background: `${color}15`,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontSize: 16,
+      }}>
+        {emoji}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          <span style={{ fontWeight: 600, fontSize: 14, color: "#111827" }}>
+            {m.product}
+          </span>
+          <span style={{ fontSize: 12, color, fontWeight: 600 }}>
+            {m.movementType === "IN" ? "+" : m.movementType === "OUT" ? "-" : "↔"}{fmt(m.quantity)}
+          </span>
+          <span style={{
+            fontSize: 11, padding: "2px 7px", borderRadius: 5, fontWeight: 500,
+            background: m.productType === "raw" ? "#FEF3C7" : "#DCFCE7",
+            color: m.productType === "raw" ? "#92400E" : "#166534",
+          }}>
+            {m.productType === "raw" ? "Xom" : "Tayyor"}
+          </span>
+        </div>
+        <div style={{ fontSize: 12, color: "#6B7280", marginTop: 2 }}>
+          {m.fromWarehouse && <span>{m.fromWarehouse} <ArrowRight style={{ width: 10, height: 10, display: "inline" }} /> </span>}
+          {m.toWarehouse && <span>{m.toWarehouse}</span>}
+          {m.note && <span> · {m.note}</span>}
+        </div>
+      </div>
+      <div style={{ fontSize: 11, color: "#9CA3AF", whiteSpace: "nowrap", flexShrink: 0 }}>
+        {timeAgo(m.createdAt)}
+      </div>
+    </div>
+  );
+}
+
 function MovementsPanel() {
   const { data: movements = [], isLoading } = useMovements();
-
-  const icon = (type: string) => {
-    if (type === "IN")       return { emoji: "⬇️", color: "#16A34A", label: "Kirim" };
-    if (type === "OUT")      return { emoji: "⬆️", color: "#DC2626", label: "Chiqim" };
-    return                          { emoji: "↔️", color: "#2563EB", label: "Transfer" };
-  };
 
   return (
     <div style={{
@@ -810,55 +874,38 @@ function MovementsPanel() {
         </div>
       ) : (
         <div style={{ maxHeight: 400, overflowY: "auto" }}>
-          {movements.map((m) => {
-            const { emoji, color, label } = icon(m.movementType);
-            return (
-              <div
-                key={m.id}
-                style={{
-                  padding: "12px 20px",
-                  borderBottom: "1px solid #F9FAFB",
-                  display: "flex",
-                  alignItems: "flex-start",
-                  gap: 12,
-                }}
-              >
-                <div style={{
-                  width: 36, height: 36, borderRadius: 10, flexShrink: 0,
-                  background: `${color}15`,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: 16,
-                }}>
-                  {emoji}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                    <span style={{ fontWeight: 600, fontSize: 14, color: "#111827" }}>
-                      {m.product}
-                    </span>
-                    <span style={{ fontSize: 12, color, fontWeight: 600 }}>
-                      {m.movementType === "IN" ? "+" : m.movementType === "OUT" ? "-" : "↔"}{fmt(m.quantity)}
-                    </span>
-                    <span style={{
-                      fontSize: 11, padding: "2px 7px", borderRadius: 5, fontWeight: 500,
-                      background: m.productType === "raw" ? "#FEF3C7" : "#DCFCE7",
-                      color: m.productType === "raw" ? "#92400E" : "#166534",
-                    }}>
-                      {m.productType === "raw" ? "Xom" : "Tayyor"}
-                    </span>
-                  </div>
-                  <div style={{ fontSize: 12, color: "#6B7280", marginTop: 2 }}>
-                    {m.fromWarehouse && <span>{m.fromWarehouse} <ArrowRight style={{ width: 10, height: 10, display: "inline" }} /> </span>}
-                    {m.toWarehouse && <span>{m.toWarehouse}</span>}
-                    {m.note && <span> · {m.note}</span>}
-                  </div>
-                </div>
-                <div style={{ fontSize: 11, color: "#9CA3AF", whiteSpace: "nowrap", flexShrink: 0 }}>
-                  {timeAgo(m.createdAt)}
-                </div>
-              </div>
-            );
-          })}
+          {movements.map((m) => <MovementRow key={m.id} m={m} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ContainerMovementsPanel({ warehouseId }: { warehouseId: number }) {
+  const { data: movements = [], isLoading } = useContainerMovements(warehouseId);
+
+  return (
+    <div style={{
+      background: "#fff", borderRadius: 16, overflow: "hidden",
+      boxShadow: "0 1px 3px rgba(0,0,0,0.06)", border: "1px solid rgba(0,0,0,0.06)",
+    }}>
+      <div style={{ padding: "16px 20px", borderBottom: "1px solid #F3F4F6", display: "flex", alignItems: "center", gap: 8 }}>
+        <Clock style={{ width: 16, height: 16, color: "#0B6B3A" }} />
+        <span style={{ fontWeight: 600, fontSize: 15, color: "#111827" }}>Konteyner harakatlari</span>
+        <span style={{ marginLeft: "auto", fontSize: 12, color: "#9CA3AF" }}>{movements.length} ta yozuv</span>
+      </div>
+
+      {isLoading ? (
+        <div style={{ padding: 20 }}>
+          {[1, 2, 3].map((i) => <Skeleton key={i} style={{ height: 56, marginBottom: 8, borderRadius: 10 }} />)}
+        </div>
+      ) : !movements.length ? (
+        <div style={{ textAlign: "center", padding: "40px 24px", color: "#9CA3AF" }}>
+          Bu konteyner uchun hozircha harakatlar yo'q
+        </div>
+      ) : (
+        <div style={{ maxHeight: 360, overflowY: "auto" }}>
+          {movements.map((m) => <MovementRow key={m.id} m={m} />)}
         </div>
       )}
     </div>
@@ -985,6 +1032,7 @@ export default function Inventory() {
     qc.invalidateQueries({ queryKey: ["ombor-summary"] });
     qc.invalidateQueries({ queryKey: ["ombor-containers"] });
     qc.invalidateQueries({ queryKey: ["ombor-movements"] });
+    qc.invalidateQueries({ queryKey: ["ombor-container-movements"] });
     if (selectedContainer) {
       qc.invalidateQueries({ queryKey: ["ombor-container-detail", selectedContainer.id] });
     }

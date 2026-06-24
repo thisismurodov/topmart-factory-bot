@@ -21,6 +21,19 @@ batch creation, the deduction logic must be duplicated/shared there too.
 BOM is stored in `product_materials` (product_name, raw_material_id,
 quantity_required). Deduction only happens for products that have BOM rows.
 
+# Finished-goods stock lives in the CONTAINER warehouse chosen at batch time
+
+A batch puts finished goods into a specific container warehouse (the one picked in
+the bot flow), NOT a single canonical warehouse. So any process that removes
+finished goods (sales OUT in `sales.ts`) must deduct from the warehouse(s) where the
+product actually has stock — query `inventory WHERE product=? AND quantity>0` and
+deduct there. **Why:** the original sales code hard-coded the first active warehouse
+(`ORDER BY id LIMIT 1`); the product was in a container, so the UPDATE hit 0 rows —
+inventory never decremented even though a stock_movement was logged. **How to
+apply:** never assume warehouse #1 holds a finished product; deduction + the
+matching OUT movement must be atomic with the sale (inside the same txn, rethrow on
+failure) and lock rows (`FOR UPDATE`) to avoid concurrent-sale drift.
+
 # A batch SESSION = many `batches` rows sharing one `batch_code`
 
 The bot's "Tovar kiritish" flow is multi-product: one session inserts N rows (one

@@ -279,30 +279,68 @@ router.post("/sales", async (req, res): Promise<void> => {
     }
 
     // ── Tayyor mahsulot omboridan kamaytirish ──────────────────────────────
+    // Mahsulot zaxirasi qaysi omborda bo'lsa, o'sha yerdan kamaytiramiz
+    // (partiya mahsulotni konteynerga kiritadi — har doim 1-ombor emas).
     try {
-      const whRes = await client.query(
-        "SELECT id FROM warehouses WHERE active=TRUE ORDER BY id LIMIT 1",
-      );
-      const whId = whRes.rows[0]?.id ?? null;
       for (const it of resolvedItems) {
-        const qty = Math.round(it.quantity);
-        if (qty <= 0) continue;
-        await client.query(
-          `UPDATE inventory
-           SET quantity = GREATEST(0, quantity - $1), updated_at = NOW()
-           WHERE product = $2 AND warehouse_id = $3`,
-          [qty, it.productName, whId],
+        let remaining = Math.round(it.quantity);
+        if (remaining <= 0) continue;
+
+        // Zaxira bor omborlardan ketma-ket kamaytiramiz (ko'pi birinchi).
+        const { rows: stockRows } = await client.query(
+          `SELECT warehouse_id, quantity FROM inventory
+            WHERE product = $1 AND quantity > 0
+            ORDER BY quantity DESC
+            FOR UPDATE`,
+          [it.productName],
         );
-        if (whId) {
+        for (const row of stockRows) {
+          if (remaining <= 0) break;
+          const take = Math.min(Number(row.quantity), remaining);
+          await client.query(
+            `UPDATE inventory SET quantity = quantity - $1, updated_at = NOW()
+              WHERE product = $2 AND warehouse_id = $3`,
+            [take, it.productName, row.warehouse_id],
+          );
           await client.query(
             `INSERT INTO stock_movements
                (product, quantity, movement_type, from_warehouse_id, note, created_by, product_type)
              VALUES ($1,$2,'OUT',$3,$4,'system','finished')`,
-            [it.productName, qty, whId, `Savdo #${saleId}`],
+            [it.productName, take, row.warehouse_id, `Savdo #${saleId}`],
           );
+          remaining -= take;
+        }
+
+        // Zaxira yetmadi (yoki umuman yo'q): qolganini asosiy ombordan yozamiz
+        // (ombor manfiyga tushadi — ortiqcha sotilgani ko'rinib turadi).
+        if (remaining > 0) {
+          const { rows: whRows } = await client.query(
+            "SELECT id FROM warehouses WHERE active=TRUE ORDER BY id LIMIT 1",
+          );
+          const whId = whRows[0]?.id ?? null;
+          if (whId) {
+            await client.query(
+              `INSERT INTO inventory (warehouse_id, product, quantity, product_type, updated_at)
+               VALUES ($1,$2,$3,'finished',NOW())
+               ON CONFLICT (warehouse_id, product)
+               DO UPDATE SET quantity = inventory.quantity - $4, updated_at = NOW()`,
+              [whId, it.productName, -remaining, remaining],
+            );
+            await client.query(
+              `INSERT INTO stock_movements
+                 (product, quantity, movement_type, from_warehouse_id, note, created_by, product_type)
+               VALUES ($1,$2,'OUT',$3,$4,'system','finished')`,
+              [it.productName, remaining, whId, `Savdo #${saleId}`],
+            );
+          }
         }
       }
-    } catch (_) {}
+    } catch (e: any) {
+      // Ombordan kamaytirish savdo bilan birga atomar bo'lishi shart:
+      // xatolik bo'lsa, butun savdoni bekor qilamiz (tashqi catch ROLLBACK qiladi).
+      req.log?.error?.({ err: e, saleId }, "sale inventory deduction failed");
+      throw e;
+    }
 
     await client.query("COMMIT");
 

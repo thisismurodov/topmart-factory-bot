@@ -399,9 +399,12 @@ router.get("/ombor/finished-goods", async (_req, res): Promise<void> => {
 router.get("/ombor/movements", async (req, res): Promise<void> => {
   const limit      = Math.min(Number(req.query.limit ?? 80), 200);
   const typeFilter = req.query.type ? String(req.query.type) : null;
+  const whFilter   = req.query.warehouse ? Number(req.query.warehouse) : null;
   const params: unknown[] = [limit];
-  const where = typeFilter ? `WHERE sm.product_type = $2` : "";
-  if (typeFilter) params.push(typeFilter);
+  const conds: string[] = [];
+  if (typeFilter) { params.push(typeFilter); conds.push(`sm.product_type = $${params.length}`); }
+  if (whFilter)   { params.push(whFilter);   conds.push(`(sm.from_warehouse_id = $${params.length} OR sm.to_warehouse_id = $${params.length})`); }
+  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
 
   const { rows } = await pool.query(
     `SELECT sm.id, sm.product, sm.quantity, sm.movement_type, sm.product_type,

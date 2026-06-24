@@ -15,6 +15,10 @@ The app runs in three places that resolve their database differently:
 
 **How to apply:** During Replit publish, the DB-migration step is harmless — it only edits the empty Replit DB. Don't repoint `drizzle.config` at Railway "to fix" the migration warning. If schema sync to Railway is ever truly needed, model the bot-only columns/tables in Drizzle first, or use `tablesFilter`, and review the SQL for DROP/TRUNCATE before applying.
 
+## Backups / ops
+- Railway runs Postgres **server 18**; the sandbox `pg_dump` is **16** → `pg_dump` aborts with "server version mismatch". For ad-hoc backups before destructive ops, dump via `psql "$RAILWAY_DATABASE_URL" -c "\copy (SELECT * FROM <t>) TO '<file>.csv' CSV HEADER"` (works across versions). Railway is external — Replit checkpoints do NOT cover it, so back up Railway data yourself before any TRUNCATE/DELETE.
+- Transactional vs config split (for "reset to real data" requests): transactional = `batches`, `salary_entries`, `salary_payments`, `daily_payroll_runs`, `inventory`, `stock_movements` (+ zero `raw_materials.current_stock`). Config to PRESERVE = `workers`, `products`, `production_lines`, `line_role_config`, `production_line_workers`, `warehouses`, `raw_materials` defs, `product_materials` (BOM), price tiers, `customers`, all `sale*`. `inventory`/`stock_movements` are finished-goods only; raw stock lives in `raw_materials.current_stock`.
+
 ## Login facts
 - Production URL: `factory-bot-manager.replit.app` (autoscale). The real admin account lives on Railway; token-based login verified working against prod (do NOT store the actual credentials here).
 - `admin` user is a **stale artifact in the Replit dev DB only** (old seed); it does not exist on Railway. Seeing `admin` when querying `DATABASE_URL` directly does NOT mean the app uses that DB.

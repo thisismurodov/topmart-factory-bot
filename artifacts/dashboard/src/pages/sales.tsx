@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   Plus, Trash2, ShoppingBag, CheckCircle2, Clock, ChevronDown, ChevronRight,
-  Pencil, PackagePlus, Banknote, CreditCard, Shuffle, History, Search, X,
+  Pencil, PackagePlus, Banknote, CreditCard, Shuffle, History, Search, X, Printer,
 } from "lucide-react";
 
 // ── SearchCombobox — qidiruv bilan dropdown ────────────────────────────────────
@@ -190,6 +190,98 @@ function groupTotals(items: SaleItem[] | DraftItem[]) {
   const totals: Record<string, number> = {};
   for (const it of items) totals[it.currency] = (totals[it.currency] ?? 0) + it.lineTotal;
   return totals;
+}
+
+function escapeHtml(s: string) {
+  return s.replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
+}
+
+// ── Chek chop etish — alohida oynada chiroyli kvitansiya ────────────────────────
+function printReceipt(sale: Sale) {
+  const totals = groupTotals(sale.saleItems);
+  const created = (sale.createdAt ?? "").slice(0, 16).replace("T", "  ");
+
+  const itemsHtml = sale.saleItems.length
+    ? sale.saleItems.map((it, i) => `
+        <tr>
+          <td class="nm">${i + 1}. ${escapeHtml(it.productName)}
+            <div class="sub">${it.quantity} ${escapeHtml(it.saleType)} × ${fmtAmt(it.unitPrice, it.currency)}</div>
+          </td>
+          <td class="amt">${fmtAmt(it.lineTotal, it.currency)}</td>
+        </tr>`).join("")
+    : `<tr><td class="nm" colspan="2">Mahsulot ma'lumotlari yo'q</td></tr>`;
+
+  const totalEntries = Object.entries(totals).length
+    ? Object.entries(totals)
+    : [[sale.currency ?? "UZS", sale.totalAmount] as [string, number]];
+  const totalsHtml = totalEntries.map(([cur, amt]) => `
+      <div class="totrow"><span>JAMI</span><span class="tot">${fmtAmt(amt as number, cur)}</span></div>`).join("");
+
+  const payType = sale.paymentType === "naqd" ? "Naqd" : sale.paymentType === "aralash" ? "Aralash" : "Nasiya";
+  let payHtml = `<div class="payrow"><span>To'lov turi</span><span>${payType}</span></div>`;
+  if (sale.paidAmount > 0)
+    payHtml += `<div class="payrow paid"><span>To'langan</span><span>${fmtAmt(sale.paidAmount, sale.currency ?? "UZS")}</span></div>`;
+  if (sale.debtAmount > 0.001)
+    payHtml += `<div class="payrow debt"><span>Nasiya (qarz)</span><span>${fmtAmt(sale.debtAmount, sale.currency ?? "UZS")}</span></div>`;
+
+  const html = `<!DOCTYPE html><html lang="uz"><head><meta charset="utf-8">
+    <title>Chek #${sale.id}</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body { font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color: #171717; background: #f3f4f6; padding: 16px; }
+      .receipt { max-width: 360px; margin: 0 auto; background: #fff; border-radius: 14px; overflow: hidden; box-shadow: 0 4px 24px rgba(0,0,0,.08); }
+      .head { background: #ea580c; color: #fff; text-align: center; padding: 22px 16px; }
+      .head h1 { font-size: 30px; font-weight: 800; letter-spacing: .5px; }
+      .head p { font-size: 13px; letter-spacing: 2px; color: #ffedd5; margin-top: 2px; }
+      .body { padding: 18px 20px 22px; }
+      .meta { font-size: 13px; }
+      .meta .row { display: flex; justify-content: space-between; padding: 3px 0; }
+      .meta .row span:first-child { color: #737373; }
+      .meta .row span:last-child { font-weight: 600; }
+      table { width: 100%; border-collapse: collapse; margin: 14px 0; }
+      td { padding: 8px 0; vertical-align: top; border-top: 1px dashed #e5e5e5; }
+      .nm { font-weight: 600; font-size: 14px; }
+      .nm .sub { font-weight: 400; font-size: 12px; color: #737373; margin-top: 2px; }
+      .amt { text-align: right; font-weight: 700; color: #ea580c; white-space: nowrap; font-size: 14px; }
+      .totals { border-top: 2px solid #e5e5e5; padding-top: 10px; }
+      .totrow { display: flex; justify-content: space-between; align-items: baseline; }
+      .totrow span:first-child { font-size: 14px; color: #171717; }
+      .tot { font-size: 22px; font-weight: 800; color: #ea580c; }
+      .pay { margin-top: 12px; font-size: 13px; }
+      .payrow { display: flex; justify-content: space-between; padding: 2px 0; }
+      .payrow span:first-child { color: #737373; }
+      .payrow span:last-child { font-weight: 600; }
+      .payrow.paid span:last-child { color: #16a34a; }
+      .payrow.debt span:last-child { color: #d97706; }
+      .foot { text-align: center; color: #737373; font-size: 13px; border-top: 1px dashed #e5e5e5; margin-top: 14px; padding-top: 14px; }
+      @media print {
+        body { background: #fff; padding: 0; }
+        .receipt { box-shadow: none; max-width: 100%; border-radius: 0; }
+      }
+    </style></head>
+    <body onload="window.print()">
+      <div class="receipt">
+        <div class="head"><h1>TopMart</h1><p>SAVDO CHEKI</p></div>
+        <div class="body">
+          <div class="meta">
+            <div class="row"><span>Chek</span><span>#${sale.id}</span></div>
+            <div class="row"><span>Sana</span><span>${created}</span></div>
+            <div class="row"><span>Mijoz</span><span>${escapeHtml(sale.customerName ?? "")}</span></div>
+          </div>
+          <table>${itemsHtml}</table>
+          <div class="totals">${totalsHtml}</div>
+          <div class="pay">${payHtml}</div>
+          <div class="foot">Xaridingiz uchun rahmat!</div>
+        </div>
+      </div>
+    </body></html>`;
+
+  const w = window.open("", "_blank", "width=420,height=720");
+  if (!w) { alert("Chekni ochish uchun pop-up oynalarga ruxsat bering."); return; }
+  w.document.write(html);
+  w.document.close();
+  w.focus();
 }
 
 // ── Status badge ──────────────────────────────────────────────────────────────
@@ -766,6 +858,13 @@ function SaleRow({ sale, onDelete, onStatusToggle, onPaymentAdded }: {
                 <PaymentHistoryDialog saleId={sale.id} currency={sale.currency ?? "USD"} />
               </>
             )}
+            <Button
+              variant="outline" size="sm"
+              className="h-7 text-xs gap-1"
+              onClick={() => printReceipt(sale)}
+            >
+              <Printer className="w-3 h-3" /> Chek
+            </Button>
             <span className="text-muted-foreground">{expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}</span>
             <AlertDialog>
               <AlertDialogTrigger asChild>
@@ -969,7 +1068,7 @@ export default function Sales() {
                 <TableHead>Summa</TableHead>
                 <TableHead>Holat</TableHead>
                 <TableHead>Sana</TableHead>
-                <TableHead className="w-[140px]"></TableHead>
+                <TableHead className="w-[220px]"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

@@ -1,3 +1,5 @@
+import logging
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ContextTypes, ConversationHandler, CommandHandler,
@@ -11,6 +13,9 @@ from ..database import (
     create_sale_multi, get_recent_sales,
     get_price_for_qty,
 )
+from ..receipt import build_receipt_text, render_receipt_png
+
+logger = logging.getLogger(__name__)
 
 # ── States ────────────────────────────────────────────────────────────────────
 SALE_CUSTOMER, SALE_NEW_NAME, SALE_NEW_PHONE, \
@@ -381,6 +386,18 @@ async def confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             f"💰 Jami: {totals}",
             parse_mode="Markdown",
         )
+
+        # ── Savdo cheki: matn + chiroyli PNG rasm (savdo saqlangan, chek ikkinchi darajali) ──
+        chat_id = update.effective_chat.id
+        try:
+            receipt_text = build_receipt_text(sale_id, sale["customer_name"], sale["items"])
+            await context.bot.send_message(chat_id, receipt_text, parse_mode="Markdown")
+            png = render_receipt_png(sale_id, sale["customer_name"], sale["items"])
+            await context.bot.send_photo(chat_id, photo=png, caption=f"🧾 Chek #{sale_id}")
+        except Exception:
+            logger.exception("Savdo cheki yaratishda xatolik (sale_id=%s)", sale_id)
+            await context.bot.send_message(chat_id, "⚠️ Chek tayyorlab bo'lmadi, ammo savdo saqlandi.")
+
         return ConversationHandler.END
 
     return SALE_CONFIRM

@@ -9,3 +9,4 @@
 - [Sales are single-currency at parent level](sales-currency-constraint.md) — a sale row holds ONE currency/total; mixing UZS+USD items corrupts total/debt; guard in API POST /sales + dashboard addItem.
 - [Raw-material currency + USD cost conversion](raw-material-currency.md) — raw_materials.currency (UZS/USD); default_cost is in that currency; cost/profit SQL converts USD via live cbu.uz rate (CASE WHEN UPPER(currency)='USD').
 - [Dashboard base path](dashboard-base-path.md) — dashboard runs under /dashboard/; Vite rebases index.html refs but NOT public file contents (manifest paths must hardcode /dashboard/).
+- [Dashboard touch ergonomics](dashboard-touch-ergonomics.md) — iPad touch tweaks gated on @media (any-pointer: coarse), not pointer:coarse (iPad+trackpad reports fine); inputs need 16px to stop iOS zoom.

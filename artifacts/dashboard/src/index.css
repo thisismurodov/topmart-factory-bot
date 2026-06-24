@@ -207,3 +207,66 @@
     inset: -1px;
   }
 }
+
+/* ===== iPad / sensorli (touch) qurilmalar uchun ergonomika =====
+   `any-pointer: coarse` — qurilmada barmoq (sensor) imkoniyati BORLIGINI tekshiradi.
+   iPad'da har doim true (hatto Magic Keyboard/trackpad ulansa ham), MacBook'da esa
+   coarse ko'rsatkich umuman yo'q, shuning uchun MacBook ko'rinishi o'zgarmaydi. */
+@media (any-pointer: coarse) {
+  /* iOS Safari input bosilganda ekranni kattalashtirib (auto-zoom) yubormasligi
+     uchun shrift kamida 16px bo'lishi shart. */
+  input,
+  textarea,
+  select,
+  [contenteditable="true"] {
+    font-size: 16px !important;
+  }
+
+  /* Tezroq bosish: 300ms kechikishsiz, ikki marta bosganda zoom yo'q,
+     uzoq bosganda matn tanlash menyusi chiqmaydi. */
+  button,
+  [role="button"],
+  [role="menuitem"],
+  [role="option"],
+  [role="tab"],
+  a,
+  label,
+  summary {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Barmoq bilan qulay bosish uchun ~44px o'lcham (Apple HIG). */
+  button,
+  [role="button"],
+  [role="menuitem"],
+  [role="option"],
+  [role="tab"] {
+    min-height: 44px;
+  }
+
+  /* Faqat ikonkali (kvadrat) tugmalar ham yetarli kenglikka ega bo'lsin. */
+  button:has(> svg:only-child),
+  [role="button"]:has(> svg:only-child) {
+    min-width: 44px;
+  }
+
+  /* Yon menyu (sidebar) bandlarini barmoq bilan bosish oson bo'lsin. */
+  [data-testid^="nav-"] {
+    min-height: 48px;
+  }
+
+  /* Jadval qatorlari kengroq — qator amallarini bosish va o'qish qulay. */
+  th,
+  td {
+    padding-top: 0.75rem;
+    padding-bottom: 0.75rem;
+  }
+
+  /* Panellar va jadvallarda tabiiy (inersiyali) skroll. */
+  .overflow-y-auto,
+  .overflow-x-auto,
+  .overflow-auto {
+    -webkit-overflow-scrolling: touch;
+  }
+}

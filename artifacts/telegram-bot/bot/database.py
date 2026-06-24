@@ -541,6 +541,30 @@ def get_role_rate(role: str, scope: str = "arqon") -> float:
     return float(row["rate"]) if row else 0.0
 
 
+def get_worker_line_role_rate(worker_name: str, product_name: str) -> tuple:
+    """Ishchining liniya roli va stavkasini line_role_config'dan qaytaradi.
+    Topilmasa payroll_role_rates global stavkasiga fallback."""
+    with get_conn() as (conn, cur):
+        cur.execute(
+            """SELECT plw.role,
+                      COALESCE(lrc.rate, prr.rate, 0) AS rate
+               FROM products p
+               JOIN production_line_workers plw
+                 ON plw.line_id = p.line_id AND plw.worker_name = %s
+               LEFT JOIN line_role_config lrc
+                 ON lrc.line_id = p.line_id AND lrc.role_key = plw.role
+               LEFT JOIN payroll_role_rates prr
+                 ON prr.scope = 'arqon' AND prr.role = plw.role
+               WHERE p.name = %s
+               LIMIT 1""",
+            (worker_name, product_name),
+        )
+        row = cur.fetchone()
+    if row:
+        return row["role"], float(row["rate"])
+    return None, 0.0
+
+
 def get_worker_production_role(worker_name: str, product_name: str) -> str | None:
     """Ishchining mahsulot liniyasidagi rolini qaytaradi (producer/packaging/preparation).
     Topilmasa None qaytaradi."""

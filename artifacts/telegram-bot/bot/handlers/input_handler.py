@@ -182,7 +182,7 @@ async def _add_item(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     # shu usul saqlanadi, shunda ishlab chiqaruvchi to'lovi va snapshot mos bo'ladi.
     method        = get_product_method(product)
     worker_role   = get_worker_production_role(worker, product) if method == "ROLE_BASED_KG" else None
-    earnings      = calc_earnings(product, quantity, weight_kg, method=method, worker_role=worker_role)
+    earnings      = calc_earnings(product, quantity, weight_kg, method=method, worker_role=worker_role, worker_name=worker)
     pieces_per_box = get_product_pieces_per_box(product)
 
     items = context.user_data.setdefault("items", [])

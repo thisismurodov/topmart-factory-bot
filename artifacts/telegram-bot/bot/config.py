@@ -40,15 +40,25 @@ def calc_earnings(
     weight_kg: float,
     method: str | None = None,
     worker_role: str | None = None,
+    worker_name: str | None = None,
 ) -> float:
-    from .database import get_products, get_product_method, get_role_rate
+    from .database import get_products, get_product_method, get_role_rate, get_worker_line_role_rate
     if method is None:
         method = get_product_method(product)
     if method == "ROLE_BASED_KG":
-        # Ishchining liniya roli berilsa — shu rolning stavkasini ishlatamiz.
-        # Har ishchi o'z stavkasida to'liq maosh oladi (bo'linmaydi, darhol).
-        role = worker_role if worker_role in ("producer", "packaging", "preparation") else "producer"
-        return weight_kg * get_role_rate(role)
+        # line_role_config'dan ishchining liniya stavkasini olish (worker_name orqali)
+        if worker_name:
+            _role, line_rate = get_worker_line_role_rate(worker_name, product)
+        else:
+            role = worker_role if worker_role in ("producer", "packaging", "preparation") else "producer"
+            line_rate = get_role_rate(role)
+        # Dona mahsulot → quantity * rate; kg mahsulot → weight_kg * rate
+        for name, rate_type, _ in get_products():
+            if name == product:
+                if rate_type == "kg":
+                    return weight_kg * line_rate
+                return float(quantity) * line_rate
+        return weight_kg * line_rate  # fallback
     for name, rate_type, rate in get_products():
         if name == product:
             if rate_type == "kg":

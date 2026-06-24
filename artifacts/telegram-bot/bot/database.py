@@ -578,6 +578,30 @@ def product_line_is_config(product_name: str) -> bool:
         return cur.fetchone() is not None
 
 
+def get_line_staffed_role_rate_sum(product_name: str) -> float:
+    """Config liniyada ≥1 ishchisi bor rollar stavkalari yig'indisi.
+
+    Kun yopilganda har bir birlik (dona/kg) uchun jami shu summa to'lanadi:
+    har rol uchun birlik×stavka hisoblanadi va rol ishchilariga teng bo'linadi
+    (yig'indida ÷ishchilar soni qisqaradi). Ishchisiz rol to'lanmaydi, shu bois
+    yig'indiga kirmaydi. Partiya tasdig'idagi "Jami haq" shu funksiyaga tayanadi
+    va kun yopilishi natijasiga mos keladi."""
+    with get_conn() as (conn, cur):
+        cur.execute(
+            """SELECT COALESCE(SUM(lrc.rate), 0) AS s
+               FROM products p
+               JOIN line_role_config lrc ON lrc.line_id = p.line_id
+               WHERE p.name = %s
+                 AND EXISTS (
+                     SELECT 1 FROM production_line_workers w
+                     WHERE w.line_id = lrc.line_id AND w.role = lrc.role_key
+                 )""",
+            (product_name,),
+        )
+        row = cur.fetchone()
+    return float(row["s"]) if row else 0.0
+
+
 def get_worker_production_role(worker_name: str, product_name: str) -> str | None:
     """Ishchining mahsulot liniyasidagi rolini qaytaradi (producer/packaging/preparation).
     Topilmasa None qaytaradi."""

@@ -27,11 +27,16 @@ have weight_kg=0, so the old kg-only pool gave them 0. Bot `close_day`, API clos
 AND any data-fix MUST use this identical SQL or they diverge. Example: 6000 dona, one
 Qopiporash worker → 600,000.
 **How to apply:** bot `create_batch_session` sets `production_line_id` from
-`products.line_id` (fallback producer lookup) and stores earnings=0 on config-line
-ROLE_BASED_KG batches; the old per-batch "other roles" block was removed. `calc_earnings`
-shows the entering worker's role-rate estimate via `get_line_role_rate_strict`; if the
-worker holds no configured role on a config line it returns 0 (not product rate) so the
-preview never promises pay the pool won't deliver.
+`products.line_id` (fallback producer lookup) and stores per-batch earnings=0 on
+config-line ROLE_BASED_KG batches; the old per-batch "other roles" block was removed.
+The confirmation/cart DISPLAY value (`calc_earnings`) is the batch's TOTAL projected
+day-close payout = `units × get_line_staffed_role_rate_sum(product)` (sum of
+`line_role_config.rate` for roles that have ≥1 worker on the line). It is INDEPENDENT
+of who enters — the operator/admin who types the batch is usually NOT a line worker, so
+keying the display off the enterer's role wrongly showed 0 (the bug the user hit). The
+÷worker-count cancels when summed over a role's workers, so the staffed-rate-sum equals
+what day-close actually disburses; unstaffed roles are excluded so the preview never
+promises pay nobody will receive.
 
 ## (Legacy-only) producers paid per batch; rates GLOBAL per role
 Applies ONLY to LEGACY lines. Producers are paid per batch (kg × producer rate,

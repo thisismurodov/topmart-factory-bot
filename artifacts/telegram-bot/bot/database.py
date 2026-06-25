@@ -630,6 +630,7 @@ def get_line_role_rate_strict(worker_name: str, product_name: str) -> tuple:
                JOIN line_role_config lrc
                  ON lrc.line_id = p.line_id AND lrc.role_key = plw.role
                WHERE p.name = %s
+               ORDER BY lrc.rate DESC
                LIMIT 1""",
             (worker_name, product_name),
         )

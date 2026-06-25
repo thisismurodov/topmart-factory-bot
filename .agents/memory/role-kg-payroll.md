@@ -29,14 +29,18 @@ Qopiporash worker → 600,000.
 **How to apply:** bot `create_batch_session` sets `production_line_id` from
 `products.line_id` (fallback producer lookup) and stores per-batch earnings=0 on
 config-line ROLE_BASED_KG batches; the old per-batch "other roles" block was removed.
-The confirmation/cart DISPLAY value (`calc_earnings`) is the batch's TOTAL projected
-day-close payout = `units × get_line_staffed_role_rate_sum(product)` (sum of
-`line_role_config.rate` for roles that have ≥1 worker on the line). It is INDEPENDENT
-of who enters — the operator/admin who types the batch is usually NOT a line worker, so
-keying the display off the enterer's role wrongly showed 0 (the bug the user hit). The
-÷worker-count cancels when summed over a role's workers, so the staffed-rate-sum equals
-what day-close actually disburses; unstaffed roles are excluded so the preview never
-promises pay nobody will receive.
+The confirmation/cart DISPLAY value (`calc_earnings`) is DISPLAY-ONLY (config-line
+batches store `earnings`=0; real pay is computed at day-close from `line_role_config`),
+so changing it never corrupts actual payroll. Rule: if the ENTERING worker holds a
+config role on the line (`get_line_role_rate_strict` matches `line_role_config.role_key`),
+show `units × that role's rate` (e.g. producer 300.2kg → 300.2×1125). ONLY when the
+enterer is NOT a line worker (operator/admin) fall back to
+`units × get_line_staffed_role_rate_sum(product)` (sum of staffed-role rates) so the
+preview isn't 0. **Why:** users read the number as "this producer's batch pay"; a combined
+line-sum (e.g. 1875 = producer 1125 + pochkalash 750) looked wrong — each role earns its
+own rate separately. The earlier always-show-the-line-sum design was wrong for line
+workers. Note staffed-rate-sum still excludes UNstaffed roles (an Ip O'rovchi role with no
+assigned worker drops out), which is also why the old sum looked short (1875 not 2250).
 
 ## (Legacy-only) producers paid per batch; rates GLOBAL per role
 Applies ONLY to LEGACY lines. Producers are paid per batch (kg × producer rate,

@@ -390,8 +390,29 @@ def init_db() -> None:
             )
         """)
         cur.execute("""
+            ALTER TABLE line_role_config
+              ADD COLUMN IF NOT EXISTS pay_mode TEXT NOT NULL DEFAULT 'pooled'
+        """)
+        cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_line_role_config_line
               ON line_role_config(line_id)
+        """)
+        # Ishlab chiqaruvchi (producer) rollarini 'individual' deb belgilaymiz:
+        # config roli a'zolari standart 'producer' rolini ham tutsa — bu producer roli.
+        # Idempotent: producer = individual o'zgarmas qoida (qayta ishga tushishda xavfsiz).
+        cur.execute("""
+            UPDATE line_role_config lrc SET pay_mode = 'individual'
+            WHERE lrc.pay_mode <> 'individual'
+              AND EXISTS (
+                SELECT 1 FROM production_line_workers w
+                WHERE w.line_id = lrc.line_id AND w.role = lrc.role_key
+                  AND EXISTS (
+                    SELECT 1 FROM production_line_workers w2
+                    WHERE w2.line_id = w.line_id
+                      AND w2.worker_name = w.worker_name
+                      AND w2.role = 'producer'
+                  )
+              )
         """)
         # Partiya yaratilganda liniya snapshot — kun yopilganda liniya bo'yicha jami kg
         cur.execute("ALTER TABLE batches ADD COLUMN IF NOT EXISTS production_line_id INTEGER")
@@ -731,17 +752,37 @@ def close_day(closed_by: str, scope: str = "arqon") -> dict:
             # to'lanadi. Config bo'lmasa (legacy) → producer partiyada to'langan;
             # bu yerda tayyorlash/upakovka POOL'lari global stavkada bo'linadi.
             cur.execute(
-                "SELECT role_key, rate FROM line_role_config WHERE line_id=%s",
+                "SELECT role_key, rate, pay_mode FROM line_role_config WHERE line_id=%s",
                 (line_id,),
             )
             cfg_rows = cur.fetchall()
             if cfg_rows:
                 pay_roles = {r["role_key"]: float(r["rate"]) for r in cfg_rows}
+                pay_modes = {r["role_key"]: (r["pay_mode"] or "pooled") for r in cfg_rows}
             else:
                 pay_roles = {
                     "preparation": rates.get("preparation", 0.0),
                     "packaging":   rates.get("packaging", 0.0),
                 }
+                pay_modes = {"preparation": "pooled", "packaging": "pooled"}
+
+            # Har bir ishchining shu liniyadagi BUGUNGI shaxsiy ishlab chiqarishi
+            # (individual to'lov uchun: own_kg × rate)
+            cur.execute(
+                """SELECT b.worker AS worker,
+                          COALESCE(SUM(CASE WHEN p.rate_type='kg' THEN b.weight_kg ELSE b.quantity END), 0) AS kg
+                   FROM batches b
+                   JOIN products p ON p.name = b.product
+                   WHERE b.payroll_method = 'ROLE_BASED_KG'
+                     AND COALESCE(b.production_line_id, p.line_id) = %s
+                     AND (b.created_at AT TIME ZONE 'Asia/Tashkent')::date = %s
+                   GROUP BY b.worker""",
+                (line_id, work_date),
+            )
+            own_kg_by_worker: dict[str, float] = {}
+            for r in cur.fetchall():
+                if r["worker"]:
+                    own_kg_by_worker[r["worker"]] = float(r["kg"])
 
             cur.execute(
                 """SELECT worker_name, role FROM production_line_workers
@@ -758,15 +799,21 @@ def close_day(closed_by: str, scope: str = "arqon") -> dict:
             for m in members:
                 role = m["role"]
                 rate = pay_roles.get(role, rates.get(role, 0.0))
-                n = counts.get(role, 0)
-                amount = (total_kg * rate) / n if n > 0 else 0.0
+                is_individual = pay_modes.get(role) == "individual"
+                if is_individual:
+                    kg = own_kg_by_worker.get(m["worker_name"], 0.0)
+                    amount = kg * rate
+                else:
+                    kg = total_kg
+                    n = counts.get(role, 0)
+                    amount = (total_kg * rate) / n if n > 0 else 0.0
                 cur.execute(
                     """INSERT INTO salary_entries
                            (scope, line_id, worker, role, source_type, work_date, kg, rate, amount)
                        VALUES (%s,%s,%s,%s,'daily_shared',%s,%s,%s,%s)
                        ON CONFLICT (scope, worker, role, work_date) WHERE source_type='daily_shared'
                        DO NOTHING""",
-                    (scope, line_id, m["worker_name"], role, work_date, total_kg, rate, amount),
+                    (scope, line_id, m["worker_name"], role, work_date, kg, rate, amount),
                 )
                 entries.append({"worker": m["worker_name"], "role": role, "rate": rate, "amount": amount})
                 new_entries.append({

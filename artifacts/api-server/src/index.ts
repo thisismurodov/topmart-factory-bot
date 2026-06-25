@@ -100,6 +100,10 @@ async function initDb() {
     )
   `);
   await pool.query(`
+    ALTER TABLE line_role_config
+      ADD COLUMN IF NOT EXISTS pay_mode TEXT NOT NULL DEFAULT 'pooled'
+  `);
+  await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_line_role_config_line
       ON line_role_config(line_id)
   `);

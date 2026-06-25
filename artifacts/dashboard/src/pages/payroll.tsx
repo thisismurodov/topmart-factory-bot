@@ -61,13 +61,14 @@ function errMsg(e: unknown, fallback: string): string {
 }
 
 // ── Types ──────────────────────────────────────────────────────────────────────
-type Member = { id: number; workerName: string; role: string };
+type Member = { id: number; workerName: string; role: string; kg?: number; amount?: number };
 
 type LineRoleStatus = {
   roleKey: string;
   label: string;
   rate: number;
   maxWorkers: number;
+  payMode?: string;
   members: Member[];
   pool: number | null;
   perWorker: number | null;
@@ -95,7 +96,7 @@ type LineStatus = {
 type LineConfig = {
   lineId: number;
   lineName: string;
-  roles: { roleKey: string; label: string; rate: number; maxWorkers: number }[];
+  roles: { roleKey: string; label: string; rate: number; maxWorkers: number; payMode?: string }[];
 };
 
 // ── Role rate row (global settings tab) ────────────────────────────────────────
@@ -151,7 +152,7 @@ function RoleRateRow({ role, rate, updatedAt }: { role: string; rate: number; up
 
 // ── One role column inside a line card ──────────────────────────────────────────
 function RoleSection({
-  roleKey, label, members, availableWorkers, closed, totalKg, pool, perWorker, rate, maxWorkers, onAdd, onRemove, adding,
+  roleKey, label, members, availableWorkers, closed, totalKg, pool, perWorker, rate, maxWorkers, payMode, onAdd, onRemove, adding,
 }: {
   roleKey: string;
   label: string;
@@ -163,13 +164,15 @@ function RoleSection({
   perWorker: number | null;
   rate: number;
   maxWorkers: number;
+  payMode?: string;
   onAdd: (role: string, workerName: string) => void;
   onRemove: (memberId: number, workerName: string, role: string) => void;
   adding: boolean;
 }) {
   const [sel, setSel] = useState<string>("");
   const atMax = members.length >= maxWorkers;
-  const isPool = roleKey !== "producer";
+  const isIndividual = payMode === "individual";
+  const isPool = !isIndividual;
 
   return (
     <div className="rounded-lg border border-border bg-card/40 flex flex-col" data-testid={`role-section-${roleKey}`}>
@@ -187,7 +190,18 @@ function RoleSection({
       </div>
 
       <div className="px-3 py-2 text-xs border-b border-border bg-muted/20">
-        {isPool ? (
+        {isIndividual ? (
+          <div className="space-y-0.5">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Stavka (shaxsiy)</span>
+              <span className="font-mono font-medium">{formatNumber(rate)} so'm/kg</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Jami ({members.length || 0} kishi)</span>
+              <span className="font-mono font-medium text-primary">{formatCurrency(pool ?? 0)}</span>
+            </div>
+          </div>
+        ) : (
           <div className="space-y-0.5">
             <div className="flex justify-between">
               <span className="text-muted-foreground">Fond ({formatNumber(totalKg)}×{formatNumber(rate)})</span>
@@ -197,11 +211,6 @@ function RoleSection({
               <span className="text-muted-foreground">Har biriga ({members.length || 0} kishi)</span>
               <span className="font-mono font-medium text-primary">{formatCurrency(perWorker ?? 0)}</span>
             </div>
-          </div>
-        ) : (
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Stavka (har partiyada)</span>
-            <span className="font-mono font-medium">{formatNumber(rate)} so'm/kg</span>
           </div>
         )}
       </div>
@@ -218,7 +227,12 @@ function RoleSection({
               className="flex items-center justify-between gap-2 rounded-md bg-background border border-border px-2 py-1.5"
               data-testid={`member-${m.id}`}
             >
-              <span className="text-sm truncate">{m.workerName || "(nomsiz)"}</span>
+              <span className="text-sm truncate flex-1">{m.workerName || "(nomsiz)"}</span>
+              {isIndividual && (
+                <span className="text-xs font-mono text-primary shrink-0" data-testid={`member-amount-${m.id}`}>
+                  {formatNumber(m.kg ?? 0)}kg · {formatCurrency(m.amount ?? 0)}
+                </span>
+              )}
               {!closed && (
                 <Button
                   size="icon"
@@ -282,17 +296,18 @@ function LineConfigDialog({
   const roles = line.roles ?? [];
 
   // Edit state for existing roles
-  const [editMap, setEditMap] = useState<Record<string, { label: string; rate: string; maxWorkers: string }>>({});
+  const [editMap, setEditMap] = useState<Record<string, { label: string; rate: string; maxWorkers: string; payMode: string }>>({});
 
-  const getEdit = (roleKey: string, defaults: { label: string; rate: number; maxWorkers: number }) => {
+  const getEdit = (roleKey: string, defaults: { label: string; rate: number; maxWorkers: number; payMode?: string }) => {
     return editMap[roleKey] ?? {
       label: defaults.label,
       rate: String(defaults.rate),
       maxWorkers: String(defaults.maxWorkers),
+      payMode: defaults.payMode ?? "pooled",
     };
   };
 
-  const setEdit = (roleKey: string, field: "label" | "rate" | "maxWorkers", value: string) => {
+  const setEdit = (roleKey: string, field: "label" | "rate" | "maxWorkers" | "payMode", value: string) => {
     setEditMap((prev) => ({
       ...prev,
       [roleKey]: { ...getEdit(roleKey, { label: "", rate: 0, maxWorkers: 5 }), [field]: value },
@@ -304,6 +319,7 @@ function LineConfigDialog({
   const [newLabel, setNewLabel] = useState("");
   const [newRate, setNewRate] = useState("");
   const [newMax, setNewMax] = useState("5");
+  const [newPayMode, setNewPayMode] = useState("pooled");
   const [saving, setSaving] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -330,6 +346,7 @@ function LineConfigDialog({
           label: ed.label.trim() || roleKey,
           rate: Number(ed.rate),
           maxWorkers: Number(ed.maxWorkers),
+          payMode: ed.payMode === "individual" ? "individual" : "pooled",
         }),
       });
       if (!res.ok) {
@@ -378,6 +395,7 @@ function LineConfigDialog({
           label: newLabel.trim() || newRoleKey.trim(),
           rate: Number(newRate),
           maxWorkers: Number(newMax) || 5,
+          payMode: newPayMode === "individual" ? "individual" : "pooled",
         }),
       });
       if (!res.ok) {
@@ -460,7 +478,8 @@ function LineConfigDialog({
             const isChanged =
               ed.label !== r.label ||
               Number(ed.rate) !== r.rate ||
-              Number(ed.maxWorkers) !== r.maxWorkers;
+              Number(ed.maxWorkers) !== r.maxWorkers ||
+              ed.payMode !== (r.payMode ?? "pooled");
             const members = line.roles?.find((lr) => lr.roleKey === r.roleKey)?.members ?? [];
             return (
               <div key={r.roleKey} className="border border-border rounded-lg p-3 space-y-2">
@@ -629,11 +648,11 @@ function LineCard({
     ? line.roles
     : [
         { roleKey: "producer", label: "Ishlab chiqaruvchi", rate: line.producerRate, maxWorkers: 5,
-          members: line.producers, pool: null, perWorker: null },
+          payMode: "individual", members: line.producers, pool: null, perWorker: null },
         { roleKey: "preparation", label: "Tayyorlash", rate: line.prepRate, maxWorkers: 3,
-          members: line.preparation, pool: line.prepPool, perWorker: line.prepPerWorker },
+          payMode: "pooled", members: line.preparation, pool: line.prepPool, perWorker: line.prepPerWorker },
         { roleKey: "packaging", label: "Qadoqlash", rate: line.packagingRate, maxWorkers: 5,
-          members: line.packaging, pool: line.packagingPool, perWorker: line.packagingPerWorker },
+          payMode: "pooled", members: line.packaging, pool: line.packagingPool, perWorker: line.packagingPerWorker },
       ];
 
   return (
@@ -728,6 +747,7 @@ function LineCard({
                 perWorker={roleStatus.perWorker}
                 rate={roleStatus.rate}
                 maxWorkers={roleStatus.maxWorkers}
+                payMode={roleStatus.payMode}
                 onAdd={(rk, w) => onAdd(line.lineId, rk, w)}
                 onRemove={onRemove}
                 adding={adding}

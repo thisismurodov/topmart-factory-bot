@@ -103,6 +103,24 @@ async function initDb() {
     ALTER TABLE line_role_config
       ADD COLUMN IF NOT EXISTS pay_mode TEXT NOT NULL DEFAULT 'pooled'
   `);
+  // Producer config roles → 'individual' (own_kg × rate, not pooled).
+  // Idempotent backfill: a config role is a producer role if its members also
+  // hold the standard 'producer' role on the same line. Mirrors bot init_db so
+  // payroll is correct regardless of which service runs migrations first.
+  await pool.query(`
+    UPDATE line_role_config lrc SET pay_mode = 'individual'
+    WHERE lrc.pay_mode <> 'individual'
+      AND EXISTS (
+        SELECT 1 FROM production_line_workers w
+        WHERE w.line_id = lrc.line_id AND w.role = lrc.role_key
+          AND EXISTS (
+            SELECT 1 FROM production_line_workers w2
+            WHERE w2.line_id = w.line_id
+              AND w2.worker_name = w.worker_name
+              AND w2.role = 'producer'
+          )
+      )
+  `);
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_line_role_config_line
       ON line_role_config(line_id)

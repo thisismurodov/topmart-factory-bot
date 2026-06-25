@@ -16,10 +16,21 @@ At day-close, ROLE_BASED_KG work is aggregated per line as WORK-UNITS, not kg:
 `units = SUM(CASE WHEN products.rate_type='kg' THEN batches.weight_kg ELSE batches.quantity END)`
 attributed via `COALESCE(batches.production_line_id, products.line_id)`, filtered to
 `batches.payroll_method='ROLE_BASED_KG'` (JOIN batches→products on name).
-- CONFIG line: pay EVERY configured role (INCLUDING producer) that has ≥1 worker:
-  `amount = units × line_role_config.rate ÷ (#workers in that role on the line)`.
+- CONFIG line: pay EVERY configured role (INCLUDING producer) that has ≥1 worker, but
+  HOW depends on `line_role_config.pay_mode` ('pooled' default | 'individual'):
+  - pay_mode='pooled' (pochkalash / ip o'rovchi / preparation / packaging):
+    `amount = line_total_units × rate ÷ (#workers in that role on the line)`.
+  - pay_mode='individual' (PRODUCERS): each worker paid by their OWN production —
+    `amount = own_units × rate`, attributed via `batches.worker` (GROUP BY worker),
+    NOT divided by headcount. Example: Aziza 98.5kg, Gullola 100kg, Shohida 50kg each
+    ×1125 individually (NOT (98.5+100+50)/3).
   The entering worker's per-batch `batches.earnings` is stored as 0 (paid at close) to
   avoid double pay. The product `rate` column is NOT used to pay anyone on a config line.
+  **pay_mode migration:** added via idempotent ALTER in BOTH api-server initDb AND bot
+  init_db; a config role is auto-flagged 'individual' iff its members ALSO hold the
+  standard 'producer' role on the same line (backfill UPDATE runs in BOTH services so
+  startup order doesn't matter). Endpoints (line-configs, role-config, POST/PATCH roles)
+  expose/accept payMode. Dashboard isPool keys off payMode (NOT roleKey==='producer').
 - LEGACY line: unchanged — producer paid per batch from product rate; prep/packaging
   global-rate pools ÷count at close.
 **Why:** dona products (e.g. Qop Ip line 9: Qopiporash=100/dona, karopkalash=60/dona)

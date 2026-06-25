@@ -404,7 +404,7 @@ function LineConfigDialog({
         return;
       }
       toast({ title: "Qo'shildi", description: `${newLabel || newRoleKey} roli qo'shildi.` });
-      setNewRoleKey(""); setNewLabel(""); setNewRate(""); setNewMax("5");
+      setNewRoleKey(""); setNewLabel(""); setNewRate(""); setNewMax("5"); setNewPayMode("pooled");
       invalidate();
     } finally {
       setAdding(false);
@@ -517,6 +517,18 @@ function LineConfigDialog({
                     />
                   </div>
                 </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">To'lov turi</Label>
+                  <Select value={ed.payMode} onValueChange={(v) => setEdit(r.roleKey, "payMode", v)}>
+                    <SelectTrigger className="h-8 text-sm">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="pooled">Pool (jami kg ÷ ishchilar)</SelectItem>
+                      <SelectItem value="individual">Shaxsiy (o'z kg × stavka)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
                 <div className="flex gap-2 justify-end">
                   <Button
                     size="sm"
@@ -606,6 +618,18 @@ function LineConfigDialog({
                 className="h-8 text-sm font-mono"
                 min={1}
               />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">To'lov turi</Label>
+              <Select value={newPayMode} onValueChange={setNewPayMode}>
+                <SelectTrigger className="h-8 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="pooled">Pool (jami kg ÷ ishchilar)</SelectItem>
+                  <SelectItem value="individual">Shaxsiy (o'z kg × stavka)</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <Button

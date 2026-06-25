@@ -1,0 +1,229 @@
+Bu juda yaxshi o'zgarish. Aslida bu ERP larda **Product Variants (Attribute Based Products)** deyiladi.
+
+Hozir sizda:
+
+```text
+Arqon 12 mm
+Arqon 16 mm
+Arqon 18 mm
+Arqon 20 mm
+```
+
+alohida mahsulot.
+
+Lekin to'g'ri model:
+
+```text
+Mahsulot:
+Arqon
+
+Attribute:
+Diametr
+
+Qiymatlar:
+12 mm
+16 mm
+18 mm
+20 mm
+```
+
+---
+
+## Replit uchun prompt
+
+### Mahsulot qo'shish tizimini Product Variants logikasiga o'tkazing
+
+Yangi mahsulot qo'shishda quyidagi oqim ishlasin:
+
+### 1-qadam
+
+Mahsulot nomi:
+
+```text
+Mahsulot nomi:
+[ Gilam Arqon ]
+```
+
+---
+
+### 2-qadam
+
+```text
+Bu mahsulotda attribute mavjudmi?
+
+( ) Yo'q
+( ) Ha
+```
+
+---
+
+### 3-qadam
+
+Agar "Ha" tanlansa:
+
+```text
+Attribute nomi:
+
+Misollar:
+Rang
+Diametr
+Og'irlik
+Hajm
+Uzunlik
+
+[ Rang ]
+```
+
+---
+
+### 4-qadam
+
+Attribute qiymatlari kiritish
+
+```text
+Qiymat:
+[ Qizil ]
+
+[ + Qo'shish ]
+```
+
+Qo'shilgandan keyin:
+
+```text
+✓ Qizil
+
+Qiymat:
+[          ]
+
+[ + Qo'shish ]
+```
+
+Yana:
+
+```text
+✓ Qizil
+✓ Ko'k
+✓ Sariq
+✓ Yashil
+```
+
+har safar input avtomatik tozalansin.
+
+---
+
+### 5-qadam
+
+```text
+[Yakunlash]
+```
+
+bosilganda variantlar yaratiladi:
+
+```text
+Gilam Arqon / Qizil
+Gilam Arqon / Ko'k
+Gilam Arqon / Sariq
+Gilam Arqon / Yashil
+```
+
+---
+
+### 6-qadam
+
+Har bir variant uchun alohida parametrlar
+
+Jadval ko'rinishida:
+
+| Variant             | Tannarx | Ishlab chiqarish | Sotish narxi | Tier |
+| ------------------- | ------- | ---------------- | ------------ | ---- |
+| Gilam Arqon / Qizil |         |                  |              |      |
+| Gilam Arqon / Ko'k  |         |                  |              |      |
+| Gilam Arqon / Sariq |         |                  |              |      |
+
+---
+
+### Auto SKU
+
+SKU avtomatik generatsiya qilinsin.
+
+Misol:
+
+```text
+Gilam Arqon / Qizil
+
+SKU:
+GA-QIZ-001
+```
+
+```text
+Gilam Arqon / Ko'k
+
+SKU:
+GA-KOK-002
+```
+
+yoki
+
+```text
+ARP-12MM
+ARP-16MM
+ARP-18MM
+```
+
+formatida.
+
+SKU unique bo'lishi shart.
+
+---
+
+### Kelajak uchun
+
+Attribute soni 1 tadan ko'p bo'lsin.
+
+Misol:
+
+```text
+Mahsulot:
+Arqon
+
+Attribute 1:
+Diametr
+
+12 mm
+16 mm
+
+Attribute 2:
+Rang
+
+Oq
+Sariq
+```
+
+ERP avtomatik yaratsin:
+
+```text
+Arqon / 12 mm / Oq
+Arqon / 12 mm / Sariq
+Arqon / 16 mm / Oq
+Arqon / 16 mm / Sariq
+```
+
+Bu BoxHero, Billz, Shopify va Odoo dagi professional variant logikasiga yaqin bo'ladi.
+
+### Yana bitta muhim qo'shimcha
+
+Mahsulot kartasida:
+
+```text
+Arqon
+├── 12 mm
+├── 16 mm
+├── 18 mm
+└── 20 mm
+```
+
+tree ko'rinishida chiqsin.
+
+Shunda ERP'da 500 ta mahsulot emas, 50 ta asosiy mahsulot va ularning variantlari ko'rinadi.
+
+Bu ombor, ishlab chiqarish va savdo hisobotlarini ancha tartibli qiladi.

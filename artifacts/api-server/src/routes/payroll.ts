@@ -447,7 +447,7 @@ router.get("/payroll/day-status", async (_req, res): Promise<void> => {
   );
   const today: string = dRows[0].today;
 
-  const [rateRes, lineRes, memberRes, kgRes, runRes, roleConfigRes, workerKgRes] = await Promise.all([
+  const [rateRes, lineRes, memberRes, kgRes, runRes, roleConfigRes, workerKgRes, frozenRes] = await Promise.all([
     pool.query(`SELECT role, rate FROM payroll_role_rates WHERE scope = $1`, [SCOPE]),
     pool.query(`SELECT id, name FROM production_lines ORDER BY id`),
     pool.query(
@@ -485,6 +485,12 @@ router.get("/payroll/day-status", async (_req, res): Promise<void> => {
        GROUP BY COALESCE(b.production_line_id, p.line_id), b.worker`,
       [today]
     ),
+    // Frozen daily_shared snapshot — for CLOSED lines, preview must match paid amounts
+    pool.query(
+      `SELECT line_id, worker, role, kg, amount FROM salary_entries
+       WHERE scope = $1 AND work_date = $2 AND source_type = 'daily_shared'`,
+      [SCOPE, today]
+    ),
   ]);
 
   // Global fallback rates
@@ -512,6 +518,21 @@ router.get("/payroll/day-status", async (_req, res): Promise<void> => {
     const lid = Number(r.production_line_id);
     if (!workerKgByLine.has(lid)) workerKgByLine.set(lid, new Map());
     workerKgByLine.get(lid)!.set(String(r.worker), Number(r.kg));
+  }
+
+  // Frozen daily_shared snapshot keyed `${lineId}::${role}::${worker}` → {kg, amount}
+  // plus a per-(line,role) list so closed lines can show workers paid then removed.
+  const frozenByKey = new Map<string, { kg: number; amount: number }>();
+  const frozenByLineRole = new Map<string, { worker: string; kg: number; amount: number }[]>();
+  for (const r of frozenRes.rows) {
+    if (r.line_id === null) continue;
+    const lid = Number(r.line_id);
+    const entry = { kg: Number(r.kg), amount: Number(r.amount) };
+    frozenByKey.set(`${lid}::${r.role}::${r.worker}`, entry);
+    const lrKey = `${lid}::${r.role}`;
+    const arr = frozenByLineRole.get(lrKey) ?? [];
+    arr.push({ worker: String(r.worker), ...entry });
+    frozenByLineRole.set(lrKey, arr);
   }
 
   const lineIdSet = new Set<number>(lineRes.rows.map((ln) => Number(ln.id)));
@@ -609,11 +630,46 @@ router.get("/payroll/day-status", async (_req, res): Promise<void> => {
       ];
     }
 
+    // For CLOSED lines, override with frozen paid amounts so preview == close-day,
+    // even if rates/pay_mode/members were edited after closing.
+    const lineClosed = closedByLine.has(lineId);
+    if (lineClosed) {
+      for (const role of roles) {
+        const frozenList = frozenByLineRole.get(`${lineId}::${role.roleKey}`);
+        if (!frozenList || frozenList.length === 0) continue;
+        // Override current members with their frozen pay
+        const seen = new Set<string>();
+        let frozenSum = 0;
+        role.members = role.members.map((m) => {
+          seen.add(m.workerName);
+          const f = frozenByKey.get(`${lineId}::${role.roleKey}::${m.workerName}`);
+          if (f) {
+            frozenSum += f.amount;
+            return { ...m, kg: f.kg, amount: f.amount };
+          }
+          frozenSum += m.amount ?? 0;
+          return m;
+        });
+        // Add workers who were paid at close but have since been removed/reassigned
+        for (const fr of frozenList) {
+          if (seen.has(fr.worker)) continue;
+          frozenSum += fr.amount;
+          role.members.push({
+            id: -1, workerName: fr.worker, role: role.roleKey, kg: fr.kg, amount: fr.amount,
+          });
+        }
+        role.pool = frozenSum;
+        role.perWorker = role.payMode === "individual"
+          ? null
+          : (role.members.length > 0 ? frozenSum / role.members.length : 0);
+      }
+    }
+
     return {
       lineId,
       lineName: ln.name,
       totalKg,
-      closed: closedByLine.has(lineId),
+      closed: lineClosed,
       closedAt: closedByLine.get(lineId) ?? null,
       producers,
       preparation,

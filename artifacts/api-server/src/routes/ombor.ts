@@ -290,6 +290,96 @@ router.post("/ombor/finished-in", async (req, res): Promise<void> => {
   }
 });
 
+// ── POST /api/ombor/adjust ─────────────────────────────────────────────────────
+// Konteyner liniyasining miqdori VA og'irligini bir amalda to'g'rilash
+// (qayta sanash / to'kilish tuzatishi). Yangi qiymatlar absolyut (ustiga emas).
+router.post("/ombor/adjust", async (req, res): Promise<void> => {
+  const { warehouseId, product, qty, weightKg, note = "" } = req.body ?? {};
+  if (!warehouseId || !product) {
+    res.status(400).json({ error: "warehouseId, product required" }); return;
+  }
+  const newQty = Number(qty);
+  if (isNaN(newQty) || newQty < 0) {
+    res.status(400).json({ error: "qty must be >= 0" }); return;
+  }
+  const explicitWeight = weightKg != null && weightKg !== "" ? Number(weightKg) : null;
+  if (explicitWeight != null && (isNaN(explicitWeight) || explicitWeight < 0)) {
+    res.status(400).json({ error: "weightKg invalid" }); return;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const curRes = await client.query(
+      `SELECT i.quantity, i.weight_kg, i.product_type, LOWER(p.unit_type) AS unit_type
+       FROM inventory i
+       LEFT JOIN products p ON p.name = i.product
+       WHERE i.warehouse_id=$1 AND i.product=$2`,
+      [warehouseId, product],
+    );
+    if (!curRes.rows.length) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "Mahsulot bu konteynerda topilmadi" }); return;
+    }
+
+    const oldQty       = Number(curRes.rows[0].quantity) || 0;
+    const oldWeight    = Number(curRes.rows[0].weight_kg) || 0;
+    const productType  = curRes.rows[0].product_type as string;
+    const isKg         = String(curRes.rows[0].unit_type ?? "dona") === "kg";
+    // kg-mahsulotlar uchun og'irlik majburiy — aks holda miqdor to'g'rilanib
+    // og'irlik eskirib qoladi (zahirani halol saqlash talabi).
+    if (isKg && explicitWeight == null) {
+      await client.query("ROLLBACK");
+      res.status(400).json({ error: "kg-mahsulot uchun og'irlik (kg) majburiy" }); return;
+    }
+    // dona-mahsulotlar uchun og'irlik doimo 0.
+    const newWeight = isKg ? (explicitWeight as number) : 0;
+
+    const qtyChanged    = newQty !== oldQty;
+    const weightChanged = newWeight !== oldWeight;
+    if (!qtyChanged && !weightChanged) {
+      await client.query("ROLLBACK");
+      res.status(400).json({ error: "O'zgartirish yo'q" }); return;
+    }
+
+    await client.query(
+      "UPDATE inventory SET quantity=$1, weight_kg=$2, updated_at=NOW() WHERE warehouse_id=$3 AND product=$4",
+      [newQty, newWeight, warehouseId, product],
+    );
+
+    // Harakatni to'g'rilangan miqdorlar bilan log qilamiz.
+    const delta = newQty - oldQty;
+    const movementType = delta > 0 ? "IN" : delta < 0 ? "OUT" : "IN";
+    let auto = `Tuzatish: ${oldQty} → ${newQty}`;
+    if (isKg) auto += `, ${oldWeight} → ${newWeight} kg`;
+    const noteText = note ? `${note} (${auto})` : auto;
+    if (movementType === "IN") {
+      await client.query(
+        `INSERT INTO stock_movements
+           (product, quantity, movement_type, to_warehouse_id, note, created_by, product_type)
+         VALUES ($1,$2,'IN',$3,$4,'admin',$5)`,
+        [product, Math.abs(delta), warehouseId, noteText, productType],
+      );
+    } else {
+      await client.query(
+        `INSERT INTO stock_movements
+           (product, quantity, movement_type, from_warehouse_id, note, created_by, product_type)
+         VALUES ($1,$2,'OUT',$3,$4,'admin',$5)`,
+        [product, Math.abs(delta), warehouseId, noteText, productType],
+      );
+    }
+
+    await client.query("COMMIT");
+    res.json({ ok: true });
+  } catch (e: any) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
 // ── GET /api/ombor/search ──────────────────────────────────────────────────────
 router.get("/ombor/search", async (req, res): Promise<void> => {
   const q = String(req.query.q ?? "").trim();

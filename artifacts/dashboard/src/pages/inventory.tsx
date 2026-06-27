@@ -5,7 +5,7 @@ import { formatNumber, formatCurrency } from "@/lib/format";
 import {
   Package, Search, ArrowLeftRight, Plus, RefreshCw, ArrowLeft,
   TrendingUp, Boxes, AlertTriangle, Container, LayoutGrid,
-  Clock, ArrowRight, X, ChevronRight,
+  Clock, ArrowRight, X, ChevronRight, SlidersHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -354,12 +354,14 @@ function ContainerDetailView({
   onBack,
   onTransfer,
   onReceive,
+  onAdjust,
 }: {
   containerId: number;
   containerName: string;
   onBack: () => void;
   onTransfer: (product: string, qty: number) => void;
   onReceive: () => void;
+  onAdjust: (item: ContainerItem) => void;
 }) {
   const { data, isLoading } = useContainerDetail(containerId);
 
@@ -428,8 +430,8 @@ function ContainerDetailView({
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr style={{ background: "#F9FAFB" }}>
-                  {["Mahsulot", "Miqdor", "Og'irlik (kg)", "Birlik", "Narx (so'm)", "Qiymat", "Tur", ""].map((h) => (
-                    <th key={h} style={{
+                  {["Mahsulot", "Miqdor", "Og'irlik (kg)", "Birlik", "Narx (so'm)", "Qiymat", "Tur", "", ""].map((h, hi) => (
+                    <th key={hi} style={{
                       padding: "10px 16px", textAlign: "left", fontSize: 12,
                       fontWeight: 600, color: "#6B7280", letterSpacing: "0.04em",
                     }}>{h}</th>
@@ -478,6 +480,18 @@ function ContainerDetailView({
                         }}
                       >
                         <ArrowLeftRight style={{ width: 12, height: 12 }} /> Transfer
+                      </button>
+                    </td>
+                    <td style={{ padding: "12px 16px" }}>
+                      <button
+                        onClick={() => onAdjust(item)}
+                        style={{
+                          border: "none", background: "none", cursor: "pointer",
+                          color: "#6B7280", padding: "4px 8px", borderRadius: 6,
+                          fontSize: 12, display: "flex", alignItems: "center", gap: 4,
+                        }}
+                      >
+                        <SlidersHorizontal style={{ width: 12, height: 12 }} /> To'g'rilash
                       </button>
                     </td>
                   </tr>
@@ -731,6 +745,119 @@ function ReceiveModal({
             style={{ background: "#0B6B3A", color: "#fff" }}
           >
             {mut.isPending ? "Saqlanmoqda…" : "Qabul qilish"}
+          </Button>
+        </div>
+      </div>
+    </ModalOverlay>
+  );
+}
+
+// ── Adjust (Correct) Modal ────────────────────────────────────────────────────
+
+function AdjustModal({
+  warehouseId,
+  warehouseName,
+  product,
+  currentQty,
+  currentWeight,
+  isKg,
+  onClose,
+  onDone,
+}: {
+  warehouseId: number;
+  warehouseName: string;
+  product: string;
+  currentQty: number;
+  currentWeight: number | null;
+  isKg: boolean;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const qc = useQueryClient();
+  const [qty, setQty]       = useState(String(currentQty));
+  const [weight, setWeight] = useState(currentWeight != null ? String(currentWeight) : "");
+  const [note, setNote]     = useState("");
+  const [err, setErr]       = useState("");
+
+  const mut = useMutation({
+    mutationFn: () =>
+      authFetch("/api/ombor/adjust", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          warehouseId, product, qty: Number(qty),
+          weightKg: isKg && weight !== "" ? Number(weight) : undefined,
+          note,
+        }),
+      }).then((r) => r.json()),
+    onSuccess: (d) => {
+      if (d.error) { setErr(d.error); return; }
+      qc.invalidateQueries({ queryKey: ["ombor-containers"] });
+      qc.invalidateQueries({ queryKey: ["ombor-container-detail"] });
+      qc.invalidateQueries({ queryKey: ["ombor-summary"] });
+      qc.invalidateQueries({ queryKey: ["ombor-movements"] });
+      qc.invalidateQueries({ queryKey: ["ombor-container-movements"] });
+      onDone();
+    },
+    onError: () => setErr("Xatolik yuz berdi"),
+  });
+
+  const disabled =
+    qty === "" || (isKg && weight === "") || mut.isPending;
+
+  return (
+    <ModalOverlay onClose={onClose}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "#111827" }}>
+          Zahirani to'g'rilash
+        </h3>
+        <p style={{ margin: 0, fontSize: 13, color: "#6B7280" }}>
+          📦 {warehouseName} · <strong>{product}</strong>
+          <br />
+          Qayta sanash yoki to'kilishdan keyin miqdor{isKg ? " va og'irlikni" : "ni"} tuzating
+        </p>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <label style={labelStyle}>
+            Miqdor (dona)
+            <Input
+              type="number" min="0" step="0.001" placeholder="0"
+              value={qty} onChange={(e) => setQty(e.target.value)}
+              style={{ borderRadius: 10 }}
+            />
+          </label>
+
+          {isKg && (
+            <label style={labelStyle}>
+              Og'irlik (kg)
+              <Input
+                type="number" min="0" step="0.001" placeholder="0"
+                value={weight} onChange={(e) => setWeight(e.target.value)}
+                style={{ borderRadius: 10 }}
+              />
+            </label>
+          )}
+
+          <label style={labelStyle}>
+            Izoh (ixtiyoriy)
+            <Input
+              placeholder="Masalan: qayta sanash, to'kilish…"
+              value={note} onChange={(e) => setNote(e.target.value)}
+              style={{ borderRadius: 10 }}
+            />
+          </label>
+        </div>
+
+        {err && <div style={{ color: "#DC2626", fontSize: 13 }}>{err}</div>}
+
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <Button variant="outline" onClick={onClose}>Bekor</Button>
+          <Button
+            onClick={() => { setErr(""); mut.mutate(); }}
+            disabled={disabled}
+            style={{ background: "#0B6B3A", color: "#fff" }}
+          >
+            {mut.isPending ? "Saqlanmoqda…" : "To'g'rilash"}
           </Button>
         </div>
       </div>
@@ -1041,6 +1168,7 @@ const selectStyle: React.CSSProperties = {
 type Modal =
   | { kind: "transfer"; fromId: number; fromName: string; product?: string; qty?: number }
   | { kind: "receive"; warehouseId: number; warehouseName: string }
+  | { kind: "adjust"; warehouseId: number; warehouseName: string; product: string; currentQty: number; currentWeight: number | null; isKg: boolean }
   | { kind: "rawin" };
 
 export default function Inventory() {
@@ -1214,6 +1342,17 @@ export default function Inventory() {
           onReceive={() =>
             setModal({ kind: "receive", warehouseId: selectedContainer.id, warehouseName: selectedContainer.name })
           }
+          onAdjust={(item) =>
+            setModal({
+              kind: "adjust",
+              warehouseId: selectedContainer.id,
+              warehouseName: selectedContainer.name,
+              product: item.product,
+              currentQty: item.quantity,
+              currentWeight: item.weightKg,
+              isKg: String(item.unit).toLowerCase() === "kg",
+            })
+          }
         />
       )}
 
@@ -1272,6 +1411,18 @@ export default function Inventory() {
           warehouseId={modal.warehouseId}
           warehouseName={modal.warehouseName}
           containers={containers}
+          onClose={() => setModal(null)}
+          onDone={() => setModal(null)}
+        />
+      )}
+      {modal?.kind === "adjust" && (
+        <AdjustModal
+          warehouseId={modal.warehouseId}
+          warehouseName={modal.warehouseName}
+          product={modal.product}
+          currentQty={modal.currentQty}
+          currentWeight={modal.currentWeight}
+          isKg={modal.isKg}
           onClose={() => setModal(null)}
           onDone={() => setModal(null)}
         />

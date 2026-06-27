@@ -19,6 +19,10 @@ ratio an approximation). Every stock mutation now carries weight directly.
 - API `/ombor/transfer`: moves proportional stored weight src→dest.
 - API `/ombor/finished-in`: accepts optional `weightKg`; if omitted, derives from batch
   ratio for kg products. Dashboard ReceiveModal shows a kg input only for kg products.
+- API `/ombor/adjust`: manual stock CORRECTION. Sets qty + weight to absolute values (not
+  deltas). **kg products MUST send a weight (enforce server-side, not just UI) — else qty
+  is "corrected" while weight goes stale, defeating the whole point.** dona forces weight 0.
+  Adjust ≠ receive: 404 if the line isn't already in that container (no upsert).
 
 **One-time backfill:** init_db backfills existing rows from the batch ratio
 (`quantity * kg_per_unit`, kg products only), guarded by db_meta flag

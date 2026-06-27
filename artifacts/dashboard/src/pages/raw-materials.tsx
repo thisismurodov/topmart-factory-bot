@@ -142,19 +142,23 @@ function RawAdjustDialog({
   const [stock, setStock] = useState("");
   const [note, setNote] = useState("");
   const [err, setErr] = useState("");
+  const [confirming, setConfirming] = useState(false);
 
   useEffect(() => {
     if (material) {
       setStock(String(material.currentStock));
       setNote("");
       setErr("");
+      setConfirming(false);
       adjustMut.reset();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [material?.id]);
 
+  const oldStock = material?.currentStock ?? 0;
   const newStock = Number(stock);
   const valid = stock !== "" && isFinite(newStock) && newStock >= 0 && newStock !== (material?.currentStock ?? -1);
+  const delta = newStock - oldStock;
 
   function submit() {
     if (!material) return;
@@ -178,30 +182,70 @@ function RawAdjustDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-3">
-          <label className="block text-sm font-medium">
-            Haqiqiy zahira ({material?.unitType})
-            <Input
-              type="number" min="0" step="0.001" className="mt-1"
-              value={stock} onChange={(e) => setStock(e.target.value)}
-            />
-          </label>
-          <label className="block text-sm font-medium">
-            Izoh (ixtiyoriy)
-            <Input
-              className="mt-1" placeholder="Masalan: qayta sanash, to'kilish…"
-              value={note} onChange={(e) => setNote(e.target.value)}
-            />
-          </label>
-          {err && <p className="text-sm text-red-600">{err}</p>}
-        </div>
+        {confirming ? (
+          <div className="space-y-3">
+            <div className="rounded-lg border bg-muted/40 p-4 text-sm space-y-2">
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-muted-foreground">Xom ashyo</span>
+                <span className="font-medium">{material?.name}</span>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-muted-foreground">Zahira</span>
+                <span className="font-medium">
+                  {oldStock.toLocaleString("ru-RU")} → <span className="text-primary">{newStock.toLocaleString("ru-RU")} {material?.unitType}</span>
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-muted-foreground">O'zgarish</span>
+                <span className={`font-medium ${delta > 0 ? "text-green-600" : "text-red-600"}`}>
+                  {delta > 0 ? "+" : ""}{delta.toLocaleString("ru-RU")} {material?.unitType} ({delta > 0 ? "IN" : "OUT"})
+                </span>
+              </div>
+              {note && (
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-muted-foreground">Izoh</span>
+                  <span className="font-medium">{note}</span>
+                </div>
+              )}
+            </div>
+            {err && <p className="text-sm text-red-600">{err}</p>}
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setConfirming(false)} disabled={adjustMut.isPending}>
+                Orqaga
+              </Button>
+              <Button onClick={submit} disabled={adjustMut.isPending}>
+                {adjustMut.isPending ? "Saqlanmoqda…" : "Tasdiqlash"}
+              </Button>
+            </DialogFooter>
+          </div>
+        ) : (
+          <>
+            <div className="space-y-3">
+              <label className="block text-sm font-medium">
+                Haqiqiy zahira ({material?.unitType})
+                <Input
+                  type="number" min="0" step="0.001" className="mt-1"
+                  value={stock} onChange={(e) => setStock(e.target.value)}
+                />
+              </label>
+              <label className="block text-sm font-medium">
+                Izoh (ixtiyoriy)
+                <Input
+                  className="mt-1" placeholder="Masalan: qayta sanash, to'kilish…"
+                  value={note} onChange={(e) => setNote(e.target.value)}
+                />
+              </label>
+              {err && <p className="text-sm text-red-600">{err}</p>}
+            </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Bekor qilish</Button>
-          <Button onClick={submit} disabled={!valid || adjustMut.isPending}>
-            {adjustMut.isPending ? "Saqlanmoqda…" : "To'g'rilash"}
-          </Button>
-        </DialogFooter>
+            <DialogFooter>
+              <Button variant="outline" onClick={onClose}>Bekor qilish</Button>
+              <Button onClick={() => { setErr(""); setConfirming(true); }} disabled={!valid}>
+                Davom etish
+              </Button>
+            </DialogFooter>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   );

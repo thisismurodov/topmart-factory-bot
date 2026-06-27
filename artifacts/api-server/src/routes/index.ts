@@ -34,6 +34,10 @@ router.use(authRouter);
 // ── AI routes — Bearer session (dashboard) OR x-internal-key (bot) ────────────
 router.use(requireAuthOrInternalKey, aiRouter);
 
+// ── Ombor routes — Bearer session (dashboard) OR x-internal-key (bot) ─────────
+// Bot needs container correction (POST /ombor/adjust); dashboard still uses session.
+router.use(requireAuthOrInternalKey, omborRouter);
+
 // ── Auth wall: everything below requires a valid session ──────────────────────
 router.use(requireAuth);
 
@@ -55,7 +59,6 @@ router.use(exchangeRateRouter);
 router.use(rawMaterialsRouter);
 router.use(productMaterialsRouter);
 router.use(packerProductAssignmentsRouter);
-router.use(omborRouter);
 router.use(auditRouter);
 
 export default router;

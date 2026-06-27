@@ -13,7 +13,9 @@ from ..database import (
     get_stock_by_warehouse, get_stock_for_warehouse, get_stock_by_warehouse_typed,
     record_movement, get_recent_movements, get_product_names,
     get_sale_products, get_raw_material_names,
+    get_containers, get_inventory_line,
 )
+from ..api_client import adjust_inventory
 
 # ── States ─────────────────────────────────────────────────────────────────────
 (
@@ -21,7 +23,8 @@ from ..database import (
     INV_IN_CATEGORY, INV_IN_PRODUCT, INV_IN_QTY, INV_IN_WAREHOUSE, INV_IN_CONFIRM,
     INV_OUT_WAREHOUSE, INV_OUT_PRODUCT, INV_OUT_QTY, INV_OUT_CONFIRM,
     INV_TR_FROM, INV_TR_PRODUCT, INV_TR_QTY, INV_TR_TO, INV_TR_CONFIRM,
-) = range(15)
+    INV_ADJ_CONTAINER, INV_ADJ_PRODUCT, INV_ADJ_QTY, INV_ADJ_WEIGHT, INV_ADJ_CONFIRM,
+) = range(20)
 
 
 # ── Keyboards ──────────────────────────────────────────────────────────────────
@@ -31,6 +34,7 @@ def _inv_main_kb() -> ReplyKeyboardMarkup:
         [
             ["➕ Kirim", "➖ Chiqim"],
             ["🔄 Skladlararo o'tkazish"],
+            ["✏️ Konteynerni to'g'rilash"],
             ["📋 Qoldiqlar", "📜 Harakatlar tarixi"],
             ["🔙 Asosiy menyu"],
         ],
@@ -471,6 +475,159 @@ async def transfer_confirm_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# ✏️  KONTEYNERNI TO'G'RILASH (qayta sanash / to'kilish tuzatishi)
+# Bot inventarni o'zi o'zgartirmaydi — Node API (/ombor/adjust) orqali o'tadi,
+# shunda miqdor VA og'irlik (kg) bir amalda halol to'g'rilanadi.
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def adjust_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    containers = get_containers()
+    if not containers:
+        await update.message.reply_text("⚠️ Konteyner topilmadi.", reply_markup=_inv_main_kb())
+        return INV_MAIN
+    await update.message.reply_text(
+        "✏️ *Konteynerni to'g'rilash*\n\nQaysi konteyner?",
+        parse_mode="Markdown",
+        reply_markup=_warehouse_inline(containers, "aw"),
+    )
+    return INV_ADJ_CONTAINER
+
+
+async def adjust_container_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    q = update.callback_query
+    await q.answer()
+    if q.data == "aw:cancel":
+        await q.edit_message_text("❌ Bekor.")
+        return INV_MAIN
+    parts = q.data.split(":", 2)
+    ctx.user_data["adj_wh_id"]   = int(parts[1])
+    ctx.user_data["adj_wh_name"] = parts[2]
+    items = get_stock_for_warehouse(int(parts[1]))
+    if not items:
+        await q.edit_message_text(f"⚠️ *{parts[2]}* bo'sh.", parse_mode="Markdown")
+        return INV_MAIN
+    products = [i["product"] for i in items]
+    await q.edit_message_text(
+        f"🏬 Konteyner: *{parts[2]}*\n\nMahsulotni tanlang:",
+        parse_mode="Markdown",
+        reply_markup=_product_inline(products, "ap"),
+    )
+    return INV_ADJ_PRODUCT
+
+
+async def adjust_product_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    q = update.callback_query
+    await q.answer()
+    if q.data == "ap:cancel":
+        await q.edit_message_text("❌ Bekor.")
+        return INV_MAIN
+    product = q.data.split(":", 1)[1]
+    line = get_inventory_line(ctx.user_data["adj_wh_id"], product)
+    if not line:
+        await q.edit_message_text("⚠️ Mahsulot bu konteynerda topilmadi.")
+        return INV_MAIN
+    unit = str(line.get("unit_type") or "dona").lower()
+    ctx.user_data["adj_product"]    = product
+    ctx.user_data["adj_unit"]       = unit
+    ctx.user_data["adj_old_qty"]    = float(line["quantity"] or 0)
+    ctx.user_data["adj_old_weight"] = float(line["weight_kg"] or 0)
+
+    txt = (
+        f"📦 *{product}*\n"
+        f"Joriy miqdor: *{ctx.user_data['adj_old_qty']:g}*"
+    )
+    if unit == "kg":
+        txt += f"\nJoriy og'irlik: *{ctx.user_data['adj_old_weight']:g} kg*"
+    txt += "\n\nTo'g'ri miqdorni kiriting:"
+    await q.edit_message_text(txt, parse_mode="Markdown")
+    return INV_ADJ_QTY
+
+
+async def adjust_qty(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    try:
+        qty = float(update.message.text.replace(",", "."))
+        if qty < 0:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text("⚠️ 0 yoki musbat son kiriting:")
+        return INV_ADJ_QTY
+    ctx.user_data["adj_qty"] = qty
+    # kg-mahsulot uchun og'irlik majburiy; dona uchun so'ramaymiz.
+    if ctx.user_data.get("adj_unit") == "kg":
+        await update.message.reply_text("⚖️ To'g'ri og'irlikni kiriting (kg):")
+        return INV_ADJ_WEIGHT
+    return await _adjust_show_confirm(update, ctx)
+
+
+async def adjust_weight(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    try:
+        w = float(update.message.text.replace(",", "."))
+        if w < 0:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text("⚠️ 0 yoki musbat son kiriting:")
+        return INV_ADJ_WEIGHT
+    ctx.user_data["adj_weight"] = w
+    return await _adjust_show_confirm(update, ctx)
+
+
+async def _adjust_show_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    unit = ctx.user_data.get("adj_unit", "dona")
+    lines = [
+        "✅ *Tasdiqlang:*\n",
+        f"🏬 Konteyner: *{ctx.user_data['adj_wh_name']}*",
+        f"📦 Mahsulot: *{ctx.user_data['adj_product']}*",
+        f"📊 Miqdor: {ctx.user_data['adj_old_qty']:g} → *{ctx.user_data['adj_qty']:g}*",
+    ]
+    if unit == "kg":
+        lines.append(
+            f"⚖️ Og'irlik: {ctx.user_data['adj_old_weight']:g} → *{ctx.user_data['adj_weight']:g} kg*"
+        )
+    await update.message.reply_text(
+        "\n".join(lines),
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Tasdiqlash", callback_data="aconfirm:yes"),
+            InlineKeyboardButton("❌ Bekor",      callback_data="aconfirm:no"),
+        ]]),
+    )
+    return INV_ADJ_CONFIRM
+
+
+async def adjust_confirm_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    q = update.callback_query
+    await q.answer()
+    if q.data != "aconfirm:yes":
+        await q.edit_message_text("❌ Bekor.")
+        return INV_MAIN
+    user = get_user_role(update.effective_chat.id)
+    who  = user["worker_name"] if user else str(update.effective_chat.id)
+    unit = ctx.user_data.get("adj_unit", "dona")
+    weight = ctx.user_data.get("adj_weight") if unit == "kg" else None
+
+    ok, err = adjust_inventory(
+        warehouse_id=ctx.user_data["adj_wh_id"],
+        product=ctx.user_data["adj_product"],
+        qty=ctx.user_data["adj_qty"],
+        weight_kg=weight,
+        note=f"Bot orqali tuzatish: {who}",
+    )
+    if ok:
+        msg = (
+            f"✅ *To'g'rilandi!*\n\n"
+            f"🏬 {ctx.user_data['adj_wh_name']}\n"
+            f"📦 {ctx.user_data['adj_product']} — {ctx.user_data['adj_qty']:g}"
+        )
+        if unit == "kg" and weight is not None:
+            msg += f"\n⚖️ {weight:g} kg"
+        await q.edit_message_text(msg, parse_mode="Markdown")
+    else:
+        reason = err or "nomalum"
+        await q.edit_message_text(f"❌ Xatolik: {reason}")
+    return INV_MAIN
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # 📋  QOLDIQLAR — kategoriya bo'yicha ajratilgan
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -567,6 +724,7 @@ def build_inventory_handler() -> ConversationHandler:
                 MessageHandler(f.Regex(r"^➕ Kirim$"),                  kirim_start),
                 MessageHandler(f.Regex(r"^➖ Chiqim$"),                 chiqim_start),
                 MessageHandler(f.Regex(r"^🔄 Skladlararo o'tkazish$"), transfer_start),
+                MessageHandler(f.Regex(r"^✏️ Konteynerni to'g'rilash$"), adjust_start),
                 MessageHandler(f.Regex(r"^📋 Qoldiqlar$"),              qoldiqlar),
                 MessageHandler(f.Regex(r"^📜 Harakatlar tarixi$"),      tarix),
                 MessageHandler(f.Regex(r"^🔙 Asosiy menyu$"),           ombor_back),
@@ -587,6 +745,12 @@ def build_inventory_handler() -> ConversationHandler:
             INV_TR_QTY:     [MessageHandler(f.TEXT & ~f.COMMAND,       transfer_qty)],
             INV_TR_TO:      [CallbackQueryHandler(transfer_to_cb,      pattern=r"^tt:")],
             INV_TR_CONFIRM: [CallbackQueryHandler(transfer_confirm_cb, pattern=r"^tconfirm:")],
+
+            INV_ADJ_CONTAINER: [CallbackQueryHandler(adjust_container_cb, pattern=r"^aw:")],
+            INV_ADJ_PRODUCT:   [CallbackQueryHandler(adjust_product_cb,   pattern=r"^ap:")],
+            INV_ADJ_QTY:       [MessageHandler(f.TEXT & ~f.COMMAND,       adjust_qty)],
+            INV_ADJ_WEIGHT:    [MessageHandler(f.TEXT & ~f.COMMAND,       adjust_weight)],
+            INV_ADJ_CONFIRM:   [CallbackQueryHandler(adjust_confirm_cb,   pattern=r"^aconfirm:")],
         },
         fallbacks=[
             MessageHandler(f.Regex(r"^🔙 Asosiy menyu$"), ombor_back),

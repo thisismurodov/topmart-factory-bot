@@ -1701,6 +1701,21 @@ def get_stock_for_warehouse(warehouse_id: int) -> list[dict]:
         return cur.fetchall()
 
 
+def get_inventory_line(warehouse_id: int, product: str) -> dict | None:
+    """Bitta konteyner liniyasi: joriy miqdor, og'irlik va mahsulot birligi (kg/dona)."""
+    with get_conn() as (conn, cur):
+        cur.execute(
+            """SELECT i.quantity,
+                      COALESCE(i.weight_kg, 0)            AS weight_kg,
+                      LOWER(COALESCE(p.unit_type, 'dona')) AS unit_type
+               FROM inventory i
+               LEFT JOIN products p ON p.name = i.product
+               WHERE i.warehouse_id = %s AND i.product = %s""",
+            (warehouse_id, product),
+        )
+        return cur.fetchone()
+
+
 def record_movement(
     product: str,
     quantity: float,

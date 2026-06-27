@@ -76,19 +76,27 @@ async function buildSnapshot(): Promise<Snapshot> {
   const [productsRes, rawRes, debtRes, prodRes, salesRes, workersRes] =
     await Promise.all([
       pool.query(
-        `WITH produced AS (
-           SELECT product, COALESCE(SUM(quantity),0) qty, COALESCE(SUM(weight_kg),0) kg
+        // Real warehouse stock comes from the inventory table (the Ombor), the
+        // same source the bot and dashboard show. Only positive rows count, so
+        // phantom negative balances in general warehouses are ignored — exactly
+        // what the user sees. kg-unit products convert qty→kg via the batch
+        // weight ratio (SUM(weight_kg)/SUM(quantity)); when no ratio exists the
+        // inventory qty is already in kg.
+        `WITH weight_ratio AS (
+           SELECT product,
+                  CASE WHEN SUM(quantity) > 0
+                       THEN SUM(weight_kg)::numeric / SUM(quantity) ELSE 0 END AS kg_per_unit
            FROM batches GROUP BY product
+         ),
+         inv AS (
+           SELECT product, COALESCE(SUM(quantity),0) qty
+           FROM inventory WHERE quantity > 0 GROUP BY product
          ),
          produced_today AS (
            SELECT product, COALESCE(SUM(quantity),0) qty, COALESCE(SUM(weight_kg),0) kg
            FROM batches
            WHERE (created_at AT TIME ZONE 'Asia/Tashkent')::date = $1
            GROUP BY product
-         ),
-         sold AS (
-           SELECT product, COALESCE(SUM(quantity),0) qty, COALESCE(SUM(weight_kg),0) kg
-           FROM sales GROUP BY product
          ),
          sold_today AS (
            SELECT product, COALESCE(SUM(quantity),0) qty
@@ -103,15 +111,14 @@ async function buildSnapshot(): Promise<Snapshot> {
            GROUP BY product
          )
          SELECT p.name, p.rate_type, p.unit_type, p.minimum_stock,
-                COALESCE(pr.qty,0) produced_qty, COALESCE(pr.kg,0) produced_kg,
+                COALESCE(iv.qty,0) inv_qty, COALESCE(wr.kg_per_unit,0) kg_per_unit,
                 COALESCE(pt.qty,0) today_qty,    COALESCE(pt.kg,0) today_kg,
-                COALESCE(s.qty,0)  sold_qty,     COALESCE(s.kg,0)  sold_kg,
                 COALESCE(st.qty,0) sold_today_qty,
                 COALESCE(s7.qty,0) sold7_qty, COALESCE(s7.kg,0) sold7_kg
          FROM products p
-         LEFT JOIN produced       pr ON pr.product = p.name
+         LEFT JOIN inv            iv ON iv.product = p.name
+         LEFT JOIN weight_ratio   wr ON wr.product = p.name
          LEFT JOIN produced_today pt ON pt.product = p.name
-         LEFT JOIN sold           s  ON s.product  = p.name
          LEFT JOIN sold_today     st ON st.product = p.name
          LEFT JOIN sold_7d        s7 ON s7.product = p.name
          WHERE p.active = TRUE
@@ -162,8 +169,10 @@ async function buildSnapshot(): Promise<Snapshot> {
 
   const products: ProductRow[] = productsRes.rows.map((r) => {
     const isKg = r.rate_type === "kg" || r.unit_type === "kg";
-    const stockQty = Math.max(0, num(r.produced_qty) - num(r.sold_qty));
-    const stockKg = Math.max(0, num(r.produced_kg) - num(r.sold_kg));
+    const invQty = num(r.inv_qty);
+    const kgPerUnit = num(r.kg_per_unit);
+    const stockQty = invQty;
+    const stockKg = kgPerUnit > 0 ? invQty * kgPerUnit : invQty;
     const minimumStock = num(r.minimum_stock);
     // Compare and forecast in the product's own unit: kg products use weight
     // (stock/min/velocity all in kg); piece products use quantity. Never mix.

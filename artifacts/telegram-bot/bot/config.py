@@ -28,7 +28,7 @@ DATABASE_URL = os.environ["DATABASE_URL"]
 # API_BASE_URL — Node API'ning manzili (oxirida /api bilan).
 #   Replit dev: http://localhost:80/api  ·  Railway: API servisining public URL'i + /api
 # AI_INTERNAL_KEY — bot ↔ API o'rtasidagi maxfiy kalit (API'dagi bilan bir xil bo'lishi shart).
-API_BASE_URL    = os.environ.get("API_BASE_URL", "")
+API_BASE_URL    = os.environ.get("API_BASE_URL", "http://localhost:80/api")
 AI_INTERNAL_KEY = os.environ.get("AI_INTERNAL_KEY", "")
 
 

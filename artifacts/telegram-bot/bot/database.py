@@ -244,6 +244,17 @@ def init_db() -> None:
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_ppt_product ON product_price_tiers(product_id)
         """)
+        # production_lines — products.line_id FK shu jadvalga ishora qiladi, shuning
+        # uchun ALTER'dan OLDIN yaratilishi shart. To'liq ta'rif quyiroqda (per-line
+        # payroll bo'limida) IF NOT EXISTS bilan takrorlanadi — bo'sh DB'da tartib
+        # muhim (aks holda "relation production_lines does not exist" bilan yiqiladi).
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS production_lines (
+                id         SERIAL PRIMARY KEY,
+                name       TEXT NOT NULL UNIQUE,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+            )
+        """)
         # line_id — mahsulotni ishlab chiqarish liniyasiga bog'lash (ROLE_BASED_KG uchun)
         cur.execute("""
             ALTER TABLE products

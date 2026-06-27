@@ -23,6 +23,7 @@ from bot.handlers.ai import register as register_ai_handlers
 from bot.handlers.inventory import build_inventory_handler
 from bot.handlers.debts import register as register_debt_handlers
 from bot.scheduler import start_scheduler
+from bot.config import AI_HOUR
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -84,7 +85,7 @@ def main() -> None:
     register_kpi_handlers(app)
     register_start_handlers(app)
 
-    start_scheduler(app.bot, ADMIN_CHAT_ID)
+    start_scheduler(app.bot, ADMIN_CHAT_ID, ai_hour=AI_HOUR)
 
     logger.info("TopMart Factory Bot v3.1 started (polling) …")
     app.run_polling(drop_pending_updates=True)

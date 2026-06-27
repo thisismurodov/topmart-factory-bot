@@ -30,6 +30,13 @@ DATABASE_URL = os.environ["DATABASE_URL"]
 # AI_INTERNAL_KEY — bot ↔ API o'rtasidagi maxfiy kalit (API'dagi bilan bir xil bo'lishi shart).
 API_BASE_URL    = os.environ.get("API_BASE_URL", "http://localhost:80/api")
 AI_INTERNAL_KEY = os.environ.get("AI_INTERNAL_KEY", "")
+# AI_HOUR — kunlik AI tahlil yuboriladigan soat (0-23, Asia/Tashkent). Standart: 20.
+try:
+    AI_HOUR = int(os.environ.get("AI_HOUR", "20"))
+    if not 0 <= AI_HOUR <= 23:
+        AI_HOUR = 20
+except ValueError:
+    AI_HOUR = 20
 
 
 def normalize_phone(raw: str) -> str:

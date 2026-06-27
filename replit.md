@@ -44,6 +44,7 @@ Arqon ishlab chiqarish zavodi uchun Telegram bot — partiyalarni kiritish, nazo
 - `SESSION_SECRET` — Express session secret
 - `AI_INTERNAL_KEY` — bot↔API ichki autentifikatsiya kaliti (bot va API'da bir xil bo'lishi shart)
 - `API_BASE_URL` — bot uchun API manzili (`https://<api-host>/api`). Replit'da default `http://localhost:80/api`
+- `AI_HOUR` — kunlik AI tahlil yuboriladigan soat (0-23, Asia/Tashkent). Standart: 20
 - `AI_INTEGRATIONS_OPENAI_*` — Replit AI integration o'zgaruvchilari. Railway deploy'da bot+API servislarida ham bo'lishi kerak
 
 ## User preferences

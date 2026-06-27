@@ -1,8 +1,24 @@
 import { Router, type IRouter } from "express";
+import { z } from "zod";
 import { pool } from "@workspace/db";
 import { openai } from "@workspace/integrations-openai-ai-server";
 
 const router: IRouter = Router();
+
+const DailyQuerySchema = z.object({ refresh: z.string().optional() });
+
+const PackerTipSchema = z.object({
+  worker: z.string().trim().min(1),
+  items: z
+    .array(
+      z.object({
+        product: z.string().trim().min(1),
+        quantity: z.coerce.number().default(0),
+        weightKg: z.coerce.number().default(0),
+      }),
+    )
+    .min(1),
+});
 
 const DAILY_MODEL = "gpt-5.4";
 const TIP_MODEL = "gpt-5-mini";
@@ -12,15 +28,17 @@ type ProductRow = {
   name: string;
   rateType: string;
   unitType: string;
+  unit: string; // "kg" | "dona" — the unit minimum/velocity/stock are expressed in
   minimumStock: number;
+  stock: number; // unit-appropriate stock (kg for kg products, pieces otherwise)
   stockQty: number;
   stockKg: number;
   producedTodayQty: number;
   producedTodayKg: number;
   soldTodayQty: number;
-  velocityPerDay: number; // units/day, last 7 days
-  daysOfStock: number | null; // stockQty / velocity, null if no velocity
-  below: boolean; // stockQty below minimum
+  velocityPerDay: number; // unit/day over last 7 days, consistent with `unit`
+  daysOfStock: number | null; // stock / velocity, null if no velocity
+  below: boolean; // unit-consistent stock below minimum
 };
 
 type Snapshot = {
@@ -79,7 +97,7 @@ async function buildSnapshot(): Promise<Snapshot> {
            GROUP BY product
          ),
          sold_7d AS (
-           SELECT product, COALESCE(SUM(quantity),0) qty
+           SELECT product, COALESCE(SUM(quantity),0) qty, COALESCE(SUM(weight_kg),0) kg
            FROM sales
            WHERE created_at >= NOW() - INTERVAL '7 days'
            GROUP BY product
@@ -89,7 +107,7 @@ async function buildSnapshot(): Promise<Snapshot> {
                 COALESCE(pt.qty,0) today_qty,    COALESCE(pt.kg,0) today_kg,
                 COALESCE(s.qty,0)  sold_qty,     COALESCE(s.kg,0)  sold_kg,
                 COALESCE(st.qty,0) sold_today_qty,
-                COALESCE(s7.qty,0) sold7_qty
+                COALESCE(s7.qty,0) sold7_qty, COALESCE(s7.kg,0) sold7_kg
          FROM products p
          LEFT JOIN produced       pr ON pr.product = p.name
          LEFT JOIN produced_today pt ON pt.product = p.name
@@ -144,25 +162,31 @@ async function buildSnapshot(): Promise<Snapshot> {
 
   const products: ProductRow[] = productsRes.rows.map((r) => {
     const isKg = r.rate_type === "kg" || r.unit_type === "kg";
-    const stockQty = num(r.produced_qty) - num(r.sold_qty);
+    const stockQty = Math.max(0, num(r.produced_qty) - num(r.sold_qty));
     const stockKg = Math.max(0, num(r.produced_kg) - num(r.sold_kg));
-    const velocityPerDay = num(r.sold7_qty) / 7;
-    const stockForDays = isKg ? stockKg : stockQty;
+    const minimumStock = num(r.minimum_stock);
+    // Compare and forecast in the product's own unit: kg products use weight
+    // (stock/min/velocity all in kg); piece products use quantity. Never mix.
+    const stock = isKg ? stockKg : stockQty;
+    const sold7 = isKg ? num(r.sold7_kg) : num(r.sold7_qty);
+    const velocityPerDay = sold7 / 7;
     const daysOfStock =
-      velocityPerDay > 0 ? Math.round((stockForDays / velocityPerDay) * 10) / 10 : null;
+      velocityPerDay > 0 ? Math.round((stock / velocityPerDay) * 10) / 10 : null;
     return {
       name: r.name,
       rateType: r.rate_type,
       unitType: r.unit_type,
-      minimumStock: num(r.minimum_stock),
-      stockQty,
+      unit: isKg ? "kg" : "dona",
+      minimumStock,
+      stock: Math.round(stock * 1000) / 1000,
+      stockQty: Math.round(stockQty * 1000) / 1000,
       stockKg: Math.round(stockKg * 1000) / 1000,
       producedTodayQty: num(r.today_qty),
       producedTodayKg: Math.round(num(r.today_kg) * 1000) / 1000,
       soldTodayQty: num(r.sold_today_qty),
       velocityPerDay: Math.round(velocityPerDay * 100) / 100,
       daysOfStock,
-      below: num(r.minimum_stock) > 0 && stockQty < num(r.minimum_stock),
+      below: minimumStock > 0 && stock < minimumStock,
     };
   });
 
@@ -253,7 +277,9 @@ function summarize(s: Snapshot) {
 // ── GET /ai/daily-analysis ────────────────────────────────────────────────────
 // Returns today's cached run unless ?refresh=1. Persists every generated run.
 router.get("/ai/daily-analysis", async (req, res): Promise<void> => {
-  const refresh = req.query.refresh === "1" || req.query.refresh === "true";
+  const q = DailyQuerySchema.safeParse(req.query);
+  const refreshVal = q.success ? q.data.refresh : undefined;
+  const refresh = refreshVal === "1" || refreshVal === "true";
 
   if (!refresh) {
     const cached = await pool.query(
@@ -326,27 +352,12 @@ Misol uslub: "Bugun qora 50g chiqarding 👍. Omborda oq 100g kam qoldi — keyi
 Qoidalar: raqamlarni o'zgartirma, qisqa yoz, Markdown ishlatma, do'stona ohangda.`;
 
 router.post("/ai/packer-tip", async (req, res): Promise<void> => {
-  const body = req.body as {
-    worker?: unknown;
-    items?: unknown;
-  };
-  const worker = typeof body.worker === "string" ? body.worker.trim() : "";
-  const itemsRaw = Array.isArray(body.items) ? body.items : [];
-  const items = itemsRaw
-    .map((it) => {
-      const o = it as { product?: unknown; quantity?: unknown; weightKg?: unknown };
-      return {
-        product: typeof o.product === "string" ? o.product : "",
-        quantity: num(o.quantity),
-        weightKg: num(o.weightKg),
-      };
-    })
-    .filter((it) => it.product);
-
-  if (!worker || items.length === 0) {
+  const parsed = PackerTipSchema.safeParse(req.body);
+  if (!parsed.success) {
     res.status(400).json({ error: "worker va items talab qilinadi" });
     return;
   }
+  const { worker, items } = parsed.data;
 
   try {
     const snapshot = await buildSnapshot();
@@ -360,7 +371,8 @@ router.post("/ai/packer-tip", async (req, res): Promise<void> => {
         product: it.product,
         madeQty: it.quantity,
         madeKg: it.weightKg,
-        stockQty: p?.stockQty ?? null,
+        unit: p?.unit ?? null,
+        stock: p?.stock ?? null,
         minimumStock: p?.minimumStock ?? null,
         below: p?.below ?? false,
       };
@@ -373,7 +385,8 @@ router.post("/ai/packer-tip", async (req, res): Promise<void> => {
       .slice(0, 4)
       .map((p) => ({
         product: p.name,
-        stockQty: p.stockQty,
+        unit: p.unit,
+        stock: p.stock,
         minimumStock: p.minimumStock,
         velocityPerDay: p.velocityPerDay,
       }));

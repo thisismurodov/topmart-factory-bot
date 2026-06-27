@@ -19,3 +19,6 @@ export * from "./user_roles";
 export * from "./packer_assignments";
 export * from "./pending_users";
 export * from "./wip_movements";
+export * from "./warehouses";
+export * from "./inventory";
+export * from "./stock_movements";

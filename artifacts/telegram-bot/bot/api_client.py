@@ -19,10 +19,13 @@ def adjust_inventory(
     qty: float,
     weight_kg: float | None = None,
     note: str = "",
+    operator: str | None = None,
 ) -> tuple[bool, str | None]:
     """POST /ombor/adjust — konteyner liniyasining miqdor (va kg) ni to'g'rilaydi.
 
     Yangi qiymatlar absolyut (ustiga emas). kg-mahsulotlar uchun weight_kg majburiy.
+    `operator` — tuzatishni bajargan Telegram operatori (audit uchun created_by'ga
+    yoziladi; aks holda "bot" qoladi).
     Muvaffaqiyatda (True, None), aks holda (False, xato matni) qaytaradi.
     """
     if not API_BASE_URL:
@@ -34,6 +37,8 @@ def adjust_inventory(
         payload["weightKg"] = weight_kg
     if note:
         payload["note"] = note
+    if operator:
+        payload["operator"] = operator
 
     data = json.dumps(payload).encode("utf-8")
     headers = {"Content-Type": "application/json"}
@@ -59,11 +64,14 @@ def adjust_raw_material(
     material_id: int,
     stock: float,
     note: str = "",
+    operator: str | None = None,
 ) -> tuple[bool, str | None]:
     """POST /ombor/raw-adjust — xom ashyo zahirasini ABSOLYUT qiymatga to'g'rilaydi.
 
     Yangi qiymat ustiga emas, to'g'ridan-to'g'ri o'rnatiladi; API delta'ni IN/OUT
-    sifatida log qiladi. Muvaffaqiyatda (True, None), aks holda (False, xato).
+    sifatida log qiladi. `operator` — tuzatishni bajargan Telegram operatori
+    (audit uchun created_by'ga yoziladi; aks holda "bot" qoladi).
+    Muvaffaqiyatda (True, None), aks holda (False, xato).
     """
     if not API_BASE_URL:
         return False, "API_BASE_URL o'rnatilmagan"
@@ -72,6 +80,8 @@ def adjust_raw_material(
     payload: dict = {"materialId": material_id, "stock": stock}
     if note:
         payload["note"] = note
+    if operator:
+        payload["operator"] = operator
 
     data = json.dumps(payload).encode("utf-8")
     headers = {"Content-Type": "application/json"}

@@ -614,6 +614,7 @@ async def adjust_confirm_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
         qty=ctx.user_data["adj_qty"],
         weight_kg=weight,
         note=f"Bot orqali tuzatish: {who}",
+        operator=who,
     )
     if ok:
         msg = (
@@ -720,6 +721,7 @@ async def raw_adjust_confirm_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) 
         material_id=ctx.user_data["radj_id"],
         stock=ctx.user_data["radj_stock"],
         note=f"Bot orqali tuzatish: {who}",
+        operator=who,
     )
     if ok:
         await q.edit_message_text(

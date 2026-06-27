@@ -6,9 +6,16 @@ const router: IRouter = Router();
 
 // Stock movements log WHO performed an action. Dashboard requests carry an
 // authenticated session (req.username); the Telegram bot calls in via the
-// shared internal key with no session user, so it is recorded as "bot".
-function actingUser(req: { username?: string }): string {
-  return req.username ?? "bot";
+// shared internal key with no session user. For bot calls we trust an
+// `operator` field in the body (the mapped worker name / Telegram identity)
+// so corrections record the real operator instead of the generic "bot".
+// A session user (req.username) always wins, so the body field cannot be used
+// to spoof an authenticated dashboard actor.
+function actingUser(req: { username?: string; body?: { operator?: unknown } }): string {
+  if (req.username) return req.username;
+  const op = req.body?.operator;
+  if (typeof op === "string" && op.trim().length > 0) return op.trim();
+  return "bot";
 }
 
 // ── GET /api/ombor/summary ─────────────────────────────────────────────────────

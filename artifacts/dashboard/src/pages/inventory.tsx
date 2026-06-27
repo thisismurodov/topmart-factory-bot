@@ -629,17 +629,25 @@ function ReceiveModal({
   const [product, setProduct]   = useState("");
   const [wId, setWId]           = useState(warehouseId);
   const [qty, setQty]           = useState("");
+  const [weight, setWeight]     = useState("");
   const [note, setNote]         = useState("");
   const [err, setErr]           = useState("");
 
   const { data: products = [] } = useProducts();
+  const isKg = (Array.isArray(products) ? products : []).some(
+    (p: any) => p.name === product && p.unitType === "kg",
+  );
 
   const mut = useMutation({
     mutationFn: () =>
       authFetch("/api/ombor/finished-in", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ warehouseId: wId, product, qty: Number(qty), note }),
+        body: JSON.stringify({
+          warehouseId: wId, product, qty: Number(qty),
+          weightKg: isKg && weight !== "" ? Number(weight) : undefined,
+          note,
+        }),
       }).then((r) => r.json()),
     onSuccess: (d) => {
       if (d.error) { setErr(d.error); return; }
@@ -691,6 +699,17 @@ function ReceiveModal({
               style={{ borderRadius: 10 }}
             />
           </label>
+
+          {isKg && (
+            <label style={labelStyle}>
+              Og'irlik (kg, ixtiyoriy)
+              <Input
+                type="number" min="0" step="0.001" placeholder="Bo'sh qolsa avtomatik hisoblanadi"
+                value={weight} onChange={(e) => setWeight(e.target.value)}
+                style={{ borderRadius: 10 }}
+              />
+            </label>
+          )}
 
           <label style={labelStyle}>
             Izoh (ixtiyoriy)

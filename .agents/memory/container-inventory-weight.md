@@ -1,26 +1,38 @@
 ---
-name: Container inventory weight derivation
-description: Why/how kg is shown for kg-sold products in the Ombor container view despite inventory tracking only quantity.
+name: Container inventory weight (stored, not derived)
+description: How exact kg per container is tracked now that inventory has a real weight_kg column.
 ---
 
-The `inventory` table (warehouse/container finished-goods stock, owned by the bot,
-not Drizzle) stores **quantity only** — there is no weight column.
+The `inventory` table (warehouse/container finished-goods stock — bot-owned, NOT in
+Drizzle schema, no CREATE TABLE anywhere in repo; it predates the SQLite→PG migration)
+now has a real **`weight_kg NUMERIC NOT NULL DEFAULT 0`** column.
 
-**Key constraint:** sales do NOT decrement `inventory`. Container stock only moves via
-batch IN (bot `create_batch`), transfers, and manual OUT/finished-in. So for the normal
-batch→container flow, `inventory.quantity` == total produced quantity.
+**Why stored, not derived:** exact per-container mass became business-critical (transfers,
+manual receives, changing pack weights make the old `SUM(weight_kg)/SUM(quantity)` batch
+ratio an approximation). Every stock mutation now carries weight directly.
 
-**Rule:** To show kg for kg-sold products (e.g. "Ikki Qavat Arqon") in the Ombor
-container detail, derive it instead of adding a weight column:
-`kg_per_unit = SUM(weight_kg)/SUM(quantity)` over `batches` per product, then
-`weightKg = inventory.quantity * kg_per_unit`. Only do this for `products.unit_type='kg'`
-AND `kg_per_unit > 0` (some kg SKUs are entered with `quantity` already in kg and
-`weight_kg=0` — for those show "—", never a misleading "0 kg").
+**Mutation paths that maintain weight_kg:**
+- Bot `create_batch`: adds the batch's actual `weight_kg` to inventory.
+- Bot `record_movement` (manual IN/OUT/TRANSFER): IN derives from batch ratio for kg
+  products (0 for dona); OUT/TRANSFER subtract **proportional** stored weight
+  (`weight_kg * qty / quantity`, capped at current).
+- API `/ombor/transfer`: moves proportional stored weight src→dest.
+- API `/ombor/finished-in`: accepts optional `weightKg`; if omitted, derives from batch
+  ratio for kg products. Dashboard ReceiveModal shows a kg input only for kg products.
 
-**Why derive, not add a column:** a real `inventory.weight_kg` would require propagating
-weight through every mutation path (bot create_batch, API transfer/finished-in, manual OUT)
-plus a schema migration on the shared Railway DB. Derivation is exact for the common
-no-transfer case and a reasonable proportional split otherwise.
+**One-time backfill:** init_db backfills existing rows from the batch ratio
+(`quantity * kg_per_unit`, kg products only), guarded by db_meta flag
+`inventory_weight_backfilled` AND `to_regclass('public.inventory')` existence (local DBs
+may not have the table — Drizzle doesn't own it). Backfill must stay idempotent/once-only,
+or it would overwrite real post-transfer weights with derived values.
+
+**Views (`/ombor/summary`, `/ombor/containers`, `/ombor/containers/:id/items`):** read
+`i.weight_kg` directly. For a kg product show weight only when `weight_kg > 0`, else `null`
+("—") and fall back to quantity for value — never a misleading "0 kg". The old
+`weight_ratio` CTEs were removed from these queries.
+
+**Not touched:** `/ombor/finished-goods (cross-warehouse aggregate)` never derived weight;
+left as-is to avoid overlapping the separate "stock value correct everywhere" task.
 
 **How to apply:** if exact per-container mass ever becomes business-critical (manual
 adjustments, changing pack weights over time), THEN add `inventory.weight_kg` and update

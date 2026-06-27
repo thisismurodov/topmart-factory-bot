@@ -275,9 +275,36 @@ def init_db() -> None:
               END IF;
               IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='inventory') THEN
                 ALTER TABLE inventory ADD COLUMN IF NOT EXISTS product_type TEXT NOT NULL DEFAULT 'finished';
+                ALTER TABLE inventory ADD COLUMN IF NOT EXISTS weight_kg NUMERIC NOT NULL DEFAULT 0;
               END IF;
             END $$;
         """)
+        # Mavjud inventory satrlari uchun og'irlikni partiya nisbati bo'yicha bir marta
+        # to'ldiramiz (kg-mahsulotlar). Bundan keyin har bir harakat og'irlikni o'zi
+        # olib yuradi; shu sabab faqat bir marta (db_meta bayrog'i bilan) bajariladi.
+        cur.execute("SELECT to_regclass('public.inventory') AS t")
+        _inv_exists = cur.fetchone()["t"] is not None
+        cur.execute("SELECT value FROM db_meta WHERE key = 'inventory_weight_backfilled'")
+        if _inv_exists and cur.fetchone() is None:
+            cur.execute("""
+                WITH wr AS (
+                  SELECT product,
+                         CASE WHEN SUM(quantity) > 0
+                              THEN SUM(weight_kg)::numeric / SUM(quantity)
+                              ELSE 0 END AS kg_per_unit
+                  FROM batches GROUP BY product
+                )
+                UPDATE inventory i
+                   SET weight_kg = i.quantity * wr.kg_per_unit
+                  FROM wr
+                  JOIN products p ON p.name = wr.product
+                 WHERE wr.product = i.product
+                   AND LOWER(p.unit_type) = 'kg'
+                   AND wr.kg_per_unit > 0
+            """)
+            cur.execute(
+                "INSERT INTO db_meta (key, value) VALUES ('inventory_weight_backfilled', '1') ON CONFLICT DO NOTHING"
+            )
         # ── Rolga asoslangan kg maosh (Arqon bo'limi) ────────────────────
         cur.execute("""
             ALTER TABLE products
@@ -1045,11 +1072,13 @@ def create_batch_session(
                     (product, quantity, wh_id, f"Partiya: {batch_code}", worker),
                 )
                 cur.execute(
-                    """INSERT INTO inventory (warehouse_id, product, quantity, product_type, updated_at)
-                       VALUES (%s,%s,%s,'finished',NOW())
+                    """INSERT INTO inventory (warehouse_id, product, quantity, weight_kg, product_type, updated_at)
+                       VALUES (%s,%s,%s,%s,'finished',NOW())
                        ON CONFLICT (warehouse_id, product)
-                       DO UPDATE SET quantity=inventory.quantity+%s, updated_at=NOW()""",
-                    (wh_id, product, quantity, quantity),
+                       DO UPDATE SET quantity=inventory.quantity+%s,
+                                     weight_kg=inventory.weight_kg+%s,
+                                     updated_at=NOW()""",
+                    (wh_id, product, quantity, weight_kg, quantity, weight_kg),
                 )
 
             # Xom ashyo zahirasini BOM (product_materials) bo'yicha kamaytirish
@@ -1646,7 +1675,14 @@ def record_movement(
     created_by: str = "",
     product_type: str = "finished",
 ) -> bool:
-    """movement_type: IN | OUT | TRANSFER; product_type: finished | raw"""
+    """movement_type: IN | OUT | TRANSFER; product_type: finished | raw
+
+    Inventory og'irligini (weight_kg) ham yangilaymiz:
+      • OUT/TRANSFER manbadan — joriy saqlangan og'irlikdan proporsional ayiramiz
+        (weight_kg * qty / quantity), shunda qisman chiqim aniq qoladi.
+      • IN/TRANSFER qabul — kg-mahsulot bo'lsa partiya nisbati bo'yicha og'irlik
+        qo'shamiz; aks holda 0 (dona mahsulotlar uchun og'irlik ahamiyatsiz).
+    """
     try:
         with get_conn() as (conn, cur):
             cur.execute(
@@ -1657,36 +1693,76 @@ def record_movement(
                 (product, quantity, movement_type, from_warehouse_id,
                  to_warehouse_id, note, created_by, product_type),
             )
-            if movement_type == "IN" and to_warehouse_id:
+
+            def _incoming_weight() -> float:
+                """Kirim uchun og'irlik — kg-mahsulot bo'lsa partiya nisbati bo'yicha."""
+                cur.execute("SELECT unit_type FROM products WHERE name=%s", (product,))
+                prow = cur.fetchone()
+                if not prow or str(prow.get("unit_type") or "").lower() != "kg":
+                    return 0.0
                 cur.execute(
-                    """INSERT INTO inventory (warehouse_id, product, quantity, product_type, updated_at)
-                       VALUES (%s,%s,%s,%s,NOW())
+                    """SELECT CASE WHEN SUM(quantity) > 0
+                                   THEN SUM(weight_kg)::numeric / SUM(quantity)
+                                   ELSE 0 END AS kg_per_unit
+                       FROM batches WHERE product=%s""",
+                    (product,),
+                )
+                rr = cur.fetchone()
+                kg_per_unit = float(rr["kg_per_unit"] or 0) if rr else 0.0
+                return quantity * kg_per_unit
+
+            def _outgoing_weight(wh_id: int) -> float:
+                """Chiqim uchun og'irlik — joriy saqlangan nisbatdan proporsional."""
+                cur.execute(
+                    "SELECT quantity, weight_kg FROM inventory WHERE warehouse_id=%s AND product=%s",
+                    (wh_id, product),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return 0.0
+                cur_qty = float(row["quantity"] or 0)
+                cur_w   = float(row["weight_kg"] or 0)
+                if cur_qty <= 0 or cur_w <= 0:
+                    return 0.0
+                return min(cur_w, cur_w * quantity / cur_qty)
+
+            if movement_type == "IN" and to_warehouse_id:
+                w_in = _incoming_weight()
+                cur.execute(
+                    """INSERT INTO inventory (warehouse_id, product, quantity, weight_kg, product_type, updated_at)
+                       VALUES (%s,%s,%s,%s,%s,NOW())
                        ON CONFLICT (warehouse_id, product)
-                       DO UPDATE SET quantity=inventory.quantity+%s, updated_at=NOW()""",
-                    (to_warehouse_id, product, quantity, product_type, quantity),
+                       DO UPDATE SET quantity=inventory.quantity+%s,
+                                     weight_kg=inventory.weight_kg+%s, updated_at=NOW()""",
+                    (to_warehouse_id, product, quantity, w_in, product_type, quantity, w_in),
                 )
             elif movement_type == "OUT" and from_warehouse_id:
+                w_out = _outgoing_weight(from_warehouse_id)
                 cur.execute(
-                    """INSERT INTO inventory (warehouse_id, product, quantity, product_type, updated_at)
-                       VALUES (%s,%s,0,%s,NOW())
+                    """INSERT INTO inventory (warehouse_id, product, quantity, weight_kg, product_type, updated_at)
+                       VALUES (%s,%s,0,0,%s,NOW())
                        ON CONFLICT (warehouse_id, product)
-                       DO UPDATE SET quantity=GREATEST(0,inventory.quantity-%s), updated_at=NOW()""",
-                    (from_warehouse_id, product, product_type, quantity),
+                       DO UPDATE SET quantity=GREATEST(0,inventory.quantity-%s),
+                                     weight_kg=GREATEST(0,inventory.weight_kg-%s), updated_at=NOW()""",
+                    (from_warehouse_id, product, product_type, quantity, w_out),
                 )
             elif movement_type == "TRANSFER" and from_warehouse_id and to_warehouse_id:
+                w_move = _outgoing_weight(from_warehouse_id)
                 cur.execute(
-                    """INSERT INTO inventory (warehouse_id, product, quantity, product_type, updated_at)
-                       VALUES (%s,%s,0,%s,NOW())
+                    """INSERT INTO inventory (warehouse_id, product, quantity, weight_kg, product_type, updated_at)
+                       VALUES (%s,%s,0,0,%s,NOW())
                        ON CONFLICT (warehouse_id, product)
-                       DO UPDATE SET quantity=GREATEST(0,inventory.quantity-%s), updated_at=NOW()""",
-                    (from_warehouse_id, product, product_type, quantity),
+                       DO UPDATE SET quantity=GREATEST(0,inventory.quantity-%s),
+                                     weight_kg=GREATEST(0,inventory.weight_kg-%s), updated_at=NOW()""",
+                    (from_warehouse_id, product, product_type, quantity, w_move),
                 )
                 cur.execute(
-                    """INSERT INTO inventory (warehouse_id, product, quantity, product_type, updated_at)
-                       VALUES (%s,%s,%s,%s,NOW())
+                    """INSERT INTO inventory (warehouse_id, product, quantity, weight_kg, product_type, updated_at)
+                       VALUES (%s,%s,%s,%s,%s,NOW())
                        ON CONFLICT (warehouse_id, product)
-                       DO UPDATE SET quantity=inventory.quantity+%s, updated_at=NOW()""",
-                    (to_warehouse_id, product, quantity, product_type, quantity),
+                       DO UPDATE SET quantity=inventory.quantity+%s,
+                                     weight_kg=inventory.weight_kg+%s, updated_at=NOW()""",
+                    (to_warehouse_id, product, quantity, w_move, product_type, quantity, w_move),
                 )
         return True
     except Exception as e:

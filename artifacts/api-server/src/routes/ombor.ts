@@ -24,17 +24,10 @@ router.get("/ombor/summary", async (_req, res): Promise<void> => {
     `, [rate ?? 0]),
 
     pool.query(`
-      WITH weight_ratio AS (
-        SELECT product,
-               CASE WHEN SUM(quantity) > 0
-                    THEN SUM(weight_kg)::numeric / SUM(quantity)
-                    ELSE 0 END AS kg_per_unit
-        FROM batches GROUP BY product
-      )
       SELECT
         COALESCE(SUM(
-          (CASE WHEN LOWER(p.unit_type) = 'kg' AND COALESCE(wr.kg_per_unit, 0) > 0
-                THEN i.quantity * wr.kg_per_unit
+          (CASE WHEN LOWER(p.unit_type) = 'kg' AND COALESCE(i.weight_kg, 0) > 0
+                THEN i.weight_kg
                 ELSE i.quantity
            END)
           * p.default_sale_price
@@ -43,7 +36,6 @@ router.get("/ombor/summary", async (_req, res): Promise<void> => {
         COUNT(DISTINCT i.product) FILTER (WHERE i.quantity > 0)::int AS sku_count
       FROM inventory i
       JOIN products p ON p.name = i.product
-      LEFT JOIN weight_ratio wr ON wr.product = i.product
     `, [rate ?? 0]),
 
     pool.query(`
@@ -82,13 +74,6 @@ router.get("/ombor/containers", async (_req, res): Promise<void> => {
   const { rate } = await getUsdToUzsRate();
 
   const { rows } = await pool.query(`
-    WITH weight_ratio AS (
-      SELECT product,
-             CASE WHEN SUM(quantity) > 0
-                  THEN SUM(weight_kg)::numeric / SUM(quantity)
-                  ELSE 0 END AS kg_per_unit
-      FROM batches GROUP BY product
-    )
     SELECT
       w.id,
       w.name,
@@ -97,8 +82,8 @@ router.get("/ombor/containers", async (_req, res): Promise<void> => {
       COUNT(DISTINCT i.product) FILTER (WHERE i.quantity > 0)::int        AS sku_count,
       COALESCE(SUM(i.quantity) FILTER (WHERE i.quantity > 0), 0)::numeric AS total_qty,
       COALESCE(SUM(
-        (CASE WHEN LOWER(p.unit_type) = 'kg' AND COALESCE(wr.kg_per_unit, 0) > 0
-              THEN i.quantity * wr.kg_per_unit
+        (CASE WHEN LOWER(p.unit_type) = 'kg' AND COALESCE(i.weight_kg, 0) > 0
+              THEN i.weight_kg
               ELSE i.quantity
          END)
         * p.default_sale_price
@@ -107,7 +92,6 @@ router.get("/ombor/containers", async (_req, res): Promise<void> => {
     FROM warehouses w
     LEFT JOIN inventory i ON i.warehouse_id = w.id
     LEFT JOIN products p  ON p.name = i.product
-    LEFT JOIN weight_ratio wr ON wr.product = i.product
     WHERE w.location_type = 'container'
     GROUP BY w.id, w.name, w.capacity_kg, w.active
     ORDER BY w.name
@@ -137,19 +121,11 @@ router.get("/ombor/containers/:id/items", async (req, res): Promise<void> => {
 
   const [itemsRes, wRes] = await Promise.all([
     pool.query(`
-      WITH weight_ratio AS (
-        SELECT product,
-               CASE WHEN SUM(quantity) > 0
-                    THEN SUM(weight_kg)::numeric / SUM(quantity)
-                    ELSE 0 END AS kg_per_unit
-        FROM batches GROUP BY product
-      )
       SELECT i.id, i.product, i.quantity, i.product_type, i.updated_at,
              p.unit_type, p.default_sale_price, p.currency_type,
-             COALESCE(wr.kg_per_unit, 0)::numeric AS kg_per_unit
+             COALESCE(i.weight_kg, 0)::numeric AS weight_kg
       FROM inventory i
       LEFT JOIN products p ON p.name = i.product
-      LEFT JOIN weight_ratio wr ON wr.product = i.product
       WHERE i.warehouse_id = $1 AND i.quantity > 0
       ORDER BY i.product
     `, [id]),
@@ -170,9 +146,9 @@ router.get("/ombor/containers/:id/items", async (req, res): Promise<void> => {
       const priceUzs = isUsd ? Number(r.default_sale_price) * (rate ?? 0) : Number(r.default_sale_price);
       const qty     = Number(r.quantity);
       const isKg     = String(r.unit_type ?? "dona").toLowerCase() === "kg";
-      const kgPerUnit = Number(r.kg_per_unit) || 0;
-      // Faqat partiyada alohida kg kiritilgan kg-mahsulotlar uchun ko'rsatamiz.
-      const weightKg = isKg && kgPerUnit > 0 ? qty * kgPerUnit : null;
+      const storedWeight = Number(r.weight_kg) || 0;
+      // Inventoryda saqlangan aniq og'irlikni ishlatamiz (kg-mahsulotlar uchun).
+      const weightKg = isKg && storedWeight > 0 ? storedWeight : null;
       // kg-mahsulotlar uchun narx kg uchun — qiymatni og'irlikka ko'paytiramiz.
       const valueQty = weightKg != null ? weightKg : qty;
       return {
@@ -211,7 +187,7 @@ router.post("/ombor/transfer", async (req, res): Promise<void> => {
     await client.query("BEGIN");
 
     const srcRes = await client.query(
-      "SELECT quantity, product_type FROM inventory WHERE warehouse_id=$1 AND product=$2",
+      "SELECT quantity, weight_kg, product_type FROM inventory WHERE warehouse_id=$1 AND product=$2",
       [fromId, product],
     );
     if (!srcRes.rows.length || Number(srcRes.rows[0].quantity) < amount) {
@@ -219,17 +195,24 @@ router.post("/ombor/transfer", async (req, res): Promise<void> => {
       res.status(400).json({ error: "Yetarli mahsulot yo'q" }); return;
     }
     const productType = srcRes.rows[0].product_type as string;
+    // Og'irlikni proporsional ko'chiramiz (saqlangan aniq og'irlikdan).
+    const srcQty    = Number(srcRes.rows[0].quantity) || 0;
+    const srcWeight = Number(srcRes.rows[0].weight_kg) || 0;
+    const moveWeight = srcQty > 0 && srcWeight > 0
+      ? Math.min(srcWeight, (srcWeight * amount) / srcQty)
+      : 0;
 
     await client.query(
-      "UPDATE inventory SET quantity = GREATEST(0, quantity - $1), updated_at=NOW() WHERE warehouse_id=$2 AND product=$3",
-      [amount, fromId, product],
+      "UPDATE inventory SET quantity = GREATEST(0, quantity - $1), weight_kg = GREATEST(0, weight_kg - $2), updated_at=NOW() WHERE warehouse_id=$3 AND product=$4",
+      [amount, moveWeight, fromId, product],
     );
     await client.query(
-      `INSERT INTO inventory (warehouse_id, product, quantity, product_type)
-       VALUES ($1,$2,$3,$4)
+      `INSERT INTO inventory (warehouse_id, product, quantity, weight_kg, product_type)
+       VALUES ($1,$2,$3,$4,$5)
        ON CONFLICT (warehouse_id, product)
-       DO UPDATE SET quantity = inventory.quantity + EXCLUDED.quantity, updated_at=NOW()`,
-      [toId, product, amount, productType],
+       DO UPDATE SET quantity = inventory.quantity + EXCLUDED.quantity,
+                     weight_kg = inventory.weight_kg + EXCLUDED.weight_kg, updated_at=NOW()`,
+      [toId, product, amount, moveWeight, productType],
     );
     await client.query(
       `INSERT INTO stock_movements
@@ -250,7 +233,7 @@ router.post("/ombor/transfer", async (req, res): Promise<void> => {
 
 // ── POST /api/ombor/finished-in ────────────────────────────────────────────────
 router.post("/ombor/finished-in", async (req, res): Promise<void> => {
-  const { warehouseId, product, qty, note = "" } = req.body ?? {};
+  const { warehouseId, product, qty, weightKg, note = "" } = req.body ?? {};
   if (!warehouseId || !product || !qty) {
     res.status(400).json({ error: "warehouseId, product, qty required" }); return;
   }
@@ -258,16 +241,38 @@ router.post("/ombor/finished-in", async (req, res): Promise<void> => {
   if (isNaN(amount) || amount <= 0) {
     res.status(400).json({ error: "qty must be > 0" }); return;
   }
+  const explicitWeight = weightKg != null && weightKg !== "" ? Number(weightKg) : null;
+  if (explicitWeight != null && (isNaN(explicitWeight) || explicitWeight < 0)) {
+    res.status(400).json({ error: "weightKg invalid" }); return;
+  }
 
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    // Og'irlik: aniq kiritilgan bo'lsa o'shani, aks holda kg-mahsulot uchun
+    // partiya nisbati bo'yicha hisoblaymiz (dona uchun 0).
+    let addWeight = explicitWeight ?? 0;
+    if (explicitWeight == null) {
+      const wr = await client.query(
+        `SELECT CASE WHEN LOWER(p.unit_type) = 'kg' AND COALESCE(SUM(b.quantity),0) > 0
+                     THEN SUM(b.weight_kg)::numeric / SUM(b.quantity)
+                     ELSE 0 END AS kg_per_unit
+         FROM products p
+         LEFT JOIN batches b ON b.product = p.name
+         WHERE p.name = $1
+         GROUP BY p.unit_type`,
+        [product],
+      );
+      const kgPerUnit = wr.rows.length ? Number(wr.rows[0].kg_per_unit) || 0 : 0;
+      addWeight = kgPerUnit > 0 ? amount * kgPerUnit : 0;
+    }
     await client.query(
-      `INSERT INTO inventory (warehouse_id, product, quantity, product_type)
-       VALUES ($1,$2,$3,'finished')
+      `INSERT INTO inventory (warehouse_id, product, quantity, weight_kg, product_type)
+       VALUES ($1,$2,$3,$4,'finished')
        ON CONFLICT (warehouse_id, product)
-       DO UPDATE SET quantity = inventory.quantity + EXCLUDED.quantity, updated_at=NOW()`,
-      [warehouseId, product, amount],
+       DO UPDATE SET quantity = inventory.quantity + EXCLUDED.quantity,
+                     weight_kg = inventory.weight_kg + EXCLUDED.weight_kg, updated_at=NOW()`,
+      [warehouseId, product, amount, addWeight],
     );
     await client.query(
       `INSERT INTO stock_movements

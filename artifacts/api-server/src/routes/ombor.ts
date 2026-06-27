@@ -413,13 +413,21 @@ router.get("/ombor/finished-goods", async (_req, res): Promise<void> => {
   const { rate } = await getUsdToUzsRate();
   const { rows } = await pool.query(`
     SELECT i.product, SUM(i.quantity)::numeric AS stock_qty,
-           p.default_sale_price, p.currency_type, p.unit_type
+           p.default_sale_price, p.currency_type, p.unit_type,
+           COALESCE(SUM(
+             (CASE WHEN LOWER(p.unit_type) = 'kg' AND COALESCE(i.weight_kg, 0) > 0
+                   THEN i.weight_kg
+                   ELSE i.quantity
+              END)
+             * p.default_sale_price
+             * CASE WHEN p.currency_type = 'USD' THEN $1::numeric ELSE 1 END
+           ), 0)::numeric AS total_value_uzs
     FROM inventory i
     JOIN products p ON p.name = i.product
     GROUP BY i.product, p.default_sale_price, p.currency_type, p.unit_type
     HAVING SUM(i.quantity) > 0
     ORDER BY i.product
-  `);
+  `, [rate ?? 0]);
   res.json(rows.map((r) => {
     const isUsd    = String(r.currency_type).toUpperCase() === "USD";
     const priceUzs = isUsd ? Number(r.default_sale_price) * (rate ?? 0) : Number(r.default_sale_price);
@@ -431,7 +439,7 @@ router.get("/ombor/finished-goods", async (_req, res): Promise<void> => {
       salePrice:     Number(r.default_sale_price),
       currency:      r.currency_type || "UZS",
       priceUzs,
-      totalValueUzs: stockQty * priceUzs,
+      totalValueUzs: Number(r.total_value_uzs),
     };
   }));
 });

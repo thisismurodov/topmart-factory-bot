@@ -15,6 +15,7 @@ import Sales from "@/pages/sales";
 import Inventory from "@/pages/inventory";
 import Debts from "@/pages/debts";
 import Reports from "@/pages/reports";
+import AiPage from "@/pages/ai";
 import Packers from "@/pages/packers";
 import RawMaterials from "@/pages/raw-materials";
 import AuditLog from "@/pages/audit";
@@ -79,6 +80,7 @@ function Router() {
             <Route path="/packers" component={Packers} />
             <Route path="/raw-materials" component={RawMaterials} />
             <Route path="/reports" component={Reports} />
+            <Route path="/ai" component={AiPage} />
             <Route path="/audit" component={AuditLog} />
             <Route component={NotFound} />
           </Switch>

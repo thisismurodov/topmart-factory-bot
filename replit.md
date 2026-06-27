@@ -35,12 +35,16 @@ Arqon ishlab chiqarish zavodi uchun Telegram bot — partiyalarni kiritish, nazo
 - Batch kodi: `XX-YYMMDD-NN` formatida
 - `db_meta` table bot tomonidan yaratiladi (Drizzle sxemasida yo'q)
 - Railway deploy: `artifacts/telegram-bot/Dockerfile` (bot), `artifacts/api-server/Dockerfile` (API)
+- AI Zavod Yordamchisi: barcha LLM chaqiruvlari Node API'da (`/api/ai/*`); bot (Python) + dashboard faqat shu endpointlarni chaqiradi. Daily-analysis kuniga bir marta hisoblanadi va `ai_analysis_runs` jadvaliga saqlanadi (refresh=1 qayta hisoblaydi). Bot/dashboard `x-internal-key`/`Bearer` bilan kiradi (`requireAuthOrInternalKey`). Daily model `gpt-5.4`, packer-tip `gpt-5-mini` (`reasoning_effort: minimal`, aks holda reasoning tokenlari budjetni yeb tip bo'sh chiqadi).
 
 ## Required env vars
 
 - `DATABASE_URL` — PostgreSQL connection string
 - `TELEGRAM_BOT_TOKEN` — Telegram bot tokeni (@BotFather)
 - `SESSION_SECRET` — Express session secret
+- `AI_INTERNAL_KEY` — bot↔API ichki autentifikatsiya kaliti (bot va API'da bir xil bo'lishi shart)
+- `API_BASE_URL` — bot uchun API manzili (`https://<api-host>/api`). Replit'da default `http://localhost:80/api`
+- `AI_INTEGRATIONS_OPENAI_*` — Replit AI integration o'zgaruvchilari. Railway deploy'da bot+API servislarida ham bo'lishi kerak
 
 ## User preferences
 

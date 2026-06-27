@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 
 from .database import get_conn
 from .config import SUPERADMIN_CHAT_ID
+from .ai_client import get_daily_analysis
 
 _log = logging.getLogger(__name__)
 
@@ -124,15 +125,40 @@ async def send_backup_to_telegram(bot, chat_id: int | str) -> None:
             pass
 
 
+# ── AI kunlik tahlil ──────────────────────────────────────────────────────────
+
+async def _send_ai_analysis(bot, admin_chat_id: str) -> None:
+    """Kunlik AI tahlilini admin'ga yuboradi (xato bo'lsa jim o'tadi)."""
+    if not admin_chat_id:
+        return
+    analysis = await asyncio.to_thread(get_daily_analysis, True)
+    if not analysis:
+        _log.info("AI tahlil: natija yo'q (API o'chirilgan yoki xato).")
+        return
+    text = "🤖 *AI kunlik tahlil*\n\n" + analysis
+    if len(text) > 4000:
+        text = text[:3990] + "…"
+    try:
+        await bot.send_message(chat_id=admin_chat_id, text=text, parse_mode="Markdown")
+        _log.info("AI kunlik tahlil yuborildi.")
+    except Exception:
+        try:
+            await bot.send_message(chat_id=admin_chat_id, text=text)
+        except Exception as exc:
+            _log.warning("AI tahlilni yuborishda xato: %s", exc)
+
+
 # ── Scheduler loop ────────────────────────────────────────────────────────────
 
-def _schedule_loop(bot, admin_chat_id: str, low_stock_hour: int = 8, backup_hour: int = 3) -> None:
+def _schedule_loop(
+    bot, admin_chat_id: str, low_stock_hour: int = 8, backup_hour: int = 3, ai_hour: int = 20,
+) -> None:
     """Blocking loop — alohida threadda ishga tushiriladi."""
     import time
 
     _log.info(
-        "Scheduler ishga tushdi (low-stock: %02d:00, backup: %02d:00).",
-        low_stock_hour, backup_hour,
+        "Scheduler ishga tushdi (low-stock: %02d:00, backup: %02d:00, AI: %02d:00).",
+        low_stock_hour, backup_hour, ai_hour,
     )
 
     def _next_run_at(hour: int) -> datetime:
@@ -146,9 +172,11 @@ def _schedule_loop(bot, admin_chat_id: str, low_stock_hour: int = 8, backup_hour
         now      = datetime.now()
         next_ls  = _next_run_at(low_stock_hour)
         next_bkp = _next_run_at(backup_hour)
+        next_ai  = _next_run_at(ai_hour)
         sleep_secs = min(
             (next_ls  - now).total_seconds(),
             (next_bkp - now).total_seconds(),
+            (next_ai  - now).total_seconds(),
         )
         time.sleep(max(sleep_secs, 30))
 
@@ -161,6 +189,9 @@ def _schedule_loop(bot, admin_chat_id: str, low_stock_hour: int = 8, backup_hour
         if abs((now - next_bkp.replace(second=0, microsecond=0)).total_seconds()) < 90:
             tasks.append(send_backup_to_telegram(bot, SUPERADMIN_CHAT_ID))
 
+        if abs((now - next_ai.replace(second=0, microsecond=0)).total_seconds()) < 90:
+            tasks.append(_send_ai_analysis(bot, admin_chat_id))
+
         if tasks:
             try:
                 loop = asyncio.new_event_loop()
@@ -172,7 +203,9 @@ def _schedule_loop(bot, admin_chat_id: str, low_stock_hour: int = 8, backup_hour
                 _log.error("Scheduler xato: %s", exc)
 
 
-def start_scheduler(bot, admin_chat_id: str, low_stock_hour: int = 8, backup_hour: int = 3) -> None:
+def start_scheduler(
+    bot, admin_chat_id: str, low_stock_hour: int = 8, backup_hour: int = 3, ai_hour: int = 20,
+) -> None:
     """Scheduler'ni daemon threadda ishga tushiradi."""
     if not admin_chat_id:
         _log.info("ADMIN_CHAT_ID o'rnatilmagan — scheduler o'chirildi.")
@@ -181,7 +214,7 @@ def start_scheduler(bot, admin_chat_id: str, low_stock_hour: int = 8, backup_hou
     import threading
     t = threading.Thread(
         target=_schedule_loop,
-        args=(bot, admin_chat_id, low_stock_hour, backup_hour),
+        args=(bot, admin_chat_id, low_stock_hour, backup_hour, ai_hour),
         daemon=True,
         name="topmart-scheduler",
     )

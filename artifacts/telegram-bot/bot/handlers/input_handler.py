@@ -392,6 +392,16 @@ async def _finalize(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         )
         await _notify_line_workers(context, batch_code, total_qty_str, line_entries)
 
+    # AI maslahat — keyingi galda nima ishlab chiqarish foydali (xato bo'lsa jim o'tadi)
+    try:
+        import asyncio
+        from ..ai_client import get_packer_tip
+        tip = await asyncio.to_thread(get_packer_tip, worker, items)
+        if tip:
+            await message.reply_text(f"🤖 {tip}")
+    except Exception:
+        pass
+
     context.user_data.clear()
     return ConversationHandler.END
 

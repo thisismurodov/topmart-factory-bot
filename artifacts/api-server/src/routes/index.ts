@@ -1,7 +1,9 @@
 import { Router, type IRouter } from "express";
 import { requireAuth } from "../middleware/requireAuth";
+import { requireAuthOrInternalKey } from "../middleware/requireAuthOrInternalKey";
 import healthRouter from "./health";
 import authRouter from "./auth";
+import aiRouter from "./ai";
 import dashboardRouter from "./dashboard";
 import batchesRouter from "./batches";
 import workersRouter from "./workers";
@@ -28,6 +30,9 @@ const router: IRouter = Router();
 // ── Public routes (no auth required) ─────────────────────────────────────────
 router.use(healthRouter);
 router.use(authRouter);
+
+// ── AI routes — Bearer session (dashboard) OR x-internal-key (bot) ────────────
+router.use(requireAuthOrInternalKey, aiRouter);
 
 // ── Auth wall: everything below requires a valid session ──────────────────────
 router.use(requireAuth);

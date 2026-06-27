@@ -19,6 +19,7 @@ import {
   Boxes,
   Scale,
   ClipboardList,
+  Bot,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -35,6 +36,7 @@ const NAV_ITEMS = [
   { href: "/sales",      label: "Savdolar",    icon: ShoppingBag },
   { href: "/debts",      label: "Nasiya",      icon: CreditCard },
   { href: "/reports",    label: "Hisobotlar",  icon: BarChart2 },
+  { href: "/ai",         label: "AI tahlil",   icon: Bot },
   { href: "/inventory",  label: "Ombor",       icon: Warehouse },
   { href: "/audit",      label: "Audit log",   icon: ClipboardList },
 ];

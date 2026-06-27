@@ -152,6 +152,19 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_audit_logs_table ON audit_logs(table_name)
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ai_analysis_runs (
+      id          SERIAL PRIMARY KEY,
+      kind        TEXT NOT NULL DEFAULT 'daily',
+      summary     JSONB,
+      analysis    TEXT NOT NULL,
+      created_at  TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_ai_runs_created ON ai_analysis_runs(kind, created_at DESC)
+  `);
+
   // DB darajasida CHECK constraint'lar (idempotent)
   await pool.query(`
     DO $$ BEGIN

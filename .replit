@@ -38,3 +38,4 @@ packages = ["freetype", "lcms2", "libimagequant", "libjpeg", "libtiff", "libwebp
 
 [userenv.shared]
 ADMIN_CHAT_ID = "1261052681"
+AI_INTERNAL_KEY = "6f265bd702cf13942ce023a924b9c021f79e57c843e4dca3"

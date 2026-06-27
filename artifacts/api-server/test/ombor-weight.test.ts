@@ -236,6 +236,29 @@ describe("Ombor container weight (kg) integrity", () => {
     // (2.5 × 60 = 150) — guards against regressing to the old ratio model.
     expect(weightOf(src, KG)).not.toBeCloseTo(150, 1);
   });
+
+  it("rejects an over-quantity transfer without moving any weight (400, both sides unchanged)", async () => {
+    // Source has 50 units / 150 kg; destination starts with 20 units / 60 kg.
+    await pool.query(
+      `INSERT INTO inventory (warehouse_id, product, quantity, weight_kg, product_type)
+       VALUES ($1,$2,50,150,'finished'), ($3,$2,20,60,'finished')`,
+      [wh.A, KG, wh.B],
+    );
+
+    // Request more than the source holds → must be refused and rolled back.
+    const res = await post("/ombor/transfer", {
+      fromId: wh.A, toId: wh.B, product: KG, qty: 80,
+    });
+    expect(res.status).toBe(400);
+
+    // Neither quantity NOR weight may have shifted on either container.
+    const src = await items(wh.A);
+    const dst = await items(wh.B);
+    expect(qtyOf(src, KG)).toBe(50);
+    expect(weightOf(src, KG)).toBeCloseTo(150, 3);
+    expect(qtyOf(dst, KG)).toBe(20);
+    expect(weightOf(dst, KG)).toBeCloseTo(60, 3);
+  });
 });
 
 describe("Ombor recount (adjust) weight integrity", () => {

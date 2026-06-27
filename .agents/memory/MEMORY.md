@@ -14,4 +14,4 @@
 - [gpt-5 empty completion output](gpt5-empty-output.md) — gpt-5* spend max_completion_tokens on reasoning first; small budget → empty content (200 OK). Fix: reasoning_effort:minimal + bigger budget.
 - [Env vars vs secrets](env-vars-vs-secrets.md) — setEnvVars writes to tracked .replit; credentials (incl. self-generated shared keys) must use requestEnvVar→Secrets store, not env.
 - [Container inventory weight derivation](container-inventory-weight.md) — inventory table holds quantity only (no weight); sales never decrement it; derive kg for kg-products via batch ratio SUM(weight_kg)/SUM(quantity).
-- [Material Flow two-step WIP](material-flow-wip.md) — Dept WIP = SUM(RECEIVE)−SUM(PRODUCE) over wip_movements ONLY; receive decrement must be atomic; raw needs purpose='raw'; API initDb mirrors bot's column ALTERs; dev API writes to Railway DB.
+- [Material Flow two-step WIP](material-flow-wip.md) — dept WIP = SUM(RECEIVE)−SUM(PRODUCE) over wip_movements ledger only; raw-in is the single entry point that syncs container inventory + raw_materials.

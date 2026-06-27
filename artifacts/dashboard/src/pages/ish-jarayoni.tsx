@@ -18,6 +18,8 @@ type RawContainer = {
   capacityKg: number;
   totalKg: number;
   materialCount: number;
+  todayIn: number;
+  todayOut: number;
   items: { material: string; kg: number }[];
 };
 
@@ -29,6 +31,8 @@ type Department = {
   wipKg: number;
   todayReceived: number;
   todayProduced: number;
+  completionPct: number;
+  status: "working" | "idle" | "empty";
 };
 
 type FinishedContainer = {
@@ -67,6 +71,9 @@ type FlowData = {
     totalFinishedKg: number;
     todayReceived: number;
     todayProduced: number;
+    departmentsWorking: number;
+    todayRawConsumption: number;
+    efficiency: number;
     rawContainerCount: number;
     departmentCount: number;
     finishedContainerCount: number;
@@ -165,12 +172,15 @@ export default function IshJarayoni() {
       </div>
 
       {/* KPI cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <KpiCard label="Xom ashyo" value={kg(kpis?.totalRawKg ?? 0)} accent={C.raw} icon={Boxes} sub={`${kpis?.rawContainerCount ?? 0} konteyner`} />
         <KpiCard label="Jarayonda (WIP)" value={kg(kpis?.totalWipKg ?? 0)} accent={C.dept} icon={Factory} sub={`${kpis?.departmentCount ?? 0} bo'lim`} />
         <KpiCard label="Tayyor mahsulot" value={kg(kpis?.totalFinishedKg ?? 0)} accent={C.finished} icon={PackageCheck} sub={`${kpis?.finishedContainerCount ?? 0} konteyner`} />
+        <KpiCard label="Faol bo'limlar" value={`${kpis?.departmentsWorking ?? 0}`} accent="#22c55e" icon={Activity} sub={`/ ${kpis?.departmentCount ?? 0} bo'lim`} />
         <KpiCard label="Bugun qabul" value={kg(kpis?.todayReceived ?? 0)} accent={C.green} icon={TrendingUp} sub="bo'limlarga" />
         <KpiCard label="Bugun ishlab chiqarish" value={kg(kpis?.todayProduced ?? 0)} accent="#06b6d4" icon={TrendingDown} sub="tayyor mahsulot" />
+        <KpiCard label="Bugun xom sarfi" value={kg(kpis?.todayRawConsumption ?? 0)} accent={C.raw} icon={Truck} sub="konteynerlardan" />
+        <KpiCard label="Samaradorlik" value={`${kpis?.efficiency ?? 0}%`} accent="#eab308" icon={Layers} sub="ishlab chiq. / qabul" />
       </div>
 
       {/* Alerts */}
@@ -231,6 +241,11 @@ export default function IshJarayoni() {
                     <span className="text-xs font-mono" style={{ color: C.raw }}>{kg(rc.totalKg)}</span>
                   </div>
                   <Bar pct={Math.min(100, (rc.totalKg / (rc.capacityKg || 20000)) * 100)} color={C.raw} />
+                  <div className="flex gap-3 text-[11px] mt-1">
+                    <span style={{ color: C.green }}>↓ {kg(rc.todayIn)}</span>
+                    <span style={{ color: "#f59e0b" }}>↑ {kg(rc.todayOut)}</span>
+                    <span className="ml-auto" style={{ color: C.textDim }}>qoldi {kg(rc.totalKg)}</span>
+                  </div>
                   <div className="mt-1.5 space-y-0.5">
                     {rc.items.slice(0, 3).map((it) => (
                       <div key={it.material} className="flex justify-between text-[11px]" style={{ color: C.textDim }}>
@@ -251,9 +266,13 @@ export default function IshJarayoni() {
             <FlowColumn title="Bo'limlar (WIP)" color={C.dept} icon={Factory}>
               {data.departments.length === 0 && <EmptyCol text="Bo'lim (liniya) yo'q" />}
               {data.departments.map((d) => (
-                <NodeCard key={d.id} color={C.dept} active={d.todayProduced > 0 || d.todayReceived > 0}>
-                  <div className="flex items-center justify-between">
+                <NodeCard key={d.id} color={C.dept} active={d.status === "working"}>
+                  <div className="flex items-center justify-between gap-2">
                     <span className="font-semibold text-sm truncate" style={{ color: C.text }}>{d.name}</span>
+                    <StatusBadge status={d.status} />
+                  </div>
+                  <div className="flex items-center justify-between mt-1">
+                    <span className="text-[11px]" style={{ color: C.textDim }}>WIP</span>
                     <span
                       className="text-xs font-mono font-bold"
                       style={{ color: d.wipKg < 0 ? "#f87171" : C.dept }}
@@ -262,8 +281,9 @@ export default function IshJarayoni() {
                     </span>
                   </div>
                   <Bar pct={Math.min(100, Math.abs(d.wipKg) / 500 * 100)} color={d.wipKg < 0 ? "#f87171" : C.dept} />
-                  <div className="flex justify-between text-[11px] mt-1.5" style={{ color: C.textDim }}>
+                  <div className="flex justify-between items-center text-[11px] mt-1.5" style={{ color: C.textDim }}>
                     <span>{d.workerCount} ishchi · {d.productCount} mahsulot</span>
+                    <span className="font-mono" style={{ color: C.green }}>{d.completionPct}%</span>
                   </div>
                   <div className="flex gap-3 text-[11px] mt-0.5">
                     <span style={{ color: C.green }}>↓ {kg(d.todayReceived)}</span>
@@ -371,6 +391,28 @@ function Bar({ pct, color }: { pct: number; color: string }) {
     <div className="mt-1.5 h-1.5 rounded-full overflow-hidden" style={{ background: C.panelSoft }}>
       <div className="h-full rounded-full transition-all" style={{ width: `${Math.max(2, pct)}%`, background: color }} />
     </div>
+  );
+}
+
+function StatusBadge({ status }: { status: "working" | "idle" | "empty" }) {
+  const cfg = {
+    working: { label: "ishlamoqda", color: "#22c55e" },
+    idle: { label: "kutmoqda", color: "#f59e0b" },
+    empty: { label: "bo'sh", color: C.textDim },
+  }[status];
+  return (
+    <span
+      className="flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full shrink-0"
+      style={{ background: `${cfg.color}22`, color: cfg.color }}
+    >
+      {status === "working" && (
+        <span className="relative flex h-1.5 w-1.5">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-70" style={{ background: cfg.color }} />
+          <span className="relative inline-flex rounded-full h-1.5 w-1.5" style={{ background: cfg.color }} />
+        </span>
+      )}
+      {cfg.label}
+    </span>
   );
 }
 
@@ -488,10 +530,10 @@ function RawInModal({ containers, onClose }: { containers: AllContainer[]; onClo
       </div>
       <div>
         <label className={labelCls}>Xom ashyo</label>
-        <input className={fieldCls} list="rawmat-list" value={materialName} onChange={(e) => setMaterialName(e.target.value)} placeholder="Nomi" />
-        <datalist id="rawmat-list">
-          {materials?.map((m) => <option key={m.id} value={m.name} />)}
-        </datalist>
+        <select className={fieldCls} value={materialName} onChange={(e) => setMaterialName(e.target.value)}>
+          <option value="">Tanlang...</option>
+          {materials?.map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}
+        </select>
       </div>
       <div>
         <label className={labelCls}>Miqdor (kg)</label>

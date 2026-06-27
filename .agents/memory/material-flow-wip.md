@@ -7,7 +7,10 @@ description: How the warehouse material-flow / WIP module models and computes wo
 
 raw container → department (production_line) WIP → finished container.
 
-- **Department WIP = SUM(RECEIVE) − SUM(PRODUCE)** over the `wip_movements` ledger ONLY. Do not derive WIP from inventory or raw_materials.current_stock — this module is a *separate visual tracking flow* and must not touch BOM or raw_materials stock.
+- **Department WIP = SUM(RECEIVE) − SUM(PRODUCE)** over the `wip_movements` ledger ONLY. Do not derive WIP from inventory or raw_materials.current_stock.
+- **Raw-stock single entry point (avoid double-count):** `POST /ombor/flow/receive` and the bot PRODUCE hook must NOT touch `raw_materials.current_stock` (raw still in factory as WIP; global stock only drops via BOM at batch creation). But raw INTAKE has ONE entry point — `POST /ombor/flow/raw-in` — which increments BOTH container `inventory` (product_type='raw') AND `raw_materials.current_stock` (matched by LOWER(name)) so the per-container view and global stock stay consistent.
+
+**Why:** two independent raw ledgers guarantee drift. Keeping intake in one place (raw-in) and consumption in one place (BOM) prevents both double-counting and divergence. raw-in REJECTS (400) any material name that has no matching raw_materials row, so container stock can never exist without a global counterpart.
 - RECEIVE (+kg) inserted by the API when raw is handed from a container to a department (`POST /ombor/flow/receive`).
 - PRODUCE (−kg) inserted by the **Python bot** in `create_batch_session` when a batch is created (additive; must not alter existing batch/BOM/payroll writes). produce_kg = batch weight_kg if >0 else quantity × product.weight.
 

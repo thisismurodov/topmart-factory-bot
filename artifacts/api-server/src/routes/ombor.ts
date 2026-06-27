@@ -577,8 +577,15 @@ router.get("/ombor/movements", async (req, res): Promise<void> => {
 //    1) Xom ashyo konteynerga kiritiladi (purpose='raw' ombor, inventory raw)
 //    2) Xom ashyo konteynerdan BO'LIMGA beriladi → WIP RECEIVE (+kg)
 //    3) Bo'lim partiya chiqaradi (bot) → WIP PRODUCE (-kg) + tayyor ombor
-//  Bo'lim WIP = SUM(RECEIVE) − SUM(PRODUCE). Bu modul mavjud raw_materials
-//  zahirasiga / BOM hisobiga tegmaydi — alohida vizual kuzatuv oqimi.
+//  Bo'lim WIP = SUM(RECEIVE) − SUM(PRODUCE).
+//
+//  XOM ASHYO IZCHILLIGI QOIDASI (double-counting'dan saqlanish):
+//   - Xom ashyo kirimi UCHUN YAGONA kirish nuqtasi = /ombor/flow/raw-in. U bir
+//     vaqtning o'zida (a) konteyner inventory'siga (product_type='raw') va
+//     (b) global raw_materials.current_stock'ga qo'shadi — ikkalasi sinxron.
+//   - Bo'limga berish (receive) faqat konteyner inventory'sini kamaytiradi;
+//     raw_materials'ga TEGMAYDI (xom ashyo hali zavodda, WIP sifatida). Global
+//     raw zahira faqat partiya yaratilganda BOM hisobida kamayadi (mavjud oqim).
 // ════════════════════════════════════════════════════════════════════════════
 
 // ── POST /api/ombor/flow/raw-in ────────────────────────────────────────────────
@@ -603,6 +610,28 @@ router.post("/ombor/flow/raw-in", async (req, res): Promise<void> => {
       await client.query("ROLLBACK");
       res.status(404).json({ error: "Xom ashyo konteyneri topilmadi (purpose='raw' bo'lishi kerak)" }); return;
     }
+    // YAGONA kirish nuqtasi qoidasi: global raw_materials.current_stock'ni shu
+    // yerda sinxron yangilaymiz. Nomi mavjud raw_material'ga mos kelishi SHART —
+    // aks holda konteyner zahira global zahiradan ajralib ketadi (drift). Mos
+    // kelmasa kirim rad etiladi (canonical nomni tanlang). Aniq bitta qatorni
+    // yangilash uchun avval id'ni topamiz (katta/kichik harf dublikatlari bo'lsa
+    // ham faqat bitta qator o'zgaradi — drift bo'lmaydi).
+    const matchRes = await client.query(
+      `SELECT id, name FROM raw_materials WHERE LOWER(name) = LOWER($1) ORDER BY id LIMIT 1`,
+      [materialName],
+    );
+    if (!matchRes.rows.length) {
+      await client.query("ROLLBACK");
+      res.status(400).json({
+        error: `"${materialName}" ro'yxatdagi xom ashyoga mos kelmadi. Mavjud xom ashyo nomini tanlang.`,
+      });
+      return;
+    }
+    const canonicalName: string = matchRes.rows[0].name;
+    await client.query(
+      `UPDATE raw_materials SET current_stock = current_stock + $1 WHERE id = $2`,
+      [amount, matchRes.rows[0].id],
+    );
     await client.query(
       `INSERT INTO inventory (warehouse_id, product, quantity, weight_kg, product_type)
        VALUES ($1,$2,$3,$3,'raw')
@@ -610,13 +639,13 @@ router.post("/ombor/flow/raw-in", async (req, res): Promise<void> => {
        DO UPDATE SET quantity = inventory.quantity + EXCLUDED.quantity,
                      weight_kg = inventory.weight_kg + EXCLUDED.weight_kg,
                      product_type = 'raw', updated_at=NOW()`,
-      [warehouseId, materialName, amount],
+      [warehouseId, canonicalName, amount],
     );
     await client.query(
       `INSERT INTO stock_movements
          (product, quantity, movement_type, to_warehouse_id, note, created_by, product_type)
        VALUES ($1,$2,'IN',$3,$4,'admin','raw')`,
-      [materialName, amount, warehouseId, note || `Xom ashyo kirimi: ${amount} kg`],
+      [canonicalName, amount, warehouseId, note || `Xom ashyo kirimi: ${amount} kg`],
     );
     await client.query("COMMIT");
     res.json({ ok: true });
@@ -720,7 +749,17 @@ router.get("/ombor/flow", async (_req, res): Promise<void> => {
     pool.query(`
       SELECT w.id, w.name, w.capacity_kg,
              COALESCE(SUM(i.weight_kg) FILTER (WHERE i.product_type='raw' AND i.quantity > 0), 0)::numeric AS total_kg,
-             COUNT(*) FILTER (WHERE i.product_type='raw' AND i.quantity > 0)::int AS material_count
+             COUNT(*) FILTER (WHERE i.product_type='raw' AND i.quantity > 0)::int AS material_count,
+             COALESCE((
+               SELECT SUM(sm.quantity) FROM stock_movements sm
+               WHERE sm.to_warehouse_id = w.id AND sm.movement_type='IN' AND sm.product_type='raw'
+                 AND (sm.created_at AT TIME ZONE 'Asia/Tashkent')::date = (NOW() AT TIME ZONE 'Asia/Tashkent')::date
+             ), 0)::numeric AS today_in,
+             COALESCE((
+               SELECT SUM(sm.quantity) FROM stock_movements sm
+               WHERE sm.from_warehouse_id = w.id AND sm.movement_type='OUT' AND sm.product_type='raw'
+                 AND (sm.created_at AT TIME ZONE 'Asia/Tashkent')::date = (NOW() AT TIME ZONE 'Asia/Tashkent')::date
+             ), 0)::numeric AS today_out
       FROM warehouses w
       LEFT JOIN inventory i ON i.warehouse_id = w.id
       WHERE w.location_type='container' AND w.purpose='raw' AND w.active = TRUE
@@ -792,18 +831,33 @@ router.get("/ombor/flow", async (_req, res): Promise<void> => {
     capacityKg: Number(r.capacity_kg) || 20000,
     totalKg: Number(r.total_kg),
     materialCount: Number(r.material_count),
+    todayIn: Number(r.today_in),
+    todayOut: Number(r.today_out),
     items: itemsByWh.get(r.id) ?? [],
   }));
 
-  const departments = deptRes.rows.map((r) => ({
-    id: r.id,
-    name: r.name,
-    workerCount: Number(r.worker_count),
-    productCount: Number(r.product_count),
-    wipKg: Number(r.wip_kg),
-    todayReceived: Number(r.today_received),
-    todayProduced: Number(r.today_produced),
-  }));
+  const departments = deptRes.rows.map((r) => {
+    const wipKg = Number(r.wip_kg);
+    const todayReceived = Number(r.today_received);
+    const todayProduced = Number(r.today_produced);
+    // Bajarilish %: bugun ishlab chiqarilgan / (bugun ishlab chiqarilgan + qolgan WIP).
+    const denom = todayProduced + Math.max(0, wipKg);
+    const completionPct = denom > 0 ? Math.round((todayProduced / denom) * 100) : 0;
+    // Holat: faol (bugun harakat bor) · kutmoqda (WIP bor, harakat yo'q) · bo'sh.
+    const status =
+      todayProduced > 0 || todayReceived > 0 ? "working" : wipKg > 0 ? "idle" : "empty";
+    return {
+      id: r.id,
+      name: r.name,
+      workerCount: Number(r.worker_count),
+      productCount: Number(r.product_count),
+      wipKg,
+      todayReceived,
+      todayProduced,
+      completionPct,
+      status,
+    };
+  });
 
   const finishedContainers = finRes.rows.map((r) => ({
     id: r.id,
@@ -839,6 +893,11 @@ router.get("/ombor/flow", async (_req, res): Promise<void> => {
   const totalFinishedKg = finishedContainers.reduce((s, c) => s + c.totalKg, 0);
   const todayReceived = departments.reduce((s, d) => s + d.todayReceived, 0);
   const todayProduced = departments.reduce((s, d) => s + d.todayProduced, 0);
+  const departmentsWorking = departments.filter((d) => d.status === "working").length;
+  // Bugungi xom sarfi = konteynerlardan bugun chiqarilgan xom ashyo (kg).
+  const todayRawConsumption = rawContainers.reduce((s, c) => s + c.todayOut, 0);
+  // Samaradorlik % = bugun ishlab chiqarilgan / bugun bo'limlarga berilgan.
+  const efficiency = todayReceived > 0 ? Math.round((todayProduced / todayReceived) * 100) : 0;
 
   const alerts: { level: string; text: string }[] = [];
   for (const d of departments) {
@@ -867,6 +926,9 @@ router.get("/ombor/flow", async (_req, res): Promise<void> => {
       totalFinishedKg,
       todayReceived,
       todayProduced,
+      departmentsWorking,
+      todayRawConsumption,
+      efficiency,
       rawContainerCount: rawContainers.length,
       departmentCount: departments.length,
       finishedContainerCount: finishedContainers.length,

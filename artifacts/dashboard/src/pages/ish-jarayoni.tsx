@@ -123,12 +123,26 @@ function useRawMaterials() {
   });
 }
 
+type ProductOption = { name: string; unitType: string; weight: number };
+
+function useProducts() {
+  return useQuery<ProductOption[]>({
+    queryKey: ["products-list"],
+    queryFn: () =>
+      authFetch("/api/products").then((r) => r.json()).then((rows: any[]) =>
+        (rows ?? [])
+          .filter((p) => p.active !== false)
+          .map((p) => ({ name: p.name, unitType: p.unitType ?? "dona", weight: Number(p.weight) || 0 }))),
+  });
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function IshJarayoni() {
   const { data, isLoading, isError, error, refetch, isFetching } = useFlow();
   const [rawInOpen, setRawInOpen] = useState(false);
   const [receiveOpen, setReceiveOpen] = useState(false);
+  const [produceOpen, setProduceOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
 
   const kpis = data?.kpis;
@@ -161,6 +175,9 @@ export default function IshJarayoni() {
           </Button>
           <Button variant="outline" size="sm" onClick={() => setReceiveOpen(true)}>
             <Truck className="w-4 h-4 mr-1.5" /> Bo'limga berish
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => setProduceOpen(true)}>
+            <PackageCheck className="w-4 h-4 mr-1.5" /> Tayyor chiqarish
           </Button>
           <Button size="sm" onClick={() => setRawInOpen(true)} style={{ background: C.green }}>
             <Plus className="w-4 h-4 mr-1.5" /> Xom ashyo kirimi
@@ -334,6 +351,7 @@ export default function IshJarayoni() {
 
       {rawInOpen && <RawInModal containers={data?.allContainers ?? []} onClose={() => setRawInOpen(false)} />}
       {receiveOpen && <ReceiveModal flow={data} onClose={() => setReceiveOpen(false)} />}
+      {produceOpen && <ProduceModal flow={data} onClose={() => setProduceOpen(false)} />}
       {manageOpen && <ManageContainersModal containers={data?.allContainers ?? []} onClose={() => setManageOpen(false)} />}
     </div>
   );
@@ -615,6 +633,92 @@ function ReceiveModal({ flow, onClose }: { flow: FlowData | undefined; onClose: 
       </div>
       <Button className="w-full" disabled={!valid || mut.isPending} onClick={() => mut.mutate()} style={{ background: C.dept }}>
         {mut.isPending ? "Saqlanmoqda..." : "Bo'limga berish"}
+      </Button>
+    </ModalShell>
+  );
+}
+
+function ProduceModal({ flow, onClose }: { flow: FlowData | undefined; onClose: () => void }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const { data: products } = useProducts();
+  const departments = flow?.departments ?? [];
+  const finishedContainers = (flow?.allContainers ?? []).filter((c) => c.purpose === "finished" && c.active);
+  const [lineId, setLineId] = useState<number | "">("");
+  const [warehouseId, setWarehouseId] = useState<number | "">("");
+  const [productName, setProductName] = useState("");
+  const [qtyVal, setQtyVal] = useState("");
+  const [kgVal, setKgVal] = useState("");
+  const [note, setNote] = useState("");
+
+  const selectedProduct = useMemo(() => products?.find((p) => p.name === productName), [products, productName]);
+  const isKg = selectedProduct?.unitType === "kg";
+
+  const mut = useMutation({
+    mutationFn: () =>
+      authFetch("/api/ombor/flow/produce", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lineId, warehouseId, product: productName,
+          quantity: Number(qtyVal), kg: kgVal === "" ? undefined : Number(kgVal), note,
+        }),
+      }).then(async (r) => { if (!r.ok) throw new Error((await r.json()).error || "Xatolik"); return r.json(); }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["ombor-flow"] });
+      toast({ title: "Tayyor mahsulot chiqarildi" });
+      onClose();
+    },
+    onError: (e: Error) => toast({ title: "Xatolik", description: e.message, variant: "destructive" }),
+  });
+
+  const valid = lineId !== "" && warehouseId !== "" && productName && Number(qtyVal) > 0;
+
+  return (
+    <ModalShell title="Tayyor mahsulot chiqarish" onClose={onClose}>
+      {finishedContainers.length === 0 && (
+        <p className="text-sm text-amber-600">
+          Avval bir konteynerni "tayyor" deb belgilang (Konteynerlar menyusi).
+        </p>
+      )}
+      <div>
+        <label className={labelCls}>Bo'lim (liniya)</label>
+        <select className={fieldCls} value={lineId} onChange={(e) => setLineId(e.target.value ? Number(e.target.value) : "")}>
+          <option value="">Tanlang...</option>
+          {departments.map((d) => <option key={d.id} value={d.id}>{d.name} ({kg(d.wipKg)} WIP)</option>)}
+        </select>
+      </div>
+      <div>
+        <label className={labelCls}>Tayyor mahsulot konteyneri</label>
+        <select className={fieldCls} value={warehouseId} onChange={(e) => setWarehouseId(e.target.value ? Number(e.target.value) : "")}>
+          <option value="">Tanlang...</option>
+          {finishedContainers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+      </div>
+      <div>
+        <label className={labelCls}>Mahsulot</label>
+        <select className={fieldCls} value={productName} onChange={(e) => setProductName(e.target.value)}>
+          <option value="">Tanlang...</option>
+          {products?.map((p) => <option key={p.name} value={p.name}>{p.name} ({p.unitType})</option>)}
+        </select>
+      </div>
+      <div>
+        <label className={labelCls}>Miqdor ({selectedProduct?.unitType ?? "dona"})</label>
+        <input className={fieldCls} type="number" min="0" step="any" value={qtyVal} onChange={(e) => setQtyVal(e.target.value)} placeholder="0" />
+      </div>
+      <div>
+        <label className={labelCls}>Og'irlik (kg, ixtiyoriy)</label>
+        <input className={fieldCls} type="number" min="0" step="any" value={kgVal} onChange={(e) => setKgVal(e.target.value)} placeholder={isKg ? "Miqdor (kg)" : "Avtomatik: miqdor × og'irlik"} />
+        {!isKg && selectedProduct && selectedProduct.weight > 0 && (
+          <p className="text-[11px] text-muted-foreground mt-1">Bo'sh qoldirilsa: {kg(Number(qtyVal || 0) * selectedProduct.weight)} hisoblanadi</p>
+        )}
+      </div>
+      <div>
+        <label className={labelCls}>Izoh (ixtiyoriy)</label>
+        <input className={fieldCls} value={note} onChange={(e) => setNote(e.target.value)} />
+      </div>
+      <Button className="w-full" disabled={!valid || mut.isPending} onClick={() => mut.mutate()} style={{ background: C.finished }}>
+        {mut.isPending ? "Saqlanmoqda..." : "Tayyor chiqarish"}
       </Button>
     </ModalShell>
   );

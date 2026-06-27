@@ -510,7 +510,7 @@ router.get("/ombor/finished-goods", async (_req, res): Promise<void> => {
   const { rate } = await getUsdToUzsRate();
   const { rows } = await pool.query(`
     SELECT i.product, SUM(i.quantity)::numeric AS stock_qty,
-           p.default_sale_price, p.currency_type, p.unit_type,
+           p.default_sale_price, p.currency_type, p.unit_type, p.minimum_stock,
            COALESCE(SUM(
              (CASE WHEN LOWER(p.unit_type) = 'kg' AND COALESCE(i.weight_kg, 0) > 0
                    THEN i.weight_kg
@@ -521,7 +521,7 @@ router.get("/ombor/finished-goods", async (_req, res): Promise<void> => {
            ), 0)::numeric AS total_value_uzs
     FROM inventory i
     JOIN products p ON p.name = i.product
-    GROUP BY i.product, p.default_sale_price, p.currency_type, p.unit_type
+    GROUP BY i.product, p.default_sale_price, p.currency_type, p.unit_type, p.minimum_stock
     HAVING SUM(i.quantity) > 0
     ORDER BY i.product
   `, [rate ?? 0]);
@@ -529,6 +529,7 @@ router.get("/ombor/finished-goods", async (_req, res): Promise<void> => {
     const isUsd    = String(r.currency_type).toUpperCase() === "USD";
     const priceUzs = isUsd ? Number(r.default_sale_price) * (rate ?? 0) : Number(r.default_sale_price);
     const stockQty = Number(r.stock_qty);
+    const minimumStock = Number(r.minimum_stock) || 0;
     return {
       product:       r.product,
       stockQty,
@@ -537,6 +538,8 @@ router.get("/ombor/finished-goods", async (_req, res): Promise<void> => {
       currency:      r.currency_type || "UZS",
       priceUzs,
       totalValueUzs: Number(r.total_value_uzs),
+      minimumStock,
+      low:           minimumStock > 0 && stockQty <= minimumStock,
     };
   }));
 });
@@ -651,8 +654,8 @@ router.post("/ombor/flow/raw-in", async (req, res): Promise<void> => {
     await client.query(
       `INSERT INTO stock_movements
          (product, quantity, movement_type, to_warehouse_id, note, created_by, product_type)
-       VALUES ($1,$2,'IN',$3,$4,'admin','raw')`,
-      [canonicalName, amount, warehouseId, note || `Xom ashyo kirimi: ${amount} kg`],
+       VALUES ($1,$2,'IN',$3,$4,$5,'raw')`,
+      [canonicalName, amount, warehouseId, note || `Xom ashyo kirimi: ${amount} kg`, actingUser(req)],
     );
     await client.query("COMMIT");
     res.json({ ok: true });
@@ -714,14 +717,14 @@ router.post("/ombor/flow/receive", async (req, res): Promise<void> => {
     await client.query(
       `INSERT INTO wip_movements
          (line_id, movement_type, raw_material, weight_kg, from_warehouse_id, note, created_by)
-       VALUES ($1,'RECEIVE',$2,$3,$4,$5,'admin')`,
-      [lineId, materialName, amount, warehouseId, note || `Bo'limga berildi: ${amount} kg`],
+       VALUES ($1,'RECEIVE',$2,$3,$4,$5,$6)`,
+      [lineId, materialName, amount, warehouseId, note || `Bo'limga berildi: ${amount} kg`, actingUser(req)],
     );
     await client.query(
       `INSERT INTO stock_movements
          (product, quantity, movement_type, from_warehouse_id, note, created_by, product_type)
-       VALUES ($1,$2,'OUT',$3,$4,'admin','raw')`,
-      [materialName, amount, warehouseId, `Bo'limga (${lineRes.rows[0].name}): ${amount} kg`],
+       VALUES ($1,$2,'OUT',$3,$4,$5,'raw')`,
+      [materialName, amount, warehouseId, `Bo'limga (${lineRes.rows[0].name}): ${amount} kg`, actingUser(req)],
     );
     await client.query("COMMIT");
     res.json({ ok: true });
@@ -942,6 +945,85 @@ router.get("/ombor/flow", async (_req, res): Promise<void> => {
     },
     alerts,
   });
+});
+
+// ── POST /api/ombor/flow/produce ───────────────────────────────────────────────
+// Bo'lim tayyor mahsulot chiqaradi: WIP'ga PRODUCE (-kg ledger) yoziladi va
+// tanlangan tayyor konteynerga (inventory product_type='finished') qo'shiladi.
+// /flow/receive bilan bir xil xavfsizlik: tranzaksiya, purpose='finished' tekshiruvi,
+// kanonik mahsulot nomi mosligi va actingUser attributsiyasi.
+router.post("/ombor/flow/produce", async (req, res): Promise<void> => {
+  const { lineId, warehouseId, product, quantity, kg, note = "" } = req.body ?? {};
+  if (!lineId || !warehouseId || !product) {
+    res.status(400).json({ error: "lineId, warehouseId, product required" }); return;
+  }
+  const qty = Number(quantity);
+  if (isNaN(qty) || qty <= 0) {
+    res.status(400).json({ error: "quantity must be > 0" }); return;
+  }
+  const kgInput = kg === undefined || kg === null || kg === "" ? 0 : Number(kg);
+  if (isNaN(kgInput) || kgInput < 0) {
+    res.status(400).json({ error: "kg must be >= 0" }); return;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const lineRes = await client.query("SELECT id, name FROM production_lines WHERE id=$1", [lineId]);
+    if (!lineRes.rows.length) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "Bo'lim topilmadi" }); return;
+    }
+    // Maqsad konteyner tayyor mahsulot ombori bo'lishi shart.
+    const whRes = await client.query(
+      "SELECT id FROM warehouses WHERE id=$1 AND location_type='container' AND purpose='finished'", [warehouseId],
+    );
+    if (!whRes.rows.length) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "Tayyor mahsulot konteyneri topilmadi (purpose='finished' bo'lishi kerak)" }); return;
+    }
+    // Mahsulot mavjud bo'lishi shart — og'irligi kg fallback uchun olinadi.
+    const prodRes = await client.query(
+      "SELECT name, weight FROM products WHERE LOWER(name)=LOWER($1) ORDER BY id LIMIT 1", [product],
+    );
+    if (!prodRes.rows.length) {
+      await client.query("ROLLBACK");
+      res.status(400).json({ error: `"${product}" ro'yxatdagi mahsulotga mos kelmadi. Mavjud mahsulotni tanlang.` }); return;
+    }
+    const canonicalProduct: string = prodRes.rows[0].name;
+    const unitWeight = Number(prodRes.rows[0].weight) > 0 ? Number(prodRes.rows[0].weight) : 0;
+    // PRODUCE kg = kiritilgan kg, aks holda quantity × birlik og'irligi (bot bilan bir xil).
+    const produceKg = kgInput > 0 ? kgInput : qty * unitWeight;
+
+    await client.query(
+      `INSERT INTO wip_movements
+         (line_id, movement_type, product, weight_kg, note, created_by)
+       VALUES ($1,'PRODUCE',$2,$3,$4,$5)`,
+      [lineId, canonicalProduct, produceKg, note || `Tayyor chiqarildi: ${qty}`, actingUser(req)],
+    );
+    await client.query(
+      `INSERT INTO inventory (warehouse_id, product, quantity, weight_kg, product_type)
+       VALUES ($1,$2,$3,$4,'finished')
+       ON CONFLICT (warehouse_id, product)
+       DO UPDATE SET quantity = inventory.quantity + EXCLUDED.quantity,
+                     weight_kg = inventory.weight_kg + EXCLUDED.weight_kg,
+                     product_type = 'finished', updated_at=NOW()`,
+      [warehouseId, canonicalProduct, qty, produceKg],
+    );
+    await client.query(
+      `INSERT INTO stock_movements
+         (product, quantity, movement_type, to_warehouse_id, note, created_by, product_type)
+       VALUES ($1,$2,'IN',$3,$4,$5,'finished')`,
+      [canonicalProduct, qty, warehouseId, note || `Tayyor mahsulot chiqarildi: ${qty}`, actingUser(req)],
+    );
+    await client.query("COMMIT");
+    res.json({ ok: true });
+  } catch (e: any) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
 });
 
 export default router;

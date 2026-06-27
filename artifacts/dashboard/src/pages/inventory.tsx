@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { authFetch } from "@/App";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { formatNumber, formatCurrency } from "@/lib/format";
@@ -91,6 +91,8 @@ type FinishedGood = {
   currency: string;
   priceUzs: number;
   totalValueUzs: number;
+  minimumStock: number;
+  low: boolean;
 };
 
 // ── Hooks ─────────────────────────────────────────────────────────────────────
@@ -1021,9 +1023,40 @@ function MovementRow({ m }: { m: Movement }) {
   );
 }
 
+type FgSort = "value" | "qty" | "name";
+
 function FinishedGoodsPanel() {
   const { data: goods = [], isLoading } = useFinishedGoods();
   const totalValue = goods.reduce((s, g) => s + g.totalValueUzs, 0);
+  const lowCount = goods.filter((g) => g.low).length;
+
+  const [query, setQuery] = useState("");
+  const [sortBy, setSortBy] = useState<FgSort>("value");
+
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const filtered = q ? goods.filter((g) => g.product.toLowerCase().includes(q)) : goods.slice();
+    filtered.sort((a, b) => {
+      if (sortBy === "name") return a.product.localeCompare(b.product);
+      if (sortBy === "qty") return b.stockQty - a.stockQty;
+      return b.totalValueUzs - a.totalValueUzs;
+    });
+    return filtered;
+  }, [goods, query, sortBy]);
+
+  const visibleValue = visible.reduce((s, g) => s + g.totalValueUzs, 0);
+
+  const sortBtn = (key: FgSort, label: string) => (
+    <button
+      key={key}
+      onClick={() => setSortBy(key)}
+      style={{
+        padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
+        border: "1px solid", borderColor: sortBy === key ? "#0B6B3A" : "#E5E7EB",
+        background: sortBy === key ? "#0B6B3A" : "#fff", color: sortBy === key ? "#fff" : "#6B7280",
+      }}
+    >{label}</button>
+  );
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -1043,6 +1076,14 @@ function FinishedGoodsPanel() {
           accent
           loading={isLoading}
         />
+        <KpiCard
+          icon={<AlertTriangle style={{ width: 18, height: 18 }} />}
+          label="Kam qolgan"
+          value={isLoading ? undefined : lowCount}
+          sub={isLoading ? undefined : "minimal zahiradan past"}
+          warn={lowCount > 0}
+          loading={isLoading}
+        />
       </div>
 
       {/* Table */}
@@ -1050,10 +1091,26 @@ function FinishedGoodsPanel() {
         background: "#fff", borderRadius: 16, overflow: "hidden",
         boxShadow: "0 1px 3px rgba(0,0,0,0.06)", border: "1px solid rgba(0,0,0,0.06)",
       }}>
-        <div style={{ padding: "16px 20px", borderBottom: "1px solid #F3F4F6", display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ padding: "16px 20px", borderBottom: "1px solid #F3F4F6", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <Package style={{ width: 16, height: 16, color: "#0B6B3A" }} />
           <span style={{ fontWeight: 600, fontSize: 15, color: "#111827" }}>Tayyor mahsulot zahirasi</span>
-          <span style={{ marginLeft: "auto", fontSize: 12, color: "#9CA3AF" }}>{goods.length} ta mahsulot</span>
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <div style={{ position: "relative" }}>
+              <Search style={{ width: 14, height: 14, color: "#9CA3AF", position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)" }} />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Mahsulot qidirish..."
+                style={{
+                  padding: "7px 10px 7px 28px", borderRadius: 8, border: "1px solid #E5E7EB",
+                  fontSize: 13, width: 180, outline: "none",
+                }}
+              />
+            </div>
+            {sortBtn("value", "Qiymat")}
+            {sortBtn("qty", "Zahira")}
+            {sortBtn("name", "Nomi")}
+          </div>
         </div>
 
         {isLoading ? (
@@ -1065,12 +1122,16 @@ function FinishedGoodsPanel() {
             <span style={{ fontSize: 40 }}>📦</span>
             <div style={{ marginTop: 12, fontWeight: 500 }}>Zahirada tayyor mahsulot yo'q</div>
           </div>
+        ) : !visible.length ? (
+          <div style={{ textAlign: "center", padding: "48px 24px", color: "#9CA3AF" }}>
+            <div style={{ fontWeight: 500 }}>"{query}" bo'yicha mahsulot topilmadi</div>
+          </div>
         ) : (
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr style={{ background: "#F9FAFB" }}>
-                  {["Mahsulot", "Zahira", "Birlik", "Narx (so'm)", "Jami qiymat"].map((h, hi) => (
+                  {["Mahsulot", "Zahira", "Min. zahira", "Birlik", "Narx (so'm)", "Jami qiymat"].map((h, hi) => (
                     <th key={hi} style={{
                       padding: "10px 16px", textAlign: hi === 0 ? "left" : "right", fontSize: 12,
                       fontWeight: 600, color: "#6B7280", letterSpacing: "0.04em",
@@ -1079,17 +1140,23 @@ function FinishedGoodsPanel() {
                 </tr>
               </thead>
               <tbody>
-                {goods.map((g) => {
+                {visible.map((g) => {
                   const isUsd = String(g.currency).toUpperCase() === "USD";
                   return (
-                    <tr key={g.product} style={{ borderTop: "1px solid #F3F4F6" }}
-                      onMouseEnter={(e) => { (e.currentTarget as HTMLTableRowElement).style.background = "#F9FAFB"; }}
-                      onMouseLeave={(e) => { (e.currentTarget as HTMLTableRowElement).style.background = ""; }}>
+                    <tr key={g.product} style={{ borderTop: "1px solid #F3F4F6", background: g.low ? "#FEF2F2" : undefined }}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLTableRowElement).style.background = g.low ? "#FEE2E2" : "#F9FAFB"; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLTableRowElement).style.background = g.low ? "#FEF2F2" : ""; }}>
                       <td style={{ padding: "12px 16px", fontWeight: 500, color: "#111827", fontSize: 14 }}>
-                        {g.product}
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                          {g.low && <AlertTriangle style={{ width: 14, height: 14, color: "#DC2626" }} />}
+                          {g.product}
+                        </span>
                       </td>
-                      <td style={{ padding: "12px 16px", color: "#374151", fontWeight: 600, textAlign: "right" }}>
+                      <td style={{ padding: "12px 16px", fontWeight: 600, textAlign: "right", color: g.low ? "#DC2626" : "#374151" }}>
                         {fmt(g.stockQty)}
+                      </td>
+                      <td style={{ padding: "12px 16px", color: "#9CA3AF", fontSize: 13, textAlign: "right" }}>
+                        {g.minimumStock > 0 ? fmt(g.minimumStock) : "—"}
                       </td>
                       <td style={{ padding: "12px 16px", color: "#6B7280", fontSize: 13, textAlign: "right" }}>
                         {g.unitType}
@@ -1111,11 +1178,11 @@ function FinishedGoodsPanel() {
               </tbody>
               <tfoot>
                 <tr style={{ borderTop: "2px solid #E5E7EB", background: "#F9FAFB" }}>
-                  <td colSpan={4} style={{ padding: "12px 16px", fontWeight: 600, color: "#374151", textAlign: "right" }}>
-                    Jami:
+                  <td colSpan={5} style={{ padding: "12px 16px", fontWeight: 600, color: "#374151", textAlign: "right" }}>
+                    Jami{query.trim() ? " (filtrlangan)" : ""}:
                   </td>
                   <td style={{ padding: "12px 16px", fontWeight: 700, color: "#0B6B3A", textAlign: "right" }}>
-                    {fmtVal(totalValue)}
+                    {fmtVal(query.trim() ? visibleValue : totalValue)}
                   </td>
                 </tr>
               </tfoot>

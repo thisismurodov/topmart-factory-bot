@@ -1913,6 +1913,27 @@ def get_raw_material_names() -> list[str]:
         return [r["name"] for r in cur.fetchall()]
 
 
+def get_raw_materials_full() -> list[dict]:
+    """id, name, unit va joriy zahira bilan faol xom ashyolar (to'g'rilash uchun)."""
+    with get_conn() as (conn, cur):
+        cur.execute(
+            """SELECT id, name, unit, COALESCE(current_stock, 0) AS current_stock
+               FROM raw_materials WHERE active=TRUE ORDER BY name"""
+        )
+        return cur.fetchall()
+
+
+def get_raw_material_by_id(material_id: int) -> dict | None:
+    """Bitta xom ashyoning joriy zahirasi va birligi."""
+    with get_conn() as (conn, cur):
+        cur.execute(
+            """SELECT id, name, unit, COALESCE(current_stock, 0) AS current_stock
+               FROM raw_materials WHERE id=%s AND active=TRUE""",
+            (material_id,),
+        )
+        return cur.fetchone()
+
+
 def add_raw_material(name: str, unit: str = "kg") -> bool:
     try:
         with get_conn() as (conn, cur):

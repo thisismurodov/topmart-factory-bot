@@ -505,6 +505,62 @@ router.post("/ombor/raw-in", async (req, res): Promise<void> => {
   }
 });
 
+// ── POST /api/ombor/raw-adjust ─────────────────────────────────────────────────
+// Xom ashyo zahirasini absolyut qiymatga to'g'rilash (qayta sanash / to'kilish).
+// /ombor/adjust kabi yangi qiymat ABSOLYUT (ustiga emas) va delta IN/OUT log qilinadi.
+router.post("/ombor/raw-adjust", async (req, res): Promise<void> => {
+  const { materialId, stock, note = "" } = req.body ?? {};
+  if (!materialId || typeof materialId !== "number") {
+    res.status(400).json({ error: "materialId required" }); return;
+  }
+  const newStock = Number(stock);
+  if (isNaN(newStock) || newStock < 0) {
+    res.status(400).json({ error: "stock must be >= 0" }); return;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const matRes = await client.query(
+      "SELECT id, name, unit, current_stock FROM raw_materials WHERE id = $1", [materialId],
+    );
+    if (!matRes.rows.length) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "Xom ashyo topilmadi" }); return;
+    }
+    const mat = matRes.rows[0];
+    const oldStock = Number(mat.current_stock) || 0;
+    const delta = newStock - oldStock;
+    if (delta === 0) {
+      await client.query("ROLLBACK");
+      res.status(400).json({ error: "O'zgartirish yo'q" }); return;
+    }
+
+    await client.query(
+      "UPDATE raw_materials SET current_stock = $1 WHERE id = $2",
+      [newStock, materialId],
+    );
+
+    const movementType = delta > 0 ? "IN" : "OUT";
+    const auto = `Tuzatish: ${oldStock} → ${newStock} ${mat.unit}`;
+    const noteText = note ? `${note} (${auto})` : auto;
+    await client.query(
+      `INSERT INTO stock_movements
+         (product, quantity, movement_type, to_warehouse_id, from_warehouse_id, note, created_by, product_type)
+       VALUES ($1,$2,$3,NULL,NULL,$4,$5,'raw')`,
+      [mat.name, Math.abs(delta), movementType, noteText, actingUser(req)],
+    );
+
+    await client.query("COMMIT");
+    res.json({ ok: true, name: mat.name, newStock });
+  } catch (e: any) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
 // ── GET /api/ombor/finished-goods ─────────────────────────────────────────────
 router.get("/ombor/finished-goods", async (_req, res): Promise<void> => {
   const { rate } = await getUsdToUzsRate();

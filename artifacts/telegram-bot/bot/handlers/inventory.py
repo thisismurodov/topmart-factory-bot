@@ -14,8 +14,9 @@ from ..database import (
     record_movement, get_recent_movements, get_product_names,
     get_sale_products, get_raw_material_names,
     get_containers, get_inventory_line,
+    get_raw_materials_full, get_raw_material_by_id,
 )
-from ..api_client import adjust_inventory
+from ..api_client import adjust_inventory, adjust_raw_material
 
 # ── States ─────────────────────────────────────────────────────────────────────
 (
@@ -24,7 +25,8 @@ from ..api_client import adjust_inventory
     INV_OUT_WAREHOUSE, INV_OUT_PRODUCT, INV_OUT_QTY, INV_OUT_CONFIRM,
     INV_TR_FROM, INV_TR_PRODUCT, INV_TR_QTY, INV_TR_TO, INV_TR_CONFIRM,
     INV_ADJ_CONTAINER, INV_ADJ_PRODUCT, INV_ADJ_QTY, INV_ADJ_WEIGHT, INV_ADJ_CONFIRM,
-) = range(20)
+    INV_RADJ_MATERIAL, INV_RADJ_STOCK, INV_RADJ_CONFIRM,
+) = range(23)
 
 
 # ── Keyboards ──────────────────────────────────────────────────────────────────
@@ -35,6 +37,7 @@ def _inv_main_kb() -> ReplyKeyboardMarkup:
             ["➕ Kirim", "➖ Chiqim"],
             ["🔄 Skladlararo o'tkazish"],
             ["✏️ Konteynerni to'g'rilash"],
+            ["🧵 Xom ashyoni to'g'rilash"],
             ["📋 Qoldiqlar", "📜 Harakatlar tarixi"],
             ["🔙 Asosiy menyu"],
         ],
@@ -628,6 +631,110 @@ async def adjust_confirm_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# 🧵  XOM ASHYONI TO'G'RILASH (qayta sanash / to'kilish tuzatishi)
+# Bot raw_materials ni o'zi o'zgartirmaydi — Node API (/ombor/raw-adjust) orqali
+# o'tadi: yangi qiymat ABSOLYUT o'rnatiladi va delta IN/OUT log qilinadi.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _raw_material_inline(materials: list[dict], prefix: str) -> InlineKeyboardMarkup:
+    rows = []
+    for i in range(0, len(materials), 2):
+        m = materials[i]
+        row = [InlineKeyboardButton(m["name"], callback_data=f"{prefix}:{m['id']}")]
+        if i + 1 < len(materials):
+            m2 = materials[i + 1]
+            row.append(InlineKeyboardButton(m2["name"], callback_data=f"{prefix}:{m2['id']}"))
+        rows.append(row)
+    rows.append([InlineKeyboardButton("❌ Bekor", callback_data=f"{prefix}:cancel")])
+    return InlineKeyboardMarkup(rows)
+
+
+async def raw_adjust_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    materials = get_raw_materials_full()
+    if not materials:
+        await update.message.reply_text("⚠️ Xom ashyo topilmadi.", reply_markup=_inv_main_kb())
+        return INV_MAIN
+    await update.message.reply_text(
+        "🧵 *Xom ashyoni to'g'rilash*\n\nQaysi xom ashyo?",
+        parse_mode="Markdown",
+        reply_markup=_raw_material_inline(materials, "rm"),
+    )
+    return INV_RADJ_MATERIAL
+
+
+async def raw_adjust_material_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    q = update.callback_query
+    await q.answer()
+    if q.data == "rm:cancel":
+        await q.edit_message_text("❌ Bekor.")
+        return INV_MAIN
+    material_id = int(q.data.split(":", 1)[1])
+    mat = get_raw_material_by_id(material_id)
+    if not mat:
+        await q.edit_message_text("⚠️ Xom ashyo topilmadi.")
+        return INV_MAIN
+    ctx.user_data["radj_id"]    = material_id
+    ctx.user_data["radj_name"]  = mat["name"]
+    ctx.user_data["radj_unit"]  = mat["unit"] or "kg"
+    ctx.user_data["radj_old"]   = float(mat["current_stock"] or 0)
+    await q.edit_message_text(
+        f"🧵 *{mat['name']}*\n"
+        f"Joriy zahira: *{ctx.user_data['radj_old']:g} {ctx.user_data['radj_unit']}*\n\n"
+        f"To'g'ri zahirani kiriting:",
+        parse_mode="Markdown",
+    )
+    return INV_RADJ_STOCK
+
+
+async def raw_adjust_stock(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    try:
+        stock = float(update.message.text.replace(",", "."))
+        if stock < 0:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text("⚠️ 0 yoki musbat son kiriting:")
+        return INV_RADJ_STOCK
+    ctx.user_data["radj_stock"] = stock
+    await update.message.reply_text(
+        "✅ *Tasdiqlang:*\n\n"
+        f"🧵 Xom ashyo: *{ctx.user_data['radj_name']}*\n"
+        f"📊 Zahira: {ctx.user_data['radj_old']:g} → *{stock:g} {ctx.user_data['radj_unit']}*",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Tasdiqlash", callback_data="raconfirm:yes"),
+            InlineKeyboardButton("❌ Bekor",      callback_data="raconfirm:no"),
+        ]]),
+    )
+    return INV_RADJ_CONFIRM
+
+
+async def raw_adjust_confirm_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    q = update.callback_query
+    await q.answer()
+    if q.data != "raconfirm:yes":
+        await q.edit_message_text("❌ Bekor.")
+        return INV_MAIN
+    user = get_user_role(update.effective_chat.id)
+    who  = user["worker_name"] if user else str(update.effective_chat.id)
+    ok, err = adjust_raw_material(
+        material_id=ctx.user_data["radj_id"],
+        stock=ctx.user_data["radj_stock"],
+        note=f"Bot orqali tuzatish: {who}",
+    )
+    if ok:
+        await q.edit_message_text(
+            f"✅ *To'g'rilandi!*\n\n"
+            f"🧵 {ctx.user_data['radj_name']} — "
+            f"{ctx.user_data['radj_stock']:g} {ctx.user_data['radj_unit']}",
+            parse_mode="Markdown",
+        )
+    else:
+        reason = err or "nomalum"
+        await q.edit_message_text(f"❌ Xatolik: {reason}")
+    return INV_MAIN
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # 📋  QOLDIQLAR — kategoriya bo'yicha ajratilgan
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -725,6 +832,7 @@ def build_inventory_handler() -> ConversationHandler:
                 MessageHandler(f.Regex(r"^➖ Chiqim$"),                 chiqim_start),
                 MessageHandler(f.Regex(r"^🔄 Skladlararo o'tkazish$"), transfer_start),
                 MessageHandler(f.Regex(r"^✏️ Konteynerni to'g'rilash$"), adjust_start),
+                MessageHandler(f.Regex(r"^🧵 Xom ashyoni to'g'rilash$"), raw_adjust_start),
                 MessageHandler(f.Regex(r"^📋 Qoldiqlar$"),              qoldiqlar),
                 MessageHandler(f.Regex(r"^📜 Harakatlar tarixi$"),      tarix),
                 MessageHandler(f.Regex(r"^🔙 Asosiy menyu$"),           ombor_back),
@@ -751,6 +859,10 @@ def build_inventory_handler() -> ConversationHandler:
             INV_ADJ_QTY:       [MessageHandler(f.TEXT & ~f.COMMAND,       adjust_qty)],
             INV_ADJ_WEIGHT:    [MessageHandler(f.TEXT & ~f.COMMAND,       adjust_weight)],
             INV_ADJ_CONFIRM:   [CallbackQueryHandler(adjust_confirm_cb,   pattern=r"^aconfirm:")],
+
+            INV_RADJ_MATERIAL: [CallbackQueryHandler(raw_adjust_material_cb, pattern=r"^rm:")],
+            INV_RADJ_STOCK:    [MessageHandler(f.TEXT & ~f.COMMAND,         raw_adjust_stock)],
+            INV_RADJ_CONFIRM:  [CallbackQueryHandler(raw_adjust_confirm_cb, pattern=r"^raconfirm:")],
         },
         fallbacks=[
             MessageHandler(f.Regex(r"^🔙 Asosiy menyu$"), ombor_back),

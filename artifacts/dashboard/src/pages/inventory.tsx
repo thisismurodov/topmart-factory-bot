@@ -1011,6 +1011,7 @@ function MovementRow({ m }: { m: Movement }) {
           {m.fromWarehouse && <span>{m.fromWarehouse} <ArrowRight style={{ width: 10, height: 10, display: "inline" }} /> </span>}
           {m.toWarehouse && <span>{m.toWarehouse}</span>}
           {m.note && <span> · {m.note}</span>}
+          {m.createdBy && <span> · 👤 {m.createdBy}</span>}
         </div>
       </div>
       <div style={{ fontSize: 11, color: "#9CA3AF", whiteSpace: "nowrap", flexShrink: 0 }}>

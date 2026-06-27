@@ -4,6 +4,13 @@ import { getUsdToUzsRate } from "../lib/exchangeRate";
 
 const router: IRouter = Router();
 
+// Stock movements log WHO performed an action. Dashboard requests carry an
+// authenticated session (req.username); the Telegram bot calls in via the
+// shared internal key with no session user, so it is recorded as "bot".
+function actingUser(req: { username?: string }): string {
+  return req.username ?? "bot";
+}
+
 // ── GET /api/ombor/summary ─────────────────────────────────────────────────────
 router.get("/ombor/summary", async (_req, res): Promise<void> => {
   const { rate } = await getUsdToUzsRate();
@@ -217,8 +224,8 @@ router.post("/ombor/transfer", async (req, res): Promise<void> => {
     await client.query(
       `INSERT INTO stock_movements
          (product, quantity, movement_type, from_warehouse_id, to_warehouse_id, note, created_by, product_type)
-       VALUES ($1,$2,'TRANSFER',$3,$4,$5,'admin',$6)`,
-      [product, amount, fromId, toId, note || `Transfer: ${amount}`, productType],
+       VALUES ($1,$2,'TRANSFER',$3,$4,$5,$6,$7)`,
+      [product, amount, fromId, toId, note || `Transfer: ${amount}`, actingUser(req), productType],
     );
 
     await client.query("COMMIT");
@@ -277,8 +284,8 @@ router.post("/ombor/finished-in", async (req, res): Promise<void> => {
     await client.query(
       `INSERT INTO stock_movements
          (product, quantity, movement_type, to_warehouse_id, note, created_by, product_type)
-       VALUES ($1,$2,'IN',$3,$4,'admin','finished')`,
-      [product, amount, warehouseId, note || `Kirim: ${amount}`],
+       VALUES ($1,$2,'IN',$3,$4,$5,'finished')`,
+      [product, amount, warehouseId, note || `Kirim: ${amount}`, actingUser(req)],
     );
     await client.query("COMMIT");
     res.json({ ok: true });
@@ -358,15 +365,15 @@ router.post("/ombor/adjust", async (req, res): Promise<void> => {
       await client.query(
         `INSERT INTO stock_movements
            (product, quantity, movement_type, to_warehouse_id, note, created_by, product_type)
-         VALUES ($1,$2,'IN',$3,$4,'admin',$5)`,
-        [product, Math.abs(delta), warehouseId, noteText, productType],
+         VALUES ($1,$2,'IN',$3,$4,$5,$6)`,
+        [product, Math.abs(delta), warehouseId, noteText, actingUser(req), productType],
       );
     } else {
       await client.query(
         `INSERT INTO stock_movements
            (product, quantity, movement_type, from_warehouse_id, note, created_by, product_type)
-         VALUES ($1,$2,'OUT',$3,$4,'admin',$5)`,
-        [product, Math.abs(delta), warehouseId, noteText, productType],
+         VALUES ($1,$2,'OUT',$3,$4,$5,$6)`,
+        [product, Math.abs(delta), warehouseId, noteText, actingUser(req), productType],
       );
     }
 

@@ -5,6 +5,7 @@ declare global {
   namespace Express {
     interface Request {
       userId?: number;
+      username?: string;
     }
   }
 }
@@ -24,7 +25,10 @@ export async function requireAuth(
 
   try {
     const r = await pool.query(
-      "SELECT user_id FROM admin_sessions WHERE token = $1",
+      `SELECT s.user_id, u.username
+       FROM admin_sessions s
+       JOIN admin_users u ON u.id = s.user_id
+       WHERE s.token = $1`,
       [token],
     );
     if (!r.rows.length) {
@@ -32,6 +36,7 @@ export async function requireAuth(
       return;
     }
     req.userId = r.rows[0].user_id;
+    req.username = r.rows[0].username;
     next();
   } catch {
     res.status(500).json({ error: "Auth check failed" });

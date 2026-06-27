@@ -237,3 +237,86 @@ describe("Ombor container weight (kg) integrity", () => {
     expect(weightOf(src, KG)).not.toBeCloseTo(150, 1);
   });
 });
+
+describe("Ombor recount (adjust) weight integrity", () => {
+  it("adjusting a kg product writes the exact new quantity AND weight", async () => {
+    // Seed a stored line whose weight is wrong so the recount must overwrite it.
+    await pool.query(
+      `INSERT INTO inventory (warehouse_id, product, quantity, weight_kg, product_type)
+       VALUES ($1,$2,100,300,'finished')`,
+      [wh.A, KG],
+    );
+
+    const res = await post("/ombor/adjust", {
+      warehouseId: wh.A, product: KG, qty: 42, weightKg: 137.5,
+    });
+    expect(res.status).toBe(200);
+
+    // Absolute values are written (not added to the old 100 / 300).
+    const rows = await items(wh.A);
+    expect(qtyOf(rows, KG)).toBe(42);
+    expect(weightOf(rows, KG)).toBeCloseTo(137.5, 3);
+  });
+
+  it("rejects a kg recount that omits the weight (400, no write)", async () => {
+    await pool.query(
+      `INSERT INTO inventory (warehouse_id, product, quantity, weight_kg, product_type)
+       VALUES ($1,$2,100,300,'finished')`,
+      [wh.A, KG],
+    );
+
+    const res = await post("/ombor/adjust", {
+      warehouseId: wh.A, product: KG, qty: 42,
+    });
+    expect(res.status).toBe(400);
+
+    // The original quantity/weight must be untouched after the rejection.
+    const rows = await items(wh.A);
+    expect(qtyOf(rows, KG)).toBe(100);
+    expect(weightOf(rows, KG)).toBeCloseTo(300, 3);
+  });
+
+  it("forces a dona product to 0 weight even if a weight is sent", async () => {
+    // Seed a dona line carrying a bogus stored weight to prove it gets zeroed.
+    await pool.query(
+      `INSERT INTO inventory (warehouse_id, product, quantity, weight_kg, product_type)
+       VALUES ($1,$2,50,99,'finished')`,
+      [wh.A, DONA],
+    );
+
+    const res = await post("/ombor/adjust", {
+      warehouseId: wh.A, product: DONA, qty: 30, weightKg: 77,
+    });
+    expect(res.status).toBe(200);
+
+    // Stored weight is forced to 0 regardless of the sent weightKg.
+    const { rows: stored } = await pool.query(
+      `SELECT quantity, weight_kg FROM inventory WHERE warehouse_id=$1 AND product=$2`,
+      [wh.A, DONA],
+    );
+    expect(Number(stored[0].quantity)).toBe(30);
+    expect(Number(stored[0].weight_kg)).toBe(0);
+
+    // GET items reports dona products as weightless (null).
+    const rows = await items(wh.A);
+    expect(qtyOf(rows, DONA)).toBe(30);
+    expect(weightOf(rows, DONA)).toBeNull();
+  });
+
+  it("GET items reports the corrected stored weight after a kg recount", async () => {
+    await pool.query(
+      `INSERT INTO inventory (warehouse_id, product, quantity, weight_kg, product_type)
+       VALUES ($1,$2,100,300,'finished')`,
+      [wh.A, KG],
+    );
+
+    const res = await post("/ombor/adjust", {
+      warehouseId: wh.A, product: KG, qty: 25, weightKg: 61.25,
+    });
+    expect(res.status).toBe(200);
+
+    const rows = await items(wh.A);
+    expect(qtyOf(rows, KG)).toBe(25);
+    expect(weightOf(rows, KG)).toBeCloseTo(61.25, 3);
+  });
+});

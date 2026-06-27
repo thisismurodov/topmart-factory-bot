@@ -521,15 +521,20 @@ router.post("/ombor/raw-adjust", async (req, res): Promise<void> => {
     res.status(400).json({ error: "materialId required" }); return;
   }
   const newStock = Number(stock);
-  if (isNaN(newStock) || newStock < 0) {
-    res.status(400).json({ error: "stock must be >= 0" }); return;
+  // isFinite NaN VA Infinity (masalan "1e999") ni rad etadi — aks holda
+  // current_stock buzilib, harakat delta'si noto'g'ri yoziladi.
+  if (!isFinite(newStock) || newStock < 0) {
+    res.status(400).json({ error: "stock must be a finite number >= 0" }); return;
   }
 
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    // FOR UPDATE — qatorni tranzaksiya davomida qulflaydi. Bu bir vaqtda
+    // kelgan ikkita to'g'rilash o'qish→yozishini ketma-ket qiladi, shunda
+    // eski→yangi delta har doim haqiqiy bo'ladi (jimgina yo'qolgan yangilanish yo'q).
     const matRes = await client.query(
-      "SELECT id, name, unit, current_stock FROM raw_materials WHERE id = $1", [materialId],
+      "SELECT id, name, unit, current_stock FROM raw_materials WHERE id = $1 FOR UPDATE", [materialId],
     );
     if (!matRes.rows.length) {
       await client.query("ROLLBACK");
@@ -612,10 +617,12 @@ router.get("/ombor/movements", async (req, res): Promise<void> => {
   const limit      = Math.min(Number(req.query.limit ?? 80), 200);
   const typeFilter = req.query.type ? String(req.query.type) : null;
   const whFilter   = req.query.warehouse ? Number(req.query.warehouse) : null;
+  const opFilter   = req.query.operator ? String(req.query.operator).trim() : null;
   const params: unknown[] = [limit];
   const conds: string[] = [];
   if (typeFilter) { params.push(typeFilter); conds.push(`sm.product_type = $${params.length}`); }
   if (whFilter)   { params.push(whFilter);   conds.push(`(sm.from_warehouse_id = $${params.length} OR sm.to_warehouse_id = $${params.length})`); }
+  if (opFilter)   { params.push(opFilter);   conds.push(`sm.created_by = $${params.length}`); }
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
 
   const { rows } = await pool.query(
@@ -643,6 +650,18 @@ router.get("/ombor/movements", async (req, res): Promise<void> => {
     createdBy:     r.created_by || "",
     createdAt:     r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
   })));
+});
+
+// ── GET /api/ombor/operators ───────────────────────────────────────────────────
+// Harakatlar tarixini operator bo'yicha filtrlash uchun mavjud operatorlar ro'yxati.
+router.get("/ombor/operators", async (_req, res): Promise<void> => {
+  const { rows } = await pool.query(
+    `SELECT DISTINCT created_by
+       FROM stock_movements
+      WHERE created_by IS NOT NULL AND created_by <> ''
+      ORDER BY created_by`,
+  );
+  res.json(rows.map((r) => r.created_by as string));
 });
 
 // ════════════════════════════════════════════════════════════════════════════

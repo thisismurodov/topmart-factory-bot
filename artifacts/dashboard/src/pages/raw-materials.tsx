@@ -1,5 +1,5 @@
 import { authFetch } from "@/App";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -19,7 +19,7 @@ import {
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Plus, Trash2, Pencil, Boxes, AlertTriangle, PackageCheck } from "lucide-react";
+import { Plus, Trash2, Pencil, Boxes, AlertTriangle, PackageCheck, Scale } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -112,6 +112,99 @@ function useDeleteRawMaterial() {
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: RAW_MATERIALS_KEY }),
   });
+}
+
+function useAdjustRawStock() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ materialId, stock, note }: { materialId: number; stock: number; note: string }) => {
+      const res = await authFetch("/api/ombor/raw-adjust", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ materialId, stock, note }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "To'g'rilashda xato");
+      return data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: RAW_MATERIALS_KEY }),
+  });
+}
+
+// ── Adjust (recount) Dialog ─────────────────────────────────────────────────────
+function RawAdjustDialog({
+  material, onClose,
+}: {
+  material: RawMaterial | null;
+  onClose: () => void;
+}) {
+  const adjustMut = useAdjustRawStock();
+  const [stock, setStock] = useState("");
+  const [note, setNote] = useState("");
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    if (material) {
+      setStock(String(material.currentStock));
+      setNote("");
+      setErr("");
+      adjustMut.reset();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [material?.id]);
+
+  const newStock = Number(stock);
+  const valid = stock !== "" && isFinite(newStock) && newStock >= 0 && newStock !== (material?.currentStock ?? -1);
+
+  function submit() {
+    if (!material) return;
+    setErr("");
+    adjustMut.mutate(
+      { materialId: material.id, stock: newStock, note },
+      { onSuccess: onClose, onError: (e: unknown) => setErr(e instanceof Error ? e.message : "Xato") },
+    );
+  }
+
+  return (
+    <Dialog open={!!material} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Scale className="w-5 h-5 text-primary" /> Zahirani to'g'rilash
+          </DialogTitle>
+          <DialogDescription>
+            <strong>{material?.name}</strong> — qayta sanash yoki to'kilishdan keyin haqiqiy zahirani kiriting.
+            Hozirgi: {material?.currentStock.toLocaleString("ru-RU")} {material?.unitType}.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <label className="block text-sm font-medium">
+            Haqiqiy zahira ({material?.unitType})
+            <Input
+              type="number" min="0" step="0.001" className="mt-1"
+              value={stock} onChange={(e) => setStock(e.target.value)}
+            />
+          </label>
+          <label className="block text-sm font-medium">
+            Izoh (ixtiyoriy)
+            <Input
+              className="mt-1" placeholder="Masalan: qayta sanash, to'kilish…"
+              value={note} onChange={(e) => setNote(e.target.value)}
+            />
+          </label>
+          {err && <p className="text-sm text-red-600">{err}</p>}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Bekor qilish</Button>
+          <Button onClick={submit} disabled={!valid || adjustMut.isPending}>
+            {adjustMut.isPending ? "Saqlanmoqda…" : "To'g'rilash"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 // ── Dialog ────────────────────────────────────────────────────────────────────
@@ -322,6 +415,7 @@ export default function RawMaterials() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<RawMaterial | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<RawMaterial | null>(null);
+  const [adjustTarget, setAdjustTarget] = useState<RawMaterial | null>(null);
 
   const lowStockCount = useMemo(
     () => materials.filter(isLowStock).length,
@@ -446,6 +540,14 @@ export default function RawMaterials() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Zahirani to'g'rilash"
+                          onClick={() => setAdjustTarget(m)}
+                        >
+                          <Scale className="w-4 h-4" />
+                        </Button>
                         <Button variant="ghost" size="icon" onClick={() => openEdit(m)}>
                           <Pencil className="w-4 h-4" />
                         </Button>
@@ -471,6 +573,11 @@ export default function RawMaterials() {
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}
         material={editTarget}
+      />
+
+      <RawAdjustDialog
+        material={adjustTarget}
+        onClose={() => setAdjustTarget(null)}
       />
 
       <AlertDialog open={!!deleteTarget} onOpenChange={o => !o && setDeleteTarget(null)}>

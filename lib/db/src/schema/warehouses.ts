@@ -1,4 +1,4 @@
-import { pgTable, serial, text, boolean, numeric } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, boolean, numeric, timestamp } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -13,8 +13,9 @@ export const warehousesTable = pgTable("warehouses", {
   locationType: text("location_type").notNull().default("general"),
   capacityKg: numeric("capacity_kg").default("20000"),
   purpose: text("purpose").notNull().default("finished"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-export const insertWarehouseSchema = createInsertSchema(warehousesTable).omit({ id: true });
+export const insertWarehouseSchema = createInsertSchema(warehousesTable).omit({ id: true, createdAt: true });
 export type InsertWarehouse = z.infer<typeof insertWarehouseSchema>;
 export type Warehouse = typeof warehousesTable.$inferSelect;

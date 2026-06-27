@@ -42,6 +42,7 @@ type ContainerItem = {
   id: number;
   product: string;
   quantity: number;
+  weightKg: number | null;
   productType: "raw" | "finished";
   unit: string;
   salePrice: number;
@@ -427,7 +428,7 @@ function ContainerDetailView({
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr style={{ background: "#F9FAFB" }}>
-                  {["Mahsulot", "Miqdor", "Birlik", "Narx (so'm)", "Qiymat", "Tur", ""].map((h) => (
+                  {["Mahsulot", "Miqdor", "Og'irlik (kg)", "Birlik", "Narx (so'm)", "Qiymat", "Tur", ""].map((h) => (
                     <th key={h} style={{
                       padding: "10px 16px", textAlign: "left", fontSize: 12,
                       fontWeight: 600, color: "#6B7280", letterSpacing: "0.04em",
@@ -445,6 +446,11 @@ function ContainerDetailView({
                     </td>
                     <td style={{ padding: "12px 16px", color: "#374151", fontWeight: 600 }}>
                       {fmt(item.quantity)}
+                    </td>
+                    <td style={{ padding: "12px 16px", color: item.weightKg != null ? "#0B6B3A" : "#D1D5DB", fontWeight: 600 }}>
+                      {item.weightKg != null
+                        ? `${item.weightKg.toLocaleString("uz-UZ", { maximumFractionDigits: 1 })} kg`
+                        : "—"}
                     </td>
                     <td style={{ padding: "12px 16px", color: "#6B7280", fontSize: 13 }}>{item.unit}</td>
                     <td style={{ padding: "12px 16px", color: "#374151" }}>

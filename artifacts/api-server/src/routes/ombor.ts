@@ -117,10 +117,19 @@ router.get("/ombor/containers/:id/items", async (req, res): Promise<void> => {
 
   const [itemsRes, wRes] = await Promise.all([
     pool.query(`
+      WITH weight_ratio AS (
+        SELECT product,
+               CASE WHEN SUM(quantity) > 0
+                    THEN SUM(weight_kg)::numeric / SUM(quantity)
+                    ELSE 0 END AS kg_per_unit
+        FROM batches GROUP BY product
+      )
       SELECT i.id, i.product, i.quantity, i.product_type, i.updated_at,
-             p.unit_type, p.default_sale_price, p.currency_type
+             p.unit_type, p.default_sale_price, p.currency_type,
+             COALESCE(wr.kg_per_unit, 0)::numeric AS kg_per_unit
       FROM inventory i
       LEFT JOIN products p ON p.name = i.product
+      LEFT JOIN weight_ratio wr ON wr.product = i.product
       WHERE i.warehouse_id = $1 AND i.quantity > 0
       ORDER BY i.product
     `, [id]),
@@ -140,10 +149,15 @@ router.get("/ombor/containers/:id/items", async (req, res): Promise<void> => {
       const isUsd   = String(r.currency_type ?? "UZS").toUpperCase() === "USD";
       const priceUzs = isUsd ? Number(r.default_sale_price) * (rate ?? 0) : Number(r.default_sale_price);
       const qty     = Number(r.quantity);
+      const isKg     = String(r.unit_type ?? "dona").toLowerCase() === "kg";
+      const kgPerUnit = Number(r.kg_per_unit) || 0;
+      // Faqat partiyada alohida kg kiritilgan kg-mahsulotlar uchun ko'rsatamiz.
+      const weightKg = isKg && kgPerUnit > 0 ? qty * kgPerUnit : null;
       return {
         id:            r.id,
         product:       r.product,
         quantity:      qty,
+        weightKg,
         productType:   r.product_type || "finished",
         unit:          r.unit_type || "dona",
         salePrice:     Number(r.default_sale_price),

@@ -177,6 +177,48 @@ async function initDb() {
     EXCEPTION WHEN duplicate_object THEN NULL; END $$
   `);
 
+  // ── Ish jarayoni (Material Flow / WIP) ───────────────────────────────────
+  // Ombor/inventory ustunlari odatda bot init_db tomonidan qo'shiladi, lekin
+  // API cold-start da (bot hali ishlamagan bo'lsa) ham mavjudligini kafolatlaymiz
+  // — aks holda /ombor/* so'rovlari "column does not exist" bilan yiqiladi.
+  await pool.query(`ALTER TABLE IF EXISTS inventory  ADD COLUMN IF NOT EXISTS weight_kg NUMERIC NOT NULL DEFAULT 0`);
+  await pool.query(`ALTER TABLE IF EXISTS inventory  ADD COLUMN IF NOT EXISTS product_type TEXT NOT NULL DEFAULT 'finished'`);
+  await pool.query(`ALTER TABLE IF EXISTS warehouses ADD COLUMN IF NOT EXISTS location_type TEXT NOT NULL DEFAULT 'general'`);
+  await pool.query(`ALTER TABLE IF EXISTS warehouses ADD COLUMN IF NOT EXISTS capacity_kg NUMERIC DEFAULT 20000`);
+  await pool.query(`ALTER TABLE IF EXISTS stock_movements ADD COLUMN IF NOT EXISTS product_type TEXT NOT NULL DEFAULT 'finished'`);
+  // Konteynerni xom ashyo ("raw") yoki tayyor mahsulot ("finished") ombori
+  // sifatida belgilash uchun. Standart: 'finished' (mavjud xatti-harakat).
+  await pool.query(`
+    ALTER TABLE IF EXISTS warehouses
+      ADD COLUMN IF NOT EXISTS purpose TEXT NOT NULL DEFAULT 'finished'
+  `);
+  // WIP ledger — bo'lim (production_line) zahirasi shu jadval orqali kuzatiladi:
+  //   RECEIVE  (+kg) — xom ashyo konteynerdan bo'limga berildi
+  //   PRODUCE  (-kg) — bo'lim tayyor mahsulot chiqardi (bot partiya yaratganda)
+  // Bo'lim WIP = SUM(RECEIVE) − SUM(PRODUCE). line_id — production_lines.id
+  // (batches.production_line_id kabi oddiy int, FK emas — liniya o'chsa snapshot qoladi).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS wip_movements (
+      id                SERIAL PRIMARY KEY,
+      line_id           INTEGER NOT NULL,
+      movement_type     TEXT NOT NULL,
+      raw_material      TEXT,
+      product           TEXT,
+      weight_kg         NUMERIC(12,3) NOT NULL DEFAULT 0,
+      from_warehouse_id INTEGER,
+      batch_id          INTEGER,
+      note              TEXT NOT NULL DEFAULT '',
+      created_by        TEXT NOT NULL DEFAULT 'admin',
+      created_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_wip_line_created ON wip_movements (line_id, created_at DESC)
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_wip_type ON wip_movements (movement_type)
+  `);
+
   // Admin userni seed qilish (mavjud bo'lmasa)
   const existing = await db.select().from(adminUsersTable).where(eq(adminUsersTable.username, "thisismurodov"));
   if (existing.length === 0) {

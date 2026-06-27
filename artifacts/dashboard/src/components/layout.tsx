@@ -20,6 +20,7 @@ import {
   Scale,
   ClipboardList,
   Bot,
+  Activity,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -38,6 +39,7 @@ const NAV_ITEMS = [
   { href: "/reports",    label: "Hisobotlar",  icon: BarChart2 },
   { href: "/ai",         label: "AI tahlil",   icon: Bot },
   { href: "/inventory",  label: "Ombor",       icon: Warehouse },
+  { href: "/ish-jarayoni", label: "Ish jarayoni", icon: Activity },
   { href: "/audit",      label: "Audit log",   icon: ClipboardList },
 ];
 

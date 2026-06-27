@@ -572,4 +572,307 @@ router.get("/ombor/movements", async (req, res): Promise<void> => {
   })));
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+//  ISH JARAYONI (Material Flow / WIP) — ikki bosqichli oqim:
+//    1) Xom ashyo konteynerga kiritiladi (purpose='raw' ombor, inventory raw)
+//    2) Xom ashyo konteynerdan BO'LIMGA beriladi → WIP RECEIVE (+kg)
+//    3) Bo'lim partiya chiqaradi (bot) → WIP PRODUCE (-kg) + tayyor ombor
+//  Bo'lim WIP = SUM(RECEIVE) − SUM(PRODUCE). Bu modul mavjud raw_materials
+//  zahirasiga / BOM hisobiga tegmaydi — alohida vizual kuzatuv oqimi.
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── POST /api/ombor/flow/raw-in ────────────────────────────────────────────────
+// Xom ashyoni TANLANGAN konteynerga (kg) kiritadi. inventory product_type='raw'.
+router.post("/ombor/flow/raw-in", async (req, res): Promise<void> => {
+  const { warehouseId, materialName, kg, note = "" } = req.body ?? {};
+  if (!warehouseId || !materialName) {
+    res.status(400).json({ error: "warehouseId, materialName required" }); return;
+  }
+  const amount = Number(kg);
+  if (isNaN(amount) || amount <= 0) {
+    res.status(400).json({ error: "kg must be > 0" }); return;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const whRes = await client.query(
+      "SELECT id FROM warehouses WHERE id=$1 AND location_type='container' AND purpose='raw'", [warehouseId],
+    );
+    if (!whRes.rows.length) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "Xom ashyo konteyneri topilmadi (purpose='raw' bo'lishi kerak)" }); return;
+    }
+    await client.query(
+      `INSERT INTO inventory (warehouse_id, product, quantity, weight_kg, product_type)
+       VALUES ($1,$2,$3,$3,'raw')
+       ON CONFLICT (warehouse_id, product)
+       DO UPDATE SET quantity = inventory.quantity + EXCLUDED.quantity,
+                     weight_kg = inventory.weight_kg + EXCLUDED.weight_kg,
+                     product_type = 'raw', updated_at=NOW()`,
+      [warehouseId, materialName, amount],
+    );
+    await client.query(
+      `INSERT INTO stock_movements
+         (product, quantity, movement_type, to_warehouse_id, note, created_by, product_type)
+       VALUES ($1,$2,'IN',$3,$4,'admin','raw')`,
+      [materialName, amount, warehouseId, note || `Xom ashyo kirimi: ${amount} kg`],
+    );
+    await client.query("COMMIT");
+    res.json({ ok: true });
+  } catch (e: any) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+// ── POST /api/ombor/flow/receive ───────────────────────────────────────────────
+// Xom ashyoni konteynerdan BO'LIMGA beradi: konteyner zahirasidan ayiriladi,
+// bo'lim WIP'iga RECEIVE (+kg) yoziladi.
+router.post("/ombor/flow/receive", async (req, res): Promise<void> => {
+  const { warehouseId, lineId, materialName, kg, note = "" } = req.body ?? {};
+  if (!warehouseId || !lineId || !materialName) {
+    res.status(400).json({ error: "warehouseId, lineId, materialName required" }); return;
+  }
+  const amount = Number(kg);
+  if (isNaN(amount) || amount <= 0) {
+    res.status(400).json({ error: "kg must be > 0" }); return;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const lineRes = await client.query("SELECT id, name FROM production_lines WHERE id=$1", [lineId]);
+    if (!lineRes.rows.length) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "Bo'lim topilmadi" }); return;
+    }
+    // Manba konteyner xom ashyo ombori bo'lishi shart.
+    const whRes = await client.query(
+      "SELECT id FROM warehouses WHERE id=$1 AND location_type='container' AND purpose='raw'", [warehouseId],
+    );
+    if (!whRes.rows.length) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "Xom ashyo konteyneri topilmadi (purpose='raw' bo'lishi kerak)" }); return;
+    }
+    // Atomik ayirish: faqat yetarli zahira bo'lsagina yangilanadi (race-safe).
+    // Konteynerda quantity = weight_kg = kg bo'lib yuritiladi.
+    const decRes = await client.query(
+      `UPDATE inventory
+         SET quantity = quantity - $1, weight_kg = weight_kg - $1, updated_at=NOW()
+       WHERE warehouse_id=$2 AND product=$3 AND product_type='raw' AND weight_kg >= $1
+       RETURNING weight_kg`,
+      [amount, warehouseId, materialName],
+    );
+    if (!decRes.rows.length) {
+      const cur = await client.query(
+        "SELECT weight_kg FROM inventory WHERE warehouse_id=$1 AND product=$2 AND product_type='raw'",
+        [warehouseId, materialName],
+      );
+      const have = cur.rows.length ? Number(cur.rows[0].weight_kg) || 0 : 0;
+      await client.query("ROLLBACK");
+      res.status(400).json({ error: `Konteynerda yetarli xom ashyo yo'q (mavjud: ${have} kg)` }); return;
+    }
+    await client.query(
+      `INSERT INTO wip_movements
+         (line_id, movement_type, raw_material, weight_kg, from_warehouse_id, note, created_by)
+       VALUES ($1,'RECEIVE',$2,$3,$4,$5,'admin')`,
+      [lineId, materialName, amount, warehouseId, note || `Bo'limga berildi: ${amount} kg`],
+    );
+    await client.query(
+      `INSERT INTO stock_movements
+         (product, quantity, movement_type, from_warehouse_id, note, created_by, product_type)
+       VALUES ($1,$2,'OUT',$3,$4,'admin','raw')`,
+      [materialName, amount, warehouseId, `Bo'limga (${lineRes.rows[0].name}): ${amount} kg`],
+    );
+    await client.query("COMMIT");
+    res.json({ ok: true });
+  } catch (e: any) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+// ── POST /api/ombor/flow/container-purpose ─────────────────────────────────────
+// Konteynerni xom ashyo ('raw') yoki tayyor ('finished') ombor sifatida belgilash.
+router.post("/ombor/flow/container-purpose", async (req, res): Promise<void> => {
+  const { warehouseId, purpose } = req.body ?? {};
+  if (!warehouseId || (purpose !== "raw" && purpose !== "finished")) {
+    res.status(400).json({ error: "warehouseId va purpose ('raw'|'finished') required" }); return;
+  }
+  const upd = await pool.query(
+    "UPDATE warehouses SET purpose=$1 WHERE id=$2 AND location_type='container' RETURNING id",
+    [purpose, warehouseId],
+  );
+  if (!upd.rows.length) { res.status(404).json({ error: "Konteyner topilmadi" }); return; }
+  res.json({ ok: true });
+});
+
+// ── GET /api/ombor/flow ────────────────────────────────────────────────────────
+// Butun oqim holati: xom konteynerlar (+itemlar), bo'limlar (+WIP), tayyor
+// konteynerlar, KPI'lar, ogohlantirishlar, va so'nggi harakatlar tarixi.
+router.get("/ombor/flow", async (_req, res): Promise<void> => {
+  const [rawRes, rawItemsRes, deptRes, finRes, allRes, histRes] = await Promise.all([
+    pool.query(`
+      SELECT w.id, w.name, w.capacity_kg,
+             COALESCE(SUM(i.weight_kg) FILTER (WHERE i.product_type='raw' AND i.quantity > 0), 0)::numeric AS total_kg,
+             COUNT(*) FILTER (WHERE i.product_type='raw' AND i.quantity > 0)::int AS material_count
+      FROM warehouses w
+      LEFT JOIN inventory i ON i.warehouse_id = w.id
+      WHERE w.location_type='container' AND w.purpose='raw' AND w.active = TRUE
+      GROUP BY w.id, w.name, w.capacity_kg
+      ORDER BY w.name
+    `),
+    pool.query(`
+      SELECT i.warehouse_id, i.product AS material, i.weight_kg, i.quantity
+      FROM inventory i
+      JOIN warehouses w ON w.id = i.warehouse_id
+      WHERE w.purpose='raw' AND i.product_type='raw' AND i.quantity > 0
+      ORDER BY i.product
+    `),
+    pool.query(`
+      SELECT pl.id, pl.name,
+        (SELECT COUNT(*) FROM production_line_workers plw WHERE plw.line_id = pl.id)::int AS worker_count,
+        (SELECT COUNT(*) FROM products p WHERE p.line_id = pl.id AND p.active = TRUE)::int AS product_count,
+        COALESCE(SUM(CASE WHEN wm.movement_type='RECEIVE' THEN wm.weight_kg
+                          WHEN wm.movement_type='PRODUCE' THEN -wm.weight_kg ELSE 0 END), 0)::numeric AS wip_kg,
+        COALESCE(SUM(CASE WHEN wm.movement_type='RECEIVE'
+                            AND (wm.created_at AT TIME ZONE 'Asia/Tashkent')::date = (NOW() AT TIME ZONE 'Asia/Tashkent')::date
+                          THEN wm.weight_kg ELSE 0 END), 0)::numeric AS today_received,
+        COALESCE(SUM(CASE WHEN wm.movement_type='PRODUCE'
+                            AND (wm.created_at AT TIME ZONE 'Asia/Tashkent')::date = (NOW() AT TIME ZONE 'Asia/Tashkent')::date
+                          THEN wm.weight_kg ELSE 0 END), 0)::numeric AS today_produced
+      FROM production_lines pl
+      LEFT JOIN wip_movements wm ON wm.line_id = pl.id
+      GROUP BY pl.id, pl.name
+      ORDER BY pl.id
+    `),
+    pool.query(`
+      SELECT w.id, w.name, w.capacity_kg,
+             COALESCE(SUM(i.quantity) FILTER (WHERE i.quantity > 0), 0)::numeric AS total_qty,
+             COALESCE(SUM(i.weight_kg) FILTER (WHERE i.quantity > 0), 0)::numeric AS total_kg,
+             COUNT(DISTINCT i.product) FILTER (WHERE i.quantity > 0)::int AS sku_count
+      FROM warehouses w
+      LEFT JOIN inventory i ON i.warehouse_id = w.id AND i.product_type='finished'
+      WHERE w.location_type='container' AND w.purpose='finished' AND w.active = TRUE
+      GROUP BY w.id, w.name, w.capacity_kg
+      ORDER BY w.name
+    `),
+    pool.query(`
+      SELECT id, name, purpose, active FROM warehouses
+      WHERE location_type='container'
+      ORDER BY name
+    `),
+    pool.query(`
+      SELECT wm.id, wm.movement_type, wm.raw_material, wm.product, wm.weight_kg,
+             wm.note, wm.created_by, wm.created_at,
+             pl.name AS line_name, fw.name AS from_warehouse
+      FROM wip_movements wm
+      LEFT JOIN production_lines pl ON pl.id = wm.line_id
+      LEFT JOIN warehouses fw ON fw.id = wm.from_warehouse_id
+      ORDER BY wm.id DESC
+      LIMIT 40
+    `),
+  ]);
+
+  const itemsByWh = new Map<number, { material: string; kg: number }[]>();
+  for (const r of rawItemsRes.rows) {
+    const arr = itemsByWh.get(r.warehouse_id) ?? [];
+    arr.push({ material: r.material, kg: Number(r.weight_kg) || Number(r.quantity) || 0 });
+    itemsByWh.set(r.warehouse_id, arr);
+  }
+
+  const rawContainers = rawRes.rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    capacityKg: Number(r.capacity_kg) || 20000,
+    totalKg: Number(r.total_kg),
+    materialCount: Number(r.material_count),
+    items: itemsByWh.get(r.id) ?? [],
+  }));
+
+  const departments = deptRes.rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    workerCount: Number(r.worker_count),
+    productCount: Number(r.product_count),
+    wipKg: Number(r.wip_kg),
+    todayReceived: Number(r.today_received),
+    todayProduced: Number(r.today_produced),
+  }));
+
+  const finishedContainers = finRes.rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    capacityKg: Number(r.capacity_kg) || 20000,
+    totalQty: Number(r.total_qty),
+    totalKg: Number(r.total_kg),
+    skuCount: Number(r.sku_count),
+  }));
+
+  const allContainers = allRes.rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    purpose: r.purpose || "finished",
+    active: r.active,
+  }));
+
+  const history = histRes.rows.map((r) => ({
+    id: r.id,
+    movementType: r.movement_type,
+    rawMaterial: r.raw_material ?? null,
+    product: r.product ?? null,
+    weightKg: Number(r.weight_kg),
+    lineName: r.line_name ?? null,
+    fromWarehouse: r.from_warehouse ?? null,
+    note: r.note || "",
+    createdBy: r.created_by || "",
+    createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
+  }));
+
+  const totalRawKg = rawContainers.reduce((s, c) => s + c.totalKg, 0);
+  const totalWipKg = departments.reduce((s, d) => s + d.wipKg, 0);
+  const totalFinishedKg = finishedContainers.reduce((s, c) => s + c.totalKg, 0);
+  const todayReceived = departments.reduce((s, d) => s + d.todayReceived, 0);
+  const todayProduced = departments.reduce((s, d) => s + d.todayProduced, 0);
+
+  const alerts: { level: string; text: string }[] = [];
+  for (const d of departments) {
+    if (d.wipKg < 0) {
+      alerts.push({ level: "danger", text: `${d.name}: WIP manfiy (${d.wipKg.toFixed(0)} kg) — qabul qilinganidan ko'p ishlab chiqarilgan` });
+    } else if (d.wipKg > 0 && d.todayProduced === 0) {
+      alerts.push({ level: "warn", text: `${d.name}: ${d.wipKg.toFixed(0)} kg jarayonda, lekin bugun ishlab chiqarish yo'q` });
+    }
+  }
+  if (rawContainers.length === 0) {
+    alerts.push({ level: "warn", text: "Xom ashyo konteyneri belgilanmagan — konteynerni 'xom ashyo' deb belgilang" });
+  } else {
+    const empty = rawContainers.filter((c) => c.totalKg <= 0).length;
+    if (empty > 0) alerts.push({ level: "info", text: `${empty} ta xom ashyo konteyneri bo'sh` });
+  }
+
+  res.json({
+    rawContainers,
+    departments,
+    finishedContainers,
+    allContainers,
+    history,
+    kpis: {
+      totalRawKg,
+      totalWipKg,
+      totalFinishedKg,
+      todayReceived,
+      todayProduced,
+      rawContainerCount: rawContainers.length,
+      departmentCount: departments.length,
+      finishedContainerCount: finishedContainers.length,
+    },
+    alerts,
+  });
+});
+
 export default router;

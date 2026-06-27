@@ -272,6 +272,7 @@ def init_db() -> None:
               IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='warehouses') THEN
                 ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS location_type TEXT NOT NULL DEFAULT 'general';
                 ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS capacity_kg NUMERIC DEFAULT 20000;
+                ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS purpose TEXT NOT NULL DEFAULT 'finished';
               END IF;
               IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='inventory') THEN
                 ALTER TABLE inventory ADD COLUMN IF NOT EXISTS product_type TEXT NOT NULL DEFAULT 'finished';
@@ -424,6 +425,27 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_line_role_config_line
               ON line_role_config(line_id)
         """)
+        # ── Ish jarayoni (Material Flow / WIP) ───────────────────────────────
+        # Bo'lim (liniya) WIP zahirasi: RECEIVE (+kg) xom ashyo bo'limga berildi,
+        # PRODUCE (-kg) tayyor mahsulot chiqdi (partiya yaratilganda). WIP =
+        # SUM(RECEIVE) − SUM(PRODUCE). line_id — oddiy int (FK emas, snapshot).
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS wip_movements (
+                id                SERIAL PRIMARY KEY,
+                line_id           INTEGER NOT NULL,
+                movement_type     TEXT NOT NULL,
+                raw_material      TEXT,
+                product           TEXT,
+                weight_kg         NUMERIC(12,3) NOT NULL DEFAULT 0,
+                from_warehouse_id INTEGER,
+                batch_id          INTEGER,
+                note              TEXT NOT NULL DEFAULT '',
+                created_by        TEXT NOT NULL DEFAULT 'admin',
+                created_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_wip_line_created ON wip_movements (line_id, created_at DESC)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_wip_type ON wip_movements (movement_type)")
         # Ishlab chiqaruvchi (producer) rollarini 'individual' deb belgilaymiz:
         # config roli a'zolari standart 'producer' rolini ham tutsa — bu producer roli.
         # Idempotent: producer = individual o'zgarmas qoida (qayta ishga tushishda xavfsiz).
@@ -1043,9 +1065,10 @@ def create_batch_session(
 
             # Liniyani mahsulot orqali aniqlaymiz (config liniya attribusiyasi);
             # mahsulotda line_id bo'lmasa ishlab chiqaruvchi liniyasiga qaytamiz.
-            cur.execute("SELECT line_id FROM products WHERE name=%s", (product,))
+            cur.execute("SELECT line_id, weight FROM products WHERE name=%s", (product,))
             _plrow = cur.fetchone()
             prod_line_id = (_plrow["line_id"] if _plrow and _plrow["line_id"] else None) or producer_line_id
+            product_weight = float(_plrow["weight"]) if _plrow and _plrow.get("weight") is not None else 0.0
 
             # Config liniyami? (line_role_config mavjud). Bunday liniyada ROLE_BASED_KG
             # maoshi kun yopilganda rol bo'yicha hisoblanadi — shu bois partiya
@@ -1080,6 +1103,19 @@ def create_batch_session(
                                      updated_at=NOW()""",
                     (wh_id, product, quantity, weight_kg, quantity, weight_kg),
                 )
+
+            # Ish jarayoni (WIP) — bo'lim tayyor mahsulot chiqardi: PRODUCE (-kg).
+            # Ishlab chiqarilgan og'irlik: aniq weight_kg bo'lsa o'shani, aks holda
+            # dona × dona-og'irligi (products.weight). Faqat liniya aniqlangan bo'lsa.
+            if prod_line_id:
+                produce_kg = weight_kg if weight_kg > 0 else quantity * product_weight
+                if produce_kg > 0:
+                    cur.execute(
+                        """INSERT INTO wip_movements
+                             (line_id, movement_type, product, weight_kg, note, created_by)
+                           VALUES (%s,'PRODUCE',%s,%s,%s,%s)""",
+                        (prod_line_id, product, produce_kg, f"Partiya: {batch_code}", worker),
+                    )
 
             # Xom ashyo zahirasini BOM (product_materials) bo'yicha kamaytirish
             cur.execute(

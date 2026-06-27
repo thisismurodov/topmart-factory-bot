@@ -1,0 +1,569 @@
+# TopMart ERP – Factory Material Flow Dashboard
+
+Create a modern responsive web dashboard (React + Tailwind CSS + Supabase/Firebase or SQLite backend).
+
+Theme:
+
+* Professional factory ERP
+* Dark mode
+* Green (#16a34a) primary
+* Blue for incoming materials
+* Orange for production
+* Purple for finished goods
+* Smooth animations
+* Live updating dashboard
+
+---
+
+## Goal
+
+Build a real-time Material Flow Monitoring System.
+
+The system must automatically calculate:
+
+* Raw material balance
+* Department (Work In Progress)
+* Finished goods
+* Container balances
+* Employee responsibility
+* Material movement history
+
+Everything must update automatically.
+
+---
+
+# MAIN LAYOUT
+
+Dashboard contains 4 sections.
+
+## 1. RAW MATERIAL STORAGE
+
+Display containers.
+
+C1
+C2
+C3
+C4
+C5
+C6
+C7
+
+Each container card shows:
+
+Container Name
+
+Material Name
+
+Number of Bags
+
+Total Weight (kg)
+
+Today's Incoming
+
+Today's Outgoing
+
+Remaining Weight
+
+Progress Bar
+
+Example
+
+C1
+
+Qop Ip
+
+25 Bags
+
+500 kg
+
+Today Out:
+5 Bags
+
+Remaining:
+20 Bags
+400 kg
+
+---
+
+## 2. PRODUCTION DEPARTMENTS
+
+Each department has its own card.
+
+Department Name
+
+Assigned Employees
+
+Assigned Machine
+
+Current Product
+
+Incoming Weight
+
+Produced Weight
+
+Work In Progress
+
+Completion %
+
+Status
+
+Example
+
+Department 1
+
+Employees
+
+Ali
+
+Vali
+
+Current Product
+
+Qop Ip 100 talik
+
+Incoming
+
+100 kg
+
+Produced
+
+80 kg
+
+Still Processing
+
+20 kg
+
+Progress
+
+80%
+
+Status
+
+Working
+
+Green animation
+
+---
+
+## 3. FINISHED GOODS STORAGE
+
+Containers
+
+B1
+B2
+B3
+...
+
+(or C4-C7 if configured)
+
+Each card displays
+
+Product
+
+Quantity
+
+Weight
+
+Date
+
+Last Movement
+
+Example
+
+C4
+
+Qop Ip 100 talik
+
+1200 pcs
+
+120 kg
+
+---
+
+## 4. LIVE MATERIAL FLOW
+
+Center of dashboard.
+
+Animated flow.
+
+C1
+
+↓
+
+Department 1
+
+↓
+
+C4
+
+Animated arrows.
+
+Materials move visually.
+
+Show live quantities moving.
+
+Example animation
+
+C1 (100kg)
+
+↓
+
+Department 1
+
+↓
+
+80kg Produced
+
+↓
+
+C4
+
+Remaining
+
+20kg
+
+Still Processing
+
+---
+
+# PRODUCT PROFILE
+
+Each product stores
+
+Product Name
+
+Weight Per Piece
+
+Unit
+
+Example
+
+Qop Ip 100 talik
+
+1 piece
+
+=
+
+0.100 kg
+
+Qop Ip 80 talik
+
+=
+
+0.125 kg
+
+Qop Ip 120 talik
+
+=
+
+0.075 kg
+
+Never hardcode calculations.
+
+Always calculate using product profile.
+
+Formula
+
+Produced Weight
+
+=
+
+Produced Quantity
+
+×
+
+Weight Per Piece
+
+---
+
+# RAW MATERIAL MOVEMENT
+
+Example
+
+C1
+
+25 Bags
+
+500kg
+
+Operator removes
+
+5 Bags
+
+System automatically
+
+C1
+
+400kg
+
+Department 1
+
+100kg
+
+---
+
+# END OF DAY PRODUCTION
+
+Operator enters
+
+Qop Ip 100 talik
+
+800 pcs
+
+System automatically calculates
+
+800 × 0.100
+
+=
+
+80kg
+
+Department
+
+Incoming
+
+100kg
+
+Produced
+
+80kg
+
+Still Processing
+
+20kg
+
+---
+
+# NEXT DAY
+
+Operator removes
+
+5 more bags
+
+100kg
+
+Department already had
+
+20kg
+
+Now
+
+120kg
+
+At night
+
+Production
+
+1200 pcs
+
+System
+
+1200 × 0.100
+
+=
+
+120kg
+
+Department becomes
+
+0kg
+
+Automatically.
+
+---
+
+# INVENTORY LOGIC
+
+Every movement creates transaction.
+
+Example
+
+Time
+
+From
+
+To
+
+Product
+
+Quantity
+
+Weight
+
+Employee
+
+Department
+
+Status
+
+Nothing is edited directly.
+
+Everything comes from transactions.
+
+Current balances are calculated.
+
+---
+
+# EMPLOYEE MANAGEMENT
+
+Each department has assigned workers.
+
+Department 1
+
+Ali
+
+Vali
+
+Each transaction stores
+
+Employee
+
+Time
+
+Machine
+
+Shift
+
+Department
+
+---
+
+# DASHBOARD KPIs
+
+Top Cards
+
+Raw Material
+
+Total kg
+
+Departments Working
+
+Work In Progress
+
+Finished Goods Today
+
+Today's Production
+
+Today's Material Consumption
+
+Efficiency %
+
+---
+
+# ALERTS
+
+If Work In Progress exceeds 200kg
+
+Show Orange Warning
+
+If Finished Goods are not transferred
+
+Show Red Warning
+
+If Container becomes empty
+
+Show Empty Badge
+
+---
+
+# HISTORY
+
+Timeline
+
+09:10
+
+100kg received from C1
+
+↓
+
+09:20
+
+Production Started
+
+↓
+
+18:00
+
+80kg Produced
+
+↓
+
+18:05
+
+Moved to C4
+
+---
+
+# DATABASE STRUCTURE
+
+Tables
+
+containers
+
+products
+
+employees
+
+departments
+
+department_inventory
+
+transactions
+
+production_batches
+
+machines
+
+users
+
+---
+
+# AUTOMATIC CALCULATIONS
+
+Container Balance
+
+=
+
+Incoming
+
+−
+
+Outgoing
+
+Department Inventory
+
+=
+
+Received
+
+−
+
+Produced
+
+Finished Goods
+
+=
+
+Produced
+
+−
+
+Shipped
+
+Product Weight
+
+=
+
+Piece Count
+
+×
+
+Weight Per Piece
+
+No manual calculations.
+
+Everything updates automatically after every transaction.
+
+---
+
+Build the interface like a premium ERP system similar to SAP or Odoo Manufacturing, with beautiful cards, charts, live animations, responsive design, searchable tables, and smooth transitions. The dashboard should feel enterprise-grade and optimized for factory supervisors and directors.

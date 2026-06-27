@@ -83,6 +83,16 @@ type SearchResult = {
 type Product = { name: string; unit_type?: string };
 type RawMaterial = { id: number; name: string; unit: string };
 
+type FinishedGood = {
+  product: string;
+  stockQty: number;
+  unitType: string;
+  salePrice: number;
+  currency: string;
+  priceUzs: number;
+  totalValueUzs: number;
+};
+
 // ── Hooks ─────────────────────────────────────────────────────────────────────
 
 function useSummary() {
@@ -113,6 +123,14 @@ function useMovements() {
   return useQuery<Movement[]>({
     queryKey: ["ombor-movements"],
     queryFn: () => authFetch("/api/ombor/movements?limit=60").then((r) => r.json()),
+    refetchInterval: 30_000,
+  });
+}
+
+function useFinishedGoods() {
+  return useQuery<FinishedGood[]>({
+    queryKey: ["ombor-finished-goods"],
+    queryFn: () => authFetch("/api/ombor/finished-goods").then((r) => r.json()),
     refetchInterval: 30_000,
   });
 }
@@ -1002,6 +1020,112 @@ function MovementRow({ m }: { m: Movement }) {
   );
 }
 
+function FinishedGoodsPanel() {
+  const { data: goods = [], isLoading } = useFinishedGoods();
+  const totalValue = goods.reduce((s, g) => s + g.totalValueUzs, 0);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* Summary strip */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 12 }}>
+        <KpiCard
+          icon={<Package style={{ width: 18, height: 18 }} />}
+          label="Mahsulot turlari"
+          value={isLoading ? undefined : goods.length}
+          loading={isLoading}
+        />
+        <KpiCard
+          icon={<TrendingUp style={{ width: 18, height: 18 }} />}
+          label="Jami tayyor mahsulot qiymati"
+          value={isLoading ? undefined : fmtVal(totalValue)}
+          sub={isLoading ? undefined : "so'm"}
+          accent
+          loading={isLoading}
+        />
+      </div>
+
+      {/* Table */}
+      <div style={{
+        background: "#fff", borderRadius: 16, overflow: "hidden",
+        boxShadow: "0 1px 3px rgba(0,0,0,0.06)", border: "1px solid rgba(0,0,0,0.06)",
+      }}>
+        <div style={{ padding: "16px 20px", borderBottom: "1px solid #F3F4F6", display: "flex", alignItems: "center", gap: 8 }}>
+          <Package style={{ width: 16, height: 16, color: "#0B6B3A" }} />
+          <span style={{ fontWeight: 600, fontSize: 15, color: "#111827" }}>Tayyor mahsulot zahirasi</span>
+          <span style={{ marginLeft: "auto", fontSize: 12, color: "#9CA3AF" }}>{goods.length} ta mahsulot</span>
+        </div>
+
+        {isLoading ? (
+          <div style={{ padding: 24 }}>
+            {[1, 2, 3, 4].map((i) => <Skeleton key={i} style={{ height: 44, marginBottom: 8, borderRadius: 8 }} />)}
+          </div>
+        ) : !goods.length ? (
+          <div style={{ textAlign: "center", padding: "48px 24px", color: "#9CA3AF" }}>
+            <span style={{ fontSize: 40 }}>📦</span>
+            <div style={{ marginTop: 12, fontWeight: 500 }}>Zahirada tayyor mahsulot yo'q</div>
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ background: "#F9FAFB" }}>
+                  {["Mahsulot", "Zahira", "Birlik", "Narx (so'm)", "Jami qiymat"].map((h, hi) => (
+                    <th key={hi} style={{
+                      padding: "10px 16px", textAlign: hi === 0 ? "left" : "right", fontSize: 12,
+                      fontWeight: 600, color: "#6B7280", letterSpacing: "0.04em",
+                    }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {goods.map((g) => {
+                  const isUsd = String(g.currency).toUpperCase() === "USD";
+                  return (
+                    <tr key={g.product} style={{ borderTop: "1px solid #F3F4F6" }}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLTableRowElement).style.background = "#F9FAFB"; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLTableRowElement).style.background = ""; }}>
+                      <td style={{ padding: "12px 16px", fontWeight: 500, color: "#111827", fontSize: 14 }}>
+                        {g.product}
+                      </td>
+                      <td style={{ padding: "12px 16px", color: "#374151", fontWeight: 600, textAlign: "right" }}>
+                        {fmt(g.stockQty)}
+                      </td>
+                      <td style={{ padding: "12px 16px", color: "#6B7280", fontSize: 13, textAlign: "right" }}>
+                        {g.unitType}
+                      </td>
+                      <td style={{ padding: "12px 16px", color: "#374151", textAlign: "right" }}>
+                        {formatCurrency(g.priceUzs)}
+                        {isUsd && (
+                          <span style={{ fontSize: 11, color: "#9CA3AF", marginLeft: 6 }}>
+                            (${fmt(g.salePrice)})
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ padding: "12px 16px", fontWeight: 600, color: "#0B6B3A", textAlign: "right" }}>
+                        {fmtVal(g.totalValueUzs)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr style={{ borderTop: "2px solid #E5E7EB", background: "#F9FAFB" }}>
+                  <td colSpan={4} style={{ padding: "12px 16px", fontWeight: 600, color: "#374151", textAlign: "right" }}>
+                    Jami:
+                  </td>
+                  <td style={{ padding: "12px 16px", fontWeight: 700, color: "#0B6B3A", textAlign: "right" }}>
+                    {fmtVal(totalValue)}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function MovementsPanel() {
   const { data: movements = [], isLoading } = useMovements();
 
@@ -1176,7 +1300,7 @@ export default function Inventory() {
   const [selectedContainer, setSelectedContainer] = useState<ContainerSummary | null>(null);
   const [modal, setModal]       = useState<Modal | null>(null);
   const [searchQ, setSearchQ]   = useState("");
-  const [activeTab, setActiveTab] = useState<"containers" | "movements">("containers");
+  const [activeTab, setActiveTab] = useState<"containers" | "finished" | "movements">("containers");
 
   const { data: summary, isLoading: loadSummary } = useSummary();
   const { data: containers = [], isLoading: loadContainers } = useContainers();
@@ -1186,6 +1310,7 @@ export default function Inventory() {
     qc.invalidateQueries({ queryKey: ["ombor-containers"] });
     qc.invalidateQueries({ queryKey: ["ombor-movements"] });
     qc.invalidateQueries({ queryKey: ["ombor-container-movements"] });
+    qc.invalidateQueries({ queryKey: ["ombor-finished-goods"] });
     if (selectedContainer) {
       qc.invalidateQueries({ queryKey: ["ombor-container-detail", selectedContainer.id] });
     }
@@ -1361,7 +1486,7 @@ export default function Inventory() {
         <>
           {/* Tab bar */}
           <div style={{ display: "flex", gap: 4, background: "#F4F7F5", padding: 4, borderRadius: 12, width: "fit-content" }}>
-            {(["containers", "movements"] as const).map((tab) => (
+            {(["containers", "finished", "movements"] as const).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -1375,6 +1500,8 @@ export default function Inventory() {
               >
                 {tab === "containers" ? (
                   <span><LayoutGrid style={{ width: 13, height: 13, display: "inline", marginRight: 6 }} />Konteynerlar</span>
+                ) : tab === "finished" ? (
+                  <span><Package style={{ width: 13, height: 13, display: "inline", marginRight: 6 }} />Tayyor mahsulot</span>
                 ) : (
                   <span><Clock style={{ width: 13, height: 13, display: "inline", marginRight: 6 }} />Harakatlar</span>
                 )}
@@ -1388,6 +1515,8 @@ export default function Inventory() {
               loading={loadContainers}
               onSelect={(c) => setSelectedContainer(c)}
             />
+          ) : activeTab === "finished" ? (
+            <FinishedGoodsPanel />
           ) : (
             <MovementsPanel />
           )}

@@ -263,6 +263,46 @@ def init_db() -> None:
                 value TEXT NOT NULL
             )
         """)
+        # ── Ombor (zaxira) jadvallari ────────────────────────────────────
+        # Bu jadvallar avval faqat ishlab chiqarish DB'sida mavjud edi va hech
+        # qaysi sxemada ta'riflanmagan edi. Yangi/bo'sh DB'da Ombor sahifasi
+        # ishlashi uchun ularni idempotent yaratamiz.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS warehouses (
+                id            SERIAL PRIMARY KEY,
+                name          TEXT NOT NULL UNIQUE,
+                active        BOOLEAN NOT NULL DEFAULT TRUE,
+                location_type TEXT NOT NULL DEFAULT 'general',
+                capacity_kg   NUMERIC DEFAULT 20000,
+                purpose       TEXT NOT NULL DEFAULT 'finished'
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS inventory (
+                id           SERIAL PRIMARY KEY,
+                warehouse_id INTEGER NOT NULL REFERENCES warehouses(id),
+                product      TEXT NOT NULL,
+                quantity     NUMERIC NOT NULL DEFAULT 0,
+                weight_kg    NUMERIC NOT NULL DEFAULT 0,
+                product_type TEXT NOT NULL DEFAULT 'finished',
+                updated_at   TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                UNIQUE (warehouse_id, product)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS stock_movements (
+                id                SERIAL PRIMARY KEY,
+                product           TEXT NOT NULL,
+                quantity          NUMERIC NOT NULL DEFAULT 0,
+                movement_type     TEXT NOT NULL,
+                from_warehouse_id INTEGER REFERENCES warehouses(id),
+                to_warehouse_id   INTEGER REFERENCES warehouses(id),
+                note              TEXT NOT NULL DEFAULT '',
+                created_by        TEXT NOT NULL DEFAULT '',
+                product_type      TEXT NOT NULL DEFAULT 'finished',
+                created_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+            )
+        """)
         # product_type ustunini mavjud jadvallarga qo'shamiz (jadval bo'lmasa xato emas)
         cur.execute("""
             DO $$ BEGIN

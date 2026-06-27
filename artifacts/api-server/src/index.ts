@@ -177,6 +177,47 @@ async function initDb() {
     EXCEPTION WHEN duplicate_object THEN NULL; END $$
   `);
 
+  // ── Ombor (zaxira) jadvallari ────────────────────────────────────────────
+  // Bu jadvallar avval faqat ishlab chiqarish DB'sida mavjud edi va hech qaysi
+  // sxemada ta'riflanmagan edi. Yangi/bo'sh DB'da (yoki bot hali ishlamagan
+  // cold-start da) Ombor sahifasi ishlashi uchun ularni idempotent yaratamiz.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS warehouses (
+      id            SERIAL PRIMARY KEY,
+      name          TEXT NOT NULL UNIQUE,
+      active         BOOLEAN NOT NULL DEFAULT TRUE,
+      location_type TEXT NOT NULL DEFAULT 'general',
+      capacity_kg   NUMERIC DEFAULT 20000,
+      purpose       TEXT NOT NULL DEFAULT 'finished'
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS inventory (
+      id           SERIAL PRIMARY KEY,
+      warehouse_id INTEGER NOT NULL REFERENCES warehouses(id),
+      product      TEXT NOT NULL,
+      quantity     NUMERIC NOT NULL DEFAULT 0,
+      weight_kg    NUMERIC NOT NULL DEFAULT 0,
+      product_type TEXT NOT NULL DEFAULT 'finished',
+      updated_at   TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+      UNIQUE (warehouse_id, product)
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS stock_movements (
+      id                SERIAL PRIMARY KEY,
+      product           TEXT NOT NULL,
+      quantity          NUMERIC NOT NULL DEFAULT 0,
+      movement_type     TEXT NOT NULL,
+      from_warehouse_id INTEGER REFERENCES warehouses(id),
+      to_warehouse_id   INTEGER REFERENCES warehouses(id),
+      note              TEXT NOT NULL DEFAULT '',
+      created_by        TEXT NOT NULL DEFAULT '',
+      product_type      TEXT NOT NULL DEFAULT 'finished',
+      created_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    )
+  `);
+
   // ── Ish jarayoni (Material Flow / WIP) ───────────────────────────────────
   // Ombor/inventory ustunlari odatda bot init_db tomonidan qo'shiladi, lekin
   // API cold-start da (bot hali ishlamagan bo'lsa) ham mavjudligini kafolatlaymiz

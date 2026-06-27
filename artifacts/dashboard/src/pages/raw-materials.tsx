@@ -1,5 +1,5 @@
 import { authFetch } from "@/App";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, Fragment } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -19,7 +19,7 @@ import {
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Plus, Trash2, Pencil, Boxes, AlertTriangle, PackageCheck, Scale } from "lucide-react";
+import { Plus, Trash2, Pencil, Boxes, AlertTriangle, PackageCheck, Scale, History, ArrowDownToLine, ArrowUpFromLine } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -52,10 +52,19 @@ type RawMaterialForm = z.infer<typeof rawMaterialSchema>;
 
 // ── Query keys ────────────────────────────────────────────────────────────────
 const RAW_MATERIALS_KEY = ["raw-materials"];
+const RAW_HISTORY_KEY = ["raw-history"];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function isLowStock(rm: RawMaterial): boolean {
   return rm.minimumStock > 0 && rm.currentStock <= rm.minimumStock;
+}
+
+function formatDateTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString("ru-RU", {
+    day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
+  });
 }
 
 // ── Hooks ─────────────────────────────────────────────────────────────────────
@@ -127,8 +136,76 @@ function useAdjustRawStock() {
       if (!res.ok) throw new Error(data.error || "To'g'rilashda xato");
       return data;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: RAW_MATERIALS_KEY }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: RAW_MATERIALS_KEY });
+      qc.invalidateQueries({ queryKey: RAW_HISTORY_KEY });
+    },
   });
+}
+
+// ── Stock movement history (per material) ──────────────────────────────────────
+type RawMovement = {
+  id: number;
+  product: string;
+  quantity: number;
+  movementType: string;
+  note: string;
+  createdBy: string;
+  createdAt: string;
+};
+
+function useRawHistory(name: string | null) {
+  return useQuery<RawMovement[]>({
+    queryKey: [...RAW_HISTORY_KEY, name],
+    enabled: !!name,
+    queryFn: async () => {
+      const res = await authFetch(
+        `/api/ombor/movements?type=raw&limit=10&product=${encodeURIComponent(name!)}`,
+      );
+      if (!res.ok) throw new Error("Tarixni yuklashda xato");
+      return res.json();
+    },
+  });
+}
+
+function RawHistoryRow({ name }: { name: string }) {
+  const { data: moves = [], isLoading } = useRawHistory(name);
+  return (
+    <TableRow className="bg-muted/30 hover:bg-muted/30">
+      <TableCell colSpan={8} className="py-3">
+        <div className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
+          <History className="w-3.5 h-3.5" /> So'nggi to'g'rilashlar / harakatlar
+        </div>
+        {isLoading ? (
+          <Skeleton className="h-4 w-48" />
+        ) : moves.length === 0 ? (
+          <div className="text-sm text-muted-foreground py-1">Harakatlar tarixi yo'q</div>
+        ) : (
+          <ul className="space-y-1.5">
+            {moves.map(mv => {
+              const isIn = mv.movementType === "IN";
+              return (
+                <li key={mv.id} className="flex items-center gap-2 text-sm">
+                  {isIn ? (
+                    <ArrowDownToLine className="w-3.5 h-3.5 text-green-600 shrink-0" />
+                  ) : (
+                    <ArrowUpFromLine className="w-3.5 h-3.5 text-red-600 shrink-0" />
+                  )}
+                  <span className={`font-medium ${isIn ? "text-green-700" : "text-red-700"}`}>
+                    {isIn ? "+" : "−"}{mv.quantity.toLocaleString("ru-RU")}
+                  </span>
+                  {mv.note && <span className="text-muted-foreground">· {mv.note}</span>}
+                  <span className="text-muted-foreground ml-auto whitespace-nowrap">
+                    {mv.createdBy || "—"} · {formatDateTime(mv.createdAt)}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </TableCell>
+    </TableRow>
+  );
 }
 
 // ── Adjust (recount) Dialog ─────────────────────────────────────────────────────
@@ -460,6 +537,7 @@ export default function RawMaterials() {
   const [editTarget, setEditTarget] = useState<RawMaterial | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<RawMaterial | null>(null);
   const [adjustTarget, setAdjustTarget] = useState<RawMaterial | null>(null);
+  const [historyId, setHistoryId] = useState<number | null>(null);
 
   const lowStockCount = useMemo(
     () => materials.filter(isLowStock).length,
@@ -549,7 +627,8 @@ export default function RawMaterials() {
               materials.map(m => {
                 const low = isLowStock(m);
                 return (
-                  <TableRow key={m.id} className={low ? "bg-red-50/60 hover:bg-red-50" : ""}>
+                  <Fragment key={m.id}>
+                  <TableRow className={low ? "bg-red-50/60 hover:bg-red-50" : ""}>
                     <TableCell className="font-medium">
                       <div className="flex items-center gap-2">
                         {m.name}
@@ -587,6 +666,15 @@ export default function RawMaterials() {
                         <Button
                           variant="ghost"
                           size="icon"
+                          title="Harakatlar tarixi"
+                          className={historyId === m.id ? "bg-muted" : ""}
+                          onClick={() => setHistoryId(prev => (prev === m.id ? null : m.id))}
+                        >
+                          <History className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
                           title="Zahirani to'g'rilash"
                           onClick={() => setAdjustTarget(m)}
                         >
@@ -606,6 +694,8 @@ export default function RawMaterials() {
                       </div>
                     </TableCell>
                   </TableRow>
+                  {historyId === m.id && <RawHistoryRow name={m.name} />}
+                  </Fragment>
                 );
               })
             )}

@@ -618,11 +618,13 @@ router.get("/ombor/movements", async (req, res): Promise<void> => {
   const typeFilter = req.query.type ? String(req.query.type) : null;
   const whFilter   = req.query.warehouse ? Number(req.query.warehouse) : null;
   const opFilter   = req.query.operator ? String(req.query.operator).trim() : null;
+  const prodFilter = req.query.product ? String(req.query.product).trim() : null;
   const params: unknown[] = [limit];
   const conds: string[] = [];
   if (typeFilter) { params.push(typeFilter); conds.push(`sm.product_type = $${params.length}`); }
   if (whFilter)   { params.push(whFilter);   conds.push(`(sm.from_warehouse_id = $${params.length} OR sm.to_warehouse_id = $${params.length})`); }
   if (opFilter)   { params.push(opFilter);   conds.push(`sm.created_by = $${params.length}`); }
+  if (prodFilter) { params.push(prodFilter); conds.push(`sm.product = $${params.length}`); }
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
 
   const { rows } = await pool.query(

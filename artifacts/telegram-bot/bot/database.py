@@ -187,6 +187,25 @@ def init_db() -> None:
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
             )
         """)
+        # sale_items — sotuvning qatorlari. create_sale() shu jadvalga yozadi,
+        # lekin ilgari uni faqat API initDb yaratardi; bot toza bazada sotuv
+        # qilsa "relation sale_items does not exist" bilan yiqilardi. API'dagi
+        # ta'rif bilan bir xil (idempotent, IF NOT EXISTS).
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS sale_items (
+                id           SERIAL PRIMARY KEY,
+                sale_id      INTEGER NOT NULL REFERENCES sales(id) ON DELETE CASCADE,
+                product_name TEXT NOT NULL,
+                sale_type    TEXT NOT NULL DEFAULT 'dona',
+                quantity     NUMERIC(12,3) NOT NULL DEFAULT 0,
+                unit_price   NUMERIC(12,2) NOT NULL DEFAULT 0,
+                currency     TEXT NOT NULL DEFAULT 'UZS',
+                line_total   NUMERIC(14,2) NOT NULL DEFAULT 0
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sale_items_sale ON sale_items(sale_id)
+        """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS raw_materials (
                 id            SERIAL PRIMARY KEY,

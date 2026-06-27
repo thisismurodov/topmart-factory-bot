@@ -27,14 +27,16 @@ router.get("/ombor/summary", async (_req, res): Promise<void> => {
       WITH weight_ratio AS (
         SELECT product,
                CASE WHEN SUM(quantity) > 0
-                    THEN SUM(weight_kg)::numeric / SUM(quantity) ELSE 0 END AS kg_per_unit
+                    THEN SUM(weight_kg)::numeric / SUM(quantity)
+                    ELSE 0 END AS kg_per_unit
         FROM batches GROUP BY product
       )
       SELECT
         COALESCE(SUM(
           (CASE WHEN LOWER(p.unit_type) = 'kg' AND COALESCE(wr.kg_per_unit, 0) > 0
                 THEN i.quantity * wr.kg_per_unit
-                ELSE i.quantity END)
+                ELSE i.quantity
+           END)
           * p.default_sale_price
           * CASE WHEN p.currency_type = 'USD' THEN $1::numeric ELSE 1 END
         ), 0)::numeric AS value_uzs,
@@ -83,7 +85,8 @@ router.get("/ombor/containers", async (_req, res): Promise<void> => {
     WITH weight_ratio AS (
       SELECT product,
              CASE WHEN SUM(quantity) > 0
-                  THEN SUM(weight_kg)::numeric / SUM(quantity) ELSE 0 END AS kg_per_unit
+                  THEN SUM(weight_kg)::numeric / SUM(quantity)
+                  ELSE 0 END AS kg_per_unit
       FROM batches GROUP BY product
     )
     SELECT
@@ -96,7 +99,8 @@ router.get("/ombor/containers", async (_req, res): Promise<void> => {
       COALESCE(SUM(
         (CASE WHEN LOWER(p.unit_type) = 'kg' AND COALESCE(wr.kg_per_unit, 0) > 0
               THEN i.quantity * wr.kg_per_unit
-              ELSE i.quantity END)
+              ELSE i.quantity
+         END)
         * p.default_sale_price
         * CASE WHEN p.currency_type = 'USD' THEN $1::numeric ELSE 1 END
       ) FILTER (WHERE i.quantity > 0), 0)::numeric AS total_value_uzs
@@ -169,6 +173,8 @@ router.get("/ombor/containers/:id/items", async (req, res): Promise<void> => {
       const kgPerUnit = Number(r.kg_per_unit) || 0;
       // Faqat partiyada alohida kg kiritilgan kg-mahsulotlar uchun ko'rsatamiz.
       const weightKg = isKg && kgPerUnit > 0 ? qty * kgPerUnit : null;
+      // kg-mahsulotlar uchun narx kg uchun — qiymatni og'irlikka ko'paytiramiz.
+      const valueQty = weightKg != null ? weightKg : qty;
       return {
         id:            r.id,
         product:       r.product,
@@ -179,7 +185,7 @@ router.get("/ombor/containers/:id/items", async (req, res): Promise<void> => {
         salePrice:     Number(r.default_sale_price),
         currency:      r.currency_type || "UZS",
         priceUzs,
-        totalValueUzs: (weightKg ?? qty) * priceUzs,
+        totalValueUzs: valueQty * priceUzs,
         updatedAt:     r.updated_at instanceof Date ? r.updated_at.toISOString() : String(r.updated_at),
       };
     }),

@@ -112,12 +112,11 @@ def _build_single(
     # Batch code uchun mavjud kenglik (chap offset hisobga olingan)
     BC_MAX_W = LABEL_W - PAD_L - PAD_R
 
-    # ── Satır 1: TOPMART (chap) + N/M (o'ng) ─────────────────────
+    # ── Satır 1: N/M (o'ng) ──────────────────────────────────────
     y = 16
-    draw.text((PAD_L, y), "TOPMART", font=F_HDR, fill="black")
     page_txt = f"{unit_num}/{total_units}"
     draw.text((LABEL_W - PAD_R, y), page_txt, font=F_HDR, fill="black", anchor="ra")
-    y += _text_h(draw, "TOPMART", F_HDR) + 6
+    y += _text_h(draw, page_txt, F_HDR) + 6
 
     # ── Satır 2: Partiya kodi — ENG KATTA ────────────────────────
     bc_font, _ = _fit_font(draw, batch_code,

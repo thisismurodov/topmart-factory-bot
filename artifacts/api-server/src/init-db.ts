@@ -202,7 +202,8 @@ export async function initDb(): Promise<void> {
       active         BOOLEAN NOT NULL DEFAULT TRUE,
       location_type TEXT NOT NULL DEFAULT 'general',
       capacity_kg   NUMERIC DEFAULT 20000,
-      purpose       TEXT NOT NULL DEFAULT 'finished'
+      purpose       TEXT NOT NULL DEFAULT 'finished',
+      created_at    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
     )
   `);
   await pool.query(`
@@ -240,6 +241,7 @@ export async function initDb(): Promise<void> {
   await pool.query(`ALTER TABLE IF EXISTS inventory  ADD COLUMN IF NOT EXISTS product_type TEXT NOT NULL DEFAULT 'finished'`);
   await pool.query(`ALTER TABLE IF EXISTS warehouses ADD COLUMN IF NOT EXISTS location_type TEXT NOT NULL DEFAULT 'general'`);
   await pool.query(`ALTER TABLE IF EXISTS warehouses ADD COLUMN IF NOT EXISTS capacity_kg NUMERIC DEFAULT 20000`);
+  await pool.query(`ALTER TABLE IF EXISTS warehouses ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()`);
   await pool.query(`ALTER TABLE IF EXISTS stock_movements ADD COLUMN IF NOT EXISTS product_type TEXT NOT NULL DEFAULT 'finished'`);
   // Konteynerni xom ashyo ("raw") yoki tayyor mahsulot ("finished") ombori
   // sifatida belgilash uchun. Standart: 'finished' (mavjud xatti-harakat).

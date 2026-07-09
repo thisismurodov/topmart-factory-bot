@@ -22,5 +22,8 @@ warehouse tables.
 **How to apply:** when adding a table or column used at runtime, add identical
 DDL to both init paths, keep column types/defaults identical (e.g. sale_items:
 quantity NUMERIC(12,3), unit_price NUMERIC(12,2), line_total NUMERIC(14,2),
-currency default 'UZS'), and rely on the fresh-db-boot test + schema-drift
-validation to catch divergence.
+currency default 'UZS'), and rely on the schema-drift validation workflow to
+catch divergence: it creates a throwaway DB, runs BOTH init paths against it,
+then diffs the resulting columns+types against the Drizzle schema for the
+warehouse tables (warehouses, inventory, stock_movements, wip_movements).
+This caught a real drift (warehouses.created_at existed only in Drizzle).

@@ -304,7 +304,8 @@ def init_db() -> None:
                 active        BOOLEAN NOT NULL DEFAULT TRUE,
                 location_type TEXT NOT NULL DEFAULT 'general',
                 capacity_kg   NUMERIC DEFAULT 20000,
-                purpose       TEXT NOT NULL DEFAULT 'finished'
+                purpose       TEXT NOT NULL DEFAULT 'finished',
+                created_at    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
             )
         """)
         cur.execute("""
@@ -343,6 +344,7 @@ def init_db() -> None:
                 ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS location_type TEXT NOT NULL DEFAULT 'general';
                 ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS capacity_kg NUMERIC DEFAULT 20000;
                 ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS purpose TEXT NOT NULL DEFAULT 'finished';
+                ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW();
               END IF;
               IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='inventory') THEN
                 ALTER TABLE inventory ADD COLUMN IF NOT EXISTS product_type TEXT NOT NULL DEFAULT 'finished';

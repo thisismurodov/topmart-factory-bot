@@ -20,6 +20,7 @@ import AiPage from "@/pages/ai";
 import Packers from "@/pages/packers";
 import RawMaterials from "@/pages/raw-materials";
 import AuditLog from "@/pages/audit";
+import Distribution from "@/pages/distribution";
 import Login from "@/pages/login";
 import { Layout } from "@/components/layout";
 import { setAuthTokenGetter, setBaseUrl } from "@workspace/api-client-react";
@@ -83,6 +84,7 @@ function Router() {
             <Route path="/raw-materials" component={RawMaterials} />
             <Route path="/reports" component={Reports} />
             <Route path="/ai" component={AiPage} />
+            <Route path="/distribution" component={Distribution} />
             <Route path="/audit" component={AuditLog} />
             <Route component={NotFound} />
           </Switch>

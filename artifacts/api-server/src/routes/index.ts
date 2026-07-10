@@ -24,6 +24,7 @@ import productMaterialsRouter from "./product-materials";
 import packerProductAssignmentsRouter from "./packer-product-assignments";
 import omborRouter from "./ombor";
 import auditRouter from "./audit";
+import distributionRouter from "./distribution";
 
 const router: IRouter = Router();
 
@@ -60,5 +61,6 @@ router.use(rawMaterialsRouter);
 router.use(productMaterialsRouter);
 router.use(packerProductAssignmentsRouter);
 router.use(auditRouter);
+router.use(distributionRouter);
 
 export default router;

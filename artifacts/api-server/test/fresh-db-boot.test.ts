@@ -102,18 +102,22 @@ beforeAll(async () => {
   const db = await import("@workspace/db");
   pool = db.pool as unknown as pg.Pool;
 
-  const [{ default: omborRouter }, { default: inventoryRouter }, { default: warehousesRouter }] =
-    await Promise.all([
-      import("../src/routes/ombor"),
-      import("../src/routes/inventory-v2"),
-      import("../src/routes/warehouses"),
-    ]);
+  // Mount EVERY route group (bypassing auth middleware — we test schema, not
+  // auth). pino-http provides req.log, which several routes use in catch paths.
+  const routeModules = [
+    "ombor", "inventory-v2", "warehouses", "inventory",
+    "dashboard", "batches", "workers", "products", "salary", "payroll",
+    "customers", "sales", "sales-products", "debts", "reports",
+    "exchange-rate", "raw-materials", "product-materials",
+    "packer-product-assignments", "audit", "ai", "health", "auth",
+  ];
+  const routers = await Promise.all(routeModules.map((m) => import(`../src/routes/${m}`)));
 
+  const { default: pinoHttp } = await import("pino-http");
   const app: Express = express();
+  app.use(pinoHttp({ logger: (await import("../src/lib/logger")).logger }));
   app.use(express.json());
-  app.use(omborRouter);
-  app.use(inventoryRouter);
-  app.use(warehousesRouter);
+  for (const r of routers) app.use(r.default);
   await new Promise<void>((resolve) => {
     server = app.listen(0, "127.0.0.1", resolve);
   });
@@ -145,8 +149,10 @@ async function post(path: string, body: unknown): Promise<{ status: number; json
   return { status: r.status, json: await r.json().catch(() => null) };
 }
 
-// Tables + the historically-fragile columns the Ombor/inventory/warehouse
-// routes depend on. If a column here is missing, those routes 500 in prod.
+// Tables + the historically-fragile columns ALL route groups depend on
+// (ombor/inventory/warehouses, sales, customers, batches, workers, salary,
+// payroll, dashboard, reports, audit, ai, auth). If a column here is missing,
+// those routes 500 in prod after a fresh install/restore.
 const REQUIRED: Record<string, string[]> = {
   warehouses: ["id", "name", "active", "location_type", "capacity_kg", "purpose"],
   inventory: ["id", "warehouse_id", "product", "quantity", "weight_kg", "product_type", "updated_at"],
@@ -159,10 +165,44 @@ const REQUIRED: Record<string, string[]> = {
     "from_warehouse_id", "batch_id", "note", "created_by", "created_at",
   ],
   raw_materials: ["id", "name", "current_stock"],
-  products: ["name", "line_id", "active", "weight", "unit_type", "default_sale_price"],
+  products: ["name", "line_id", "active", "weight", "unit_type", "default_sale_price", "payroll_method", "pieces_per_box"],
   production_lines: ["id", "name"],
   production_line_workers: ["line_id", "worker_name", "role"],
   product_materials: ["product_name", "raw_material_id", "quantity_required"],
+  // ── Sales / customers / debts / reports ────────────────────────────────────
+  sales: [
+    "id", "customer_id", "customer_name", "product", "quantity", "weight_kg",
+    "unit_price", "total_amount", "status", "note", "created_at",
+    "currency", "payment_type", "paid_amount", "debt_amount",
+  ],
+  sale_items: ["id", "sale_id", "product_name", "sale_type", "quantity", "unit_price", "currency", "line_total"],
+  sale_payments: ["id", "sale_id", "amount", "currency", "note", "created_at"],
+  sale_events: ["id", "sale_id", "event_type", "description", "amount", "currency", "user_id", "created_at"],
+  sales_products: ["id", "name", "unit", "price", "active", "sale_type", "default_price", "currency"],
+  sales_product_tiers: ["id", "product_id", "min_qty", "price", "currency"],
+  customers: ["id", "name", "phone", "company", "address", "created_at", "deleted_at"],
+  product_price_tiers: ["id", "product_id", "min_quantity", "max_quantity", "price", "currency"],
+  // ── Batches / workers / packers ─────────────────────────────────────────────
+  batches: [
+    "id", "batch_code", "worker", "product", "quantity", "weight_kg",
+    "earnings", "payroll_method", "created_at", "archived", "production_line_id",
+  ],
+  workers: ["name", "prefix", "phone", "role"],
+  user_roles: ["chat_id", "worker_name", "role"],
+  packer_assignments: ["packer_chat_id", "worker_name"],
+  packer_product_assignments: ["id", "packer_name", "product_name"],
+  // ── Salary / payroll ────────────────────────────────────────────────────────
+  salary_payments: ["id", "worker", "year", "month", "amount", "paid_at"],
+  salary_entries: ["id", "scope", "worker", "role", "source_type", "batch_id", "work_date", "kg", "rate", "amount", "line_id"],
+  daily_payroll_runs: ["id", "scope", "line_id", "work_date", "total_kg", "status", "closed_by", "closed_at"],
+  payroll_role_rates: ["id", "scope", "role", "rate", "updated_at"],
+  kg_payroll_workers: ["id", "scope", "worker_name", "role", "active"],
+  line_role_config: ["id", "line_id", "role_key", "label", "rate", "max_workers", "pay_mode"],
+  // ── Audit / AI / auth ───────────────────────────────────────────────────────
+  audit_logs: ["id", "table_name", "action", "record_id", "changed_by", "old_data", "new_data", "created_at"],
+  ai_analysis_runs: ["id", "kind", "summary", "analysis", "created_at"],
+  admin_users: ["id", "username", "password_hash", "role"],
+  admin_sessions: ["id", "token", "user_id", "created_at"],
 };
 
 describe("Fresh DB boots via init code alone", () => {
@@ -193,8 +233,9 @@ describe("Fresh DB boots via init code alone", () => {
     expect(missing, `Missing schema after init: ${missing.join(", ")}`).toEqual([]);
   });
 
-  it("warehouse GET endpoints don't 500 on a fresh (empty) DB", async () => {
+  it("GET endpoints across ALL route groups don't 500 on a fresh (empty) DB", async () => {
     const paths = [
+      // Ombor / inventory / warehouses
       "/ombor/summary",
       "/ombor/containers",
       "/ombor/raw-materials",
@@ -204,7 +245,50 @@ describe("Fresh DB boots via init code alone", () => {
       "/inventory/stock",
       "/inventory/summary",
       "/inventory/movements",
+      "/inventory",
       "/warehouses",
+      // Dashboard
+      "/dashboard/today",
+      "/dashboard/monthly",
+      "/dashboard/top-workers",
+      "/dashboard/daily-chart",
+      "/dashboard/v2",
+      "/dashboard/product-highlights",
+      "/dashboard/today-extended",
+      // Batches / workers / products
+      "/batches",
+      "/workers",
+      "/products",
+      // Salary / payroll
+      "/salary/report",
+      "/payroll/role-rates",
+      "/payroll/workers",
+      "/payroll/lines",
+      "/payroll/worker-earnings",
+      "/payroll/day-status",
+      "/payroll/line-configs",
+      // Customers / sales / debts / reports
+      "/customers",
+      "/sales",
+      "/sales-products",
+      "/debts/summary",
+      "/reports/summary",
+      "/reports/product-profitability",
+      "/reports/sales-summary",
+      // Raw materials / product materials / packers
+      "/raw-materials",
+      "/raw-materials/low-stock",
+      "/product-materials",
+      "/packer-assignments",
+      "/packer-worker-assignments",
+      // Exchange rate (has internal fallback — never 500s)
+      "/exchange-rate",
+      // Audit / AI (cached-runs listing only — no LLM call)
+      "/audit-logs",
+      "/ai/runs",
+      // Auth (no token → expects 401, never 500) / health
+      "/auth/me",
+      "/healthz",
     ];
     const failures: string[] = [];
     for (const p of paths) {

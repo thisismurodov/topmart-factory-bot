@@ -32,8 +32,14 @@ self-created by init, in dependency order.
   self-create pattern the API uses for the Ombor tables.
 - Guard test: `artifacts/api-server/test/fresh-db-boot.test.ts` spins up a throwaway
   Railway DB (`topmart_freshboot_test_<pid>`), runs bot `init_db()` then API `initDb()`,
-  asserts a schema manifest, hits Ombor GET endpoints, and runs a raw-in→receive→read
-  flow. Remote Railway latency is high — the bot init alone is ~16s, full setup ~32s, so
-  the `beforeAll`/`afterAll` hooks need explicit long timeouts (120s/60s) and the whole
-  file runs ~60s. Vitest file isolation keeps the `@workspace/db` singleton from leaking
-  the temp connection into other suites.
+  asserts a schema manifest covering ALL route groups, smoke-GETs one+ endpoint per
+  group (mounted without auth middleware; pino-http supplies `req.log`), and runs a
+  raw-in→receive→read flow. Remote Railway latency is high — the bot init alone is
+  ~16s, full setup ~32s, so the `beforeAll`/`afterAll` hooks need explicit long
+  timeouts (120s/60s) and the whole file runs ~80s. Vitest file isolation keeps the
+  `@workspace/db` singleton from leaking the temp connection into other suites.
+- Fastest way to find gaps: diff `information_schema.columns` of a fresh-init DB vs the
+  live DB. That surfaced never-created sale_payments/sale_events/sales_products/
+  sales_product_tiers, missing sales.currency/payment_type/paid_amount/debt_amount,
+  customers.deleted_at, and a `sales.product NOT NULL` mismatch (API inserts without
+  product — needed `DROP NOT NULL` in init).

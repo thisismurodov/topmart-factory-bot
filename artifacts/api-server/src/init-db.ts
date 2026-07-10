@@ -179,6 +179,75 @@ export async function initDb(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_sale_items_sale ON sale_items(sale_id)
   `);
 
+  // ── Sotuv (sales) sxemasi — bo'sh DB'da yetishmagan ustun/jadvallar ──────
+  // Bot init_db sales jadvalini eski shaklda yaratadi (currency/payment_type/
+  // paid_amount/debt_amount yo'q, product NOT NULL). API POST /sales esa aynan
+  // shu ustunlarga yozadi va product'siz INSERT qiladi — toza DB'da 500 bo'lardi.
+  await pool.query(`ALTER TABLE IF EXISTS sales ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'uzs'`);
+  await pool.query(`ALTER TABLE IF EXISTS sales ADD COLUMN IF NOT EXISTS payment_type TEXT NOT NULL DEFAULT 'naqd'`);
+  await pool.query(`ALTER TABLE IF EXISTS sales ADD COLUMN IF NOT EXISTS paid_amount NUMERIC(12,2) NOT NULL DEFAULT 0`);
+  await pool.query(`ALTER TABLE IF EXISTS sales ADD COLUMN IF NOT EXISTS debt_amount NUMERIC(12,2) NOT NULL DEFAULT 0`);
+  await pool.query(`ALTER TABLE IF EXISTS sales ALTER COLUMN product DROP NOT NULL`);
+
+  // customers.deleted_at — yumshoq o'chirish (routes deleted_at IS NULL filtrlaydi)
+  await pool.query(`ALTER TABLE IF EXISTS customers ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE`);
+
+  // sale_payments — qarzga to'lovlar tarixi (bot add_sale_payment + API /sales/:id/payments)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sale_payments (
+      id         SERIAL PRIMARY KEY,
+      sale_id    INTEGER NOT NULL REFERENCES sales(id) ON DELETE CASCADE,
+      amount     NUMERIC(12,2) NOT NULL,
+      currency   TEXT NOT NULL DEFAULT 'USD',
+      note       TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_sale_payments_sale ON sale_payments(sale_id)`);
+
+  // sale_events — sotuv voqealar jurnali (logEvent best-effort yozadi, reports o'qiydi)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sale_events (
+      id          SERIAL PRIMARY KEY,
+      sale_id     INTEGER,
+      event_type  TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      amount      NUMERIC(12,2),
+      currency    TEXT,
+      user_id     INTEGER,
+      created_at  TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_sale_events_sale ON sale_events(sale_id)`);
+
+  // sales_products — sotuv katalogi (sales-products route'lari CRUD qiladi)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sales_products (
+      id            SERIAL PRIMARY KEY,
+      name          TEXT NOT NULL,
+      unit          TEXT NOT NULL DEFAULT 'dona',
+      price         NUMERIC(12,2) NOT NULL DEFAULT 0,
+      active        BOOLEAN NOT NULL DEFAULT TRUE,
+      sale_type     TEXT NOT NULL DEFAULT 'dona',
+      default_price NUMERIC(12,4) NOT NULL DEFAULT 0,
+      currency      TEXT NOT NULL DEFAULT 'UZS',
+      created_at    TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    )
+  `);
+
+  // sales_product_tiers — sotuv katalogi tier narxlari
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sales_product_tiers (
+      id         SERIAL PRIMARY KEY,
+      product_id INTEGER NOT NULL REFERENCES sales_products(id) ON DELETE CASCADE,
+      min_qty    NUMERIC NOT NULL DEFAULT 0,
+      price      NUMERIC NOT NULL,
+      currency   TEXT NOT NULL DEFAULT 'usd',
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_spt_product ON sales_product_tiers(product_id)`);
+
   // DB darajasida CHECK constraint'lar (idempotent)
   await pool.query(`
     DO $$ BEGIN

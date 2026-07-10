@@ -206,6 +206,36 @@ def init_db() -> None:
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_sale_items_sale ON sale_items(sale_id)
         """)
+        # Sotuv sxemasi kengaytmalari — create_sale() currency ustuniga yozadi,
+        # add_sale_payment() paid_amount/debt_amount'ni yangilaydi va
+        # sale_payments jadvaliga yozadi. Bular ilgari hech qaysi init'da
+        # yaratilmagan (faqat jonli DB'da bor edi) — toza bazada bot yiqilardi.
+        cur.execute("""
+            ALTER TABLE sales
+              ADD COLUMN IF NOT EXISTS currency     TEXT NOT NULL DEFAULT 'uzs',
+              ADD COLUMN IF NOT EXISTS payment_type TEXT NOT NULL DEFAULT 'naqd',
+              ADD COLUMN IF NOT EXISTS paid_amount  NUMERIC(12,2) NOT NULL DEFAULT 0,
+              ADD COLUMN IF NOT EXISTS debt_amount  NUMERIC(12,2) NOT NULL DEFAULT 0
+        """)
+        # API POST /sales product'siz INSERT qiladi — NOT NULL bo'lsa 500 bo'ladi.
+        cur.execute("ALTER TABLE sales ALTER COLUMN product DROP NOT NULL")
+        cur.execute("""
+            ALTER TABLE customers
+              ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS sale_payments (
+                id         SERIAL PRIMARY KEY,
+                sale_id    INTEGER NOT NULL REFERENCES sales(id) ON DELETE CASCADE,
+                amount     NUMERIC(12,2) NOT NULL,
+                currency   TEXT NOT NULL DEFAULT 'USD',
+                note       TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sale_payments_sale ON sale_payments(sale_id)
+        """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS raw_materials (
                 id            SERIAL PRIMARY KEY,

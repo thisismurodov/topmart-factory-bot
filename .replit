@@ -20,6 +20,10 @@ author = "agent"
 task = "workflow.run"
 args = "schema-drift"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "api-tests"
+
 [[workflows.workflow]]
 name = "schema-drift"
 author = "agent"
@@ -30,6 +34,17 @@ isValidation = true
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "pnpm --filter @workspace/scripts run check-schema-drift"
+
+[[workflows.workflow]]
+name = "api-tests"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/api-server run test"
+
+[workflows.workflow.metadata]
+isValidation = true
 
 [agent]
 stack = "PNPM_WORKSPACE"

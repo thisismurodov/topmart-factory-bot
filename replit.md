@@ -6,6 +6,7 @@ Arqon ishlab chiqarish zavodi uchun Telegram bot — partiyalarni kiritish, nazo
 
 - `cd artifacts/telegram-bot && python3 main.py` — botni ishga tushirish (Workflow: "TopMart Factory Bot")
 - `pnpm --filter @workspace/api-server run dev` — API server (port 5000)
+- `pnpm --filter @workspace/api-server run test` — api-server vitest suite (fresh-DB boot guard). Registered as the `api-tests` validation step; requires `DATABASE_URL`/`RAILWAY_DATABASE_URL` (creates+drops a throwaway DB). Runs alongside `schema-drift` as an automated quality gate.
 - Required env: `TELEGRAM_BOT_TOKEN` — Telegram bot tokeni (@BotFather orqali olinadi)
 
 ## Stack

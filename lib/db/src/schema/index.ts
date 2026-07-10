@@ -22,3 +22,4 @@ export * from "./wip_movements";
 export * from "./warehouses";
 export * from "./inventory";
 export * from "./stock_movements";
+export * from "./distribution";

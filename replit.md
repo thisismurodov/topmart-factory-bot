@@ -18,7 +18,8 @@ Arqon ishlab chiqarish zavodi uchun Telegram bot — partiyalarni kiritish, nazo
 
 ## Where things live
 
-- `artifacts/telegram-bot/main.py` — bot entry point
+- `artifacts/telegram-bot/main.py` — factory (production) bot entry point
+- `artifacts/distribution-bot/main.py` — distribution (savdo/agent) bot; single-file telebot app on central Postgres `distribution` schema
 - `artifacts/telegram-bot/bot/config.py` — seed data, DATABASE_URL
 - `artifacts/telegram-bot/bot/database.py` — psycopg2 PostgreSQL operatsiyalari
 - `artifacts/telegram-bot/bot/keyboards.py` — Telegram tugmalari
@@ -34,7 +35,8 @@ Arqon ishlab chiqarish zavodi uchun Telegram bot — partiyalarni kiritish, nazo
 - Polling rejimi ishlatilgan (webhook emas) — Replit'da soddaroq
 - Batch kodi: `XX-YYMMDD-NN` formatida
 - `db_meta` table bot tomonidan yaratiladi (Drizzle sxemasida yo'q)
-- Railway deploy: `artifacts/telegram-bot/Dockerfile` (bot), `artifacts/api-server/Dockerfile` (API)
+- Railway deploy: `artifacts/telegram-bot/Dockerfile` (bot), `artifacts/api-server/Dockerfile` (API), `artifacts/distribution-bot/Dockerfile` (distribution bot)
+- Distribution modul: bitta markaziy Postgres (`RAILWAY_DATABASE_URL`) ichida alohida `distribution` sxema. O'zbekcha table nomlari saqlangan; izolyatsiya sxema orqali. Bot SQLite→psycopg2 shim bilan ishlaydi (`?`→`%s`, `RETURNING id`, `search_path=distribution`). Drizzle mirror: `lib/db/src/schema/distribution.ts`; DDL: `pnpm --filter @workspace/scripts run init-distribution`. Distribution botning O'ZINING `TELEGRAM_BOT_TOKEN`i bo'lishi shart (factory bilan bir xil token bo'lolmaydi — polling to'qnashadi).
 - AI Zavod Yordamchisi: barcha LLM chaqiruvlari Node API'da (`/api/ai/*`); bot (Python) + dashboard faqat shu endpointlarni chaqiradi. Daily-analysis kuniga bir marta hisoblanadi va `ai_analysis_runs` jadvaliga saqlanadi (refresh=1 qayta hisoblaydi). Bot/dashboard `x-internal-key`/`Bearer` bilan kiradi (`requireAuthOrInternalKey`). Daily model `gpt-5.4`, packer-tip `gpt-5-mini` (`reasoning_effort: minimal`, aks holda reasoning tokenlari budjetni yeb tip bo'sh chiqadi).
 
 ## Required env vars

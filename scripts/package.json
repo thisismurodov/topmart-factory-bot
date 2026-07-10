@@ -6,6 +6,7 @@
   "scripts": {
     "hello": "tsx ./src/hello.ts",
     "check-warehouse-schema": "tsx ./src/check-warehouse-schema.ts",
+    "init-distribution": "tsx ./src/init-distribution.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

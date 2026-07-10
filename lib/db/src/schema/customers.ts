@@ -9,6 +9,7 @@ export const customersTable = pgTable("customers", {
   company: text("company").notNull().default(""),
   address: text("address").notNull().default(""),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
 });
 
 export const insertCustomerSchema = createInsertSchema(customersTable).omit({ id: true, createdAt: true });

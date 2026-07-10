@@ -24,12 +24,12 @@ args = "schema-drift"
 name = "schema-drift"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "pnpm --filter @workspace/scripts run check-warehouse-schema"
-
 [workflows.workflow.metadata]
 isValidation = true
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/scripts run check-schema-drift"
 
 [agent]
 stack = "PNPM_WORKSPACE"

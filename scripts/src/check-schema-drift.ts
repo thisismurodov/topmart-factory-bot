@@ -3,15 +3,35 @@ import path from "node:path";
 import { getTableColumns } from "drizzle-orm";
 import pg from "pg";
 import {
-  warehousesTable,
+  adminUsersTable,
+  batchesTable,
+  customersTable,
+  dailyPayrollRunsTable,
   inventoryTable,
+  kgPayrollWorkersTable,
+  packerAssignmentsTable,
+  packerProductAssignmentsTable,
+  payrollRoleRatesTable,
+  pendingUsersTable,
+  productionLineWorkersTable,
+  productionLinesTable,
+  productMaterialsTable,
+  productPriceTiersTable,
+  productsTable,
+  rawMaterialsTable,
+  salaryEntriesTable,
+  salaryPaymentsTable,
+  salesTable,
   stockMovementsTable,
+  userRolesTable,
+  warehousesTable,
   wipMovementsTable,
+  workersTable,
 } from "@workspace/db";
 
-// Ombor jadvallari (warehouses, inventory, stock_movements, wip_movements)
-// IKKI joyda qo'lda sinxron saqlanadi: runtime DDL (bot init_db + API initDb)
-// va kanonik Drizzle sxemasi (lib/db/src/schema/). Bu skript driftni ushlaydi:
+// Bu jadvallar IKKI joyda qo'lda sinxron saqlanadi: runtime DDL (bot init_db +
+// API initDb) va kanonik Drizzle sxemasi (lib/db/src/schema/). Bu skript
+// driftni ushlaydi:
 //
 // 1. Tashlanadigan (throwaway) baza yaratadi
 // 2. Bot init_db() va API initDb() ni o'sha bazaga qarshi ishga tushiradi —
@@ -19,14 +39,41 @@ import {
 // 3. Natijaviy ustunlar + turlarni Drizzle sxemasi bilan solishtiradi
 //
 // Bir tomonga ustun qo'shilsa-yu ikkinchisiga qo'shilmasa — non-zero exit.
-const DRIFT_DB = "warehouse_drift_check";
+//
+// TABLES — Drizzle sxemasida HAM, runtime init yo'lida HAM mavjud har bir
+// jadval. Yangi jadval qo'shsangiz (Drizzle + init_db/initDb), shu yerga ham
+// qo'shing. Faqat runtime'da bo'lgan (Drizzle'siz) yordamchi jadvallar —
+// db_meta, admin_sessions, audit_logs, ai_analysis_runs, sale_items,
+// sale_payments, sale_events, sales_products, sales_product_tiers,
+// sale_products, line_role_config — bu yerga KIRMAYDI (kanonik sxema yo'q).
+const DRIFT_DB = "schema_drift_check";
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 
 const TABLES = {
-  warehouses: warehousesTable,
+  admin_users: adminUsersTable,
+  batches: batchesTable,
+  customers: customersTable,
+  daily_payroll_runs: dailyPayrollRunsTable,
   inventory: inventoryTable,
+  kg_payroll_workers: kgPayrollWorkersTable,
+  packer_assignments: packerAssignmentsTable,
+  packer_product_assignments: packerProductAssignmentsTable,
+  payroll_role_rates: payrollRoleRatesTable,
+  pending_users: pendingUsersTable,
+  production_line_workers: productionLineWorkersTable,
+  production_lines: productionLinesTable,
+  product_materials: productMaterialsTable,
+  product_price_tiers: productPriceTiersTable,
+  products: productsTable,
+  raw_materials: rawMaterialsTable,
+  salary_entries: salaryEntriesTable,
+  salary_payments: salaryPaymentsTable,
+  sales: salesTable,
   stock_movements: stockMovementsTable,
+  user_roles: userRolesTable,
+  warehouses: warehousesTable,
   wip_movements: wipMovementsTable,
+  workers: workersTable,
 } as const;
 
 // Drizzle getSQLType() → information_schema.columns.data_type normalizatsiyasi
@@ -144,13 +191,13 @@ async function main(): Promise<void> {
 
   if (drift) {
     console.error(
-      "\nOmbor sxemasida drift aniqlandi (Drizzle ↔ runtime DDL). " +
+      "\nSxema drifti aniqlandi (Drizzle ↔ runtime DDL). " +
         "lib/db/src/schema/ ni HAM, bot init_db + API initDb ni HAM yangilang.",
     );
     process.exit(1);
   }
 
-  console.log("\nOmbor sxemasi mos — drift yo'q.");
+  console.log("\nSxema mos — drift yo'q.");
 }
 
 main().catch((e) => {

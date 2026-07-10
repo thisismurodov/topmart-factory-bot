@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, numeric, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, numeric, timestamp, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -12,6 +12,7 @@ export const batchesTable = pgTable("batches", {
   earnings: numeric("earnings", { precision: 12, scale: 2 }).notNull(),
   payrollMethod: text("payroll_method").notNull().default("PRODUCT_RATE"),
   productionLineId: integer("production_line_id"),
+  archived: boolean("archived").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

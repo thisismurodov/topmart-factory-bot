@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "hello": "tsx ./src/hello.ts",
-    "check-warehouse-schema": "tsx ./src/check-warehouse-schema.ts",
+    "check-schema-drift": "tsx ./src/check-schema-drift.ts",
     "init-distribution": "tsx ./src/init-distribution.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

@@ -135,10 +135,15 @@ function useMovements(operator?: string, from?: string, to?: string) {
   });
 }
 
-function useOperators() {
+function useOperators(warehouseId?: number | null) {
   return useQuery<string[]>({
-    queryKey: ["ombor-operators"],
-    queryFn: () => authFetch("/api/ombor/operators").then((r) => r.json()),
+    queryKey: ["ombor-operators", warehouseId ?? null],
+    queryFn: () =>
+      authFetch(
+        warehouseId != null
+          ? `/api/ombor/operators?warehouse=${warehouseId}`
+          : "/api/ombor/operators",
+      ).then((r) => r.json()),
     staleTime: 60_000,
   });
 }
@@ -151,10 +156,13 @@ function useFinishedGoods() {
   });
 }
 
-function useContainerMovements(id: number | null) {
+function useContainerMovements(id: number | null, operator?: string) {
   return useQuery<Movement[]>({
-    queryKey: ["ombor-container-movements", id],
-    queryFn: () => authFetch(`/api/ombor/movements?warehouse=${id}&limit=40`).then((r) => r.json()),
+    queryKey: ["ombor-container-movements", id, operator || null],
+    queryFn: () => {
+      const op = operator ? `&operator=${encodeURIComponent(operator)}` : "";
+      return authFetch(`/api/ombor/movements?warehouse=${id}&limit=40${op}`).then((r) => r.json());
+    },
     enabled: id !== null,
     refetchInterval: 30_000,
   });
@@ -1288,16 +1296,29 @@ function MovementsPanel() {
 }
 
 function ContainerMovementsPanel({ warehouseId }: { warehouseId: number }) {
-  const { data: movements = [], isLoading } = useContainerMovements(warehouseId);
+  const [operator, setOperator] = useState("");
+  const { data: movements = [], isLoading } = useContainerMovements(warehouseId, operator || undefined);
+  const { data: operators = [] } = useOperators(warehouseId);
 
   return (
     <div style={{
       background: "#fff", borderRadius: 16, overflow: "hidden",
       boxShadow: "0 1px 3px rgba(0,0,0,0.06)", border: "1px solid rgba(0,0,0,0.06)",
     }}>
-      <div style={{ padding: "16px 20px", borderBottom: "1px solid #F3F4F6", display: "flex", alignItems: "center", gap: 8 }}>
+      <div style={{ padding: "16px 20px", borderBottom: "1px solid #F3F4F6", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <Clock style={{ width: 16, height: 16, color: "#0B6B3A" }} />
         <span style={{ fontWeight: 600, fontSize: 15, color: "#111827" }}>Konteyner harakatlari</span>
+        <select
+          value={operator}
+          onChange={(e) => setOperator(e.target.value)}
+          style={{
+            marginLeft: 8, fontSize: 13, color: "#374151", padding: "5px 10px",
+            borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer",
+          }}
+        >
+          <option value="">👤 Barcha operatorlar</option>
+          {operators.map((op) => <option key={op} value={op}>{op}</option>)}
+        </select>
         <span style={{ marginLeft: "auto", fontSize: 12, color: "#9CA3AF" }}>{movements.length} ta yozuv</span>
       </div>
 

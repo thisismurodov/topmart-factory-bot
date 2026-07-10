@@ -664,12 +664,21 @@ router.get("/ombor/movements", async (req, res): Promise<void> => {
 
 // ── GET /api/ombor/operators ───────────────────────────────────────────────────
 // Harakatlar tarixini operator bo'yicha filtrlash uchun mavjud operatorlar ro'yxati.
-router.get("/ombor/operators", async (_req, res): Promise<void> => {
+// Ixtiyoriy `warehouse` param berilsa — faqat shu konteynerda harakati bor operatorlar.
+router.get("/ombor/operators", async (req, res): Promise<void> => {
+  const whFilter = req.query.warehouse ? Number(req.query.warehouse) : null;
+  const params: unknown[] = [];
+  let where = "created_by IS NOT NULL AND created_by <> ''";
+  if (whFilter) {
+    params.push(whFilter);
+    where += ` AND (from_warehouse_id = $${params.length} OR to_warehouse_id = $${params.length})`;
+  }
   const { rows } = await pool.query(
     `SELECT DISTINCT created_by
        FROM stock_movements
-      WHERE created_by IS NOT NULL AND created_by <> ''
+      WHERE ${where}
       ORDER BY created_by`,
+    params,
   );
   res.json(rows.map((r) => r.created_by as string));
 });

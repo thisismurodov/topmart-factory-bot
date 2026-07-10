@@ -614,17 +614,25 @@ router.get("/ombor/finished-goods", async (_req, res): Promise<void> => {
 
 // ── GET /api/ombor/movements ───────────────────────────────────────────────────
 router.get("/ombor/movements", async (req, res): Promise<void> => {
-  const limit      = Math.min(Number(req.query.limit ?? 80), 200);
   const typeFilter = req.query.type ? String(req.query.type) : null;
   const whFilter   = req.query.warehouse ? Number(req.query.warehouse) : null;
   const opFilter   = req.query.operator ? String(req.query.operator).trim() : null;
   const prodFilter = req.query.product ? String(req.query.product).trim() : null;
+  // Sana oralig'i (Asia/Tashkent kun chegaralari, YYYY-MM-DD). Oraliq tanlanganda
+  // eski yozuvlar 60-lik oynadan kesilib qolmasligi uchun cheklovni kengaytiramiz.
+  const dateRe     = /^\d{4}-\d{2}-\d{2}$/;
+  const fromFilter = req.query.from && dateRe.test(String(req.query.from)) ? String(req.query.from) : null;
+  const toFilter   = req.query.to   && dateRe.test(String(req.query.to))   ? String(req.query.to)   : null;
+  const rangeChosen = Boolean(fromFilter || toFilter);
+  const limit      = Math.min(Number(req.query.limit ?? (rangeChosen ? 1000 : 80)), rangeChosen ? 5000 : 200);
   const params: unknown[] = [limit];
   const conds: string[] = [];
   if (typeFilter) { params.push(typeFilter); conds.push(`sm.product_type = $${params.length}`); }
   if (whFilter)   { params.push(whFilter);   conds.push(`(sm.from_warehouse_id = $${params.length} OR sm.to_warehouse_id = $${params.length})`); }
   if (opFilter)   { params.push(opFilter);   conds.push(`sm.created_by = $${params.length}`); }
   if (prodFilter) { params.push(prodFilter); conds.push(`sm.product = $${params.length}`); }
+  if (fromFilter) { params.push(fromFilter); conds.push(`(sm.created_at AT TIME ZONE 'Asia/Tashkent')::date >= $${params.length}::date`); }
+  if (toFilter)   { params.push(toFilter);   conds.push(`(sm.created_at AT TIME ZONE 'Asia/Tashkent')::date <= $${params.length}::date`); }
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
 
   const { rows } = await pool.query(

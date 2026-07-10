@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, type CSSProperties } from "react";
 import { authFetch } from "@/App";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { formatNumber, formatCurrency } from "@/lib/format";
@@ -121,12 +121,15 @@ function useContainerDetail(id: number | null) {
   });
 }
 
-function useMovements(operator?: string) {
+function useMovements(operator?: string, from?: string, to?: string) {
   return useQuery<Movement[]>({
-    queryKey: ["ombor-movements", operator ?? ""],
+    queryKey: ["ombor-movements", operator ?? "", from ?? "", to ?? ""],
     queryFn: () => {
       const op = operator ? `&operator=${encodeURIComponent(operator)}` : "";
-      return authFetch(`/api/ombor/movements?limit=60${op}`).then((r) => r.json());
+      const f  = from ? `&from=${encodeURIComponent(from)}` : "";
+      const t  = to   ? `&to=${encodeURIComponent(to)}`     : "";
+      const base = from || to ? "/api/ombor/movements?limit=1000" : "/api/ombor/movements?limit=60";
+      return authFetch(`${base}${op}${f}${t}`).then((r) => r.json());
     },
     refetchInterval: 30_000,
   });
@@ -1207,8 +1210,15 @@ function FinishedGoodsPanel() {
 
 function MovementsPanel() {
   const [operator, setOperator] = useState("");
-  const { data: movements = [], isLoading } = useMovements(operator || undefined);
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const { data: movements = [], isLoading } = useMovements(operator || undefined, from || undefined, to || undefined);
   const { data: operators = [] } = useOperators();
+
+  const dateInputStyle: CSSProperties = {
+    fontSize: 13, color: "#374151", padding: "5px 10px",
+    borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer",
+  };
 
   return (
     <div style={{
@@ -1229,6 +1239,34 @@ function MovementsPanel() {
           <option value="">👤 Barcha operatorlar</option>
           {operators.map((op) => <option key={op} value={op}>{op}</option>)}
         </select>
+        <input
+          type="date"
+          value={from}
+          max={to || undefined}
+          onChange={(e) => setFrom(e.target.value)}
+          title="Boshlanish sanasi"
+          style={dateInputStyle}
+        />
+        <span style={{ fontSize: 13, color: "#9CA3AF" }}>—</span>
+        <input
+          type="date"
+          value={to}
+          min={from || undefined}
+          onChange={(e) => setTo(e.target.value)}
+          title="Tugash sanasi"
+          style={dateInputStyle}
+        />
+        {(from || to) && (
+          <button
+            onClick={() => { setFrom(""); setTo(""); }}
+            style={{
+              fontSize: 13, color: "#6B7280", padding: "5px 10px", borderRadius: 8,
+              border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer",
+            }}
+          >
+            Tozalash
+          </button>
+        )}
         <span style={{ marginLeft: "auto", fontSize: 12, color: "#9CA3AF" }}>{movements.length} ta yozuv</span>
       </div>
 

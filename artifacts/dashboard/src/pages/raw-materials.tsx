@@ -152,6 +152,7 @@ type RawMovement = {
   note: string;
   createdBy: string;
   createdAt: string;
+  balanceAfter: number | null;
 };
 
 function useRawHistory(name: string | null) {
@@ -168,7 +169,7 @@ function useRawHistory(name: string | null) {
   });
 }
 
-function RawHistoryRow({ name }: { name: string }) {
+function RawHistoryRow({ name, unit }: { name: string; unit: string }) {
   const { data: moves = [], isLoading } = useRawHistory(name);
   return (
     <TableRow className="bg-muted/30 hover:bg-muted/30">
@@ -194,6 +195,11 @@ function RawHistoryRow({ name }: { name: string }) {
                   <span className={`font-medium ${isIn ? "text-green-700" : "text-red-700"}`}>
                     {isIn ? "+" : "−"}{mv.quantity.toLocaleString("ru-RU")}
                   </span>
+                  {mv.balanceAfter != null && (
+                    <span className="font-medium text-foreground whitespace-nowrap">
+                      → {mv.balanceAfter.toLocaleString("ru-RU")} {unit}
+                    </span>
+                  )}
                   {mv.note && <span className="text-muted-foreground">· {mv.note}</span>}
                   <span className="text-muted-foreground ml-auto whitespace-nowrap">
                     {mv.createdBy || "—"} · {formatDateTime(mv.createdAt)}
@@ -694,7 +700,7 @@ export default function RawMaterials() {
                       </div>
                     </TableCell>
                   </TableRow>
-                  {historyId === m.id && <RawHistoryRow name={m.name} />}
+                  {historyId === m.id && <RawHistoryRow name={m.name} unit={m.unitType} />}
                   </Fragment>
                 );
               })

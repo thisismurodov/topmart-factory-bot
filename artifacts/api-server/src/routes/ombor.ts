@@ -648,6 +648,32 @@ router.get("/ombor/movements", async (req, res): Promise<void> => {
     params,
   );
 
+  // Running stock balance per raw material. For a single-material raw history
+  // we anchor the newest movement to the material's live current_stock, then
+  // walk backward subtracting each movement's signed delta. This guarantees the
+  // most recent row matches current stock (BOM consumption changes current_stock
+  // without a movement row, so a forward-summed ledger would drift; anchoring at
+  // the live value avoids that). Only computed for a specific raw material whose
+  // newest movement is guaranteed present (no upper date bound excluding it).
+  let balances: Record<number, number> | null = null;
+  if (typeFilter === "raw" && prodFilter && !toFilter && rows.length) {
+    const stockRes = await pool.query(
+      "SELECT current_stock FROM raw_materials WHERE name = $1 LIMIT 1",
+      [prodFilter],
+    );
+    if (stockRes.rows.length) {
+      balances = {};
+      // rows are newest-first; walk from the top anchoring at current_stock.
+      let running = Number(stockRes.rows[0].current_stock) || 0;
+      for (const r of rows) {
+        balances[r.id] = running;
+        const qty = Number(r.quantity) || 0;
+        const signed = r.movement_type === "OUT" ? -qty : qty;
+        running -= signed;
+      }
+    }
+  }
+
   res.json(rows.map((r) => ({
     id:            r.id,
     product:       r.product,
@@ -659,6 +685,7 @@ router.get("/ombor/movements", async (req, res): Promise<void> => {
     note:          r.note || "",
     createdBy:     r.created_by || "",
     createdAt:     r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
+    balanceAfter:  balances ? balances[r.id] ?? null : null,
   })));
 });
 

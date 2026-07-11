@@ -4,8 +4,8 @@ import { z } from "zod/v4";
 
 export const workersTable = pgTable("workers", {
   name: text("name").primaryKey(),
-  prefix: text("prefix").notNull(),
-  phone: text("phone").notNull(),
+  prefix: text("prefix").notNull().default(""),
+  phone: text("phone").notNull().default(""),
   role: text("role").notNull().default("worker"),
 });
 

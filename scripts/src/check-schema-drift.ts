@@ -1,6 +1,8 @@
 import { execFileSync } from "node:child_process";
 import path from "node:path";
-import { getTableColumns } from "drizzle-orm";
+import { getTableColumns, is, SQL } from "drizzle-orm";
+import type { Column } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import pg from "pg";
 import {
   adminUsersTable,
@@ -46,7 +48,9 @@ import {
 // db_meta, admin_sessions, audit_logs, ai_analysis_runs, sale_items,
 // sale_payments, sale_events, sales_products, sales_product_tiers,
 // sale_products, line_role_config — bu yerga KIRMAYDI (kanonik sxema yo'q).
-const DRIFT_DB = "schema_drift_check";
+// Parallel validation'lar bir-birining bazasini DROP qilmasligi uchun nom
+// har bir ishga tushirishda unikal (pid + timestamp).
+const DRIFT_DB = `schema_drift_check_${process.pid}_${Date.now()}`;
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 
 const TABLES = {
@@ -104,6 +108,59 @@ function normalizeType(sqlType: string): string {
   }
 }
 
+const NUMERIC_TYPES = new Set([
+  "integer",
+  "bigint",
+  "smallint",
+  "numeric",
+  "double precision",
+  "real",
+]);
+
+// information_schema.columns.column_default → kanonik shakl.
+// Misollar: `'UZS'::text` → `'UZS'`, `0.00` → `0`, `now()` → `now()`,
+// `nextval('..._seq'::regclass)` → `nextval`, `true` → `true`.
+function normalizeRuntimeDefault(raw: string | null): string | null {
+  if (raw == null) return null;
+  let s = raw.trim();
+  if (/^nextval\(/i.test(s)) return "nextval";
+  // `::type` cast qo'shimchalarini olib tashlash (masalan `'UZS'::character varying`)
+  s = s.replace(/::"?[a-z_][a-z0-9_ ]*"?(\(\s*\d+(\s*,\s*\d+)?\s*\))?/gi, "").trim();
+  while (s.startsWith("(") && s.endsWith(")")) s = s.slice(1, -1).trim();
+  const lower = s.toLowerCase();
+  if (lower === "now()" || lower === "current_timestamp") return "now()";
+  if (lower === "true") return "true";
+  if (lower === "false") return "false";
+  if (s.startsWith("'") && s.endsWith("'") && s.length >= 2) {
+    return `'${s.slice(1, -1).replace(/''/g, "'")}'`;
+  }
+  if (/^-?\d+(\.\d+)?$/.test(s)) return String(Number(s));
+  return lower;
+}
+
+// Drizzle ustunining default'i → xuddi shu kanonik shakl.
+function normalizeDrizzleDefault(c: Column): string | null {
+  const sqlType = c.getSQLType().toLowerCase();
+  if (sqlType.startsWith("serial") || sqlType.startsWith("bigserial")) return "nextval";
+  if (!c.hasDefault) return null;
+  const d = c.default;
+  // $defaultFn / $onUpdate — faqat ilova darajasida, DB default emas
+  if (d === undefined) return null;
+  if (is(d, SQL)) {
+    return normalizeRuntimeDefault(new PgDialect().sqlToQuery(d).sql);
+  }
+  if (typeof d === "boolean") return d ? "true" : "false";
+  if (typeof d === "number") return String(d);
+  if (typeof d === "string") {
+    // Raqamli ustunlarda Drizzle default satr bo'ladi (`.default("0")`)
+    if (NUMERIC_TYPES.has(normalizeType(sqlType)) && /^-?\d+(\.\d+)?$/.test(d)) {
+      return String(Number(d));
+    }
+    return `'${d}'`;
+  }
+  return String(d);
+}
+
 function withDatabase(url: string, dbName: string): string {
   const u = new URL(url);
   u.pathname = `/${dbName}`;
@@ -148,7 +205,11 @@ async function main(): Promise<void> {
     const expected = new Map(
       Object.values(getTableColumns(table)).map((c) => [
         c.name,
-        { type: normalizeType(c.getSQLType()), notNull: c.notNull },
+        {
+          type: normalizeType(c.getSQLType()),
+          notNull: c.notNull,
+          def: normalizeDrizzleDefault(c),
+        },
       ]),
     );
 
@@ -156,8 +217,9 @@ async function main(): Promise<void> {
       column_name: string;
       data_type: string;
       is_nullable: string;
+      column_default: string | null;
     }>(
-      `SELECT column_name, data_type, is_nullable FROM information_schema.columns
+      `SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns
         WHERE table_schema = 'public' AND table_name = $1`,
       [tableName],
     );
@@ -171,7 +233,11 @@ async function main(): Promise<void> {
     const actual = new Map(
       rows.map((r) => [
         r.column_name,
-        { type: r.data_type.toLowerCase(), notNull: r.is_nullable.toUpperCase() === "NO" },
+        {
+          type: r.data_type.toLowerCase(),
+          notNull: r.is_nullable.toUpperCase() === "NO",
+          def: normalizeRuntimeDefault(r.column_default),
+        },
       ]),
     );
 
@@ -188,8 +254,20 @@ async function main(): Promise<void> {
             actual.get(name)!.notNull ? "NOT NULL" : "nullable"
           })`,
       );
+    const defaultMismatch = [...expected.entries()]
+      .filter(([name, e]) => actual.has(name) && actual.get(name)!.def !== e.def)
+      .map(
+        ([name, e]) =>
+          `${name} (Drizzle: ${e.def ?? "yo'q"}, runtime: ${actual.get(name)!.def ?? "yo'q"})`,
+      );
 
-    if (missing.length || extra.length || typeMismatch.length || nullMismatch.length) {
+    if (
+      missing.length ||
+      extra.length ||
+      typeMismatch.length ||
+      nullMismatch.length ||
+      defaultMismatch.length
+    ) {
       if (missing.length)
         console.error(`✗ ${tableName}: runtime DDL'da yo'q ustun(lar): ${missing.join(", ")}`);
       if (extra.length)
@@ -198,9 +276,13 @@ async function main(): Promise<void> {
         console.error(`✗ ${tableName}: tur mos emas: ${typeMismatch.join("; ")}`);
       if (nullMismatch.length)
         console.error(`✗ ${tableName}: nullability mos emas: ${nullMismatch.join("; ")}`);
+      if (defaultMismatch.length)
+        console.error(`✗ ${tableName}: default mos emas: ${defaultMismatch.join("; ")}`);
       drift = true;
     } else {
-      console.log(`✓ ${tableName}: ${expected.size} ustun mos (nom + tur + nullability)`);
+      console.log(
+        `✓ ${tableName}: ${expected.size} ustun mos (nom + tur + nullability + default)`,
+      );
     }
   }
 

@@ -9,19 +9,20 @@ import pg from "pg";
 // Distribution-bot fresh-database boot guard.
 //
 // The distribution (savdo/agent) bot runs on its own `distribution` Postgres
-// schema through a SQLite→psycopg2 shim. This test mirrors the factory
-// fresh-db-boot guard: it creates a genuinely EMPTY throwaway database on the
-// same server, brings the `distribution` schema up using ONLY the real bot
-// init code (`main.init_db()` — exactly what runs at bot startup), and then:
+// schema through a native psycopg2 pool (`database/` package). This test
+// mirrors the factory fresh-db-boot guard: it creates a genuinely EMPTY
+// throwaway database on the same server, brings the `distribution` schema up
+// using ONLY the real bot init code (`main.init_db()` — exactly what runs at
+// bot startup), and then:
 //
 //   1. asserts every table the bot's SQL references (auto-extracted from
 //      main.py source) actually exists after init,
 //   2. asserts every column the bot's queries depend on exists,
 //   3. asserts the `users` column ORDER (the bot does `SELECT * FROM users`
 //      and indexes rows positionally — u[3] must be `role`),
-//   4. exercises a full sale flow end-to-end THROUGH the real shim
-//      (get_db / ?-params / lastrowid-RETURNING / update_balans_delta),
-//      so a shim or schema regression fails loudly here instead of in prod.
+//   4. exercises a full sale flow end-to-end THROUGH the real database layer
+//      (pooled get_db / native %s params / RETURNING id / update_balans_delta),
+//      so a schema or db-layer regression fails loudly here instead of in prod.
 //
 // Why a throwaway DATABASE (not just a schema): mirrors the factory guard and
 // guarantees zero leakage onto real `distribution` data; the DB is dropped in
@@ -33,7 +34,7 @@ const { Client } = pg;
 const adminUrl = process.env.RAILWAY_DATABASE_URL || process.env.DATABASE_URL;
 if (!adminUrl) throw new Error("RAILWAY_DATABASE_URL or DATABASE_URL must be set to run these tests");
 
-const TMP_DB = `topmart_dist_freshboot_${process.pid}`;
+const TMP_DB = `topmart_dist_freshboot_${process.pid}_${Date.now()}`;
 const ssl = { rejectUnauthorized: false } as const;
 
 function tmpUrl(): string {
@@ -137,6 +138,38 @@ const NOT_TABLES = new Set([
   "set",                // "… DO UPDATE SET …"
 ]);
 
+describe("Distribution bot: no SQLite-isms remain in the PostgreSQL layer", () => {
+  it("no '?' placeholders in execute() literals, no .lastrowid, anywhere in bot code", () => {
+    // AST-based guard (regex would false-positive on Uzbek '?' in messages).
+    // Scans main.py AND every database/*.py module.
+    const py = `
+import ast, glob, json, sys
+bad = []
+for path in ["main.py"] + sorted(glob.glob("database/*.py")):
+    src = open(path).read()
+    if ".lastrowid" in src:
+        bad.append(f"{path}: uses .lastrowid (use RETURNING id)")
+    tree = ast.parse(src)
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr in ("execute", "executemany") and node.args):
+            a = node.args[0]
+            if isinstance(a, ast.Constant) and isinstance(a.value, str) and "?" in a.value:
+                bad.append(f"{path}:{a.lineno}: '?' placeholder in SQL literal")
+    # dynamic SQL fragments assembled outside execute()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            v = node.value
+            if ("=?" in v and "%s" not in v) or "IN (?" in v.upper():
+                bad.append(f"{path}:{getattr(node,'lineno','?')}: suspicious '?' SQL fragment: {v[:60]!r}")
+print(json.dumps(bad))
+`;
+    const out = execFileSync("python3", ["-c", py], { cwd: botDir, stdio: "pipe" }).toString().trim();
+    const bad = JSON.parse(out.split("\n").pop()!) as string[];
+    expect(bad, `SQLite-era SQL found:\n${bad.join("\n")}`).toEqual([]);
+  });
+});
+
 describe("Distribution bot: fresh DB boots via init_db() alone", () => {
   it("bot init_db() completes without error on a brand-new database", () => {
     const detail =
@@ -201,35 +234,35 @@ describe("Distribution bot: fresh DB boots via init_db() alone", () => {
   });
 });
 
-describe("Distribution sale flow end-to-end through the real shim on a fresh DB", () => {
+describe("Distribution sale flow end-to-end through the real db layer on a fresh DB", () => {
   it("insert agent → dokon → sale (+items, nasiya, balans) via bot code and read back", async () => {
-    // Runs INSIDE the bot's own runtime: main.get_db() (search_path shim),
-    // ?→%s translation, auto "RETURNING id"/lastrowid, update_balans_delta's
+    // Runs INSIDE the bot's own runtime: pooled main.get_db() (search_path set
+    // per connection), native %s params, RETURNING id, update_balans_delta's
     // ON CONFLICT upsert, and get_balans/get_user helpers.
     const py = `
 import json, main
 conn = main.get_db(); c = conn.cursor()
-c.execute("INSERT INTO users (telegram_id,name,role,viloyat,created_at) VALUES (?,?,?,?,?)",
+c.execute("INSERT INTO users (telegram_id,name,role,viloyat,created_at) VALUES (%s,%s,%s,%s,%s)",
           (111, "Fresh Test Agent", "agent", "Toshkent", "2026-07-11 10:00:00"))
-c.execute("INSERT INTO dokonlar (nomi,egasi,telefon,viloyat,hudud,agent_id,holat,created_at) VALUES (?,?,?,?,?,?,?,?)",
+c.execute("INSERT INTO dokonlar (nomi,egasi,telefon,viloyat,hudud,agent_id,holat,created_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
           ("Fresh Test Dokon", "Egasi", "+998900000000", "Toshkent", "Chilonzor", 111, "faol", "2026-07-11 10:01:00"))
-dokon_id = c.lastrowid
-c.execute("INSERT INTO mahsulotlar (nomi,narx,birlik,faol) VALUES (?,?,?,?)", ("Arqon 5mm", 12000, "dona", 1))
-mid = c.lastrowid
-c.execute("INSERT INTO savdolar (dokon_id,agent_id,jami_summa,tolov_turi,created_at) VALUES (?,?,?,?,?)",
+dokon_id = c.fetchone()[0]
+c.execute("INSERT INTO mahsulotlar (nomi,narx,birlik,faol) VALUES (%s,%s,%s,%s) RETURNING id", ("Arqon 5mm", 12000, "dona", 1))
+mid = c.fetchone()[0]
+c.execute("INSERT INTO savdolar (dokon_id,agent_id,jami_summa,tolov_turi,created_at) VALUES (%s,%s,%s,%s,%s) RETURNING id",
           (dokon_id, 111, 24000, "nasiya", "2026-07-11 10:05:00"))
-sid = c.lastrowid
-c.execute("INSERT INTO savdo_tafsilot (savdo_id,mahsulot_id,miqdor,narx,summa) VALUES (?,?,?,?,?)",
+sid = c.fetchone()[0]
+c.execute("INSERT INTO savdo_tafsilot (savdo_id,mahsulot_id,miqdor,narx,summa) VALUES (%s,%s,%s,%s,%s)",
           (sid, mid, 2, 12000, 24000))
-c.execute("INSERT INTO nasiya (dokon_id,agent_id,savdo_id,jami_summa,tolangan,qoldiq,created_at) VALUES (?,?,?,?,?,?,?)",
+c.execute("INSERT INTO nasiya (dokon_id,agent_id,savdo_id,jami_summa,tolangan,qoldiq,created_at) VALUES (%s,%s,%s,%s,%s,%s,%s)",
           (dokon_id, 111, sid, 24000, 0, 24000, "2026-07-11 10:05:00"))
 main.update_balans_delta(c, dokon_id, -24000)
 conn.commit()
-c.execute("SELECT jami_summa FROM savdolar WHERE id=?", (sid,))
+c.execute("SELECT jami_summa FROM savdolar WHERE id=%s", (sid,))
 jami = c.fetchone()[0]
-c.execute("SELECT COUNT(*), COALESCE(SUM(st.summa),0) FROM savdo_tafsilot st JOIN savdolar s ON st.savdo_id=s.id WHERE s.dokon_id=?", (dokon_id,))
+c.execute("SELECT COUNT(*), COALESCE(SUM(st.summa),0) FROM savdo_tafsilot st JOIN savdolar s ON st.savdo_id=s.id WHERE s.dokon_id=%s", (dokon_id,))
 cnt, total = c.fetchone()
-c.execute("SELECT COALESCE(SUM(qoldiq),0) FROM nasiya WHERE dokon_id=?", (dokon_id,))
+c.execute("SELECT COALESCE(SUM(qoldiq),0) FROM nasiya WHERE dokon_id=%s", (dokon_id,))
 qoldiq = c.fetchone()[0]
 conn.close()
 u = main.get_user(111)
@@ -245,7 +278,7 @@ print(json.dumps({
       .trim();
     const r = JSON.parse(out.split("\n").pop()!);
 
-    expect(r.sid).toBeGreaterThan(0);       // lastrowid via auto-RETURNING shim
+    expect(r.sid).toBeGreaterThan(0);       // native RETURNING id
     expect(r.dokon_id).toBeGreaterThan(0);
     expect(r.jami).toBe(24000);
     expect(r.items).toBe(1);

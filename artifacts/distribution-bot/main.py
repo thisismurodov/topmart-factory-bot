@@ -2,7 +2,6 @@ import os
 import telebot
 from telebot import types
 import psycopg2
-import re
 import csv
 import io
 import threading
@@ -19,192 +18,50 @@ if _admin_env:
 else:
     ADMIN_IDS = [1261052681]
 
-bot = telebot.TeleBot(TOKEN)
-DB_URL = os.environ.get("RAILWAY_DATABASE_URL") or os.environ.get("DATABASE_URL")
-if not DB_URL:
-    raise RuntimeError("RAILWAY_DATABASE_URL or DATABASE_URL must be set")
-_DB_SSL = bool(os.environ.get("RAILWAY_DATABASE_URL"))
+import logging
 
-_INIT_DDL = """
-CREATE SCHEMA IF NOT EXISTS distribution;
-CREATE TABLE IF NOT EXISTS distribution.users (
-    id SERIAL PRIMARY KEY, telegram_id BIGINT UNIQUE, name TEXT,
-    role TEXT DEFAULT 'agent', viloyat TEXT, created_at TEXT
-);
-CREATE TABLE IF NOT EXISTS distribution.dokonlar (
-    id SERIAL PRIMARY KEY, nomi TEXT, egasi TEXT, telefon TEXT, viloyat TEXT,
-    hudud TEXT, latitude DOUBLE PRECISION, longitude DOUBLE PRECISION, foto TEXT,
-    agent_id BIGINT, holat TEXT DEFAULT 'faol', created_at TEXT, owner_telegram_id BIGINT,
-    first_order_date TEXT, last_order_date TEXT, total_orders INTEGER DEFAULT 0,
-    repeat_orders INTEGER DEFAULT 0, total_sales BIGINT DEFAULT 0, avg_repeat_days DOUBLE PRECISION DEFAULT 0
-);
-CREATE TABLE IF NOT EXISTS distribution.mahsulotlar (
-    id SERIAL PRIMARY KEY, nomi TEXT, narx BIGINT, birlik TEXT DEFAULT 'dona', faol INTEGER DEFAULT 1
-);
-CREATE TABLE IF NOT EXISTS distribution.savdolar (
-    id SERIAL PRIMARY KEY, dokon_id BIGINT, agent_id BIGINT, jami_summa BIGINT,
-    tolov_turi TEXT, foto TEXT, created_at TEXT
-);
-CREATE TABLE IF NOT EXISTS distribution.savdo_tafsilot (
-    id SERIAL PRIMARY KEY, savdo_id BIGINT, mahsulot_id BIGINT, miqdor INTEGER, narx BIGINT, summa BIGINT
-);
-CREATE TABLE IF NOT EXISTS distribution.olmagan_dokonlar (
-    id SERIAL PRIMARY KEY, dokon_id BIGINT, agent_id BIGINT, sabab TEXT, sabab_text TEXT,
-    latitude DOUBLE PRECISION, longitude DOUBLE PRECISION, qaytish_sanasi TEXT,
-    bajarildi INTEGER DEFAULT 0, created_at TEXT, foto TEXT
-);
-CREATE TABLE IF NOT EXISTS distribution.pul_olish (
-    id SERIAL PRIMARY KEY, dokon_id BIGINT, agent_id BIGINT, summa BIGINT, created_at TEXT
-);
-CREATE TABLE IF NOT EXISTS distribution.nasiya (
-    id SERIAL PRIMARY KEY, dokon_id BIGINT, agent_id BIGINT, savdo_id BIGINT, jami_summa BIGINT,
-    tolangan BIGINT DEFAULT 0, qoldiq BIGINT, created_at TEXT, updated_at TEXT
-);
-CREATE TABLE IF NOT EXISTS distribution.mijoz_balans (
-    id SERIAL PRIMARY KEY, dokon_id BIGINT UNIQUE, balans BIGINT DEFAULT 0
-);
-CREATE TABLE IF NOT EXISTS distribution.revisitlar (
-    id SERIAL PRIMARY KEY, dokon_id BIGINT, agent_id BIGINT, last_order_date TEXT,
-    revisit_date TEXT, status TEXT DEFAULT 'pending', created_at TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_revisit_pending ON distribution.revisitlar (revisit_date, status);
-CREATE TABLE IF NOT EXISTS distribution.agent_plans (
-    id SERIAL PRIMARY KEY, agent_id BIGINT, oy TEXT, savdo_plan BIGINT DEFAULT 0,
-    dokon_plan INTEGER DEFAULT 0, created_at TEXT
-);
-CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_plans_agent_oy ON distribution.agent_plans (agent_id, oy);
-CREATE TABLE IF NOT EXISTS distribution.delivery_agents (
-    id SERIAL PRIMARY KEY, name TEXT NOT NULL, telefon TEXT, tugilgan_kun TEXT,
-    mashina_turi TEXT, mashina_nomeri TEXT, hudud TEXT, telegram_id BIGINT,
-    faol INTEGER DEFAULT 1, created_at TEXT
-);
-CREATE TABLE IF NOT EXISTS distribution.delivery_routes (
-    id SERIAL PRIMARY KEY, delivery_agent_id BIGINT NOT NULL, kun INTEGER NOT NULL,
-    dokon_id BIGINT NOT NULL, tartib INTEGER DEFAULT 0, created_at TEXT, added_by_dlv INTEGER DEFAULT 0
-);
-CREATE UNIQUE INDEX IF NOT EXISTS uq_routes_agent_kun_dokon ON distribution.delivery_routes (delivery_agent_id, kun, dokon_id);
-CREATE INDEX IF NOT EXISTS idx_routes_agent_day ON distribution.delivery_routes (delivery_agent_id, kun);
-"""
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+log = logging.getLogger("distribution.bot")
 
-def _raw_connect():
-    kw = {"dsn": DB_URL}
-    if _DB_SSL:
-        kw["sslmode"] = "require"
-    conn = psycopg2.connect(**kw)
-    cur = conn.cursor()
-    cur.execute("SET search_path TO distribution, public")
-    conn.commit()
-    cur.close()
-    return conn
+from database import get_db, init_db, transaction, DatabaseUnavailable
 
-def init_db():
-    conn = _raw_connect()
-    try:
-        cur = conn.cursor()
-        cur.execute(_INIT_DDL)
-        conn.commit()
-        cur.close()
-    finally:
-        conn.close()
+# --- Global DB error handling -------------------------------------------
+# PostgreSQL vaqtincha ulanmasa: foydalanuvchiga tushunarli xabar, log yoziladi,
+# bot ishlashda davom etadi (polling to'xtamaydi).
+DB_ERROR_MSG = "\u26a0\ufe0f Ma'lumotlar bazasi bilan vaqtincha aloqa yo'q. Iltimos, birozdan so'ng qayta urinib ko'ring."
 
-# --- SQLite -> psycopg2 compatibility shim -------------------------------
-# The original bot was written for sqlite3 (qmark paramstyle, cursor.lastrowid).
-# These wrappers translate "?" -> "%s", auto-append RETURNING id so lastrowid
-# keeps working, and escape literal "%" when params are supplied.
-_INSERT_RE = re.compile(r"^\s*INSERT\s+INTO", re.IGNORECASE)
-
-def _translate(sql, params):
-    if params:
-        sql = sql.replace("%", "%%").replace("?", "%s")
-    else:
-        sql = sql.replace("?", "%s")
-    return sql
-
-class _Cur:
-    def __init__(self, cur):
-        self._cur = cur
-        self.lastrowid = None
-
-    def execute(self, sql, params=None):
-        s = _translate(sql, params)
-        auto = bool(_INSERT_RE.match(s)) and "RETURNING" not in s.upper()
-        if auto:
-            s = s.rstrip().rstrip(";") + " RETURNING id"
-        self._cur.execute(s, params if params else None)
-        if auto:
+def _wrap_db_errors(fn):
+    def inner(msg, *a, **k):
+        try:
+            return fn(msg, *a, **k)
+        except (DatabaseUnavailable, psycopg2.Error) as e:
+            log.exception("DB error in handler %s: %s", getattr(fn, "__name__", "?"), e)
             try:
-                r = self._cur.fetchone()
-                self.lastrowid = r[0] if r else None
+                uid = getattr(getattr(msg, "from_user", None), "id", None)
+                if uid:
+                    bot.send_message(uid, DB_ERROR_MSG)
             except Exception:
-                self.lastrowid = None
-        return self
+                pass
+    inner.__name__ = getattr(fn, "__name__", "handler")
+    return inner
 
-    def executemany(self, sql, seq):
-        self._cur.executemany(_translate(sql, (1,)), seq)
-        return self
+class SafeTeleBot(telebot.TeleBot):
+    def message_handler(self, *a, **k):
+        parent = super().message_handler(*a, **k)
+        def deco(fn):
+            return parent(_wrap_db_errors(fn))
+        return deco
 
-    def fetchone(self):
-        return self._cur.fetchone()
-
-    def fetchall(self):
-        return self._cur.fetchall()
-
-    @property
-    def rowcount(self):
-        return self._cur.rowcount
-
-    @property
-    def description(self):
-        return self._cur.description
-
-    def close(self):
-        try:
-            self._cur.close()
-        except Exception:
-            pass
-
-class _Conn:
-    def __init__(self, conn):
-        self._conn = conn
-
-    def cursor(self):
-        return _Cur(self._conn.cursor())
-
-    def execute(self, sql, params=None):
-        cur = self.cursor()
-        cur.execute(sql, params)
-        return cur
-
-    def commit(self):
-        self._conn.commit()
-
-    def rollback(self):
-        try:
-            self._conn.rollback()
-        except Exception:
-            pass
-
-    def close(self):
-        try:
-            self._conn.close()
-        except Exception:
-            pass
-
-def get_db(): return _Conn(_raw_connect())
+bot = SafeTeleBot(TOKEN)
 user_state = {}
 def set_state(uid,s,d=None): user_state[uid]={"state":s,"data":d or {}}
 def get_state(uid): return user_state.get(uid,{"state":None,"data":{}})
 def clear_state(uid): user_state.pop(uid,None)
-def get_balans(dokon_id):
-    conn=get_db();c=conn.cursor()
-    c.execute("SELECT balans FROM mijoz_balans WHERE dokon_id=?",(dokon_id,))
-    row=c.fetchone(); conn.close(); return row[0] if row else 0
-def update_balans_delta(c,dokon_id,delta):
-    c.execute("INSERT INTO mijoz_balans (dokon_id,balans) VALUES (?,?) ON CONFLICT(dokon_id) DO UPDATE SET balans=mijoz_balans.balans+?",(dokon_id,delta,delta))
-def get_user(tid):
-    conn=get_db();c=conn.cursor()
-    c.execute("SELECT * FROM users WHERE telegram_id=?",(tid,))
-    r=c.fetchone();conn.close();return r
+from database import (
+    get_user, get_balans, update_balans_delta, apply_balans_delta,
+    update_dokon_repeat, create_sale, record_pul_olish, pay_nasiya_fifo,
+    get_admin_telegram_ids,
+)
 def is_admin(tid):
     if tid in ADMIN_IDS: return True
     u=get_user(tid); return u and u[3]=="admin"
@@ -212,12 +69,9 @@ def all_admin_ids():
     """Env ADMIN_IDS + DB role='admin' users (de-duplicated)."""
     ids=set(ADMIN_IDS)
     try:
-        conn=get_db();c=conn.cursor()
-        c.execute("SELECT telegram_id FROM users WHERE role='admin'")
-        for (tid,) in c.fetchall():
-            if tid: ids.add(tid)
-        conn.close()
-    except: pass
+        for tid in get_admin_telegram_ids(): ids.add(tid)
+    except Exception as e:
+        log.warning("all_admin_ids DB lookup failed: %s", e)
     return ids
 def notify_admins(text=None, photo=None, caption=None):
     """Send a notification to every admin (env + DB)."""
@@ -288,7 +142,7 @@ def _build_lost_dokons_report(scope_agent_id=None):
         c.execute("""SELECT d.id,d.nomi,d.viloyat,d.hudud,d.last_order_date,d.created_at,d.agent_id,
                             COALESCE(u.name,'—'),d.total_orders
                      FROM dokonlar d LEFT JOIN users u ON u.telegram_id=d.agent_id
-                     WHERE d.holat='faol' AND d.agent_id=?""",(scope_agent_id,))
+                     WHERE d.holat='faol' AND d.agent_id=%s""",(scope_agent_id,))
     else:
         c.execute("""SELECT d.id,d.nomi,d.viloyat,d.hudud,d.last_order_date,d.created_at,d.agent_id,
                             COALESCE(u.name,'—'),d.total_orders
@@ -371,7 +225,7 @@ def _build_old_nasiya_report(scope_agent_id=None):
             LEFT JOIN users u ON u.telegram_id=n.agent_id
             WHERE n.qoldiq>0"""
     if scope_agent_id:
-        c.execute(base+" AND n.agent_id=?",(scope_agent_id,))
+        c.execute(base+" AND n.agent_id=%s",(scope_agent_id,))
     else:
         c.execute(base)
     rows=c.fetchall(); conn.close()
@@ -454,19 +308,19 @@ def _build_monthly_rating(oy=None):
                         COALESCE(SUM(s.jami_summa),0) as savdo,
                         COUNT(DISTINCT s.id) as savdo_n
                  FROM users u
-                 LEFT JOIN savdolar s ON s.agent_id=u.telegram_id AND substr(s.created_at,1,7)=?
+                 LEFT JOIN savdolar s ON s.agent_id=u.telegram_id AND substr(s.created_at,1,7)=%s
                  WHERE u.role IN ('agent','supervisor')
                  GROUP BY u.telegram_id,u.name,u.viloyat ORDER BY savdo DESC""",(oy,))
     by_savdo=c.fetchall()
     c.execute("""SELECT u.telegram_id,u.name,COUNT(d.id) as dn
                  FROM users u
-                 LEFT JOIN dokonlar d ON d.agent_id=u.telegram_id AND substr(d.created_at,1,7)=?
+                 LEFT JOIN dokonlar d ON d.agent_id=u.telegram_id AND substr(d.created_at,1,7)=%s
                  WHERE u.role IN ('agent','supervisor')
                  GROUP BY u.telegram_id,u.name ORDER BY dn DESC""",(oy,))
     by_dokon=c.fetchall()
     c.execute("""SELECT u.telegram_id,u.name,COALESCE(SUM(p.summa),0) as inkasso
                  FROM users u
-                 LEFT JOIN pul_olish p ON p.agent_id=u.telegram_id AND substr(p.created_at,1,7)=?
+                 LEFT JOIN pul_olish p ON p.agent_id=u.telegram_id AND substr(p.created_at,1,7)=%s
                  WHERE u.role IN ('agent','supervisor')
                  GROUP BY u.telegram_id,u.name ORDER BY inkasso DESC""",(oy,))
     by_inkasso=c.fetchall()
@@ -606,11 +460,11 @@ def dlv_add_step(msg):
     conn=get_db();c=conn.cursor()
     c.execute("""INSERT INTO delivery_agents
                  (name,telefon,tugilgan_kun,mashina_turi,mashina_nomeri,hudud,created_at)
-                 VALUES (?,?,?,?,?,?,?)""",
+                 VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
               (data["name"],data["telefon"],data["tugilgan_kun"],
                data["mashina_turi"],data["mashina_nomeri"],data["hudud"],
                datetime.now().isoformat()))
-    new_id=c.lastrowid
+    new_id=c.fetchone()[0]
     conn.commit(); conn.close()
     set_state(uid,None,{})
     summary=(f"✅ DELIVERY AGENT QO'SHILDI!\n{'━'*26}\n"
@@ -642,12 +496,12 @@ def dlv_after_create(msg):
 # ─── HAFTALIK MARSHRUT ───
 def _route_count(dlv_id, kun):
     conn=get_db();c=conn.cursor()
-    c.execute("SELECT COUNT(*) FROM delivery_routes WHERE delivery_agent_id=? AND kun=?",(dlv_id,kun))
+    c.execute("SELECT COUNT(*) FROM delivery_routes WHERE delivery_agent_id=%s AND kun=%s",(dlv_id,kun))
     n=c.fetchone()[0]; conn.close(); return n
 
 def _route_dokon_ids(dlv_id, kun):
     conn=get_db();c=conn.cursor()
-    c.execute("SELECT dokon_id FROM delivery_routes WHERE delivery_agent_id=? AND kun=?",(dlv_id,kun))
+    c.execute("SELECT dokon_id FROM delivery_routes WHERE delivery_agent_id=%s AND kun=%s",(dlv_id,kun))
     ids=[r[0] for r in c.fetchall()]; conn.close(); return ids
 
 def _start_route_day_picker(uid, dlv_id, dlv_name):
@@ -695,7 +549,7 @@ def rt_pick_agent(msg):
     try: dlv_id=int(txt[1:].split("||")[0])
     except: return
     conn=get_db();c=conn.cursor()
-    c.execute("SELECT name FROM delivery_agents WHERE id=?",(dlv_id,))
+    c.execute("SELECT name FROM delivery_agents WHERE id=%s",(dlv_id,))
     r=c.fetchone(); conn.close()
     if not r: return
     _start_route_day_picker(uid, dlv_id, r[0])
@@ -751,8 +605,8 @@ def rt_pick_viloyat(msg):
     conn=get_db();c=conn.cursor()
     c.execute("""SELECT COALESCE(NULLIF(hudud,''),'— Noma''lum') as h, COUNT(*) as n
                  FROM dokonlar
-                 WHERE holat='faol' AND (viloyat=? OR (viloyat IS NULL AND ?='— Noma''lum')
-                                          OR (viloyat='' AND ?='— Noma''lum'))
+                 WHERE holat='faol' AND (viloyat=%s OR (viloyat IS NULL AND %s='— Noma''lum')
+                                          OR (viloyat='' AND %s='— Noma''lum'))
                  GROUP BY h ORDER BY n DESC""",(vil,vil,vil))
     huds=c.fetchall(); conn.close()
     kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=2)
@@ -787,8 +641,8 @@ def _show_route_dokon_picker(uid):
     conn=get_db();c=conn.cursor()
     c.execute("""SELECT id,nomi,egasi,telefon,latitude,longitude FROM dokonlar
                  WHERE holat='faol'
-                   AND (viloyat=? OR (viloyat IS NULL AND ?='— Noma''lum') OR (viloyat='' AND ?='— Noma''lum'))
-                   AND (hudud=? OR (hudud IS NULL AND ?='— Noma''lum') OR (hudud='' AND ?='— Noma''lum'))
+                   AND (viloyat=%s OR (viloyat IS NULL AND %s='— Noma''lum') OR (viloyat='' AND %s='— Noma''lum'))
+                   AND (hudud=%s OR (hudud IS NULL AND %s='— Noma''lum') OR (hudud='' AND %s='— Noma''lum'))
                  ORDER BY nomi""",(vil,vil,vil,hud,hud,hud))
     rows=c.fetchall(); conn.close()
     available=[r for r in rows if r[0] not in already]
@@ -826,7 +680,7 @@ def rt_pick_dokon(msg):
     if _route_count(dlv_id,kun)>=20:
         bot.send_message(uid,"❗ 20 ta dokon to'ldi. ✅ Marshrutni yakunlash ni bosing."); return
     conn=get_db();c=conn.cursor()
-    c.execute("SELECT id,nomi,egasi,telefon,hudud,latitude,longitude FROM dokonlar WHERE id=?",(did,))
+    c.execute("SELECT id,nomi,egasi,telefon,hudud,latitude,longitude FROM dokonlar WHERE id=%s",(did,))
     d=c.fetchone()
     if not d: conn.close(); return
     # Insert into route
@@ -834,7 +688,7 @@ def rt_pick_dokon(msg):
     try:
         c.execute("""INSERT INTO delivery_routes
                      (delivery_agent_id,kun,dokon_id,tartib,created_at)
-                     VALUES (?,?,?,?,?)""",
+                     VALUES (%s,%s,%s,%s,%s)""",
                   (dlv_id,kun,did,tartib,datetime.now().isoformat()))
         conn.commit()
     except: pass
@@ -853,7 +707,7 @@ def _show_route_summary(uid, dlv_id, dlv_name, kun):
     c.execute("""SELECT r.tartib,d.nomi,d.egasi,d.telefon,d.hudud,d.latitude,d.longitude
                  FROM delivery_routes r
                  JOIN dokonlar d ON d.id=r.dokon_id
-                 WHERE r.delivery_agent_id=? AND r.kun=?
+                 WHERE r.delivery_agent_id=%s AND r.kun=%s
                  ORDER BY r.tartib""",(dlv_id,kun))
     rows=c.fetchall(); conn.close()
     text=f"📋 MARSHRUT YAKUNLANDI\n🚚 {dlv_name} — 📅 {day_name(kun)}\n📦 {len(rows)} ta dokon\n{'━'*26}\n"
@@ -891,17 +745,17 @@ def dlv_del_pick(msg):
     try: did=int(txt[1:].split("||")[0])
     except: return
     conn=get_db();c=conn.cursor()
-    c.execute("SELECT name FROM delivery_agents WHERE id=?",(did,))
+    c.execute("SELECT name FROM delivery_agents WHERE id=%s",(did,))
     row=c.fetchone()
     if not row: conn.close(); bot.send_message(uid,"❗ Topilmadi."); return
     name=row[0]
     # Check if any other delivery agents exist for reassignment
-    c.execute("SELECT id,name FROM delivery_agents WHERE faol=1 AND id!=?",(did,))
+    c.execute("SELECT id,name FROM delivery_agents WHERE faol=1 AND id!=%s",(did,))
     others=c.fetchall(); conn.close()
     if not others:
         # No replacement available — soft delete directly
         conn=get_db();c=conn.cursor()
-        c.execute("UPDATE delivery_agents SET faol=0 WHERE id=?",(did,))
+        c.execute("UPDATE delivery_agents SET faol=0 WHERE id=%s",(did,))
         conn.commit(); conn.close()
         set_state(uid,None,{})
         bot.send_message(uid,f"✅ '{name}' o'chirildi.\n\n💡 Boshqa delivery agent yo'q (almashtirish kerak emas).",reply_markup=dlv_menu_kb()); return
@@ -926,12 +780,12 @@ def dlv_del_reassign(msg):
     except: return
     data=get_state(uid)["data"]; del_id=data["del_id"]; del_name=data["del_name"]
     conn=get_db();c=conn.cursor()
-    c.execute("SELECT name FROM delivery_agents WHERE id=?",(new_id,))
+    c.execute("SELECT name FROM delivery_agents WHERE id=%s",(new_id,))
     nr=c.fetchone()
     if not nr: conn.close(); bot.send_message(uid,"❗ Topilmadi."); return
     new_name=nr[0]
     # NOTE: Route reassignment will be wired in next stage when delivery_routes table exists
-    c.execute("UPDATE delivery_agents SET faol=0 WHERE id=?",(del_id,))
+    c.execute("UPDATE delivery_agents SET faol=0 WHERE id=%s",(del_id,))
     conn.commit(); conn.close()
     set_state(uid,None,{})
     bot.send_message(uid,
@@ -943,7 +797,7 @@ def get_agent_plan(agent_id, oy=None):
     """Returns (savdo_plan, dokon_plan) for given month (YYYY-MM)."""
     if oy is None: oy=datetime.now().strftime("%Y-%m")
     conn=get_db();c=conn.cursor()
-    c.execute("SELECT savdo_plan,dokon_plan FROM agent_plans WHERE agent_id=? AND oy=?",(agent_id,oy))
+    c.execute("SELECT savdo_plan,dokon_plan FROM agent_plans WHERE agent_id=%s AND oy=%s",(agent_id,oy))
     r=c.fetchone(); conn.close()
     return (r[0] or 0, r[1] or 0) if r else (0,0)
 
@@ -951,9 +805,9 @@ def get_agent_fakt(agent_id, oy=None):
     """Returns (savdo_fakt, dokon_fakt) - actual monthly sales & new dokons."""
     if oy is None: oy=datetime.now().strftime("%Y-%m")
     conn=get_db();c=conn.cursor()
-    c.execute("SELECT COALESCE(SUM(jami_summa),0) FROM savdolar WHERE agent_id=? AND substr(created_at,1,7)=?",(agent_id,oy))
+    c.execute("SELECT COALESCE(SUM(jami_summa),0) FROM savdolar WHERE agent_id=%s AND substr(created_at,1,7)=%s",(agent_id,oy))
     savdo=c.fetchone()[0]
-    c.execute("SELECT COUNT(*) FROM dokonlar WHERE agent_id=? AND substr(created_at,1,7)=?",(agent_id,oy))
+    c.execute("SELECT COUNT(*) FROM dokonlar WHERE agent_id=%s AND substr(created_at,1,7)=%s",(agent_id,oy))
     dokon=c.fetchone()[0]
     conn.close()
     return savdo, dokon
@@ -1085,8 +939,8 @@ def s_plan_dokon_input(msg):
     final_dp = dokon if dokon>0 else cur_dp
     conn=get_db();c=conn.cursor()
     c.execute("""INSERT INTO agent_plans (agent_id,oy,savdo_plan,dokon_plan,created_at)
-                 VALUES (?,?,?,?,?)
-                 ON CONFLICT(agent_id,oy) DO UPDATE SET savdo_plan=?, dokon_plan=?""",
+                 VALUES (%s,%s,%s,%s,%s)
+                 ON CONFLICT(agent_id,oy) DO UPDATE SET savdo_plan=%s, dokon_plan=%s""",
               (tid,oy,final_sp,final_dp,datetime.now().isoformat(),final_sp,final_dp))
     conn.commit(); conn.close()
     clear_state(uid); user=get_user(uid)
@@ -1094,30 +948,6 @@ def s_plan_dokon_input(msg):
     # Notify agent
     try: bot.send_message(tid,f"🎯 Admin sizga {oy} oyiga reja qo'ydi:\n💰 Savdo: {fmt(final_sp)}\n🏪 Yangi dokon: {final_dp}\n\nKo'rish: 🎯 Mening rejam")
     except: pass
-
-def update_dokon_repeat(c, dokon_id, jami_summa):
-    """Repeat System: update store stats after each new order."""
-    from datetime import datetime as _dt
-    today=_dt.now()
-    c.execute("SELECT total_orders,repeat_orders,avg_repeat_days,last_order_date,first_order_date FROM dokonlar WHERE id=?",(dokon_id,))
-    row=c.fetchone()
-    if not row: return
-    total,repeat_n,avg,last_d,first_d=row
-    total=total or 0; repeat_n=repeat_n or 0; avg=avg or 0.0
-    if total==0:
-        first_d=today.isoformat()
-    else:
-        try:
-            ld=_dt.fromisoformat(last_d); days=(today-ld).days
-            total_repeat_time=avg*repeat_n
-            repeat_n+=1
-            avg=(total_repeat_time+days)/repeat_n
-        except: pass
-    total+=1
-    c.execute("""UPDATE dokonlar SET first_order_date=COALESCE(first_order_date,?),
-                 last_order_date=?, total_orders=?, repeat_orders=?, avg_repeat_days=?,
-                 total_sales=COALESCE(total_sales,0)+? WHERE id=?""",
-              (first_d,today.isoformat(),total,repeat_n,avg,jami_summa or 0,dokon_id))
 
 def get_store_status(last_order_date, avg_repeat_days):
     """Returns (emoji_label, days_since_last)"""
@@ -1238,13 +1068,13 @@ def _normalize_phone(s):
 
 def _ensure_delivery_user(tid, name):
     conn=get_db();c=conn.cursor()
-    c.execute("SELECT role FROM users WHERE telegram_id=?",(tid,))
+    c.execute("SELECT role FROM users WHERE telegram_id=%s",(tid,))
     r=c.fetchone()
     if r:
         if r[0]!="delivery":
-            c.execute("UPDATE users SET role='delivery',name=? WHERE telegram_id=?",(name,tid))
+            c.execute("UPDATE users SET role='delivery',name=%s WHERE telegram_id=%s",(name,tid))
     else:
-        c.execute("INSERT INTO users (telegram_id,name,role,viloyat,created_at) VALUES (?,?,?,?,?)",
+        c.execute("INSERT INTO users (telegram_id,name,role,viloyat,created_at) VALUES (%s,%s,%s,%s,%s)",
                   (tid,name,"delivery","",datetime.now().isoformat()))
     conn.commit(); conn.close()
 
@@ -1281,7 +1111,7 @@ def dlv_link_phone(msg):
         return
     # Link
     conn=get_db();c=conn.cursor()
-    c.execute("UPDATE delivery_agents SET telegram_id=? WHERE id=?",(uid,did))
+    c.execute("UPDATE delivery_agents SET telegram_id=%s WHERE id=%s",(uid,did))
     conn.commit(); conn.close()
     _ensure_delivery_user(uid, name)
     clear_state(uid)
@@ -1310,7 +1140,7 @@ def dlv_my_route(msg):
     c.execute("""SELECT r.tartib,d.nomi,d.egasi,d.telefon,d.hudud,d.latitude,d.longitude,
                         COALESCE(r.added_by_dlv,0)
                  FROM delivery_routes r JOIN dokonlar d ON d.id=r.dokon_id
-                 WHERE r.delivery_agent_id=? AND r.kun=? AND d.holat='faol'
+                 WHERE r.delivery_agent_id=%s AND r.kun=%s AND d.holat='faol'
                  ORDER BY r.tartib""",(dlv[0],today))
     rows=c.fetchall(); conn.close()
     if not rows:
@@ -1332,7 +1162,7 @@ def dlv_profile(msg):
     if not user or user[3]!="delivery": return
     conn=get_db();c=conn.cursor()
     c.execute("""SELECT name,telefon,tugilgan_kun,mashina_turi,mashina_nomeri,hudud
-                 FROM delivery_agents WHERE telegram_id=? AND faol=1""",(uid,))
+                 FROM delivery_agents WHERE telegram_id=%s AND faol=1""",(uid,))
     r=c.fetchone(); conn.close()
     if not r:
         bot.send_message(uid,"❗ Profil topilmadi."); return
@@ -1395,7 +1225,7 @@ def reg_viloyat(msg):
     if msg.text not in viloyatlar:
         bot.send_message(uid,"❗ Iltimos ro'yxatdan viloyat tanlang:",reply_markup=viloyat_kb()); return
     conn=get_db();c=conn.cursor()
-    c.execute("INSERT INTO users (telegram_id,name,role,viloyat,created_at) VALUES (?,?,?,?,?) ON CONFLICT (telegram_id) DO NOTHING",
+    c.execute("INSERT INTO users (telegram_id,name,role,viloyat,created_at) VALUES (%s,%s,%s,%s,%s) ON CONFLICT (telegram_id) DO NOTHING",
               (uid,data["name"],"pending",msg.text,datetime.now().isoformat()))
     conn.commit();conn.close();clear_state(uid)
     bot.send_message(uid,f"✅ {data['name']}, ro'yxatdan o'tdingiz!\n\n⏳ Hisobingiz admin tomonidan tasdiqlanishini kuting. Tasdiqlanganingizda xabar olasiz.",reply_markup=types.ReplyKeyboardRemove())
@@ -1409,11 +1239,11 @@ def approve(msg):
     try:
         tid=int(msg.text.split()[1])
         conn=get_db();c=conn.cursor()
-        c.execute("SELECT name,role FROM users WHERE telegram_id=?",(tid,))
+        c.execute("SELECT name,role FROM users WHERE telegram_id=%s",(tid,))
         row=c.fetchone()
         if not row: bot.send_message(msg.from_user.id,"❗ Foydalanuvchi topilmadi."); conn.close(); return
         if row[1]!="pending": bot.send_message(msg.from_user.id,f"⚠️ Bu foydalanuvchi allaqachon '{row[1]}' rolida."); conn.close(); return
-        c.execute("UPDATE users SET role='agent' WHERE telegram_id=?",(tid,))
+        c.execute("UPDATE users SET role='agent' WHERE telegram_id=%s",(tid,))
         conn.commit();conn.close()
         bot.send_message(tid,"✅ Hisobingiz tasdiqlandi! Endi botdan foydalanishingiz mumkin.\n/start bosing.")
         bot.send_message(msg.from_user.id,f"✅ {row[0]} tasdiqlandi va 'agent' roliga o'tkazildi.")
@@ -1444,11 +1274,11 @@ def reject_cmd(msg):
     try:
         tid=int(msg.text.split()[1])
         conn=get_db();c=conn.cursor()
-        c.execute("SELECT name,role FROM users WHERE telegram_id=?",(tid,))
+        c.execute("SELECT name,role FROM users WHERE telegram_id=%s",(tid,))
         row=c.fetchone()
         if not row: bot.send_message(msg.from_user.id,"❗ Foydalanuvchi topilmadi."); conn.close(); return
         if row[1]!="pending": bot.send_message(msg.from_user.id,f"⚠️ Bu foydalanuvchi '{row[1]}' rolida, rad etib bo'lmaydi."); conn.close(); return
-        c.execute("DELETE FROM users WHERE telegram_id=?",(tid,))
+        c.execute("DELETE FROM users WHERE telegram_id=%s",(tid,))
         conn.commit();conn.close()
         try: bot.send_message(tid,"❌ Afsus, hisobingiz admin tomonidan rad etildi. Muammo bo'lsa, adminга murojaat qiling.")
         except: pass
@@ -1501,7 +1331,7 @@ def make_sup(msg):
     try:
         tid=int(msg.text.split()[1])
         conn=get_db();c=conn.cursor()
-        c.execute("UPDATE users SET role='supervisor' WHERE telegram_id=?",(tid,))
+        c.execute("UPDATE users SET role='supervisor' WHERE telegram_id=%s",(tid,))
         conn.commit();conn.close()
         bot.send_message(tid,"✅ Supervisor qildingiz!")
         bot.send_message(msg.from_user.id,"✅ Supervisor qilindi.")
@@ -1513,7 +1343,7 @@ def make_adm(msg):
     try:
         tid=int(msg.text.split()[1])
         conn=get_db();c=conn.cursor()
-        c.execute("UPDATE users SET role='admin' WHERE telegram_id=?",(tid,))
+        c.execute("UPDATE users SET role='admin' WHERE telegram_id=%s",(tid,))
         conn.commit();conn.close()
         bot.send_message(msg.from_user.id,"✅ Admin qilindi.")
     except Exception as e: bot.send_message(msg.from_user.id,f"❗{e}")
@@ -1527,12 +1357,15 @@ def eksport(msg):
     if not is_admin(uid): return
     import json as _json, datetime as _dt
     conn=get_db();c=conn.cursor()
-    tables=[r[0] for r in c.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='distribution' ORDER BY table_name").fetchall()]
+    c.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='distribution' ORDER BY table_name")
+    tables=[r[0] for r in c.fetchall()]
     dump={"_meta":{"exported_at":_dt.datetime.now().isoformat(),"db_path":"postgres:distribution","host":os.uname().nodename}}
     summary=[]
     for t in tables:
-        cols=[d[0] for d in c.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='distribution' AND table_name=? ORDER BY ordinal_position",(t,)).fetchall()]
-        rows=c.execute(f"SELECT * FROM {t}").fetchall()
+        c.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='distribution' AND table_name=%s ORDER BY ordinal_position",(t,))
+        cols=[d[0] for d in c.fetchall()]
+        c.execute(f"SELECT * FROM {t}")
+        rows=c.fetchall()
         dump[t]=[dict(zip(cols,r)) for r in rows]
         summary.append(f"  {t}: {len(rows)} ta")
     conn.close()
@@ -1579,15 +1412,15 @@ def delete_agent(msg):
         if tid==msg.from_user.id:
             bot.send_message(msg.from_user.id,"❗ O'zingizni o'chira olmaysiz."); return
         conn=get_db();c=conn.cursor()
-        c.execute("SELECT name,role,viloyat FROM users WHERE telegram_id=?",(tid,))
+        c.execute("SELECT name,role,viloyat FROM users WHERE telegram_id=%s",(tid,))
         agent=c.fetchone()
         if not agent:
             conn.close()
             bot.send_message(msg.from_user.id,"❗ Bunday ID li foydalanuvchi topilmadi."); return
         name,role,viloyat=agent
-        c.execute("UPDATE dokonlar SET holat='nofaol' WHERE agent_id=?",(tid,))
+        c.execute("UPDATE dokonlar SET holat='nofaol' WHERE agent_id=%s",(tid,))
         deactivated=c.rowcount
-        c.execute("DELETE FROM users WHERE telegram_id=?",(tid,))
+        c.execute("DELETE FROM users WHERE telegram_id=%s",(tid,))
         conn.commit();conn.close()
         bot.send_message(msg.from_user.id,
             f"✅ Agent o'chirildi!\n\n"
@@ -1631,12 +1464,12 @@ def savdolar_cmd(msg):
     conn=get_db();c=conn.cursor()
     bugun=date.today().isoformat(); oy=datetime.now().strftime("%Y-%m")
     c.execute("""SELECT u.name,u.viloyat,
-                        COALESCE(SUM(CASE WHEN s.created_at LIKE ? THEN s.jami_summa ELSE 0 END),0) as bugun_savdo,
-                        COALESCE(SUM(CASE WHEN s.created_at LIKE ? THEN s.jami_summa ELSE 0 END),0) as oy_savdo,
-                        COALESCE(SUM(CASE WHEN p.created_at LIKE ? THEN p.summa ELSE 0 END),0) as bugun_pul,
-                        COALESCE(SUM(CASE WHEN p.created_at LIKE ? THEN p.summa ELSE 0 END),0) as oy_pul,
-                        COUNT(DISTINCT CASE WHEN s.created_at LIKE ? THEN s.id END) as bugun_n,
-                        COUNT(DISTINCT CASE WHEN s.created_at LIKE ? THEN s.id END) as oy_n
+                        COALESCE(SUM(CASE WHEN s.created_at LIKE %s THEN s.jami_summa ELSE 0 END),0) as bugun_savdo,
+                        COALESCE(SUM(CASE WHEN s.created_at LIKE %s THEN s.jami_summa ELSE 0 END),0) as oy_savdo,
+                        COALESCE(SUM(CASE WHEN p.created_at LIKE %s THEN p.summa ELSE 0 END),0) as bugun_pul,
+                        COALESCE(SUM(CASE WHEN p.created_at LIKE %s THEN p.summa ELSE 0 END),0) as oy_pul,
+                        COUNT(DISTINCT CASE WHEN s.created_at LIKE %s THEN s.id END) as bugun_n,
+                        COUNT(DISTINCT CASE WHEN s.created_at LIKE %s THEN s.id END) as oy_n
                  FROM users u
                  LEFT JOIN savdolar s ON s.agent_id=u.telegram_id
                  LEFT JOIN pul_olish p ON p.agent_id=u.telegram_id
@@ -1733,7 +1566,7 @@ def add_prod(msg):
         t=msg.text.replace("/addproduct","").strip().split("|")
         nomi,narx,birlik=t[0].strip(),int(t[1].strip()),t[2].strip()
         conn=get_db();c=conn.cursor()
-        c.execute("INSERT INTO mahsulotlar (nomi,narx,birlik) VALUES (?,?,?)",(nomi,narx,birlik))
+        c.execute("INSERT INTO mahsulotlar (nomi,narx,birlik) VALUES (%s,%s,%s)",(nomi,narx,birlik))
         conn.commit();conn.close()
         bot.send_message(msg.from_user.id,f"✅ {nomi} — {fmt(narx)}/{birlik}")
     except: bot.send_message(msg.from_user.id,"❗ /addproduct Arqon 5mm|35000|dona")
@@ -1744,7 +1577,7 @@ def upd_price(msg):
     try:
         p=msg.text.split()[1].split("|"); mid,narx=int(p[0]),int(p[1])
         conn=get_db();c=conn.cursor()
-        c.execute("UPDATE mahsulotlar SET narx=? WHERE id=?",(narx,mid))
+        c.execute("UPDATE mahsulotlar SET narx=%s WHERE id=%s",(narx,mid))
         conn.commit();conn.close()
         bot.send_message(msg.from_user.id,f"✅ #{mid}: {fmt(narx)}")
     except: bot.send_message(msg.from_user.id,"❗ /updateprice 1|40000")
@@ -1755,7 +1588,7 @@ def del_prod(msg):
     try:
         mid=int(msg.text.split()[1])
         conn=get_db();c=conn.cursor()
-        c.execute("UPDATE mahsulotlar SET faol=0 WHERE id=?",(mid,))
+        c.execute("UPDATE mahsulotlar SET faol=0 WHERE id=%s",(mid,))
         conn.commit();conn.close()
         bot.send_message(msg.from_user.id,f"✅ #{mid} o'chirildi.")
     except: bot.send_message(msg.from_user.id,"❗ /delproduct 1")
@@ -1823,23 +1656,23 @@ def s_dokon_foto_s(msg):
 
 def _save_dokon(uid,data):
     user=get_user(uid); conn=get_db(); c=conn.cursor()
-    c.execute("INSERT INTO dokonlar (nomi,egasi,telefon,viloyat,hudud,latitude,longitude,foto,agent_id,created_at,owner_telegram_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+    c.execute("INSERT INTO dokonlar (nomi,egasi,telefon,viloyat,hudud,latitude,longitude,foto,agent_id,created_at,owner_telegram_id) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
               (data["nomi"],data["egasi"],data["telefon"],user[4],data.get("hudud",""),data.get("lat"),data.get("lon"),data.get("foto"),uid,datetime.now().isoformat(),data.get("owner_telegram_id")))
-    new_did=c.lastrowid
+    new_did=c.fetchone()[0]
     # Delivery agent: auto-add to today's route (max 5/day)
     route_note=""
     if user and user[3]=="delivery":
         dlv=_get_delivery_agent_by_tid(uid)
         kun=_today_kun()
         if dlv and kun:
-            c.execute("SELECT COUNT(*) FROM delivery_routes WHERE delivery_agent_id=? AND kun=? AND COALESCE(added_by_dlv,0)=1",(dlv[0],kun))
+            c.execute("SELECT COUNT(*) FROM delivery_routes WHERE delivery_agent_id=%s AND kun=%s AND COALESCE(added_by_dlv,0)=1",(dlv[0],kun))
             added=c.fetchone()[0]
             if added<DLV_ADHOC_MAX:
-                c.execute("SELECT COALESCE(MAX(tartib),0)+1 FROM delivery_routes WHERE delivery_agent_id=? AND kun=?",(dlv[0],kun))
+                c.execute("SELECT COALESCE(MAX(tartib),0)+1 FROM delivery_routes WHERE delivery_agent_id=%s AND kun=%s",(dlv[0],kun))
                 tartib=c.fetchone()[0]
                 try:
                     c.execute("""INSERT INTO delivery_routes (delivery_agent_id,kun,dokon_id,tartib,created_at,added_by_dlv)
-                                 VALUES (?,?,?,?,?,1)""",(dlv[0],kun,new_did,tartib,datetime.now().isoformat()))
+                                 VALUES (%s,%s,%s,%s,%s,1)""",(dlv[0],kun,new_did,tartib,datetime.now().isoformat()))
                     route_note=f"\n🗺 Bugungi marshrutga qo'shildi ({day_name(kun)}, {added+1}/{DLV_ADHOC_MAX})"
                 except Exception as _e:
                     route_note=f"\n⚠️ Marshrutga qo'shilmadi: {_e}"
@@ -1903,11 +1736,11 @@ def _next_kb():
 def _scope_clause(uid):
     """Returns (where_extra, params) to scope queries by role."""
     if is_admin(uid): return "", ()
-    return " AND agent_id=?", (uid,)
+    return " AND agent_id=%s", (uid,)
 
 def _get_delivery_agent_by_tid(tid):
     conn=get_db();c=conn.cursor()
-    c.execute("SELECT id,name,telefon,hudud FROM delivery_agents WHERE telegram_id=? AND faol=1",(tid,))
+    c.execute("SELECT id,name,telefon,hudud FROM delivery_agents WHERE telegram_id=%s AND faol=1",(tid,))
     r=c.fetchone(); conn.close(); return r
 
 def _today_kun():
@@ -1919,7 +1752,7 @@ DLV_ADHOC_MAX=5
 
 def _dlv_adhoc_count(dlv_id, kun):
     conn=get_db();c=conn.cursor()
-    c.execute("SELECT COUNT(*) FROM delivery_routes WHERE delivery_agent_id=? AND kun=? AND COALESCE(added_by_dlv,0)=1",(dlv_id,kun))
+    c.execute("SELECT COUNT(*) FROM delivery_routes WHERE delivery_agent_id=%s AND kun=%s AND COALESCE(added_by_dlv,0)=1",(dlv_id,kun))
     n=c.fetchone()[0]; conn.close(); return n
 
 def _delivery_today_dokon_kb(uid):
@@ -1931,7 +1764,7 @@ def _delivery_today_dokon_kb(uid):
     conn=get_db();c=conn.cursor()
     c.execute("""SELECT d.id,d.nomi FROM delivery_routes r
                  JOIN dokonlar d ON d.id=r.dokon_id
-                 WHERE r.delivery_agent_id=? AND r.kun=? AND d.holat='faol'
+                 WHERE r.delivery_agent_id=%s AND r.kun=%s AND d.holat='faol'
                  ORDER BY r.tartib""",(dlv[0],kun))
     rows=c.fetchall(); conn.close()
     added=_dlv_adhoc_count(dlv[0],kun)
@@ -1956,7 +1789,7 @@ def _bosh_dokon_kb(uid):
                      WHERE holat='faol' ORDER BY created_at DESC, id DESC""")
     else:
         c.execute("""SELECT id,nomi FROM dokonlar
-                     WHERE agent_id=? AND holat='faol'
+                     WHERE agent_id=%s AND holat='faol'
                      ORDER BY created_at DESC, id DESC""",(uid,))
     rows=c.fetchall(); conn.close()
     kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=2)
@@ -1981,7 +1814,7 @@ def _viloyat_kb(uid):
     else:
         c.execute("""SELECT d.id,d.nomi FROM dokonlar d
                      JOIN savdolar s ON s.dokon_id=d.id
-                     WHERE d.agent_id=? AND d.holat='faol'
+                     WHERE d.agent_id=%s AND d.holat='faol'
                      GROUP BY d.id ORDER BY MAX(s.created_at) DESC LIMIT 5""",(uid,))
     recent=c.fetchall()
     # Distinct viloyats with counts
@@ -2005,7 +1838,7 @@ def _hudud_kb(uid, viloyat):
     """List hududs within a viloyat."""
     conn=get_db();c=conn.cursor()
     extra,params=_scope_clause(uid)
-    vil_clause="(viloyat=? OR (viloyat IS NULL AND ?='— Noma''lum') OR (viloyat='' AND ?='— Noma''lum'))"
+    vil_clause="(viloyat=%s OR (viloyat IS NULL AND %s='— Noma''lum') OR (viloyat='' AND %s='— Noma''lum'))"
     c.execute(f"""SELECT COALESCE(NULLIF(hudud,''),'— Noma''lum') as h, COUNT(*) as n
                   FROM dokonlar WHERE holat='faol' AND {vil_clause}{extra}
                   GROUP BY h ORDER BY n DESC""",(viloyat,viloyat,viloyat)+params)
@@ -2022,8 +1855,8 @@ def _hudud_kb(uid, viloyat):
 def _dokon_in_hudud_kb(uid, viloyat, hudud):
     conn=get_db();c=conn.cursor()
     extra,params=_scope_clause(uid)
-    vil_clause="(viloyat=? OR (viloyat IS NULL AND ?='— Noma''lum') OR (viloyat='' AND ?='— Noma''lum'))"
-    hud_clause="(hudud=? OR (hudud IS NULL AND ?='— Noma''lum') OR (hudud='' AND ?='— Noma''lum'))"
+    vil_clause="(viloyat=%s OR (viloyat IS NULL AND %s='— Noma''lum') OR (viloyat='' AND %s='— Noma''lum'))"
+    hud_clause="(hudud=%s OR (hudud IS NULL AND %s='— Noma''lum') OR (hudud='' AND %s='— Noma''lum'))"
     c.execute(f"""SELECT id,nomi FROM dokonlar
                   WHERE holat='faol' AND {vil_clause} AND {hud_clause}{extra}
                   ORDER BY nomi""",(viloyat,viloyat,viloyat,hudud,hudud,hudud)+params)
@@ -2223,17 +2056,13 @@ def _check_balans_before_save(uid,data):
     if balans>0 and tolov=="nasiya":
         jami=sum(m[2]*data["tanlangan"].get(m[0],0) for m in data["mahsulotlar"])
         deducted=min(balans,jami); yangi_balans=balans-deducted
-        conn=get_db();c=conn.cursor()
-        update_balans_delta(c,did,-deducted)
-        conn.commit();conn.close()
+        apply_balans_delta(did,-deducted)
         data["balans_ishlatildi"]=deducted; data["yangi_balans"]=yangi_balans
         bot.send_message(uid,f"✅ {fmt(deducted)} so'm balans nasiyadan ayirildi.\nQolgan balans: {fmt(yangi_balans)}")
         _save_savdo(uid,data)
     elif balans>0 and tolov=="aralash" and data.get("nasiya_qism",0)>0:
         nas=data["nasiya_qism"]; deducted=min(balans,nas); yangi_balans=balans-deducted
-        conn=get_db();c=conn.cursor()
-        update_balans_delta(c,did,-deducted)
-        conn.commit();conn.close()
+        apply_balans_delta(did,-deducted)
         data["nasiya_qism"]=nas-deducted
         data["balans_ishlatildi"]=deducted; data["yangi_balans"]=yangi_balans
         bot.send_message(uid,f"✅ {fmt(deducted)} so'm balans nasiyadan ayirildi.\nQolgan balans: {fmt(yangi_balans)}")
@@ -2256,9 +2085,7 @@ def s_savdo_balans_confirm(msg):
     if msg.text=="✅ Ha, ayirish":
         jami=sum(m[2]*data["tanlangan"].get(m[0],0) for m in data["mahsulotlar"])
         deducted=min(balans,jami); yangi_balans=balans-deducted
-        conn=get_db();c=conn.cursor()
-        update_balans_delta(c,data["dokon_id"],-deducted)
-        conn.commit();conn.close()
+        apply_balans_delta(data["dokon_id"],-deducted)
         data["balans_ishlatildi"]=deducted; data["yangi_balans"]=yangi_balans
         _save_savdo(uid,data)
     elif msg.text=="❌ Yo'q, to'liq to'lov":
@@ -2275,40 +2102,23 @@ def _tolov_info_str(data):
     return f"\n{TOLOV_LABEL.get(tolov,tolov)}"
 
 def _save_savdo(uid,data):
-    user=get_user(uid); conn=get_db(); c=conn.cursor()
+    user=get_user(uid)
     jami=sum(m[2]*data["tanlangan"].get(m[0],0) for m in data["mahsulotlar"])
-    tolov=data["tolov"]; now=datetime.now().isoformat()
-    c.execute("INSERT INTO savdolar (dokon_id,agent_id,jami_summa,tolov_turi,foto,created_at) VALUES (?,?,?,?,?,?)",
-              (data["dokon_id"],uid,jami,tolov,data.get("foto"),now))
-    sid=c.lastrowid; lines=[]
-    update_dokon_repeat(c, data["dokon_id"], jami)
-    # Qayta kirish workflow: schedule a revisit N days later (default 7)
-    try:
-        rdays=int(os.environ.get("REVISIT_DAYS","7"))
-        revisit_date=(date.today()+timedelta(days=rdays)).isoformat()
-        # Cancel any earlier pending revisit for this dokon — replace with the latest
-        c.execute("UPDATE revisitlar SET status='superseded' WHERE dokon_id=? AND status='pending'",(data["dokon_id"],))
-        c.execute("INSERT INTO revisitlar (dokon_id,agent_id,last_order_date,revisit_date,status,created_at) VALUES (?,?,?,?,?,?)",
-                  (data["dokon_id"],uid,date.today().isoformat(),revisit_date,"pending",now))
-    except Exception as _e: pass
+    tolov=data["tolov"]
+    items=[]; lines=[]
     for m in data["mahsulotlar"]:
         mid,nomi,narx,birlik=m; miqdor=data["tanlangan"].get(mid,0)
         if miqdor>0:
-            c.execute("INSERT INTO savdo_tafsilot (savdo_id,mahsulot_id,miqdor,narx,summa) VALUES (?,?,?,?,?)",(sid,mid,miqdor,narx,narx*miqdor))
+            items.append((mid,miqdor,narx))
             lines.append(f"  • {nomi}\n     {fmt_miq(miqdor)} {birlik} × {fmt(narx)} = {fmt(narx*miqdor)}")
     nasiya_summa=0
     balans_ishlatildi=data.get("balans_ishlatildi",0)
     if tolov=="nasiya": nasiya_summa=max(0,jami-balans_ishlatildi)
     elif tolov=="aralash": nasiya_summa=data.get("nasiya_qism",0)
-    if nasiya_summa>0:
-        c.execute("INSERT INTO nasiya (dokon_id,agent_id,savdo_id,jami_summa,tolangan,qoldiq,created_at,updated_at) VALUES (?,?,?,?,0,?,?,?)",
-                  (data["dokon_id"],uid,sid,nasiya_summa,nasiya_summa,now,now))
-    # Fetch owner telegram id and store's total remaining nasiya for receipt
-    c.execute("SELECT owner_telegram_id FROM dokonlar WHERE id=?",(data["dokon_id"],))
-    row=c.fetchone(); owner_tg=row[0] if row else None
-    c.execute("SELECT COALESCE(SUM(qoldiq),0) FROM nasiya WHERE dokon_id=? AND qoldiq>0",(data["dokon_id"],))
-    jami_nasiya_qoldiq=c.fetchone()[0]
-    conn.commit();conn.close();clear_state(uid)
+    # Bitta tranzaksiyada: savdo + tafsilot + repeat statistika + revisit + nasiya
+    sid,owner_tg,jami_nasiya_qoldiq=create_sale(
+        data["dokon_id"],uid,items,jami,tolov,data.get("foto"),nasiya_summa)
+    clear_state(uid)
     tolov_str=_tolov_info_str(data)
     foto_id=data.get("foto")
     yangi_balans=data.get("yangi_balans",None)
@@ -2361,7 +2171,7 @@ def pul_olish(msg):
     if is_admin(uid):
         c.execute("SELECT id,nomi FROM dokonlar WHERE holat='faol' ORDER BY nomi")
     else:
-        c.execute("SELECT id,nomi FROM dokonlar WHERE agent_id=? AND holat='faol' ORDER BY nomi",(uid,))
+        c.execute("SELECT id,nomi FROM dokonlar WHERE agent_id=%s AND holat='faol' ORDER BY nomi",(uid,))
     dokonlar=c.fetchall(); conn.close()
     if not dokonlar: bot.send_message(uid,"❗ Faol dokon yo'q."); return
     kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=1)
@@ -2379,7 +2189,7 @@ def s_pul_dokon(msg):
         data["dokon_id"]=int(did); data["dokon_nomi"]=dnomi
     except: return
     conn=get_db();c=conn.cursor()
-    c.execute("SELECT COALESCE(SUM(qoldiq),0) FROM nasiya WHERE dokon_id=? AND agent_id=? AND qoldiq>0",(int(did),uid))
+    c.execute("SELECT COALESCE(SUM(qoldiq),0) FROM nasiya WHERE dokon_id=%s AND agent_id=%s AND qoldiq>0",(int(did),uid))
     nasiya_qoldiq=c.fetchone()[0]; conn.close()
     if nasiya_qoldiq>0:
         data["nasiya_qoldiq"]=nasiya_qoldiq
@@ -2426,16 +2236,8 @@ def s_pul_nasiya_summa(msg):
         bot.send_message(uid,
             f"⚠️ Siz {fmt(nasiya_qoldiq)}ga qarshi {fmt(summa)} kiritdingiz.\n"
             f"{fmt(ortiqcha)} so'm ORTIQCHA.\n\nTasdiqlaysizmi?",reply_markup=kb); return
-    now=datetime.now().isoformat(); remaining=summa
-    conn=get_db();c=conn.cursor()
-    c.execute("SELECT id,qoldiq FROM nasiya WHERE dokon_id=? AND agent_id=? AND qoldiq>0 ORDER BY created_at",(did,uid))
-    for nid,qoldiq in c.fetchall():
-        if remaining<=0: break
-        pay=min(remaining,qoldiq)
-        c.execute("UPDATE nasiya SET tolangan=tolangan+?,qoldiq=qoldiq-?,updated_at=? WHERE id=?",(pay,pay,now,nid))
-        remaining-=pay
-    c.execute("INSERT INTO pul_olish (dokon_id,agent_id,summa,created_at) VALUES (?,?,?,?)",(did,uid,summa,now))
-    conn.commit(); conn.close(); clear_state(uid)
+    pay_nasiya_fifo(did,uid,summa)
+    clear_state(uid)
     yangi_qoldiq=nasiya_qoldiq-summa
     nasiya_status="✅ Nasiya to'liq to'landi!" if yangi_qoldiq<=0 else f"🔴 Qolgan nasiya: {fmt(yangi_qoldiq)}"
     bot.send_message(uid,
@@ -2467,19 +2269,8 @@ def s_pul_nasiya_ortiqcha_confirm(msg):
     if msg.text!="✅ Tasdiqlash": return
     summa=data["ortiqcha_summa"]; nasiya_qoldiq=data["nasiya_qoldiq"]; ortiqcha=data["ortiqcha_diff"]
     did=data["dokon_id"]; dnomi=data["dokon_nomi"]
-    now=datetime.now().isoformat(); remaining=nasiya_qoldiq
-    conn=get_db();c=conn.cursor()
-    c.execute("SELECT id,qoldiq FROM nasiya WHERE dokon_id=? AND agent_id=? AND qoldiq>0 ORDER BY created_at",(did,uid))
-    for nid,qoldiq in c.fetchall():
-        if remaining<=0: break
-        pay=min(remaining,qoldiq)
-        c.execute("UPDATE nasiya SET tolangan=tolangan+?,qoldiq=qoldiq-?,updated_at=? WHERE id=?",(pay,pay,now,nid))
-        remaining-=pay
-    c.execute("INSERT INTO pul_olish (dokon_id,agent_id,summa,created_at) VALUES (?,?,?,?)",(did,uid,summa,now))
-    update_balans_delta(c,did,ortiqcha)
-    c.execute("SELECT owner_telegram_id FROM dokonlar WHERE id=?",(did,))
-    row=c.fetchone(); owner_tg=row[0] if row else None
-    conn.commit(); conn.close(); clear_state(uid)
+    owner_tg=pay_nasiya_fifo(did,uid,summa,apply_amount=nasiya_qoldiq,ortiqcha=ortiqcha)
+    clear_state(uid)
     bot.send_message(uid,
         f"✅ Pul olish saqlandi!\n\n"
         f"🏪 {dnomi}\n"
@@ -2506,10 +2297,8 @@ def s_pul_summa(msg):
     uid=msg.from_user.id; user=get_user(uid); data=get_state(uid)["data"]
     try: summa=int(msg.text.replace(" ","").replace(",",""))
     except: bot.send_message(uid,"❗ Raqam kiriting: 500000"); return
-    conn=get_db();c=conn.cursor()
-    c.execute("INSERT INTO pul_olish (dokon_id,agent_id,summa,created_at) VALUES (?,?,?,?)",
-              (data["dokon_id"],uid,summa,datetime.now().isoformat()))
-    conn.commit();conn.close();clear_state(uid)
+    record_pul_olish(data["dokon_id"],uid,summa)
+    clear_state(uid)
     bot.send_message(uid,f"✅ Pul olish saqlandi!\n🏪 {data['dokon_nomi']}\n💰 {fmt(summa)}",reply_markup=main_kb(user[3]))
     for aid in all_admin_ids():
         try: bot.send_message(aid,
@@ -2537,10 +2326,10 @@ def _nasiya_summary_kb(uid, admin_view=False):
     else:
         c.execute("""SELECT d.id,d.nomi,COALESCE(SUM(n.qoldiq),0),''
                      FROM nasiya n JOIN dokonlar d ON d.id=n.dokon_id
-                     WHERE n.agent_id=? AND n.qoldiq>0
+                     WHERE n.agent_id=%s AND n.qoldiq>0
                      GROUP BY d.id,d.nomi ORDER BY d.nomi""",(uid,))
         store_rows=c.fetchall()
-        c.execute("SELECT COUNT(*) FROM dokonlar WHERE agent_id=? AND holat='faol'",(uid,))
+        c.execute("SELECT COUNT(*) FROM dokonlar WHERE agent_id=%s AND holat='faol'",(uid,))
         jami_dokon=c.fetchone()[0]
     conn.close()
     nasiyali_d=len(store_rows)
@@ -2568,7 +2357,7 @@ def _show_nasiya_store(uid,did,dnomi):
     """Step 2: show full sale history for one store."""
     conn=get_db();c=conn.cursor()
     c.execute("""SELECT n.id,n.jami_summa,n.tolangan,n.qoldiq,n.created_at
-                 FROM nasiya n WHERE n.dokon_id=? AND n.agent_id=?
+                 FROM nasiya n WHERE n.dokon_id=%s AND n.agent_id=%s
                  ORDER BY n.created_at""",(did,uid))
     rows=c.fetchall(); conn.close()
     jami_savdo=sum(r[1] for r in rows)
@@ -2650,17 +2439,8 @@ def s_nasiya_tolov(msg):
         bot.send_message(uid,
             f"⚠️ Siz {fmt(jami_qoldiq)}ga qarshi {fmt(summa)} kiritdingiz.\n"
             f"{fmt(ortiqcha)} so'm ORTIQCHA.\n\nTasdiqlaysizmi?",reply_markup=kb); return
-    # Apply FIFO: pay off oldest unpaid sales first
-    remaining=summa; now=datetime.now().isoformat()
-    conn=get_db();c=conn.cursor()
-    c.execute("SELECT id,qoldiq FROM nasiya WHERE dokon_id=? AND agent_id=? AND qoldiq>0 ORDER BY created_at",(did,uid))
-    for nid,qoldiq in c.fetchall():
-        if remaining<=0: break
-        pay=min(remaining,qoldiq)
-        c.execute("UPDATE nasiya SET tolangan=tolangan+?,qoldiq=qoldiq-?,updated_at=? WHERE id=?",(pay,pay,now,nid))
-        remaining-=pay
-    c.execute("INSERT INTO pul_olish (dokon_id,agent_id,summa,created_at) VALUES (?,?,?,?)",(did,uid,summa,now))
-    conn.commit(); conn.close()
+    # FIFO: eng eski qarzdan boshlab yopiladi (bitta tranzaksiyada)
+    pay_nasiya_fifo(did,uid,summa)
     yangi_qoldiq=jami_qoldiq-summa
     status="✅ Barcha qarz to'liq to'landi!" if yangi_qoldiq<=0 else f"🔴 Qolgan qarz: {fmt(yangi_qoldiq)}"
     bot.send_message(uid,
@@ -2691,19 +2471,8 @@ def s_nasiya_tolov_ortiqcha_confirm(msg):
     if msg.text!="✅ Tasdiqlash": return
     summa=data["ortiqcha_summa"]; jami_qoldiq=data["jami_qoldiq"]; ortiqcha=data["ortiqcha_diff"]
     did=data["did"]; dnomi=data["dnomi"]
-    now=datetime.now().isoformat(); remaining=jami_qoldiq
-    conn=get_db();c=conn.cursor()
-    c.execute("SELECT id,qoldiq FROM nasiya WHERE dokon_id=? AND agent_id=? AND qoldiq>0 ORDER BY created_at",(did,uid))
-    for nid,qoldiq in c.fetchall():
-        if remaining<=0: break
-        pay=min(remaining,qoldiq)
-        c.execute("UPDATE nasiya SET tolangan=tolangan+?,qoldiq=qoldiq-?,updated_at=? WHERE id=?",(pay,pay,now,nid))
-        remaining-=pay
-    c.execute("INSERT INTO pul_olish (dokon_id,agent_id,summa,created_at) VALUES (?,?,?,?)",(did,uid,summa,now))
-    update_balans_delta(c,did,ortiqcha)
-    c.execute("SELECT owner_telegram_id FROM dokonlar WHERE id=?",(did,))
-    row=c.fetchone(); owner_tg=row[0] if row else None
-    conn.commit(); conn.close(); clear_state(uid)
+    owner_tg=pay_nasiya_fifo(did,uid,summa,apply_amount=jami_qoldiq,ortiqcha=ortiqcha)
+    clear_state(uid)
     bot.send_message(uid,
         f"✅ To'lov qabul qilindi!\n\n"
         f"🏪 {dnomi}\n"
@@ -2741,7 +2510,7 @@ def tovar_olmadi(msg):
             conn.close(); bot.send_message(uid,"😴 Bugun Yakshanba — marshrut yo'q."); return
         c.execute("""SELECT d.id,d.nomi FROM delivery_routes r
                      JOIN dokonlar d ON d.id=r.dokon_id
-                     WHERE r.delivery_agent_id=? AND r.kun=? AND d.holat='faol'
+                     WHERE r.delivery_agent_id=%s AND r.kun=%s AND d.holat='faol'
                      ORDER BY r.tartib""",(dlv[0],kun))
         dokonlar=c.fetchall(); conn.close()
         if not dokonlar:
@@ -2754,7 +2523,7 @@ def tovar_olmadi(msg):
     if is_admin(uid):
         c.execute("SELECT id,nomi FROM dokonlar ORDER BY nomi")
     else:
-        c.execute("SELECT id,nomi FROM dokonlar WHERE agent_id=? ORDER BY nomi",(uid,))
+        c.execute("SELECT id,nomi FROM dokonlar WHERE agent_id=%s ORDER BY nomi",(uid,))
     dokonlar=c.fetchall(); conn.close()
     kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=1)
     for d in dokonlar: kb.add(f"🏪 {d[0]}||{d[1]}")
@@ -2867,14 +2636,14 @@ def _save_olmadi(uid,data):
     egasi=""; telefon=""
     if dokon_id is None:
         egasi=data.get("egasi",""); telefon=data.get("telefon","")
-        c.execute("INSERT INTO dokonlar (nomi,egasi,telefon,viloyat,latitude,longitude,foto,agent_id,holat,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        c.execute("INSERT INTO dokonlar (nomi,egasi,telefon,viloyat,latitude,longitude,foto,agent_id,holat,created_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
                   (data["dokon_nomi"],egasi,telefon,user[4],data.get("lat"),data.get("lon"),data.get("foto"),uid,"nofaol",datetime.now().isoformat()))
-        dokon_id=c.lastrowid
+        dokon_id=c.fetchone()[0]
     else:
-        c.execute("SELECT egasi,telefon FROM dokonlar WHERE id=?",(dokon_id,))
+        c.execute("SELECT egasi,telefon FROM dokonlar WHERE id=%s",(dokon_id,))
         r=c.fetchone()
         if r: egasi,telefon=r[0] or "",r[1] or ""
-    c.execute("INSERT INTO olmagan_dokonlar (dokon_id,agent_id,sabab,sabab_text,latitude,longitude,qaytish_sanasi,foto,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+    c.execute("INSERT INTO olmagan_dokonlar (dokon_id,agent_id,sabab,sabab_text,latitude,longitude,qaytish_sanasi,foto,created_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
               (dokon_id,uid,data["sabab"],data["sabab_text"],data.get("lat"),data.get("lon"),data.get("qaytish_sanasi"),data.get("foto"),datetime.now().isoformat()))
     conn.commit();conn.close();clear_state(uid)
     qaytish=f"\n📅 Qaytish: {data.get('qaytish_sanasi','')}" if data.get("qaytish_sanasi") else ""
@@ -2905,7 +2674,7 @@ def qaytib_kirish(msg):
     conn=get_db();c=conn.cursor()
     c.execute("""SELECT d.nomi,d.egasi,d.telefon,o.sabab_text,o.qaytish_sanasi,o.id,o.latitude,o.longitude
         FROM olmagan_dokonlar o JOIN dokonlar d ON o.dokon_id=d.id
-        WHERE o.agent_id=? AND o.bajarildi=0 AND o.qaytish_sanasi IS NOT NULL
+        WHERE o.agent_id=%s AND o.bajarildi=0 AND o.qaytish_sanasi IS NOT NULL
         ORDER BY o.qaytish_sanasi""",(uid,))
     rows=c.fetchall();conn.close()
     if not rows: bot.send_message(uid,"✅ Qaytib kirish kerak bo'lgan dokon yo'q!",reply_markup=main_kb(user[3])); return
@@ -2929,7 +2698,7 @@ def bajarildi(msg):
     try:
         oid=int(msg.text.split("_")[1])
         conn=get_db();c=conn.cursor()
-        c.execute("UPDATE olmagan_dokonlar SET bajarildi=1 WHERE id=? AND agent_id=?",(oid,uid))
+        c.execute("UPDATE olmagan_dokonlar SET bajarildi=1 WHERE id=%s AND agent_id=%s",(oid,uid))
         conn.commit();conn.close()
         bot.send_message(uid,"✅ Bajarildi!")
     except: bot.send_message(uid,"❗ Xato")
@@ -2963,11 +2732,11 @@ def qidiruv_query(msg):
     like=f"%{q}%"
     if role=="admin":
         c.execute("""SELECT id,nomi,egasi,viloyat,holat FROM dokonlar
-                     WHERE nomi LIKE ? OR egasi LIKE ? OR telefon LIKE ?
+                     WHERE nomi LIKE %s OR egasi LIKE %s OR telefon LIKE %s
                      ORDER BY nomi LIMIT 50""",(like,like,like))
     else:
         c.execute("""SELECT id,nomi,egasi,viloyat,holat FROM dokonlar
-                     WHERE agent_id=? AND (nomi LIKE ? OR egasi LIKE ? OR telefon LIKE ?)
+                     WHERE agent_id=%s AND (nomi LIKE %s OR egasi LIKE %s OR telefon LIKE %s)
                      ORDER BY nomi LIMIT 50""",(uid,like,like,like))
     rows=c.fetchall(); conn.close()
     if not rows:
@@ -2997,13 +2766,13 @@ def s_agent_dokon_view(msg):
     conn=get_db();c=conn.cursor()
     c.execute("""SELECT id,nomi,egasi,telefon,viloyat,hudud,latitude,longitude,foto,holat,
                  last_order_date,total_orders,total_sales
-                 FROM dokonlar WHERE id=? AND agent_id=?""",(did,uid))
+                 FROM dokonlar WHERE id=%s AND agent_id=%s""",(did,uid))
     d=c.fetchone()
     if not d:
         conn.close(); bot.send_message(uid,"❗ Topilmadi yoki sizniki emas."); return
-    c.execute("SELECT created_at,jami_summa,tolov_turi FROM savdolar WHERE dokon_id=? ORDER BY created_at DESC LIMIT 5",(did,))
+    c.execute("SELECT created_at,jami_summa,tolov_turi FROM savdolar WHERE dokon_id=%s ORDER BY created_at DESC LIMIT 5",(did,))
     savdolar=c.fetchall()
-    c.execute("SELECT COALESCE(SUM(qoldiq),0) FROM nasiya WHERE dokon_id=? AND qoldiq>0",(did,))
+    c.execute("SELECT COALESCE(SUM(qoldiq),0) FROM nasiya WHERE dokon_id=%s AND qoldiq>0",(did,))
     jami_nasiya=c.fetchone()[0]
     conn.close()
     (_,nomi,egasi,telefon,viloyat,hudud,lat,lon,foto,holat,last_d,total_o,total_s)=d
@@ -3058,16 +2827,16 @@ def s_admin_dokon_list(msg):
     conn=get_db();c=conn.cursor()
     c.execute("""SELECT id,nomi,egasi,telefon,viloyat,hudud,latitude,longitude,foto,holat,
                  first_order_date,last_order_date,total_orders,repeat_orders,total_sales,avg_repeat_days
-                 FROM dokonlar WHERE id=?""",(did,))
+                 FROM dokonlar WHERE id=%s""",(did,))
     d=c.fetchone()
     if not d: conn.close(); return
-    c.execute("SELECT created_at,jami_summa,tolov_turi FROM savdolar WHERE dokon_id=? ORDER BY created_at DESC LIMIT 7",(did,))
+    c.execute("SELECT created_at,jami_summa,tolov_turi FROM savdolar WHERE dokon_id=%s ORDER BY created_at DESC LIMIT 7",(did,))
     savdolar=c.fetchall()
-    c.execute("SELECT COALESCE(SUM(jami_summa),0) FROM savdolar WHERE dokon_id=?",(did,))
+    c.execute("SELECT COALESCE(SUM(jami_summa),0) FROM savdolar WHERE dokon_id=%s",(did,))
     jami_savdo=c.fetchone()[0]
-    c.execute("SELECT COALESCE(SUM(qoldiq),0) FROM nasiya WHERE dokon_id=? AND qoldiq>0",(did,))
+    c.execute("SELECT COALESCE(SUM(qoldiq),0) FROM nasiya WHERE dokon_id=%s AND qoldiq>0",(did,))
     jami_nasiya=c.fetchone()[0]
-    c.execute("SELECT COALESCE(balans,0) FROM mijoz_balans WHERE dokon_id=?",(did,))
+    c.execute("SELECT COALESCE(balans,0) FROM mijoz_balans WHERE dokon_id=%s",(did,))
     row2=c.fetchone(); mijoz_bal=row2[0] if row2 else 0
     conn.close()
     (_,nomi,egasi,telefon,viloyat,hudud,lat,lon,foto,holat,
@@ -3116,9 +2885,9 @@ def dokon_ochir_start(msg):
     data=get_state(uid)["data"]; did=data.get("did")
     if not did: return
     conn=get_db();c=conn.cursor()
-    c.execute("SELECT COUNT(*),COALESCE(SUM(jami_summa),0) FROM savdolar WHERE dokon_id=?",(did,))
+    c.execute("SELECT COUNT(*),COALESCE(SUM(jami_summa),0) FROM savdolar WHERE dokon_id=%s",(did,))
     sv_n,sv_sum=c.fetchone()
-    c.execute("SELECT COALESCE(SUM(qoldiq),0) FROM nasiya WHERE dokon_id=? AND qoldiq>0",(did,))
+    c.execute("SELECT COALESCE(SUM(qoldiq),0) FROM nasiya WHERE dokon_id=%s AND qoldiq>0",(did,))
     nas=c.fetchone()[0]
     conn.close()
     set_state(uid,"admin_dokon_delete_confirm",data)
@@ -3145,14 +2914,14 @@ def dokon_ochir_tasdiq(msg):
     did=data["did"]; nomi=data["nomi"]
     conn=get_db();c=conn.cursor()
     try:
-        c.execute("DELETE FROM savdo_tafsilot WHERE savdo_id IN (SELECT id FROM savdolar WHERE dokon_id=?)",(did,))
-        c.execute("DELETE FROM savdolar WHERE dokon_id=?",(did,))
-        c.execute("DELETE FROM nasiya WHERE dokon_id=?",(did,))
-        c.execute("DELETE FROM pul_olish WHERE dokon_id=?",(did,))
-        c.execute("DELETE FROM olmagan_dokonlar WHERE dokon_id=?",(did,))
-        c.execute("DELETE FROM revisitlar WHERE dokon_id=?",(did,))
-        c.execute("DELETE FROM mijoz_balans WHERE dokon_id=?",(did,))
-        c.execute("DELETE FROM dokonlar WHERE id=?",(did,))
+        c.execute("DELETE FROM savdo_tafsilot WHERE savdo_id IN (SELECT id FROM savdolar WHERE dokon_id=%s)",(did,))
+        c.execute("DELETE FROM savdolar WHERE dokon_id=%s",(did,))
+        c.execute("DELETE FROM nasiya WHERE dokon_id=%s",(did,))
+        c.execute("DELETE FROM pul_olish WHERE dokon_id=%s",(did,))
+        c.execute("DELETE FROM olmagan_dokonlar WHERE dokon_id=%s",(did,))
+        c.execute("DELETE FROM revisitlar WHERE dokon_id=%s",(did,))
+        c.execute("DELETE FROM mijoz_balans WHERE dokon_id=%s",(did,))
+        c.execute("DELETE FROM dokonlar WHERE id=%s",(did,))
         conn.commit()
     except Exception as e:
         conn.close(); clear_state(uid)
@@ -3195,16 +2964,16 @@ def s_agent_boshqaruv_list(msg):
 
 def _show_agent_profile(uid,agent_id):
     conn=get_db();c=conn.cursor()
-    c.execute("SELECT telegram_id,name,viloyat,role,created_at FROM users WHERE telegram_id=?",(agent_id,))
+    c.execute("SELECT telegram_id,name,viloyat,role,created_at FROM users WHERE telegram_id=%s",(agent_id,))
     a=c.fetchone()
     if not a: conn.close(); return
-    c.execute("SELECT COUNT(*) FROM dokonlar WHERE agent_id=? AND holat='faol'",(agent_id,))
+    c.execute("SELECT COUNT(*) FROM dokonlar WHERE agent_id=%s AND holat='faol'",(agent_id,))
     dokon_n=c.fetchone()[0]
-    c.execute("SELECT COALESCE(SUM(jami_summa),0) FROM savdolar WHERE agent_id=?",(agent_id,))
+    c.execute("SELECT COALESCE(SUM(jami_summa),0) FROM savdolar WHERE agent_id=%s",(agent_id,))
     jami_savdo=c.fetchone()[0]
-    c.execute("SELECT COALESCE(SUM(qoldiq),0) FROM nasiya WHERE agent_id=? AND qoldiq>0",(agent_id,))
+    c.execute("SELECT COALESCE(SUM(qoldiq),0) FROM nasiya WHERE agent_id=%s AND qoldiq>0",(agent_id,))
     jami_nasiya=c.fetchone()[0]
-    c.execute("SELECT COUNT(*) FROM olmagan_dokonlar WHERE agent_id=? AND bajarildi=0 AND qaytish_sanasi IS NOT NULL",(agent_id,))
+    c.execute("SELECT COUNT(*) FROM olmagan_dokonlar WHERE agent_id=%s AND bajarildi=0 AND qaytish_sanasi IS NOT NULL",(agent_id,))
     qaytib=c.fetchone()[0]; conn.close()
     rol_map={"agent":"Agent","supervisor":"Supervisor","blok":"🚫 Bloklangan"}
     rol_txt=rol_map.get(a[3],a[3]); sana=a[4][:10] if a[4] else "—"
@@ -3236,7 +3005,7 @@ def s_agent_action(msg):
     if msg.text in("🔼 Supervisorga ko'tarish","🔽 Agentga tushirish"):
         new_role="supervisor" if "ko'tarish" in msg.text else "agent"
         conn=get_db();c=conn.cursor()
-        c.execute("UPDATE users SET role=? WHERE telegram_id=?",(new_role,agent_id))
+        c.execute("UPDATE users SET role=%s WHERE telegram_id=%s",(new_role,agent_id))
         conn.commit();conn.close()
         label="Supervisor" if new_role=="supervisor" else "Agent"
         bot.send_message(uid,f"✅ {agent_name} → {label} qilindi.")
@@ -3245,7 +3014,7 @@ def s_agent_action(msg):
         _show_agent_profile(uid,agent_id); return
     if msg.text=="🚫 Bloklash":
         conn=get_db();c=conn.cursor()
-        c.execute("UPDATE users SET role='blok' WHERE telegram_id=?",(agent_id,))
+        c.execute("UPDATE users SET role='blok' WHERE telegram_id=%s",(agent_id,))
         conn.commit();conn.close()
         bot.send_message(uid,f"🚫 {agent_name} bloklandi.")
         try: bot.send_message(agent_id,"🚫 Sizning akkauntingiz bloklandi. Admin bilan bog'laning.")
@@ -3253,7 +3022,7 @@ def s_agent_action(msg):
         _show_agent_profile(uid,agent_id); return
     if msg.text=="✅ Blokdan chiqarish":
         conn=get_db();c=conn.cursor()
-        c.execute("UPDATE users SET role='agent' WHERE telegram_id=?",(agent_id,))
+        c.execute("UPDATE users SET role='agent' WHERE telegram_id=%s",(agent_id,))
         conn.commit();conn.close()
         bot.send_message(uid,f"✅ {agent_name} blokdan chiqarildi.")
         try: bot.send_message(agent_id,"✅ Akkauntingiz faollashtirildi. /start bosing.")
@@ -3264,11 +3033,11 @@ def s_agent_action(msg):
     if msg.text=="🗑 To'liq o'chirish":
         # Count what would be deleted
         conn=get_db();c=conn.cursor()
-        c.execute("SELECT COUNT(*) FROM dokonlar WHERE agent_id=?",(agent_id,))
+        c.execute("SELECT COUNT(*) FROM dokonlar WHERE agent_id=%s",(agent_id,))
         d_n=c.fetchone()[0]
-        c.execute("SELECT COUNT(*),COALESCE(SUM(jami_summa),0) FROM savdolar WHERE agent_id=?",(agent_id,))
+        c.execute("SELECT COUNT(*),COALESCE(SUM(jami_summa),0) FROM savdolar WHERE agent_id=%s",(agent_id,))
         s_n,s_sum=c.fetchone()
-        c.execute("SELECT COUNT(*),COALESCE(SUM(qoldiq),0) FROM nasiya WHERE agent_id=? AND qoldiq>0",(agent_id,))
+        c.execute("SELECT COUNT(*),COALESCE(SUM(qoldiq),0) FROM nasiya WHERE agent_id=%s AND qoldiq>0",(agent_id,))
         n_n,n_sum=c.fetchone()
         conn.close()
         kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=1)
@@ -3296,10 +3065,10 @@ def s_agent_delete_confirm(msg):
     if msg.text!="✅ HA, BUTUNLAY O'CHIR": return
     conn=get_db();c=conn.cursor()
     # Collect dokon ids to also clean dependent rows
-    c.execute("SELECT id FROM dokonlar WHERE agent_id=?",(agent_id,))
+    c.execute("SELECT id FROM dokonlar WHERE agent_id=%s",(agent_id,))
     dokon_ids=[r[0] for r in c.fetchall()]
     if dokon_ids:
-        ph=",".join("?"*len(dokon_ids))
+        ph=",".join(["%s"]*len(dokon_ids))
         c.execute(f"DELETE FROM savdo_tafsilot WHERE savdo_id IN (SELECT id FROM savdolar WHERE dokon_id IN ({ph}))",dokon_ids)
         c.execute(f"DELETE FROM savdolar WHERE dokon_id IN ({ph})",dokon_ids)
         c.execute(f"DELETE FROM nasiya WHERE dokon_id IN ({ph})",dokon_ids)
@@ -3309,15 +3078,15 @@ def s_agent_delete_confirm(msg):
         c.execute(f"DELETE FROM revisitlar WHERE dokon_id IN ({ph})",dokon_ids)
         c.execute(f"DELETE FROM delivery_routes WHERE dokon_id IN ({ph})",dokon_ids)
     # Also drop any rows tied to agent_id directly (in case dokons were reassigned)
-    c.execute("DELETE FROM savdo_tafsilot WHERE savdo_id IN (SELECT id FROM savdolar WHERE agent_id=?)",(agent_id,))
-    c.execute("DELETE FROM savdolar WHERE agent_id=?",(agent_id,))
-    c.execute("DELETE FROM nasiya WHERE agent_id=?",(agent_id,))
-    c.execute("DELETE FROM pul_olish WHERE agent_id=?",(agent_id,))
-    c.execute("DELETE FROM olmagan_dokonlar WHERE agent_id=?",(agent_id,))
-    c.execute("DELETE FROM revisitlar WHERE agent_id=?",(agent_id,))
-    c.execute("DELETE FROM agent_plans WHERE agent_id=?",(agent_id,))
-    c.execute("DELETE FROM dokonlar WHERE agent_id=?",(agent_id,))
-    c.execute("DELETE FROM users WHERE telegram_id=?",(agent_id,))
+    c.execute("DELETE FROM savdo_tafsilot WHERE savdo_id IN (SELECT id FROM savdolar WHERE agent_id=%s)",(agent_id,))
+    c.execute("DELETE FROM savdolar WHERE agent_id=%s",(agent_id,))
+    c.execute("DELETE FROM nasiya WHERE agent_id=%s",(agent_id,))
+    c.execute("DELETE FROM pul_olish WHERE agent_id=%s",(agent_id,))
+    c.execute("DELETE FROM olmagan_dokonlar WHERE agent_id=%s",(agent_id,))
+    c.execute("DELETE FROM revisitlar WHERE agent_id=%s",(agent_id,))
+    c.execute("DELETE FROM agent_plans WHERE agent_id=%s",(agent_id,))
+    c.execute("DELETE FROM dokonlar WHERE agent_id=%s",(agent_id,))
+    c.execute("DELETE FROM users WHERE telegram_id=%s",(agent_id,))
     conn.commit(); conn.close()
     try: bot.send_message(agent_id,"🗑 Sizning akkauntingiz va barcha ma'lumotlaringiz tizimdan to'liq o'chirildi.")
     except: pass
@@ -3327,13 +3096,13 @@ def s_agent_delete_confirm(msg):
 def _agent_batafsil(uid,agent_id,agent_name):
     conn=get_db();c=conn.cursor()
     c.execute("""SELECT substr(created_at,1,7) as oy,COALESCE(SUM(jami_summa),0),COUNT(*)
-        FROM savdolar WHERE agent_id=? GROUP BY oy ORDER BY oy DESC LIMIT 6""",(agent_id,))
+        FROM savdolar WHERE agent_id=%s GROUP BY oy ORDER BY oy DESC LIMIT 6""",(agent_id,))
     oylar=c.fetchall()
-    c.execute("SELECT COALESCE(SUM(jami_summa),0),COUNT(*) FROM savdolar WHERE agent_id=? AND substr(created_at,1,10)=?",(agent_id,date.today().isoformat()))
+    c.execute("SELECT COALESCE(SUM(jami_summa),0),COUNT(*) FROM savdolar WHERE agent_id=%s AND substr(created_at,1,10)=%s",(agent_id,date.today().isoformat()))
     bugungi_s,bugungi_n=c.fetchone()
-    c.execute("SELECT COUNT(*) FROM dokonlar WHERE agent_id=? AND holat='faol'",(agent_id,))
+    c.execute("SELECT COUNT(*) FROM dokonlar WHERE agent_id=%s AND holat='faol'",(agent_id,))
     dokon_n=c.fetchone()[0]
-    c.execute("SELECT COALESCE(SUM(qoldiq),0) FROM nasiya WHERE agent_id=? AND qoldiq>0",(agent_id,))
+    c.execute("SELECT COALESCE(SUM(qoldiq),0) FROM nasiya WHERE agent_id=%s AND qoldiq>0",(agent_id,))
     nasiya=c.fetchone()[0]; conn.close()
     text=(f"📊 {agent_name} — Batafsil\n{'━'*26}\n"
           f"🏪 Faol dokonlar: {dokon_n} ta\n"
@@ -3447,16 +3216,16 @@ def _send_umumiy_stat(uid,d_from,d_to,label):
     conn=get_db();c=conn.cursor()
     c.execute("SELECT COUNT(*) FROM dokonlar WHERE holat='faol'"); jami_d=c.fetchone()[0]
     c.execute("SELECT COUNT(*) FROM users WHERE role IN ('agent','supervisor')"); jami_a=c.fetchone()[0]
-    c.execute("SELECT COALESCE(SUM(jami_summa),0),COUNT(*) FROM savdolar WHERE substr(created_at,1,10) BETWEEN ? AND ?",(d_from,d_to))
+    c.execute("SELECT COALESCE(SUM(jami_summa),0),COUNT(*) FROM savdolar WHERE substr(created_at,1,10) BETWEEN %s AND %s",(d_from,d_to))
     jami_savdo,savdo_n=c.fetchone()
-    c.execute("SELECT COALESCE(SUM(summa),0) FROM pul_olish WHERE substr(created_at,1,10) BETWEEN ? AND ?",(d_from,d_to))
+    c.execute("SELECT COALESCE(SUM(summa),0) FROM pul_olish WHERE substr(created_at,1,10) BETWEEN %s AND %s",(d_from,d_to))
     jami_pul=c.fetchone()[0]
     c.execute("""SELECT d.viloyat,COALESCE(SUM(s.jami_summa),0)
         FROM savdolar s JOIN dokonlar d ON s.dokon_id=d.id
-        WHERE substr(s.created_at,1,10) BETWEEN ? AND ?
+        WHERE substr(s.created_at,1,10) BETWEEN %s AND %s
         GROUP BY d.viloyat ORDER BY 2 DESC""",(d_from,d_to)); vs=c.fetchall()
     c.execute("""SELECT sabab_text,COUNT(*) FROM olmagan_dokonlar
-        WHERE substr(created_at,1,10) BETWEEN ? AND ?
+        WHERE substr(created_at,1,10) BETWEEN %s AND %s
         GROUP BY sabab_text ORDER BY COUNT(*) DESC LIMIT 5""",(d_from,d_to)); sab=c.fetchall()
     c.execute("SELECT COALESCE(SUM(qoldiq),0) FROM nasiya WHERE qoldiq>0"); jami_nasiya=c.fetchone()[0]
     c.execute("SELECT COUNT(DISTINCT dokon_id) FROM nasiya WHERE qoldiq>0"); nasiyali_d=c.fetchone()[0]
@@ -3527,8 +3296,8 @@ def agentlar_stat(msg):
     c.execute("""
         SELECT u.telegram_id,u.name,u.viloyat,
                COUNT(DISTINCT d.id) as dokon_soni,
-               COALESCE(SUM(CASE WHEN substr(s.created_at,1,7)=? THEN s.jami_summa ELSE 0 END),0) as oylik,
-               COALESCE(SUM(CASE WHEN substr(s.created_at,1,10)=? THEN s.jami_summa ELSE 0 END),0) as bugungi
+               COALESCE(SUM(CASE WHEN substr(s.created_at,1,7)=%s THEN s.jami_summa ELSE 0 END),0) as oylik,
+               COALESCE(SUM(CASE WHEN substr(s.created_at,1,10)=%s THEN s.jami_summa ELSE 0 END),0) as bugungi
         FROM users u
         LEFT JOIN dokonlar d ON d.agent_id=u.telegram_id AND d.holat='faol'
         LEFT JOIN savdolar s ON s.agent_id=u.telegram_id
@@ -3542,9 +3311,9 @@ def agentlar_stat(msg):
     nasiya_map={}; qaytib_map={}
     for r in rows:
         tid=r[0]
-        c.execute("SELECT COALESCE(SUM(qoldiq),0) FROM nasiya WHERE agent_id=? AND qoldiq>0",(tid,))
+        c.execute("SELECT COALESCE(SUM(qoldiq),0) FROM nasiya WHERE agent_id=%s AND qoldiq>0",(tid,))
         nasiya_map[tid]=c.fetchone()[0]
-        c.execute("SELECT COUNT(*) FROM olmagan_dokonlar WHERE agent_id=? AND bajarildi=0 AND qaytish_sanasi IS NOT NULL",(tid,))
+        c.execute("SELECT COUNT(*) FROM olmagan_dokonlar WHERE agent_id=%s AND bajarildi=0 AND qaytish_sanasi IS NOT NULL",(tid,))
         qaytib_map[tid]=c.fetchone()[0]
     conn.close()
     text=f"👥 AGENTLAR STATISTIKASI\n📅 {oy}\n{'━'*28}\n\n"
@@ -3633,7 +3402,7 @@ def mah_qosh_tasdiq(msg):
         clear_state(uid)
         bot.send_message(uid,"Bekor qilindi.",reply_markup=mah_menu_kb()); return
     conn=get_db();c=conn.cursor()
-    c.execute("INSERT INTO mahsulotlar (nomi,narx,birlik) VALUES (?,?,?)",(data["nomi"],data["narx"],data["birlik"]))
+    c.execute("INSERT INTO mahsulotlar (nomi,narx,birlik) VALUES (%s,%s,%s)",(data["nomi"],data["narx"],data["birlik"]))
     conn.commit();conn.close();clear_state(uid)
     bot.send_message(uid,f"✅ Mahsulot qo'shildi!\n\n📝 {data['nomi']} — {fmt(data['narx'])}/{data['birlik']}",reply_markup=mah_menu_kb())
 
@@ -3673,7 +3442,7 @@ def mah_narx_kirit(msg):
     try: narx=int(msg.text.replace(" ","").replace(",",""))
     except: bot.send_message(uid,"❗ Raqam kiriting, masalan: 40000"); return
     conn=get_db();c=conn.cursor()
-    c.execute("UPDATE mahsulotlar SET narx=? WHERE id=?",(narx,data["mid"]))
+    c.execute("UPDATE mahsulotlar SET narx=%s WHERE id=%s",(narx,data["mid"]))
     conn.commit();conn.close();clear_state(uid)
     bot.send_message(uid,f"✅ Narx yangilandi!\n📝 {data['nomi']} — {fmt(narx)}",reply_markup=mah_menu_kb())
 
@@ -3716,7 +3485,7 @@ def mah_ochir_tasdiq(msg):
         clear_state(uid)
         bot.send_message(uid,"Bekor qilindi.",reply_markup=mah_menu_kb()); return
     conn=get_db();c=conn.cursor()
-    c.execute("UPDATE mahsulotlar SET faol=0 WHERE id=?",(data["mid"],))
+    c.execute("UPDATE mahsulotlar SET faol=0 WHERE id=%s",(data["mid"],))
     conn.commit();conn.close();clear_state(uid)
     bot.send_message(uid,f"✅ {data['nomi']} o'chirildi.",reply_markup=mah_menu_kb())
 
@@ -3742,28 +3511,28 @@ def send_daily_report(target=1261052681):
     try:
         yesterday=(date.today()-timedelta(days=1)).isoformat()
         conn=get_db();c=conn.cursor()
-        c.execute("SELECT COALESCE(SUM(jami_summa),0),COUNT(*) FROM savdolar WHERE created_at LIKE ?",(f"{yesterday}%",))
+        c.execute("SELECT COALESCE(SUM(jami_summa),0),COUNT(*) FROM savdolar WHERE created_at LIKE %s",(f"{yesterday}%",))
         jami_savdo,savdo_n=c.fetchone()
-        c.execute("SELECT COALESCE(SUM(summa),0) FROM pul_olish WHERE created_at LIKE ?",(f"{yesterday}%",))
+        c.execute("SELECT COALESCE(SUM(summa),0) FROM pul_olish WHERE created_at LIKE %s",(f"{yesterday}%",))
         jami_pul=c.fetchone()[0]
         c.execute("""SELECT u.name,COALESCE(SUM(s.jami_summa),0) as jami
                      FROM savdolar s JOIN users u ON u.telegram_id=s.agent_id
-                     WHERE s.created_at LIKE ?
+                     WHERE s.created_at LIKE %s
                      GROUP BY s.agent_id,u.name ORDER BY jami DESC LIMIT 3""",(f"{yesterday}%",))
         top3=c.fetchall()
-        c.execute("SELECT COUNT(*) FROM dokonlar WHERE created_at LIKE ?",(f"{yesterday}%",))
+        c.execute("SELECT COUNT(*) FROM dokonlar WHERE created_at LIKE %s",(f"{yesterday}%",))
         yangi_dokon=c.fetchone()[0]
-        c.execute("SELECT COUNT(*) FROM olmagan_dokonlar WHERE created_at LIKE ?",(f"{yesterday}%",))
+        c.execute("SELECT COUNT(*) FROM olmagan_dokonlar WHERE created_at LIKE %s",(f"{yesterday}%",))
         olmagan_n=c.fetchone()[0]
         c.execute("""SELECT sabab_text,COUNT(*) as n FROM olmagan_dokonlar
-                     WHERE created_at LIKE ? GROUP BY sabab_text ORDER BY n DESC LIMIT 1""",(f"{yesterday}%",))
+                     WHERE created_at LIKE %s GROUP BY sabab_text ORDER BY n DESC LIMIT 1""",(f"{yesterday}%",))
         top_sabab=c.fetchone()
         viloyatlar=["Namangan","Farg'ona","Andijon"]
         viloyat_stats=[]
         for v in viloyatlar:
             c.execute("""SELECT COALESCE(SUM(s.jami_summa),0)
                          FROM savdolar s JOIN dokonlar d ON d.id=s.dokon_id
-                         WHERE s.created_at LIKE ? AND d.viloyat=?""",(f"{yesterday}%",v))
+                         WHERE s.created_at LIKE %s AND d.viloyat=%s""",(f"{yesterday}%",v))
             viloyat_stats.append((v,c.fetchone()[0]))
         conn.close()
         import random; motiv=random.choice(MOTIVATSIYA)
@@ -3797,9 +3566,9 @@ def haftalik_cmd(msg):
 
         daily=[]
         for d in days:
-            c.execute("SELECT COALESCE(SUM(jami_summa),0),COUNT(*) FROM savdolar WHERE created_at LIKE ?",(f"{d}%",))
+            c.execute("SELECT COALESCE(SUM(jami_summa),0),COUNT(*) FROM savdolar WHERE created_at LIKE %s",(f"{d}%",))
             s,n=c.fetchone()
-            c.execute("SELECT COALESCE(SUM(summa),0) FROM pul_olish WHERE created_at LIKE ?",(f"{d}%",))
+            c.execute("SELECT COALESCE(SUM(summa),0) FROM pul_olish WHERE created_at LIKE %s",(f"{d}%",))
             p=c.fetchone()[0]
             daily.append((d,s,n,p))
 
@@ -3809,12 +3578,12 @@ def haftalik_cmd(msg):
 
         prev_savdo=0
         for d in prev_days:
-            c.execute("SELECT COALESCE(SUM(jami_summa),0) FROM savdolar WHERE created_at LIKE ?",(f"{d}%",))
+            c.execute("SELECT COALESCE(SUM(jami_summa),0) FROM savdolar WHERE created_at LIKE %s",(f"{d}%",))
             prev_savdo+=c.fetchone()[0]
 
         c.execute("""SELECT u.name,COALESCE(SUM(s.jami_summa),0) as jami
                      FROM savdolar s JOIN users u ON u.telegram_id=s.agent_id
-                     WHERE s.created_at >= ?
+                     WHERE s.created_at >= %s
                      GROUP BY s.agent_id,u.name ORDER BY jami DESC LIMIT 3""",(days[0],))
         top3=c.fetchall()
 
@@ -3823,7 +3592,7 @@ def haftalik_cmd(msg):
         for v in viloyatlar:
             c.execute("""SELECT COALESCE(SUM(s.jami_summa),0)
                          FROM savdolar s JOIN dokonlar d ON d.id=s.dokon_id
-                         WHERE s.created_at >= ? AND d.viloyat=?""",(days[0],v))
+                         WHERE s.created_at >= %s AND d.viloyat=%s""",(days[0],v))
             viloyat_stats.append((v,c.fetchone()[0]))
         conn.close()
 
@@ -3868,22 +3637,22 @@ def oylik_cmd(msg):
 
         conn=get_db();c=conn.cursor()
 
-        c.execute("SELECT COALESCE(SUM(jami_summa),0),COUNT(*) FROM savdolar WHERE created_at LIKE ?",(f"{oy}%",))
+        c.execute("SELECT COALESCE(SUM(jami_summa),0),COUNT(*) FROM savdolar WHERE created_at LIKE %s",(f"{oy}%",))
         jami_savdo,savdo_n=c.fetchone()
-        c.execute("SELECT COALESCE(SUM(summa),0) FROM pul_olish WHERE created_at LIKE ?",(f"{oy}%",))
+        c.execute("SELECT COALESCE(SUM(summa),0) FROM pul_olish WHERE created_at LIKE %s",(f"{oy}%",))
         jami_pul=c.fetchone()[0]
-        c.execute("SELECT COALESCE(SUM(jami_summa),0) FROM savdolar WHERE created_at LIKE ?",(f"{prev_oy}%",))
+        c.execute("SELECT COALESCE(SUM(jami_summa),0) FROM savdolar WHERE created_at LIKE %s",(f"{prev_oy}%",))
         prev_savdo=c.fetchone()[0]
 
         c.execute("""SELECT substr(created_at,1,10) as kun,
                             COALESCE(SUM(jami_summa),0)
-                     FROM savdolar WHERE created_at LIKE ?
+                     FROM savdolar WHERE created_at LIKE %s
                      GROUP BY kun ORDER BY kun""",(f"{oy}%",))
         daily_rows=c.fetchall()
 
         c.execute("""SELECT u.name,COALESCE(SUM(s.jami_summa),0) as jami
                      FROM savdolar s JOIN users u ON u.telegram_id=s.agent_id
-                     WHERE s.created_at LIKE ?
+                     WHERE s.created_at LIKE %s
                      GROUP BY s.agent_id,u.name ORDER BY jami DESC LIMIT 3""",(f"{oy}%",))
         top3=c.fetchall()
 
@@ -3892,12 +3661,12 @@ def oylik_cmd(msg):
         for v in viloyatlar:
             c.execute("""SELECT COALESCE(SUM(s.jami_summa),0)
                          FROM savdolar s JOIN dokonlar d ON d.id=s.dokon_id
-                         WHERE s.created_at LIKE ? AND d.viloyat=?""",(f"{oy}%",v))
+                         WHERE s.created_at LIKE %s AND d.viloyat=%s""",(f"{oy}%",v))
             viloyat_stats.append((v,c.fetchone()[0]))
 
-        c.execute("SELECT COUNT(*) FROM dokonlar WHERE created_at LIKE ?",(f"{oy}%",))
+        c.execute("SELECT COUNT(*) FROM dokonlar WHERE created_at LIKE %s",(f"{oy}%",))
         yangi_dokon=c.fetchone()[0]
-        c.execute("SELECT COUNT(*) FROM olmagan_dokonlar WHERE created_at LIKE ?",(f"{oy}%",))
+        c.execute("SELECT COUNT(*) FROM olmagan_dokonlar WHERE created_at LIKE %s",(f"{oy}%",))
         olmagan_n=c.fetchone()[0]
         conn.close()
 
@@ -4002,7 +3771,7 @@ def send_today_revisits(target_agent=None, target_admin=None):
                      FROM revisitlar r
                      JOIN dokonlar d ON d.id=r.dokon_id
                      LEFT JOIN users u ON u.telegram_id=r.agent_id
-                     WHERE r.revisit_date<=? AND r.status='pending' AND r.agent_id=?
+                     WHERE r.revisit_date<=%s AND r.status='pending' AND r.agent_id=%s
                      ORDER BY d.nomi""",(today,target_agent))
     else:
         c.execute("""SELECT r.id, r.dokon_id, d.nomi, d.egasi, d.viloyat, d.hudud, d.latitude, d.longitude,
@@ -4010,7 +3779,7 @@ def send_today_revisits(target_agent=None, target_admin=None):
                      FROM revisitlar r
                      JOIN dokonlar d ON d.id=r.dokon_id
                      LEFT JOIN users u ON u.telegram_id=r.agent_id
-                     WHERE r.revisit_date<=? AND r.status='pending'
+                     WHERE r.revisit_date<=%s AND r.status='pending'
                      ORDER BY r.agent_id, d.nomi""",(today,))
     rows=c.fetchall(); conn.close()
     if not rows:
@@ -4087,7 +3856,10 @@ def run_scheduler():
         schedule.every().day.at("15:00").do(send_monthly_rating_if_last_day) # 20:00 Tashkent
         print("⏰ Scheduler started (UTC fallback): daily 03:00, revisits 02:00, lost-alert Mon 04:00, old-nasiya Mon 04:30, rating 15:00 UTC")
     while True:
-        schedule.run_pending()
+        try:
+            schedule.run_pending()
+        except Exception as e:
+            log.exception("Scheduler job failed: %s", e)
         time.sleep(30)
 
 def run_health_server():

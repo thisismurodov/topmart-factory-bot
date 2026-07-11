@@ -158,6 +158,16 @@ CREATE TABLE IF NOT EXISTS distribution.delivery_routes (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_routes_agent_kun_dokon ON distribution.delivery_routes (delivery_agent_id, kun, dokon_id);
 CREATE INDEX IF NOT EXISTS idx_routes_agent_day ON distribution.delivery_routes (delivery_agent_id, kun);
+
+CREATE TABLE IF NOT EXISTS distribution.agent_locations (
+  id SERIAL PRIMARY KEY,
+  agent_id BIGINT NOT NULL,
+  latitude DOUBLE PRECISION NOT NULL,
+  longitude DOUBLE PRECISION NOT NULL,
+  source TEXT DEFAULT 'manual',
+  created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_agent_locations_agent_time ON distribution.agent_locations (agent_id, created_at);
 `;
 
 async function main() {

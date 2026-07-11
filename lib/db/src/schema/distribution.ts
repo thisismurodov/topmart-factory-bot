@@ -175,6 +175,20 @@ export const deliveryRoutesTable = distribution.table(
   ],
 );
 
+// Agent GPS nuqtalari (jonli oqim — Task "Agent jonli oqimi")
+export const agentLocationsTable = distribution.table(
+  "agent_locations",
+  {
+    id: serial("id").primaryKey(),
+    agentId: bigint("agent_id", { mode: "number" }).notNull(),
+    latitude: doublePrecision("latitude").notNull(),
+    longitude: doublePrecision("longitude").notNull(),
+    source: text("source").default("manual"),
+    createdAt: text("created_at"),
+  },
+  (t) => [index("idx_agent_locations_agent_time").on(t.agentId, t.createdAt)],
+);
+
 export const insertDokonSchema = createInsertSchema(dokonlarTable).omit({ id: true });
 export type Dokon = typeof dokonlarTable.$inferSelect;
 export type DistSavdo = typeof savdolarTable.$inferSelect;

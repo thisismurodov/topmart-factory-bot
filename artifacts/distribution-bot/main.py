@@ -1156,6 +1156,20 @@ def dlv_my_route(msg):
         if lat and lon: text+=f"\n   🗺 https://maps.google.com/?q={lat},{lon}"
     _send_long(uid,text)
 
+@bot.message_handler(func=lambda m:m.text=="🚀 Marshrutni boshlash")
+def dlv_route_begin(msg):
+    uid=msg.from_user.id; user=get_user(uid)
+    if not user or user[3]!="delivery": return
+    set_state(uid,"route_gps",{})
+    bot.send_message(uid,"📍 Marshrutni boshlash uchun joylashuvingizni yuboring:",reply_markup=location_kb())
+
+@bot.message_handler(content_types=["location"],func=lambda m:get_state(m.from_user.id)["state"]=="route_gps")
+def dlv_route_gps(msg):
+    uid=msg.from_user.id
+    _record_agent_location(uid,msg.location.latitude,msg.location.longitude,"route_start")
+    clear_state(uid)
+    bot.send_message(uid,"✅ Joylashuv qabul qilindi — marshrut boshlandi. Yaxshi yo'l! 🚚",reply_markup=main_kb("delivery"))
+
 @bot.message_handler(func=lambda m:m.text=="👤 Profil")
 def dlv_profile(msg):
     uid=msg.from_user.id; user=get_user(uid)
@@ -1641,6 +1655,7 @@ def s_dokon_hudud(msg):
 def s_dokon_loc(msg):
     uid=msg.from_user.id; data=get_state(uid)["data"]
     data["lat"]=msg.location.latitude; data["lon"]=msg.location.longitude
+    _record_agent_location(uid,data["lat"],data["lon"],"dokon")
     set_state(uid,"dokon_foto",data)
     bot.send_message(uid,"📸 Dokon rasmini yuboring:",reply_markup=skip_kb())
 
@@ -1747,6 +1762,17 @@ def _today_kun():
     """Returns 1=Du..6=Sh, or None if Sunday."""
     iw=datetime.now().isoweekday()
     return iw if 1<=iw<=6 else None
+
+def _record_agent_location(uid,lat,lon,source="manual"):
+    """GPS nuqtasini agent_locations ga yozadi — xato bo'lsa asosiy oqimni buzmaydi."""
+    if lat is None or lon is None: return
+    try:
+        conn=get_db();c=conn.cursor()
+        c.execute("INSERT INTO agent_locations (agent_id,latitude,longitude,source,created_at) VALUES (%s,%s,%s,%s,%s)",
+                  (uid,lat,lon,source,datetime.now().isoformat()))
+        conn.commit();conn.close()
+    except Exception as e:
+        log.warning("agent_location yozilmadi (uid=%s): %s", uid, e)
 
 DLV_ADHOC_MAX=5
 
@@ -2588,6 +2614,7 @@ def s_olmadi_qaytish(msg):
 def s_olmadi_loc(msg):
     uid=msg.from_user.id; data=get_state(uid)["data"]
     data["lat"]=msg.location.latitude; data["lon"]=msg.location.longitude
+    _record_agent_location(uid,data["lat"],data["lon"],"olmadi")
     set_state(uid,"olmadi_foto",data)
     bot.send_message(uid,"📸 Dokon rasmini yuboring:",reply_markup=skip_kb())
 
@@ -3837,24 +3864,68 @@ def qayta_kirish_cmd(msg):
     else:
         send_today_revisits(target_agent=uid)
 
+def send_morning_routes():
+    """Har kuni ertalab faol delivery agentlarga bugungi marshrutni yuborish."""
+    kun=_today_kun()
+    if not kun: return 0  # Yakshanba — dam olish kuni
+    conn=get_db();c=conn.cursor()
+    c.execute("SELECT id,name,telegram_id FROM delivery_agents WHERE faol=1 AND telegram_id IS NOT NULL")
+    agents=c.fetchall()
+    sent=0
+    for did,name,tid in agents:
+        c.execute("""SELECT r.tartib,d.nomi,d.hudud,d.latitude,d.longitude
+                     FROM delivery_routes r JOIN dokonlar d ON d.id=r.dokon_id
+                     WHERE r.delivery_agent_id=%s AND r.kun=%s AND d.holat='faol'
+                     ORDER BY r.tartib""",(did,kun))
+        rows=c.fetchall()
+        if not rows: continue
+        text=(f"🌅 Xayrli tong, {name}!\n"
+              f"📅 {day_name(kun)} — bugungi marshrutingiz\n"
+              f"📦 {len(rows)} ta do'kon\n{'━'*26}\n")
+        for tartib,nomi,hud,_,_ in rows:
+            text+=f"\n{tartib}. 🏪 {nomi} | 📍 {hud or '—'}"
+        coords=[(lat,lon) for _,_,_,lat,lon in rows if lat and lon]
+        if coords:
+            cc=coords[:10]
+            if len(cc)==1:
+                url=f"https://maps.google.com/?q={cc[0][0]},{cc[0][1]}"
+            else:
+                url=("https://www.google.com/maps/dir/?api=1&destination="
+                     f"{cc[-1][0]},{cc[-1][1]}&waypoints="
+                     +"|".join(f"{la},{lo}" for la,lo in cc[:-1])+"&travelmode=driving")
+            text+=f"\n\n🚗 MARSHRUT (ko'p to'xtash): {url}"
+        text+="\n\n🚀 \"Marshrutni boshlash\" tugmasini bosib joylashuvingizni yuboring."
+        kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=2)
+        kb.add("🚀 Marshrutni boshlash")
+        kb.add("📦 Tovar berish","❌ Tovar olmadi")
+        kb.add("🗺 Mening marshrutim","👤 Profil")
+        try:
+            bot.send_message(tid,text,reply_markup=kb,disable_web_page_preview=True); sent+=1
+        except Exception as e:
+            log.warning("Morning route yuborilmadi (tid=%s): %s", tid, e)
+    conn.close()
+    return sent
+
 def run_scheduler():
     # Tashkent vaqti bilan (UTC+5). Eski schedule versiyalari uchun fallback — UTC ekvivalent.
     tz="Asia/Tashkent"
     try:
         schedule.every().day.at("08:00", tz).do(send_daily_report)
         schedule.every().day.at("07:00", tz).do(send_today_revisits)
+        schedule.every().day.at("07:30", tz).do(send_morning_routes)
         schedule.every().monday.at("09:00", tz).do(send_weekly_lost_alert)
         schedule.every().monday.at("09:30", tz).do(send_weekly_old_nasiya_alert)
         schedule.every().day.at("20:00", tz).do(send_monthly_rating_if_last_day)
-        print(f"⏰ Scheduler started (TZ={tz}): daily 08:00, revisits 07:00, lost-alert Mon 09:00, old-nasiya Mon 09:30, rating last-day 20:00")
+        print(f"⏰ Scheduler started (TZ={tz}): daily 08:00, revisits 07:00, morning-routes 07:30, lost-alert Mon 09:00, old-nasiya Mon 09:30, rating last-day 20:00")
     except TypeError:
         # Old `schedule` lib — convert manually (Tashkent = UTC+5)
         schedule.every().day.at("03:00").do(send_daily_report)   # 08:00 Tashkent
         schedule.every().day.at("02:00").do(send_today_revisits) # 07:00 Tashkent
+        schedule.every().day.at("02:30").do(send_morning_routes) # 07:30 Tashkent
         schedule.every().monday.at("04:00").do(send_weekly_lost_alert) # 09:00 Tashkent
         schedule.every().monday.at("04:30").do(send_weekly_old_nasiya_alert) # 09:30 Tashkent
         schedule.every().day.at("15:00").do(send_monthly_rating_if_last_day) # 20:00 Tashkent
-        print("⏰ Scheduler started (UTC fallback): daily 03:00, revisits 02:00, lost-alert Mon 04:00, old-nasiya Mon 04:30, rating 15:00 UTC")
+        print("⏰ Scheduler started (UTC fallback): daily 03:00, revisits 02:00, morning-routes 02:30, lost-alert Mon 04:00, old-nasiya Mon 04:30, rating 15:00 UTC")
     while True:
         try:
             schedule.run_pending()
@@ -3969,6 +4040,16 @@ def dokonlar_pdf(msg):
     fname=f"dokonlar_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
     bot.send_document(uid, (fname, buf.read()),
         caption=f"📄 Dokonlar ro'yxati\n🗓 {datetime.now().strftime('%d.%m.%Y %H:%M')}\n📊 Jami: {len(rows)} ta (✓ {faol} faol, ✗ {len(rows)-faol} nofaol)")
+
+# ── Boshqa har qanday joylashuv xabari → agent_locations (jonli GPS oqimi) ─────
+# Diqqat: bu handler ENG OXIRIDA ro'yxatdan o'tadi — state-ga bog'liq location
+# handlerlari (dokon_location, olmadi_location, route_gps) undan ustun turadi.
+@bot.message_handler(content_types=["location"])
+def any_location(msg):
+    uid=msg.from_user.id
+    if not (get_user(uid) or _get_delivery_agent_by_tid(uid)): return
+    _record_agent_location(uid,msg.location.latitude,msg.location.longitude,"manual")
+    bot.send_message(uid,"📍 Joylashuv qayd etildi.")
 
 if __name__=="__main__":
     init_db()

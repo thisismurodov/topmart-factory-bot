@@ -1083,4 +1083,111 @@ router.get("/distribution/route-progress", async (req, res): Promise<void> => {
   });
 });
 
+// ── Jonli holat: har bir delivery agentning oxirgi GPS nuqtasi + bugungi progress ──
+// Bot yozgan agent_locations (telegram_id bo'yicha) + marshrut statistikasi + savdolar.
+router.get("/distribution/live-status", async (req, res): Promise<void> => {
+  const f = parseFilters(req);
+  const q = req.query as Record<string, unknown>;
+  const dateRaw = typeof q.date === "string" && DATE_RE.test(q.date) ? q.date : null;
+
+  const dQ = await pool.query(
+    `SELECT COALESCE($1::text, to_char(now() AT TIME ZONE 'Asia/Tashkent','YYYY-MM-DD')) AS d,
+            EXTRACT(ISODOW FROM COALESCE($1::text::date, (now() AT TIME ZONE 'Asia/Tashkent')::date))::int AS dow`,
+    [dateRaw]
+  );
+  const date = dQ.rows[0].d as string;
+  const dow = dQ.rows[0].dow as number;
+
+  const params: unknown[] = [dow, date];
+  let stopsW = "";
+  if (f.viloyat) {
+    params.push(f.viloyat);
+    stopsW += ` AND d.viloyat = $${params.length}`;
+  }
+  if (f.hudud) {
+    params.push(f.hudud);
+    stopsW += ` AND d.hudud = $${params.length}`;
+  }
+  let agentW = "";
+  if (f.agentId) {
+    params.push(f.agentId);
+    agentW += ` AND da.telegram_id = $${params.length}`;
+  }
+  // Viloyat/hudud filtri berilsa — faqat shu hududda marshruti bor agentlar
+  const restrict = f.viloyat || f.hudud ? " AND p.agent_id IS NOT NULL" : "";
+
+  const { rows } = await pool.query(
+    `WITH stops AS (
+       SELECT da.id AS agent_id, r.dokon_id,
+              EXISTS (SELECT 1 FROM distribution.savdolar s
+                       WHERE s.dokon_id = r.dokon_id AND substr(s.created_at,1,10) = $2) AS sold,
+              EXISTS (SELECT 1 FROM distribution.olmagan_dokonlar o
+                       WHERE o.dokon_id = r.dokon_id AND substr(o.created_at,1,10) = $2) AS noorder,
+              EXISTS (SELECT 1 FROM distribution.pul_olish pl
+                       WHERE pl.dokon_id = r.dokon_id AND substr(pl.created_at,1,10) = $2) AS paid
+         FROM distribution.delivery_routes r
+         JOIN distribution.delivery_agents da ON da.id = r.delivery_agent_id
+         JOIN distribution.dokonlar d ON d.id = r.dokon_id
+        WHERE r.kun = $1 AND da.faol = 1${stopsW}
+     ),
+     prog AS (
+       SELECT agent_id,
+              COUNT(*)::int                                        AS planned,
+              COUNT(*) FILTER (WHERE sold OR noorder OR paid)::int AS visited,
+              COUNT(*) FILTER (WHERE sold)::int                    AS sold
+         FROM stops GROUP BY agent_id
+     ),
+     loc AS (
+       SELECT DISTINCT ON (agent_id) agent_id, latitude, longitude, created_at
+         FROM distribution.agent_locations
+        WHERE substr(created_at,1,10) = $2
+        ORDER BY agent_id, created_at DESC
+     ),
+     sales AS (
+       SELECT agent_id, COALESCE(SUM(jami_summa),0) AS total, COUNT(*)::int AS cnt
+         FROM distribution.savdolar
+        WHERE substr(created_at,1,10) = $2
+        GROUP BY agent_id
+     )
+     SELECT da.id, da.name, da.mashina_nomeri, da.hudud, da.telegram_id,
+            COALESCE(p.planned,0)::int  AS planned,
+            COALESCE(p.visited,0)::int  AS visited,
+            COALESCE(p.sold,0)::int     AS sold,
+            l.latitude  AS loc_lat,
+            l.longitude AS loc_lng,
+            l.created_at AS loc_at,
+            COALESCE(sa.total,0)        AS sales_total,
+            COALESCE(sa.cnt,0)::int     AS sales_count
+       FROM distribution.delivery_agents da
+       LEFT JOIN prog p  ON p.agent_id  = da.id
+       LEFT JOIN loc l   ON l.agent_id  = da.telegram_id
+       LEFT JOIN sales sa ON sa.agent_id = da.telegram_id
+      WHERE da.faol = 1${agentW}
+        AND (p.agent_id IS NOT NULL OR l.agent_id IS NOT NULL OR sa.agent_id IS NOT NULL)${restrict}
+      ORDER BY da.name`,
+    params
+  );
+
+  res.json({
+    date,
+    kun: dow,
+    agents: rows.map((r) => ({
+      agentId: r.id,
+      agentName: r.name,
+      mashinaNomeri: r.mashina_nomeri,
+      hudud: r.hudud,
+      planned: r.planned,
+      visited: r.visited,
+      sold: r.sold,
+      remaining: r.planned - r.visited,
+      salesTotal: Number(r.sales_total),
+      salesCount: r.sales_count,
+      lastLocation:
+        r.loc_lat != null && r.loc_lng != null
+          ? { lat: r.loc_lat, lng: r.loc_lng, at: r.loc_at as string }
+          : null,
+    })),
+  });
+});
+
 export default router;

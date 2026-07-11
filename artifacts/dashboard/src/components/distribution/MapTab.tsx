@@ -60,19 +60,32 @@ type MapRouteStop = {
   visited: boolean;
 };
 type MapData = { date: string; kun: number; shops: MapShop[]; routes: MapRouteStop[] };
-type RouteProgressData = {
-  date: string;
-  kun: number;
-  agents: {
-    agentId: number;
-    agentName: string | null;
-    mashinaNomeri: string | null;
-    planned: number;
-    visited: number;
-    sold: number;
-    remaining: number;
-  }[];
+type LiveAgent = {
+  agentId: number;
+  agentName: string | null;
+  mashinaNomeri: string | null;
+  hudud: string | null;
+  planned: number;
+  visited: number;
+  sold: number;
+  remaining: number;
+  salesTotal: number;
+  salesCount: number;
+  lastLocation: { lat: number; lng: number; at: string } | null;
 };
+type LiveStatusData = { date: string; kun: number; agents: LiveAgent[] };
+
+// Har 45 soniyada yangilanadi — agentlarning jonli oqimi uchun
+const LIVE_REFETCH_MS = 45_000;
+
+function fmtSom(n: number): string {
+  return `${Math.round(n).toLocaleString("en-US").replace(/,/g, " ")} so'm`;
+}
+
+// created_at TEXT ISO — vaqt qismini (HH:MM) ko'rsatamiz
+function locTime(at: string): string {
+  return at.length >= 16 ? at.slice(11, 16) : at;
+}
 
 export type MapTabProps = {
   date?: string;
@@ -108,6 +121,15 @@ function dotIcon(color: string): L.DivIcon {
     html: `<div style="width:16px;height:16px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.45)"></div>`,
     iconSize: [16, 16],
     iconAnchor: [8, 8],
+  });
+}
+
+function truckIcon(): L.DivIcon {
+  return L.divIcon({
+    className: "",
+    html: `<div style="width:30px;height:30px;border-radius:50%;background:#fff;border:2px solid #4f46e5;display:flex;align-items:center;justify-content:center;font-size:16px;box-shadow:0 1px 4px rgba(0,0,0,.45)">🚚</div>`,
+    iconSize: [30, 30],
+    iconAnchor: [15, 15],
   });
 }
 
@@ -147,8 +169,8 @@ export function GeoNavLinks({ lat, lng }: { lat: number; lng: number }) {
   );
 }
 
-// ── Marshrut progress paneli ───────────────────────────────────────────────────
-function RouteProgressPanel({ data, isLoading }: { data?: RouteProgressData; isLoading: boolean }) {
+// ── Jonli holat paneli (progress + oxirgi GPS + bugungi savdo) ─────────────────
+function LiveStatusPanel({ data, isLoading }: { data?: LiveStatusData; isLoading: boolean }) {
   if (isLoading)
     return (
       <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -158,7 +180,7 @@ function RouteProgressPanel({ data, isLoading }: { data?: RouteProgressData; isL
   if (!data || data.agents.length === 0)
     return (
       <div className="text-sm text-muted-foreground border rounded-md py-4 text-center">
-        Bu kun ({KUN_NOMLARI[data ? data.kun - 1 : 0]}) uchun marshrut rejalashtirilmagan
+        Bugun ({KUN_NOMLARI[data ? data.kun - 1 : 0]}) uchun marshrut ham, faoliyat ham yo'q
       </div>
     );
   return (
@@ -176,7 +198,14 @@ function RouteProgressPanel({ data, isLoading }: { data?: RouteProgressData; isL
                     {a.mashinaNomeri && <div className="text-[11px] text-muted-foreground">{a.mashinaNomeri}</div>}
                   </div>
                 </div>
-                <Badge variant="secondary" className="h-5 text-[10px]">{pct}%</Badge>
+                <div className="flex items-center gap-1.5">
+                  {a.lastLocation ? (
+                    <Badge className="h-5 text-[10px] bg-emerald-600 hover:bg-emerald-600">📍 {locTime(a.lastLocation.at)}</Badge>
+                  ) : (
+                    <Badge variant="outline" className="h-5 text-[10px] text-muted-foreground">GPS yo'q</Badge>
+                  )}
+                  <Badge variant="secondary" className="h-5 text-[10px]">{pct}%</Badge>
+                </div>
               </div>
               <Progress value={pct} className="h-2" />
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -184,6 +213,10 @@ function RouteProgressPanel({ data, isLoading }: { data?: RouteProgressData; isL
                 <span>Kirildi: <b className="text-blue-700">{a.visited}</b></span>
                 <span>Savdo: <b className="text-green-700">{a.sold}</b></span>
                 <span>Qoldi: <b className={a.remaining > 0 ? "text-amber-700" : "text-foreground"}>{a.remaining}</b></span>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                💰 Bugungi savdo: <b className="text-foreground">{fmtSom(a.salesTotal)}</b>
+                {a.salesCount > 0 && <span className="ml-1">({a.salesCount} ta)</span>}
               </div>
             </CardContent>
           </Card>
@@ -214,16 +247,18 @@ export default function MapTab({ date, agentId, viloyat, hudud, search, active, 
       return r.json();
     },
     enabled: active,
+    refetchInterval: LIVE_REFETCH_MS,
   });
 
-  const { data: progress, isLoading: progressLoading } = useQuery<RouteProgressData>({
-    queryKey: ["distribution", "route-progress", qs],
+  const { data: live, isLoading: liveLoading } = useQuery<LiveStatusData>({
+    queryKey: ["distribution", "live-status", qs],
     queryFn: async () => {
-      const r = await authFetch(`/api/distribution/route-progress${qs}`);
-      if (!r.ok) throw new Error("Marshrut progressi yuklanmadi");
+      const r = await authFetch(`/api/distribution/live-status${qs}`);
+      if (!r.ok) throw new Error("Jonli holat yuklanmadi");
       return r.json();
     },
     enabled: active,
+    refetchInterval: LIVE_REFETCH_MS,
   });
 
   // Marshrut tanlovi: all — hammasi, none — yashirish, aks holda agent id
@@ -246,6 +281,7 @@ export default function MapTab({ date, agentId, viloyat, hudud, search, active, 
   const mapRef = useRef<L.Map | null>(null);
   const clusterRef = useRef<L.MarkerClusterGroup | null>(null);
   const routeLayerRef = useRef<L.LayerGroup | null>(null);
+  const liveLayerRef = useRef<L.LayerGroup | null>(null);
   const fittedRef = useRef(false);
   const onShopRef = useRef(onShop);
   onShopRef.current = onShop;
@@ -260,6 +296,7 @@ export default function MapTab({ date, agentId, viloyat, hudud, search, active, 
     }).addTo(map);
     clusterRef.current = L.markerClusterGroup({ maxClusterRadius: 45, disableClusteringAtZoom: 14 }).addTo(map);
     routeLayerRef.current = L.layerGroup().addTo(map);
+    liveLayerRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
     // Tab endi ko'ringanda o'lchamni to'g'rilash
     setTimeout(() => map.invalidateSize(), 50);
@@ -268,6 +305,7 @@ export default function MapTab({ date, agentId, viloyat, hudud, search, active, 
       mapRef.current = null;
       clusterRef.current = null;
       routeLayerRef.current = null;
+      liveLayerRef.current = null;
     };
   }, []);
 
@@ -331,6 +369,22 @@ export default function MapTab({ date, agentId, viloyat, hudud, search, active, 
     }
   }, [data, routeSel]);
 
+  // Agentlarning jonli GPS markerlari (🚚)
+  useEffect(() => {
+    const layer = liveLayerRef.current;
+    if (!layer) return;
+    layer.clearLayers();
+    for (const a of live?.agents ?? []) {
+      if (!a.lastLocation) continue;
+      const m = L.marker([a.lastLocation.lat, a.lastLocation.lng], { icon: truckIcon(), zIndexOffset: 2000 });
+      m.bindTooltip(
+        `<b>🚚 ${esc(a.agentName ?? "Agent")}</b><br/>📍 Oxirgi GPS: ${esc(locTime(a.lastLocation.at))}<br/>` +
+          `Reja: ${a.planned} | Kirildi: ${a.visited} | Savdo: ${a.sold}<br/>💰 ${esc(fmtSom(a.salesTotal))}`
+      );
+      m.addTo(layer);
+    }
+  }, [live]);
+
   return (
     <div className="p-4 space-y-4">
       {/* Legenda + marshrut tanlovi */}
@@ -378,13 +432,13 @@ export default function MapTab({ date, agentId, viloyat, hudud, search, active, 
         )}
       </div>
 
-      {/* Marshrut progressi */}
+      {/* Jonli holat: progress + GPS + savdolar */}
       <div className="space-y-2">
         <div className="text-sm font-semibold flex items-center gap-1.5">
           <RouteIcon className="w-4 h-4 text-indigo-600" />
-          Marshrut progressi {progress && <span className="text-[11px] font-normal text-muted-foreground">({progress.date}, {KUN_NOMLARI[progress.kun - 1]})</span>}
+          Agentlar jonli holati {live && <span className="text-[11px] font-normal text-muted-foreground">({live.date}, {KUN_NOMLARI[live.kun - 1]} • har 45 soniyada yangilanadi)</span>}
         </div>
-        <RouteProgressPanel data={progress} isLoading={progressLoading} />
+        <LiveStatusPanel data={live} isLoading={liveLoading} />
       </div>
     </div>
   );

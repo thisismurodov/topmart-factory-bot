@@ -10,6 +10,7 @@ import {
   withDatabase,
 } from "./drift-utils";
 import {
+  agentLocationsTable,
   agentPlansTable,
   deliveryAgentsTable,
   deliveryRoutesTable,
@@ -54,6 +55,7 @@ const TS_DB = `dist_drift_ts_${RUN_ID}`;
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 
 const TABLES = {
+  agent_locations: agentLocationsTable,
   agent_plans: agentPlansTable,
   delivery_agents: deliveryAgentsTable,
   delivery_routes: deliveryRoutesTable,

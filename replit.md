@@ -54,7 +54,8 @@ Arqon ishlab chiqarish zavodi uchun Telegram bot — partiyalarni kiritish, nazo
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+- Har bir task yakunidagi hisobotga qo'shilsin: Business Impact (★1-5), Technical Risk (★1-5), Estimated User Value (★1-5), Future Dependency (Yes/No).
+- Roadmap ustuvorligi (2026-07-11): #69 → #70 → #62, keyin #66, #65, #64, #63, #72, #73. #69+#70 "Distribution Intelligence" epic sifatida ketma-ket bajarilsin.
 
 ## Gotchas
 

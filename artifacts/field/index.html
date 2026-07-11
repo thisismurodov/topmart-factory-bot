@@ -16,7 +16,11 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <!-- Telegram WebApp skripti LOKAL nusxadan yuklanadi (public/telegram-web-app.js).
+         Sabab: telegram.org ba'zi provayderlarda bloklangan — skript yuklanmasa
+         window.Telegram bo'lmaydi, initData yuborilmaydi va Mini App 401 oladi.
+         Vite build'da /telegram-web-app.js avtomatik /field/ bazasiga o'giriladi. -->
+    <script src="/telegram-web-app.js"></script>
   </head>
   <body>
     <div id="root"></div>

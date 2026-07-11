@@ -135,6 +135,7 @@ type Summary = {
   activeAgents: number; shopsCount: number;
   salesCount: number; salesTotal: number;
   collectedTotal: number; outstandingTotal: number;
+  nasiyaSalesTotal: number; nasiyaSalesCount: number;
   lastSaleAt: string | null;
   newShops: number; visitedShops: number;
   stale7: number; stale14: number; stale30: number;
@@ -220,6 +221,7 @@ function KpiCards({ f, update }: { f: Filters; update: (p: Partial<Filters>) => 
     { label: `${periodLabel} savdo`, value: data ? fmtSom(data.salesTotal) : undefined, icon: ShoppingBag, tone: "text-primary" },
     { label: `${periodLabel} buyurtma`, value: data ? `${data.salesCount} ta` : undefined, icon: Truck, tone: "text-indigo-600" },
     { label: "Yig'ilgan pul", value: data ? fmtSom(data.collectedTotal) : undefined, icon: Wallet, tone: "text-green-600" },
+    { label: `${periodLabel} nasiya`, value: data ? fmtSom(data.nasiyaSalesTotal) : undefined, icon: CreditCard, tone: "text-orange-600" },
     { label: "Nasiya qoldiq", value: data ? fmtSom(data.outstandingTotal) : undefined, icon: CreditCard, tone: "text-red-600" },
     { label: "Kirilgan do'konlar", value: data ? `${data.visitedShops} ta` : undefined, icon: CheckCircle2, tone: "text-teal-600" },
     { label: "Yangi do'konlar", value: data ? `${data.newShops} ta` : undefined, icon: MapPin, tone: "text-purple-600" },
@@ -235,7 +237,7 @@ function KpiCards({ f, update }: { f: Filters; update: (p: Partial<Filters>) => 
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9 gap-3">
         {cards.map((c) => (
           <Card key={c.label}>
             <CardContent className="p-4">

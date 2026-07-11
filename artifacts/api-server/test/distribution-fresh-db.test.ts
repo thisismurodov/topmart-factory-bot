@@ -394,6 +394,89 @@ print(json.dumps({
   }, 60_000);
 });
 
+describe("Distribution summary API: period nasiya (davr) vs nasiya qoldiq (outstanding)", () => {
+  // Guard for the "bugungi/davr nasiya" KPI: /distribution/summary must expose
+  // BOTH the credit issued in the selected period (nasiyaSalesTotal/Count from
+  // `nasiya.jami_summa` filtered by created_at) AND the current outstanding
+  // balance (outstandingTotal from `nasiya.qoldiq`, date-independent). A partial
+  // payment makes the two values differ, so a regression that conflates them
+  // fails loudly here.
+  let server: import("node:http").Server;
+  let apiUrl: string;
+  let apiPool: pg.Pool | undefined;
+
+  beforeAll(async () => {
+    // The sale-flow test above inserted one nasiya row:
+    // jami_summa=24000, qoldiq=24000, created_at 2026-07-11. Record a partial
+    // payment so period-nasiya (24000) and outstanding (20000) diverge.
+    await client.query(
+      `UPDATE distribution.nasiya SET tolangan = 4000, qoldiq = 20000, updated_at = '2026-07-12 09:00:00'`,
+    );
+
+    // Point @workspace/db at the throwaway DB BEFORE importing the router —
+    // the pool binds its connection string at import time.
+    process.env.RAILWAY_DATABASE_URL = tmpUrl();
+    process.env.DATABASE_URL = tmpUrl();
+
+    const [{ default: distributionRouter }, expressMod, pinoHttpMod, loggerMod, dbMod] =
+      await Promise.all([
+        import("../src/routes/distribution"),
+        import("express"),
+        import("pino-http"),
+        import("../src/lib/logger"),
+        import("@workspace/db"),
+      ]);
+    apiPool = dbMod.pool as unknown as pg.Pool;
+
+    const express = expressMod.default;
+    const app = express();
+    app.use(pinoHttpMod.default({ logger: loggerMod.logger }));
+    app.use(express.json());
+    // Auth wall lives in routes/index.ts (router-level requireAuth); here we
+    // test schema/metrics, not auth, so the router is mounted directly.
+    app.use(distributionRouter);
+
+    await new Promise<void>((resolve) => {
+      server = app.listen(0, () => resolve());
+    });
+    const addr = server.address() as import("node:net").AddressInfo;
+    apiUrl = `http://127.0.0.1:${addr.port}`;
+  }, 60_000);
+
+  afterAll(async () => {
+    if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+    if (apiPool) await apiPool.end();
+  });
+
+  it("unfiltered summary: nasiyaSalesTotal is credit ISSUED, outstandingTotal is current qoldiq", async () => {
+    const r = await fetch(`${apiUrl}/distribution/summary`);
+    expect(r.status).toBe(200);
+    const j = await r.json();
+    expect(j.nasiyaSalesTotal).toBe(24000); // jami_summa of the period's nasiya
+    expect(j.nasiyaSalesCount).toBe(1);
+    expect(j.outstandingTotal).toBe(20000); // qoldiq after the partial payment
+    expect(j.nasiyaSalesTotal).not.toBe(j.outstandingTotal); // must stay distinct metrics
+  });
+
+  it("date filter scopes nasiyaSalesTotal but NOT outstandingTotal", async () => {
+    // Period covering the sale day.
+    const rIn = await fetch(`${apiUrl}/distribution/summary?from=2026-07-11&to=2026-07-11`);
+    expect(rIn.status).toBe(200);
+    const jIn = await rIn.json();
+    expect(jIn.nasiyaSalesTotal).toBe(24000);
+    expect(jIn.nasiyaSalesCount).toBe(1);
+    expect(jIn.outstandingTotal).toBe(20000);
+
+    // Period with no nasiya sales — period metric drops to 0, outstanding stays.
+    const rOut = await fetch(`${apiUrl}/distribution/summary?from=2020-01-01&to=2020-01-02`);
+    expect(rOut.status).toBe(200);
+    const jOut = await rOut.json();
+    expect(jOut.nasiyaSalesTotal).toBe(0);
+    expect(jOut.nasiyaSalesCount).toBe(0);
+    expect(jOut.outstandingTotal).toBe(20000);
+  });
+});
+
 describe("Distribution reporting & route flows execute with real typed params", () => {
   // The EXPLAIN sweep proves every statement PLANS; these run the riskiest
   // read flows end-to-end with real parameter types (aggregate joins over

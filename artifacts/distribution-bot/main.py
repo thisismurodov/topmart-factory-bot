@@ -18,6 +18,15 @@ if _admin_env:
 else:
     ADMIN_IDS = [1261052681]
 
+# TopMart Field Assistant (Telegram Mini App) URL — delivery agent keyboard'idagi
+# "BOSHLASH" web_app tugmasi shu manzilni ochadi. Railway'da FIELD_APP_URL env
+# o'rnatiladi; Replit dev muhitida REPLIT_DEV_DOMAIN'dan avtomatik olinadi.
+FIELD_APP_URL = os.environ.get("FIELD_APP_URL", "").strip()
+if not FIELD_APP_URL:
+    _dev_domain = os.environ.get("REPLIT_DEV_DOMAIN", "").strip()
+    if _dev_domain:
+        FIELD_APP_URL = f"https://{_dev_domain}/field/"
+
 import logging
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -972,6 +981,8 @@ def fmt_miq(q):
 def main_kb(role):
     kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=2)
     if role=="delivery":
+        if FIELD_APP_URL:
+            kb.add(types.KeyboardButton("🗺 BOSHLASH",web_app=types.WebAppInfo(FIELD_APP_URL)))
         kb.add("📦 Tovar berish","❌ Tovar olmadi")
         kb.add("🗺 Mening marshrutim","👤 Profil")
         return kb

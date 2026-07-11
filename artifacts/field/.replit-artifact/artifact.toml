@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/field/"
+title = "TopMart Field Assistant"
+version = "1.0.0"
+id = "artifacts/field"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/field/" ]
+localPort = 22341
+
+[services.development]
+run = "pnpm --filter @workspace/field run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/field", "run", "build" ]
+publicDir = "artifacts/field/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "22341"
+BASE_PATH = "/field/"

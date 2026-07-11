@@ -22,6 +22,8 @@
 - [Distribution bot PostgreSQL layer](distribution-db-layer.md) — native %s/RETURNING only; AST guard test blocks ? placeholders/.lastrowid; rows stay raw tuples; main.py must re-export db helpers.
 - [E2E dashboard auth](e2e-dashboard-auth.md) — create throwaway bcrypt admin in RAILWAY DB for Playwright login; screenshot tool can't pass the login wall; always clean up user+sessions.
 - [Ledger backfill ordering](ledger-backfill-ordering.md) — backfilled ledger rows have new ids but old timestamps; history queries must ORDER BY created_at, not id, or timelines/balances corrupt.
+- [Offline sync queue pitfalls](offline-sync-queue.md) — flush must remove from FRESH storage (not snapshot); optimistic setQueryData needs exact query key via shared factory; drop only 400/404/422.
+- [Leaflet map in flex layouts](leaflet-in-flex-layout.md) — blank map: import leaflet.css in main.tsx (not CDN) + layout root needs h-[100dvh] not min-h (h-full chain collapses to 0).
 - [Sandbox kills bash background processes](sandbox-background-process-kill.md) — setsid/nohup don't survive tool-call end; run long tests via workflows and poll /tmp/logs.
 - [Distribution olmagan sabab semantics](distribution-sabab-semantics.md) — sabab (enum code) is canonical, sabab_text nullable; classify no-sale visits by row existence, never sabab_text IS NOT NULL.
 - [Constraint drift comparison](constraint-drift-comparison.md) — diff CHECK/UNIQUE by materializing both sides into throwaway DBs and comparing pg catalogs; never string-compare source DDL.

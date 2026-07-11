@@ -168,6 +168,17 @@ CREATE TABLE IF NOT EXISTS distribution.agent_locations (
   created_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_agent_locations_agent_time ON distribution.agent_locations (agent_id, created_at);
+
+CREATE TABLE IF NOT EXISTS distribution.field_ops (
+  id SERIAL PRIMARY KEY,
+  client_op_id TEXT NOT NULL,
+  agent_id BIGINT NOT NULL,
+  op_type TEXT NOT NULL,
+  dokon_id BIGINT,
+  result_id BIGINT,
+  created_at TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_field_ops_client_op ON distribution.field_ops (client_op_id);
 `;
 
 async function main() {

@@ -27,6 +27,8 @@ Arqon ishlab chiqarish zavodi uchun Telegram bot — partiyalarni kiritish, nazo
 - `artifacts/telegram-bot/bot/keyboards.py` — Telegram tugmalari
 - `artifacts/telegram-bot/bot/handlers/` — bot handlers
 - `artifacts/api-server/src/routes/` — REST API (workers, products, batches, dashboard, salary, customers, sales, inventory)
+- `artifacts/field/` — TopMart Field Assistant: yetkazib beruvchi agent uchun Telegram Mini App (`/field`); React+Vite+Leaflet, wouter sahifalar: `/` (start), `/map`, `/drive`, `/visit/:id(/sale|/nosale)`, `/summary`
+- `artifacts/api-server/src/routes/field.ts` — Mini App REST API (`/api/field/*`), auth: `middleware/telegramInitData.ts` (initData HMAC + dev bypass)
 - `lib/db/src/schema/` — Drizzle ORM schema (PostgreSQL)
 - `artifacts/dashboard/src/pages/` — React sahifalar
 
@@ -42,6 +44,8 @@ Arqon ishlab chiqarish zavodi uchun Telegram bot — partiyalarni kiritish, nazo
 - Distribution "Savdo markazi" sahifasi (dashboard `/distribution`): KPI kartalar + kombinatsiyalangan filtr paneli (sana presetlari, agent, viloyat→tuman, to'lov turi, mahsulot, qidiruv) URL query paramlarda saqlanadi (wouter, replace:true). Tablar: Savdolar (jadval), Agentlar/Do'konlar (kartochkalar), Nasiya, Marshrut (delivery_routes, kun=1..7 isoweekday). Do'kon drill-down Sheet drawer (`/api/distribution/shops/:id`). Sana presetlari Asia/Tashkent kalendarida hisoblanadi (Intl en-CA), backend `substr(created_at,1,10)` TEXT ISO ustunlarda filtrlaydi.
 - AI Zavod Yordamchisi: barcha LLM chaqiruvlari Node API'da (`/api/ai/*`); bot (Python) + dashboard faqat shu endpointlarni chaqiradi. Daily-analysis kuniga bir marta hisoblanadi va `ai_analysis_runs` jadvaliga saqlanadi (refresh=1 qayta hisoblaydi). Bot/dashboard `x-internal-key`/`Bearer` bilan kiradi (`requireAuthOrInternalKey`). Daily model `gpt-5.4`, packer-tip `gpt-5-mini` (`reasoning_effort: minimal`, aks holda reasoning tokenlari budjetni yeb tip bo'sh chiqadi).
 
+- Field Assistant (Mini App): auth — `X-Telegram-Init-Data` header HMAC bilan tekshiriladi (`DISTRIBUTION_BOT_TOKEN` kaliti; factory `TELEGRAM_BOT_TOKEN` EMAS). Dev bypass: `NODE_ENV!==production` VA `FIELD_DEV_BYPASS=1` bo'lsa `X-Field-Dev-Id` header (klient `?dev_tg=` query paramdan oladi, faqat `import.meta.env.DEV`). Dev'da `?kun=1..7` bilan boshqa kun marshrutini ko'rish mumkin. `fieldRouter` routes/index.ts'da BARCHA auth wall'lardan oldin mount qilinadi (path'siz `router.use(middleware, ...)` hamma so'rovga qo'llanadi!). Idempotentlik: `field_ops.client_op_id` UNIQUE — offline queue takror yuborsa `duplicate:true`. Yakshanba (kun=7) — dam kuni. Distribution bot "🗺 BOSHLASH" web_app tugmasi `FIELD_APP_URL` (env yoki `https://$REPLIT_DEV_DOMAIN/field/`).
+
 ## Required env vars
 
 - `DATABASE_URL` — PostgreSQL connection string
@@ -51,6 +55,9 @@ Arqon ishlab chiqarish zavodi uchun Telegram bot — partiyalarni kiritish, nazo
 - `API_BASE_URL` — bot uchun API manzili (`https://<api-host>/api`). Replit'da default `http://localhost:80/api`
 - `AI_HOUR` — kunlik AI tahlil yuboriladigan soat (0-23, Asia/Tashkent). Standart: 20
 - `AI_INTEGRATIONS_OPENAI_*` — Replit AI integration o'zgaruvchilari. Railway deploy'da bot+API servislarida ham bo'lishi kerak
+- `DISTRIBUTION_BOT_TOKEN` — API serverda Mini App initData'ni tekshirish uchun distribution bot tokeni (productionda majburiy)
+- `FIELD_DEV_BYPASS` — faqat dev: `1` bo'lsa `X-Field-Dev-Id` bypass yoqiladi (productionda hech qachon qo'yilmasin)
+- `FIELD_APP_URL` — distribution bot uchun Mini App manzili (default: `https://$REPLIT_DEV_DOMAIN/field/`)
 
 ## User preferences
 

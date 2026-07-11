@@ -130,6 +130,9 @@ const REQUIRED: Record<string, string[]> = {
     "hudud", "telegram_id", "faol", "created_at",
   ],
   delivery_routes: ["id", "delivery_agent_id", "kun", "dokon_id", "tartib", "created_at", "added_by_dlv"],
+  // Field Assistant Mini App idempotency jurnali — API yozadi, lekin bot
+  // init_db() yaratishi shart (uch nusxa DDL sinxron bo'lishi kerak).
+  field_ops: ["id", "client_op_id", "agent_id", "op_type", "dokon_id", "result_id", "created_at"],
 };
 
 // Words the table-name regex can catch that are not distribution tables.

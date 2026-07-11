@@ -26,12 +26,20 @@ import omborRouter from "./ombor";
 import auditRouter from "./audit";
 import distributionRouter from "./distribution";
 import distributionAnalyticsRouter from "./distribution-analytics";
+import fieldRouter from "./field";
 
 const router: IRouter = Router();
 
 // ── Public routes (no auth required) ─────────────────────────────────────────
 router.use(healthRouter);
 router.use(authRouter);
+
+// ── Field Assistant (delivery agent Mini App) — Telegram initData auth ────────
+// O'z autentifikatsiyasi bor (X-Telegram-Init-Data), shuning uchun BARCHA auth
+// wall'lardan (requireAuthOrInternalKey ham path'siz mount bo'lgani uchun hamma
+// so'rovga qo'llanadi) OLDIN mount qilinadi. fieldAuth faqat /field/* yo'llariga
+// qo'llanadi.
+router.use(fieldRouter);
 
 // ── AI routes — Bearer session (dashboard) OR x-internal-key (bot) ────────────
 router.use(requireAuthOrInternalKey, aiRouter);

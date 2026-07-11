@@ -189,6 +189,23 @@ export const agentLocationsTable = distribution.table(
   (t) => [index("idx_agent_locations_agent_time").on(t.agentId, t.createdAt)],
 );
 
+// Field Assistant (Mini App) offline-sync idempotency jurnali:
+// har bir tashrif natijasi klient UUID (client_op_id) bilan yoziladi — takror
+// yuborilsa UNIQUE constraint duplikat savdo/olmadi yozuvining oldini oladi.
+export const fieldOpsTable = distribution.table(
+  "field_ops",
+  {
+    id: serial("id").primaryKey(),
+    clientOpId: text("client_op_id").notNull(),
+    agentId: bigint("agent_id", { mode: "number" }).notNull(),
+    opType: text("op_type").notNull(),
+    dokonId: bigint("dokon_id", { mode: "number" }),
+    resultId: bigint("result_id", { mode: "number" }),
+    createdAt: text("created_at"),
+  },
+  (t) => [uniqueIndex("uq_field_ops_client_op").on(t.clientOpId)],
+);
+
 export const insertDokonSchema = createInsertSchema(dokonlarTable).omit({ id: true });
 export type Dokon = typeof dokonlarTable.$inferSelect;
 export type DistSavdo = typeof savdolarTable.$inferSelect;

@@ -1351,6 +1351,32 @@ def make_adm(msg):
 @bot.message_handler(commands=["myid"])
 def myid(msg): bot.send_message(msg.from_user.id,f"Sizning ID: {msg.from_user.id}")
 
+@bot.message_handler(commands=["dbfayl"])
+def dbfayl(msg):
+    """VAQTINCHALIK: volume'dagi eski SQLite fayl(lar)ni adminga yuboradi.
+    Eski ma'lumotlar markaziy bazaga ko'chirilgach bu buyruqni olib tashlash mumkin."""
+    uid=msg.from_user.id
+    if not is_admin(uid): return
+    import glob as _glob
+    found=[]
+    for pat in ("/data/**/*.db","/data/**/*.sqlite","/data/**/*.sqlite3","/app/**/*.db","./*.db"):
+        found+=_glob.glob(pat,recursive=True)
+    found=sorted(set(found))
+    if not found:
+        bot.send_message(uid,"❗ /data ichida .db fayl topilmadi.")
+        return
+    for path in found:
+        try:
+            size=os.path.getsize(path)
+            if size>49*1024*1024:
+                bot.send_message(uid,f"❗ {path} juda katta ({size//1024//1024} MB) — Telegram orqali yuborib bo'lmaydi.")
+                continue
+            with open(path,"rb") as fh:
+                bot.send_document(uid,(os.path.basename(path),fh.read()),
+                                  caption=f"🗄 {path}\n📦 {size//1024} KB")
+        except Exception as e:
+            bot.send_message(uid,f"❗ {path}: {e}")
+
 @bot.message_handler(commands=["eksport","export"])
 def eksport(msg):
     uid=msg.from_user.id

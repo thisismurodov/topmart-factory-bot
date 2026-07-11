@@ -668,6 +668,7 @@ router.get("/distribution/shops/:id", async (req, res): Promise<void> => {
   const shopQ = await pool.query(
     `SELECT d.id, d.nomi, d.egasi, d.telefon, d.viloyat, d.hudud, d.holat,
             d.total_orders, d.total_sales, d.last_order_date, d.created_at,
+            d.latitude, d.longitude,
             u.name AS agent_name,
             COALESCE((SELECT b.balans FROM distribution.mijoz_balans b WHERE b.dokon_id = d.id),0)::bigint AS balans,
             COALESCE((SELECT SUM(n.qoldiq) FROM distribution.nasiya n
@@ -683,7 +684,7 @@ router.get("/distribution/shops/:id", async (req, res): Promise<void> => {
   }
   const s = shopQ.rows[0];
 
-  const [salesQ, paymentsQ, debtsQ] = await Promise.all([
+  const [salesQ, paymentsQ, debtsQ, visitsQ] = await Promise.all([
     pool.query(
       `SELECT s.id, s.created_at, s.jami_summa, s.tolov_turi,
               u.name AS agent_name,
@@ -714,6 +715,17 @@ router.get("/distribution/shops/:id", async (req, res): Promise<void> => {
         ORDER BY n.id DESC`,
       [id]
     ),
+    // Oxirgi tashriflar (mahsulot olinmagan holatlar — sabab + qaytish sanasi bilan)
+    pool.query(
+      `SELECT o.id, o.created_at, o.sabab, o.sabab_text, o.qaytish_sanasi, o.bajarildi,
+              u.name AS agent_name
+         FROM distribution.olmagan_dokonlar o
+         LEFT JOIN distribution.users u ON u.telegram_id = o.agent_id
+        WHERE o.dokon_id = $1
+        ORDER BY o.id DESC
+        LIMIT 10`,
+      [id]
+    ),
   ]);
 
   res.json({
@@ -728,6 +740,8 @@ router.get("/distribution/shops/:id", async (req, res): Promise<void> => {
     totalSales: Number(s.total_sales),
     lastOrderDate: s.last_order_date,
     createdAt: s.created_at,
+    latitude: s.latitude === null ? null : Number(s.latitude),
+    longitude: s.longitude === null ? null : Number(s.longitude),
     agentName: s.agent_name,
     balans: Number(s.balans),
     outstanding: Number(s.outstanding),
@@ -751,6 +765,15 @@ router.get("/distribution/shops/:id", async (req, res): Promise<void> => {
       paid: Number(r.tolangan),
       remaining: Number(r.qoldiq),
       updatedAt: r.updated_at,
+    })),
+    recentVisits: visitsQ.rows.map((r) => ({
+      id: r.id,
+      createdAt: r.created_at,
+      sabab: r.sabab,
+      sababText: r.sabab_text,
+      qaytishSanasi: r.qaytish_sanasi,
+      bajarildi: r.bajarildi,
+      agentName: r.agent_name,
     })),
   });
 });
@@ -854,6 +877,202 @@ router.get("/distribution/routes", async (req, res): Promise<void> => {
       viloyat: r.viloyat,
       hudud: r.hudud,
       visited: r.visited,
+    })),
+  });
+});
+
+// ── Xarita (Leaflet tab) ────────────────────────────────────────────────────────
+// Tanlangan sana bo'yicha do'kon markerlari holati:
+//   sold    — shu kuni savdo bo'lgan (yashil)
+//   nosale  — kirilgan, mahsulot olinmagan + sabab bor (qizil)
+//   visited — kirilgan (pul yig'ilgan), savdo yo'q (ko'k)
+//   planned — shu kun marshrutida bor, hali kirilmagan (sariq)
+//   none    — hech biri (kulrang)
+// date berilmasa — bugungi kun (Asia/Tashkent). kun = sananing isoweekday'i (1..7).
+router.get("/distribution/map", async (req, res): Promise<void> => {
+  const f = parseFilters(req);
+  const q = req.query as Record<string, unknown>;
+  const dateRaw = typeof q.date === "string" && DATE_RE.test(q.date) ? q.date : null;
+
+  const dQ = await pool.query(
+    `SELECT COALESCE($1::text, to_char(now() AT TIME ZONE 'Asia/Tashkent','YYYY-MM-DD')) AS d,
+            EXTRACT(ISODOW FROM COALESCE($1::text::date, (now() AT TIME ZONE 'Asia/Tashkent')::date))::int AS dow`,
+    [dateRaw]
+  );
+  const date = dQ.rows[0].d as string;
+  const dow = dQ.rows[0].dow as number; // 1=dushanba .. 7=yakshanba
+
+  // Do'kon markerlari (faqat koordinatasi borlar)
+  const sp: unknown[] = [date, dow];
+  const sw = shopsWhere(f, sp);
+  const shopsQ = pool.query(
+    `SELECT d.id, d.nomi, d.telefon, d.viloyat, d.hudud, d.holat,
+            d.latitude, d.longitude,
+            u.name AS agent_name,
+            EXISTS (SELECT 1 FROM distribution.savdolar s
+                     WHERE s.dokon_id = d.id AND substr(s.created_at,1,10) = $1)      AS sold,
+            (SELECT o.sabab_text FROM distribution.olmagan_dokonlar o
+              WHERE o.dokon_id = d.id AND substr(o.created_at,1,10) = $1
+              ORDER BY o.id DESC LIMIT 1)                                             AS sabab_text,
+            (SELECT o.qaytish_sanasi FROM distribution.olmagan_dokonlar o
+              WHERE o.dokon_id = d.id AND substr(o.created_at,1,10) = $1
+              ORDER BY o.id DESC LIMIT 1)                                             AS qaytish_sanasi,
+            EXISTS (SELECT 1 FROM distribution.pul_olish p
+                     WHERE p.dokon_id = d.id AND substr(p.created_at,1,10) = $1)      AS paid,
+            EXISTS (SELECT 1 FROM distribution.delivery_routes r
+                     JOIN distribution.delivery_agents da ON da.id = r.delivery_agent_id AND da.faol = 1
+                    WHERE r.dokon_id = d.id AND r.kun = $2)                           AS on_route
+       FROM distribution.dokonlar d
+       LEFT JOIN distribution.users u ON u.telegram_id = d.agent_id
+      WHERE d.latitude IS NOT NULL AND d.longitude IS NOT NULL${sw}`,
+    sp
+  );
+
+  // Marshrut to'xtashlari (polyline uchun, tartib bilan)
+  const rp: unknown[] = [dow, date];
+  let rw = "";
+  if (f.agentId) {
+    rp.push(f.agentId);
+    rw += ` AND da.telegram_id = $${rp.length}`;
+  }
+  if (f.viloyat) {
+    rp.push(f.viloyat);
+    rw += ` AND d.viloyat = $${rp.length}`;
+  }
+  if (f.hudud) {
+    rp.push(f.hudud);
+    rw += ` AND d.hudud = $${rp.length}`;
+  }
+  const routesQ = pool.query(
+    `SELECT da.id AS agent_id, da.name AS agent_name, da.mashina_nomeri,
+            r.tartib, d.id AS dokon_id, d.nomi AS dokon_name, d.latitude, d.longitude,
+            EXISTS (SELECT 1 FROM distribution.savdolar s
+                     WHERE s.dokon_id = d.id AND substr(s.created_at,1,10) = $2) AS sold,
+            (EXISTS (SELECT 1 FROM distribution.savdolar s
+                      WHERE s.dokon_id = d.id AND substr(s.created_at,1,10) = $2)
+             OR EXISTS (SELECT 1 FROM distribution.olmagan_dokonlar o
+                         WHERE o.dokon_id = d.id AND substr(o.created_at,1,10) = $2)
+             OR EXISTS (SELECT 1 FROM distribution.pul_olish p
+                         WHERE p.dokon_id = d.id AND substr(p.created_at,1,10) = $2)) AS visited
+       FROM distribution.delivery_routes r
+       JOIN distribution.delivery_agents da ON da.id = r.delivery_agent_id
+       JOIN distribution.dokonlar d ON d.id = r.dokon_id
+      WHERE r.kun = $1 AND da.faol = 1
+        AND d.latitude IS NOT NULL AND d.longitude IS NOT NULL${rw}
+      ORDER BY da.name, r.tartib`,
+    rp
+  );
+
+  const [shops, routes] = await Promise.all([shopsQ, routesQ]);
+
+  res.json({
+    date,
+    kun: dow,
+    shops: shops.rows.map((r) => {
+      const status = r.sold
+        ? "sold"
+        : r.sabab_text !== null
+          ? "nosale"
+          : r.paid
+            ? "visited"
+            : r.on_route
+              ? "planned"
+              : "none";
+      return {
+        id: r.id,
+        nomi: r.nomi,
+        telefon: r.telefon,
+        viloyat: r.viloyat,
+        hudud: r.hudud,
+        holat: r.holat,
+        lat: Number(r.latitude),
+        lng: Number(r.longitude),
+        agentName: r.agent_name,
+        status,
+        sababText: r.sabab_text,
+        qaytishSanasi: r.qaytish_sanasi,
+      };
+    }),
+    routes: routes.rows.map((r) => ({
+      agentId: r.agent_id,
+      agentName: r.agent_name,
+      mashinaNomeri: r.mashina_nomeri,
+      tartib: r.tartib,
+      dokonId: r.dokon_id,
+      dokonName: r.dokon_name,
+      lat: Number(r.latitude),
+      lng: Number(r.longitude),
+      sold: r.sold,
+      visited: r.visited,
+    })),
+  });
+});
+
+// ── Marshrut progressi (har bir yetkazib beruvchi agent uchun) ──────────────────
+// planned/visited/sold/remaining — tanlangan sana marshrutidagi do'konlar bo'yicha.
+router.get("/distribution/route-progress", async (req, res): Promise<void> => {
+  const f = parseFilters(req);
+  const q = req.query as Record<string, unknown>;
+  const dateRaw = typeof q.date === "string" && DATE_RE.test(q.date) ? q.date : null;
+
+  const dQ = await pool.query(
+    `SELECT COALESCE($1::text, to_char(now() AT TIME ZONE 'Asia/Tashkent','YYYY-MM-DD')) AS d,
+            EXTRACT(ISODOW FROM COALESCE($1::text::date, (now() AT TIME ZONE 'Asia/Tashkent')::date))::int AS dow`,
+    [dateRaw]
+  );
+  const date = dQ.rows[0].d as string;
+  const dow = dQ.rows[0].dow as number;
+
+  const params: unknown[] = [dow, date];
+  let w = "";
+  if (f.agentId) {
+    params.push(f.agentId);
+    w += ` AND da.telegram_id = $${params.length}`;
+  }
+  if (f.viloyat) {
+    params.push(f.viloyat);
+    w += ` AND d.viloyat = $${params.length}`;
+  }
+  if (f.hudud) {
+    params.push(f.hudud);
+    w += ` AND d.hudud = $${params.length}`;
+  }
+
+  const { rows } = await pool.query(
+    `WITH stops AS (
+       SELECT da.id AS agent_id, da.name AS agent_name, da.mashina_nomeri, r.dokon_id,
+              EXISTS (SELECT 1 FROM distribution.savdolar s
+                       WHERE s.dokon_id = r.dokon_id AND substr(s.created_at,1,10) = $2) AS sold,
+              EXISTS (SELECT 1 FROM distribution.olmagan_dokonlar o
+                       WHERE o.dokon_id = r.dokon_id AND substr(o.created_at,1,10) = $2) AS noorder,
+              EXISTS (SELECT 1 FROM distribution.pul_olish p
+                       WHERE p.dokon_id = r.dokon_id AND substr(p.created_at,1,10) = $2) AS paid
+         FROM distribution.delivery_routes r
+         JOIN distribution.delivery_agents da ON da.id = r.delivery_agent_id
+         JOIN distribution.dokonlar d ON d.id = r.dokon_id
+        WHERE r.kun = $1 AND da.faol = 1${w}
+     )
+     SELECT agent_id, agent_name, mashina_nomeri,
+            COUNT(*)::int                                        AS planned,
+            COUNT(*) FILTER (WHERE sold OR noorder OR paid)::int AS visited,
+            COUNT(*) FILTER (WHERE sold)::int                    AS sold
+       FROM stops
+      GROUP BY agent_id, agent_name, mashina_nomeri
+      ORDER BY agent_name`,
+    params
+  );
+
+  res.json({
+    date,
+    kun: dow,
+    agents: rows.map((r) => ({
+      agentId: r.agent_id,
+      agentName: r.agent_name,
+      mashinaNomeri: r.mashina_nomeri,
+      planned: r.planned,
+      visited: r.visited,
+      sold: r.sold,
+      remaining: r.planned - r.visited,
     })),
   });
 });

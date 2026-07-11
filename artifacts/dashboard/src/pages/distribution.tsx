@@ -15,6 +15,7 @@ import {
   Users, Store, ShoppingBag, CreditCard, Banknote, Wallet,
   MapPin, Phone, Search, X, Route as RouteIcon, CheckCircle2, XCircle, Truck,
 } from "lucide-react";
+import MapTab, { GeoNavLinks } from "@/components/distribution/MapTab";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────────
 const fmtSom = (n: number) => `${Math.round(n).toLocaleString("uz-UZ")} so'm`;
@@ -179,9 +180,11 @@ type Debt = {
 };
 type ShopDetail = Shop & {
   createdAt: string | null; balans: number;
+  latitude: number | null; longitude: number | null;
   recentSales: { id: number; createdAt: string | null; total: number; tolovTuri: string | null; agentName: string | null; items: string | null }[];
   recentPayments: { id: number; createdAt: string | null; summa: number; agentName: string | null }[];
   openDebts: { id: number; total: number; paid: number; remaining: number; updatedAt: string | null }[];
+  recentVisits: { id: number; createdAt: string | null; sabab: string | null; sababText: string | null; qaytishSanasi: string | null; bajarildi: number | null; agentName: string | null }[];
 };
 type RoutesData = {
   kun: number; kunlar: string[];
@@ -502,6 +505,11 @@ function ShopDrawer({ shopId, onClose }: { shopId: number | null; onClose: () =>
               <div><div className="text-xs text-muted-foreground">Holat</div><div>{data.holat === "faol" ? <Badge className="bg-green-100 text-green-700 border-green-200 h-5 text-[10px]">Faol</Badge> : <Badge variant="outline" className="h-5 text-[10px]">{data.holat || "—"}</Badge>}</div></div>
             </div>
 
+            {/* Yo'l ko'rsatish (navigatsiya) */}
+            {data.latitude !== null && data.longitude !== null && (
+              <GeoNavLinks lat={data.latitude} lng={data.longitude} />
+            )}
+
             {/* Moliyaviy xulosalar */}
             <div className="grid grid-cols-3 gap-2">
               <div className="rounded-md border p-3">
@@ -552,6 +560,27 @@ function ShopDrawer({ shopId, onClose }: { shopId: number | null; onClose: () =>
                     <div key={n.id} className="flex items-center justify-between border rounded-md p-2.5 text-sm">
                       <span className="text-xs text-muted-foreground">{fmtDate(n.updatedAt)} • to'langan {fmtSom(n.paid)}</span>
                       <span className="font-bold text-red-600">{fmtSom(n.remaining)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Oxirgi tashriflar (mahsulot olinmagan) */}
+            {data.recentVisits && data.recentVisits.length > 0 && (
+              <div>
+                <div className="text-sm font-semibold mb-2 flex items-center gap-1.5 text-amber-700"><XCircle className="w-3.5 h-3.5" /> Oxirgi tashriflar (olmagan)</div>
+                <div className="space-y-1.5">
+                  {data.recentVisits.map((v) => (
+                    <div key={v.id} className="border rounded-md p-2.5 text-sm">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs text-muted-foreground">{fmtDateTime(v.createdAt)}</span>
+                        <span className="text-xs font-medium text-amber-700">{v.sababText || v.sabab || "—"}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 mt-0.5 text-[11px] text-muted-foreground">
+                        <span>{v.agentName ? `Agent: ${v.agentName}` : ""}</span>
+                        {v.qaytishSanasi && <span>🔁 Qaytish: {v.qaytishSanasi}{v.bajarildi ? " ✅" : ""}</span>}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -925,6 +954,13 @@ export default function Distribution() {
   const [f, update] = useFilters();
   const [shopId, setShopId] = useState<number | null>(null);
 
+  // Xarita bitta sana bilan ishlaydi: davr bir kun bo'lsa — o'sha kun,
+  // aks holda davr oxiri (yoki bugun — backend standarti)
+  const mapDate = useMemo(() => {
+    const { from, to } = presetRange(f.preset, f.from, f.to);
+    return from && from === to ? from : to;
+  }, [f.preset, f.from, f.to]);
+
   return (
     <div className="space-y-4">
       <KpiCards f={f} update={update} />
@@ -939,6 +975,7 @@ export default function Distribution() {
               <TabsTrigger value="shops">Do'konlar</TabsTrigger>
               <TabsTrigger value="debts">Nasiya</TabsTrigger>
               <TabsTrigger value="routes">Marshrut</TabsTrigger>
+              <TabsTrigger value="map">Xarita</TabsTrigger>
             </TabsList>
             <TabsContent value="sales" className="border rounded-md mt-4 overflow-x-auto">
               <SalesTab f={f} active={f.tab === "sales"} onShop={setShopId} />
@@ -954,6 +991,17 @@ export default function Distribution() {
             </TabsContent>
             <TabsContent value="routes" className="border rounded-md mt-4">
               <RoutesTab f={f} update={update} active={f.tab === "routes"} onShop={setShopId} />
+            </TabsContent>
+            <TabsContent value="map" className="border rounded-md mt-4">
+              <MapTab
+                date={mapDate}
+                agentId={f.agentId}
+                viloyat={f.viloyat}
+                hudud={f.hudud}
+                search={f.search}
+                active={f.tab === "map"}
+                onShop={setShopId}
+              />
             </TabsContent>
           </Tabs>
         </CardContent>

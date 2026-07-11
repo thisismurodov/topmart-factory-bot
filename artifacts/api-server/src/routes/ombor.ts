@@ -1113,7 +1113,11 @@ router.post("/ombor/flow/produce", async (req, res): Promise<void> => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const lineRes = await client.query("SELECT id, name FROM production_lines WHERE id=$1", [lineId]);
+    // FOR UPDATE: bir bo'lim uchun parallel PRODUCE so'rovlarini ketma-ketlashtiradi —
+    // WIP balans tekshiruvi race-safe bo'ladi (ikkalasi ham bir vaqtda o'tib keta olmaydi).
+    const lineRes = await client.query(
+      "SELECT id, name FROM production_lines WHERE id=$1 FOR UPDATE", [lineId],
+    );
     if (!lineRes.rows.length) {
       await client.query("ROLLBACK");
       res.status(404).json({ error: "Bo'lim topilmadi" }); return;
@@ -1138,6 +1142,23 @@ router.post("/ombor/flow/produce", async (req, res): Promise<void> => {
     const unitWeight = Number(prodRes.rows[0].weight) > 0 ? Number(prodRes.rows[0].weight) : 0;
     // PRODUCE kg = kiritilgan kg, aks holda quantity × birlik og'irligi (bot bilan bir xil).
     const produceKg = kgInput > 0 ? kgInput : qty * unitWeight;
+
+    // WIP balans himoyasi: bo'lim qabul qilganidan (RECEIVE − PRODUCE) ko'p
+    // chiqara olmaydi. Yuqoridagi FOR UPDATE qulfi tufayli bu tekshiruv
+    // race-safe — parallel PRODUCE tranzaksiyalari ketma-ket bajariladi.
+    const balRes = await client.query(
+      `SELECT COALESCE(SUM(CASE WHEN movement_type='RECEIVE' THEN weight_kg
+                                WHEN movement_type='PRODUCE' THEN -weight_kg ELSE 0 END), 0)::numeric AS wip_kg
+       FROM wip_movements WHERE line_id=$1`,
+      [lineId],
+    );
+    const wipKg = Number(balRes.rows[0].wip_kg) || 0;
+    if (produceKg > wipKg + 1e-9) {
+      await client.query("ROLLBACK");
+      res.status(400).json({
+        error: `Bo'limda yetarli xom ashyo yo'q: mavjud ${wipKg} kg, so'ralgan ${produceKg} kg. Avval bo'limga xom ashyo bering.`,
+      }); return;
+    }
 
     await client.query(
       `INSERT INTO wip_movements

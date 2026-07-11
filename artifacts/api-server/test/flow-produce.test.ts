@@ -65,6 +65,20 @@ async function wipMovements(): Promise<any[]> {
   return rows;
 }
 
+async function produceRows(): Promise<any[]> {
+  return (await wipMovements()).filter((w) => w.movement_type === "PRODUCE");
+}
+
+// Seed the department's WIP ledger with a RECEIVE row so produce has a balance
+// to draw from (the route now rejects produceKg > WIP balance).
+async function seedWip(kg: number, line: number = lineId): Promise<void> {
+  await pool.query(
+    `INSERT INTO wip_movements (line_id, movement_type, raw_material, weight_kg, note)
+     VALUES ($1,'RECEIVE','Xom ashyo (test)',$2,'test seed')`,
+    [line, kg],
+  );
+}
+
 beforeAll(async () => {
   const db = await import("@workspace/db");
   pool = db.pool as unknown as Pool;
@@ -189,6 +203,7 @@ async function expectNothingWritten(): Promise<void> {
 
 describe("POST /ombor/flow/produce — finished-goods output integrity", () => {
   it("writes exactly one PRODUCE wip row AND increments finished inventory in lockstep (+ one IN log)", async () => {
+    await seedWip(100);
     const res = await post("/ombor/flow/produce", {
       lineId, warehouseId: finishedWarehouseId, product: PRODUCT, quantity: 10, kg: 48,
     });
@@ -196,7 +211,7 @@ describe("POST /ombor/flow/produce — finished-goods output integrity", () => {
     expect(res.json.ok).toBe(true);
 
     // Exactly ONE PRODUCE row for 48 kg — the department's WIP debit.
-    const wip = await wipMovements();
+    const wip = await produceRows();
     expect(wip).toHaveLength(1);
     expect(wip[0].movement_type).toBe("PRODUCE");
     expect(wip[0].line_id).toBe(lineId);
@@ -224,6 +239,7 @@ describe("POST /ombor/flow/produce — finished-goods output integrity", () => {
   });
 
   it("accumulates consecutive produces into one inventory row (upsert, no duplicates)", async () => {
+    await seedWip(100);
     await post("/ombor/flow/produce", {
       lineId, warehouseId: finishedWarehouseId, product: PRODUCT, quantity: 10, kg: 48,
     });
@@ -237,7 +253,7 @@ describe("POST /ombor/flow/produce — finished-goods output integrity", () => {
     expect(Number(inv[0].weight_kg)).toBe(68.5);
 
     // WIP = SUM(RECEIVE) − SUM(PRODUCE) → two PRODUCE rows totalling 68.5 kg.
-    const wip = await wipMovements();
+    const wip = await produceRows();
     expect(wip).toHaveLength(2);
     expect(wip.map((w) => Number(w.weight_kg))).toEqual([48, 20.5]);
     expect(wip.every((w) => w.movement_type === "PRODUCE")).toBe(true);
@@ -247,24 +263,26 @@ describe("POST /ombor/flow/produce — finished-goods output integrity", () => {
   });
 
   it("records the custom note on the wip_movements row", async () => {
+    await seedWip(50);
     const res = await post("/ombor/flow/produce", {
       lineId, warehouseId: finishedWarehouseId, product: PRODUCT, quantity: 2, kg: 10,
       note: "Kechki smena",
     });
     expect(res.status).toBe(200);
-    const wip = await wipMovements();
+    const wip = await produceRows();
     expect(wip[0].note).toBe("Kechki smena");
   });
 
   // ── kg fallback: produceKg = quantity × products.weight ────────────────────
 
   it("falls back to quantity × products.weight when kg is omitted", async () => {
+    await seedWip(100);
     const res = await post("/ombor/flow/produce", {
       lineId, warehouseId: finishedWarehouseId, product: PRODUCT, quantity: 10,
     });
     expect(res.status).toBe(200);
 
-    const wip = await wipMovements();
+    const wip = await produceRows();
     expect(wip).toHaveLength(1);
     expect(Number(wip[0].weight_kg)).toBe(10 * UNIT_WEIGHT); // 50
 
@@ -274,22 +292,24 @@ describe("POST /ombor/flow/produce — finished-goods output integrity", () => {
   });
 
   it("treats kg = 0 the same as omitted (fallback to quantity × weight)", async () => {
+    await seedWip(50);
     const res = await post("/ombor/flow/produce", {
       lineId, warehouseId: finishedWarehouseId, product: PRODUCT, quantity: 3, kg: 0,
     });
     expect(res.status).toBe(200);
-    const wip = await wipMovements();
+    const wip = await produceRows();
     expect(Number(wip[0].weight_kg)).toBe(3 * UNIT_WEIGHT); // 15
     const inv = await inventoryRows();
     expect(Number(inv[0].weight_kg)).toBe(3 * UNIT_WEIGHT);
   });
 
   it("lets an explicit kg override the quantity × weight fallback", async () => {
+    await seedWip(100);
     const res = await post("/ombor/flow/produce", {
       lineId, warehouseId: finishedWarehouseId, product: PRODUCT, quantity: 10, kg: 47.3,
     });
     expect(res.status).toBe(200);
-    const wip = await wipMovements();
+    const wip = await produceRows();
     expect(Number(wip[0].weight_kg)).toBe(47.3); // NOT 50
     const inv = await inventoryRows();
     expect(Number(inv[0].weight_kg)).toBe(47.3);
@@ -298,13 +318,14 @@ describe("POST /ombor/flow/produce — finished-goods output integrity", () => {
   // ── Canonical product name (case-insensitive match) ─────────────────────────
 
   it("stores the canonical product name everywhere on a case-insensitive match", async () => {
+    await seedWip(50);
     const res = await post("/ombor/flow/produce", {
       lineId, warehouseId: finishedWarehouseId,
       product: PRODUCT.toUpperCase(), quantity: 2, kg: 9,
     });
     expect(res.status).toBe(200);
 
-    const wip = await wipMovements();
+    const wip = await produceRows();
     expect(wip[0].product).toBe(PRODUCT);
     const inv = await inventoryRows();
     expect(inv[0].product).toBe(PRODUCT);
@@ -313,6 +334,7 @@ describe("POST /ombor/flow/produce — finished-goods output integrity", () => {
   });
 
   it("merges differently-cased requests into ONE inventory row (no case-split stock)", async () => {
+    await seedWip(50);
     await post("/ombor/flow/produce", {
       lineId, warehouseId: finishedWarehouseId, product: PRODUCT.toLowerCase(), quantity: 1, kg: 5,
     });
@@ -438,5 +460,128 @@ describe("POST /ombor/flow/produce — finished-goods output integrity", () => {
     });
     expect(res.status).toBe(400);
     await expectNothingWritten();
+  });
+
+  // ── WIP balance guard: cannot produce more than the department received ─────
+
+  it("rejects produce when the department has NO WIP at all (400) and writes nothing", async () => {
+    const res = await post("/ombor/flow/produce", {
+      lineId, warehouseId: finishedWarehouseId, product: PRODUCT, quantity: 2, kg: 10,
+    });
+    expect(res.status).toBe(400);
+    expect(res.json.error).toContain("mavjud 0 kg");
+    await expectNothingWritten();
+  });
+
+  it("rejects produce exceeding the WIP balance and leaves wip/inventory/stock untouched", async () => {
+    await seedWip(50);
+    const res = await post("/ombor/flow/produce", {
+      lineId, warehouseId: finishedWarehouseId, product: PRODUCT, quantity: 100, kg: 500,
+    });
+    expect(res.status).toBe(400);
+    expect(res.json.error).toContain("mavjud 50 kg");
+    expect(res.json.error).toContain("500 kg");
+
+    // Only the seeded RECEIVE row remains — no PRODUCE row was written.
+    const wip = await wipMovements();
+    expect(wip).toHaveLength(1);
+    expect(wip[0].movement_type).toBe("RECEIVE");
+    expect(await inventoryRows()).toHaveLength(0);
+    expect(await movements()).toHaveLength(0);
+  });
+
+  it("allows produce EXACTLY equal to the WIP balance", async () => {
+    await seedWip(48);
+    const res = await post("/ombor/flow/produce", {
+      lineId, warehouseId: finishedWarehouseId, product: PRODUCT, quantity: 10, kg: 48,
+    });
+    expect(res.status).toBe(200);
+    const wip = await produceRows();
+    expect(wip).toHaveLength(1);
+    expect(Number(wip[0].weight_kg)).toBe(48);
+  });
+
+  it("accounts for prior PRODUCE rows — remaining balance shrinks after each produce", async () => {
+    await seedWip(100);
+    const first = await post("/ombor/flow/produce", {
+      lineId, warehouseId: finishedWarehouseId, product: PRODUCT, quantity: 12, kg: 60,
+    });
+    expect(first.status).toBe(200);
+
+    // Only 40 kg remain — a second 60 kg produce must be rejected.
+    const second = await post("/ombor/flow/produce", {
+      lineId, warehouseId: finishedWarehouseId, product: PRODUCT, quantity: 12, kg: 60,
+    });
+    expect(second.status).toBe(400);
+    expect(second.json.error).toContain("mavjud 40 kg");
+    expect(await produceRows()).toHaveLength(1);
+
+    // 40 kg fits.
+    const third = await post("/ombor/flow/produce", {
+      lineId, warehouseId: finishedWarehouseId, product: PRODUCT, quantity: 8, kg: 40,
+    });
+    expect(third.status).toBe(200);
+    expect(await produceRows()).toHaveLength(2);
+  });
+
+  it("guards the kg fallback path too (quantity × weight > WIP → 400)", async () => {
+    await seedWip(20);
+    // 10 units × 5 kg = 50 kg produceKg — exceeds the 20 kg balance.
+    const res = await post("/ombor/flow/produce", {
+      lineId, warehouseId: finishedWarehouseId, product: PRODUCT, quantity: 10,
+    });
+    expect(res.status).toBe(400);
+    expect(res.json.error).toContain("mavjud 20 kg");
+    expect(await produceRows()).toHaveLength(0);
+    expect(await inventoryRows()).toHaveLength(0);
+    expect(await movements()).toHaveLength(0);
+  });
+
+  it("only counts the SAME line's ledger — another line's WIP cannot be spent", async () => {
+    const other = await pool.query(
+      `INSERT INTO production_lines (name) VALUES ('Boshqa bo''lim (test)')
+       ON CONFLICT (name) DO UPDATE SET active=TRUE RETURNING id`,
+    );
+    await seedWip(1000, other.rows[0].id);
+    const res = await post("/ombor/flow/produce", {
+      lineId, warehouseId: finishedWarehouseId, product: PRODUCT, quantity: 2, kg: 10,
+    });
+    expect(res.status).toBe(400);
+    expect(res.json.error).toContain("mavjud 0 kg");
+    expect(await produceRows()).toHaveLength(0);
+  });
+
+  it("still allows a zero-kg produce (zero-weight product, no kg given) with empty WIP", async () => {
+    // produceKg = 0 → does not exceed the 0 balance; existing behavior preserved.
+    const res = await post("/ombor/flow/produce", {
+      lineId, warehouseId: finishedWarehouseId, product: ZERO_WEIGHT_PRODUCT, quantity: 5,
+    });
+    expect(res.status).toBe(200);
+    const wip = await produceRows();
+    expect(wip).toHaveLength(1);
+    expect(Number(wip[0].weight_kg)).toBe(0);
+  });
+
+  it("race-safe: two concurrent produces cannot BOTH spend the same WIP balance", async () => {
+    await seedWip(50);
+    const [a, b] = await Promise.all([
+      post("/ombor/flow/produce", {
+        lineId, warehouseId: finishedWarehouseId, product: PRODUCT, quantity: 8, kg: 40,
+      }),
+      post("/ombor/flow/produce", {
+        lineId, warehouseId: finishedWarehouseId, product: PRODUCT, quantity: 8, kg: 40,
+      }),
+    ]);
+    const statuses = [a.status, b.status].sort();
+    expect(statuses).toEqual([200, 400]); // exactly ONE wins, the other is rejected
+    expect(await produceRows()).toHaveLength(1);
+
+    // Ledger never goes negative: 50 − 40 = 10 kg remain.
+    const { rows } = await pool.query(
+      `SELECT COALESCE(SUM(CASE WHEN movement_type='RECEIVE' THEN weight_kg
+                                WHEN movement_type='PRODUCE' THEN -weight_kg END),0) AS bal
+       FROM wip_movements WHERE line_id=$1`, [lineId],
+    );
+    expect(Number(rows[0].bal)).toBe(10);
   });
 });

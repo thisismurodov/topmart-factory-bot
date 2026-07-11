@@ -1,0 +1,600 @@
+Bu men yozgan prompt oddiy UI prompt emas. Bu **TopMart Distribution Intelligence v2** uchun texnik topshiriq. Replit AI buni o'qib to'liq modulni qurishi mumkin.
+
+---
+
+# TopMart ERP — Distribution Intelligence v2
+
+## Maqsad
+
+Distribution modulini oddiy savdo ro'yxatidan chiqarib, **Supervisor va Delivery Agent uchun real vaqt boshqaruv markazi**ga aylantirish.
+
+Bu modul kelajakda:
+
+* 18 000+ do'kon
+* 250+ TopMart Store
+* 120+ Delivery Agent
+* Supervisorlar
+* Store Managerlar
+
+uchun ishlaydi.
+
+Shuning uchun dizayn va arxitektura enterprise darajasida bo'lsin.
+
+---
+
+# 1. Dashboard
+
+KPI lar:
+
+```
+👥 Faol agentlar
+
+🏪 Faol do'konlar
+
+🆕 Bugun qo'shilgan do'konlar
+
+📍 Bugun kirilgan do'konlar
+
+💰 Bugungi savdo
+
+📦 Bugungi buyurtmalar
+
+💵 Bugun yig'ilgan pul
+
+🧾 Bugungi nasiya
+
+⚠️ 7 kundan beri olinmagan
+
+⚠️ 14 kundan beri olinmagan
+
+⚠️ 30 kundan beri olinmagan
+```
+
+---
+
+# 2. Smart Filters
+
+Yuqoriga professional filter panel qo'shing.
+
+```
+Sana
+
+Bugun
+
+Kecha
+
+Hafta
+
+Oy
+
+Custom
+```
+
+```
+Supervisor
+
+Delivery Agent
+
+Viloyat
+
+Tuman
+
+Mahsulot
+
+To'lov turi
+
+Do'kon qidiruvi
+```
+
+Filterlar birgalikda ishlasin.
+
+---
+
+# 3. Stores Intelligence
+
+Yangi tab.
+
+Har bir do'kon uchun:
+
+```
+Do'kon
+
+Telefon
+
+Lokatsiya
+
+Agent
+
+Supervisor
+
+Oxirgi tashrif
+
+Oxirgi savdo
+
+Oxirgi buyurtma
+
+Repeat
+
+Nasiya
+
+Status
+```
+
+Status:
+
+🟢 Faol
+
+🟡 Risk
+
+🔴 Muammo
+
+---
+
+# 4. Today's Store Activity
+
+Yangi widget.
+
+```
+Bugun qo'shilgan
+
+Bugun kirilgan
+
+Bugun savdo qilgan
+
+Bugun savdo qilmagan
+
+Bugun umuman kirilmagan
+```
+
+---
+
+# 5. Route Map (eng muhim modul)
+
+Distribution moduliga interaktiv xarita qo'shing.
+
+Leaflet yoki Mapbox ishlating.
+
+Google Maps API shart emas.
+
+Har bir do'kon marker sifatida ko'rsatiladi.
+
+Marker ranglari:
+
+🟢
+
+Savdo bo'lgan.
+
+---
+
+🔵
+
+Do'konga kirilgan.
+
+Savdo bo'lmagan.
+
+---
+
+🔴
+
+Mahsulot olinmagan.
+
+Sabab mavjud.
+
+---
+
+🟡
+
+Bugungi marshrutda bor.
+
+Lekin hali kirilmagan.
+
+---
+
+Kulrang
+
+Bugungi marshrutga kirmaydi.
+
+---
+
+# 6. Route Lines
+
+Bugungi marshrut
+
+```
+1
+
+↓
+
+2
+
+↓
+
+3
+
+↓
+
+4
+
+↓
+
+5
+```
+
+ketma-ket chiziq bilan bog'lansin.
+
+Har bir markerda:
+
+```
+1
+
+2
+
+3
+
+4
+
+...
+```
+
+raqam yozilsin.
+
+---
+
+# 7. Marker bosilganda
+
+Drawer ochilsin.
+
+```
+Do'kon
+
+Telefon
+
+Lokatsiya
+
+Agent
+
+Supervisor
+
+Oxirgi savdo
+
+Oxirgi tashrif
+
+Oxirgi buyurtma
+
+Nasiya
+
+Status
+```
+
+---
+
+Agar savdo qilmagan bo'lsa:
+
+```
+Sabab
+
+Mahsulot bor
+
+Pul yo'q
+
+Raqobatchi
+
+Yopiq
+
+Boshqa
+```
+
+---
+
+Keyingi kirish sanasi:
+
+```
+15.07.2026
+```
+
+---
+
+Izohlar.
+
+---
+
+Oxirgi 10 ta tashrif.
+
+---
+
+Oxirgi 10 ta savdo.
+
+---
+
+# 8. Live Route Progress
+
+Har bir agent uchun:
+
+```
+25 ta do'kon
+
+18 ta kirilgan
+
+12 ta savdo
+
+6 ta savdo yo'q
+
+7 ta qolgan
+```
+
+Progress Bar.
+
+```
+████████████░░░░
+72%
+```
+
+---
+
+# 9. Supervisor View
+
+Supervisor xaritada real vaqt ko'rsin.
+
+```
+Agent
+
+Qayerda
+
+Qaysi do'konda
+
+Oxirgi GPS
+
+Bugungi progress
+
+Bugungi savdo
+```
+
+---
+
+# 10. Delivery Agent Mobile
+
+Telegram Bot yoki Mobile UI.
+
+Ertalab:
+
+```
+Bugungi marshrutingiz tayyor.
+
+25 ta do'kon.
+
+Boshlash
+
+Xaritani ochish
+```
+
+---
+
+Agent xaritada:
+
+🟡
+
+hali bormagan.
+
+---
+
+Borib savdo qilsa:
+
+🟢
+
+---
+
+Borib savdo qilmasa:
+
+🔵
+
+---
+
+Mahsulot olinmasa:
+
+🔴
+
+---
+
+Marker rangi real vaqt o'zgarsin.
+
+Supervisor ham ko'rsin.
+
+---
+
+# 11. Navigation
+
+Har bir do'kon uchun:
+
+```
+Google Maps
+
+Yandex
+
+Apple Maps
+```
+
+ochish tugmasi.
+
+---
+
+# 12. Smart Suggestions
+
+Tizim tavsiya bersin.
+
+Masalan:
+
+```
+17-do'kon
+
+400 metr
+
+Keyingi shu yerga boring.
+```
+
+---
+
+Yoki:
+
+```
+Bu do'kon
+
+14 kundan beri buyurtma bermagan.
+
+Bugun kirishni tavsiya qilamiz.
+```
+
+---
+
+# 13. Heat Map
+
+Hududlar:
+
+🟢
+
+Har hafta savdo.
+
+---
+
+🟡
+
+Faolligi pasaymoqda.
+
+---
+
+🔴
+
+30 kundan beri olinmagan.
+
+Supervisor uchun.
+
+---
+
+# 14. Territory
+
+Har bir agentning hududi.
+
+```
+150 ta do'kon
+
+Shahand
+
+Toraqo'rg'on
+
+Mingbuloq
+```
+
+xaritada ko'rinsin.
+
+---
+
+# 15. Analytics
+
+```
+Route Efficiency
+
+Bosilgan km
+
+Tejalgan km
+
+O'rtacha tashrif
+
+Savdo %
+
+Conversion %
+
+Repeat %
+
+Nasiya %
+
+```
+
+---
+
+# 16. Performance
+
+Server-side filtering.
+
+Pagination.
+
+Lazy loading.
+
+Marker clustering.
+
+100 000+ location ishlay olishi kerak.
+
+---
+
+# 17. Architecture
+
+Kod modulli yozilsin.
+
+```
+distribution/
+
+dashboard
+
+stores
+
+routes
+
+map
+
+analytics
+
+supervisors
+
+agents
+
+gps
+
+recommendations
+```
+
+---
+
+# 18. UX
+
+Maqsad Google Maps yasash emas.
+
+Google Maps ustiga **TopMart Intelligence Layer** qurish.
+
+Xarita fon.
+
+Qiymat esa:
+
+* Distribution Analytics
+* Route Intelligence
+* Repeat Control
+* Store Intelligence
+* GPS Tracking
+* Visit History
+* Sales History
+* Credit Management
+
+---
+
+# 19. Kelajak
+
+Arxitektura shunday yozilsinki keyinchalik:
+
+* AI Route Optimization
+* AI Sales Recommendation
+* AI Repeat Prediction
+* Mobile App
+* TopMart Store
+* Regional Warehouse
+* Central Asia Expansion
+
+qo'shilganda kodni qayta yozishga ehtiyoj bo'lmasin.
+
+---
+
+## Yakuniy maqsad
+
+TopMart ERP oddiy ERP bo'lmasin.
+
+**TopMart Distribution Intelligence Platform** bo'lsin.
+
+Supervisor, Delivery Agent va rahbariyat bir xil ma'lumotni real vaqt rejimida ko'rsin. Xarita, GPS, marshrut, savdo, repeat, nasiya va do'kon tarixi bitta interfeysda birlashsin. Natijada agentlar kamroq masofa bosib ko'proq do'konga kirishi, supervisorlar esa muammoli hududlarni bir qarashda aniqlashi kerak.
+
+**Muhim:** Hozirgi ishlayotgan funksiyalarni buzmasdan, yangi imkoniyatlar ustiga qurilsin. Avval MVP, keyin AI va optimallashtirish modullari bosqichma-bosqich qo'shilsin. Bu tizimning asosiy vazifasi chiroyli xarita emas, **savdo samaradorligini oshirish** bo'lishi kerak.

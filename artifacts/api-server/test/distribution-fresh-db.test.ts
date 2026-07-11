@@ -589,3 +589,123 @@ print(json.dumps({
     expect(r.route_first_tartib).toBe(1);
   }, 60_000);
 });
+
+describe("Distribution WRITE flows execute with real typed params", () => {
+  // The EXPLAIN sweep substitutes NULL for every %s placeholder, so it can
+  // never catch a *parameter type* mismatch (e.g. a Python int bound into a
+  // TEXT column — PostgreSQL rejects `text = integer`, while SQLite silently
+  // coerced). These are the write flows that until now only ran in
+  // production: agent-plan upsert (ON CONFLICT DO UPDATE), pul olish + FIFO
+  // nasiya payment, revisit scheduling (inside create_sale), and
+  // olmagan-dokon logging. Each runs here with EXACTLY the parameter types
+  // the handlers pass at runtime, then results are read back and asserted.
+  // NOTE: this describe must stay LAST in the file — it inserts July-2026
+  // sales for a new agent, which would change the monthly-rating and summary
+  // assertions above if it ran before them.
+  it("plan upsert (insert + DO UPDATE), FIFO nasiya payment, revisit, olmagan insert", () => {
+    const py = `
+import json, main
+from datetime import datetime
+from database import create_sale, record_pul_olish, pay_nasiya_fifo
+
+AGENT = 333  # msg.from_user.id is an int at runtime
+
+conn = main.get_db(); c = conn.cursor()
+c.execute("INSERT INTO users (telegram_id,name,role,viloyat,created_at) VALUES (%s,%s,%s,%s,%s)",
+          (AGENT, "Typed Write Agent", "agent", "Toshkent", datetime.now().isoformat()))
+c.execute("INSERT INTO dokonlar (nomi,egasi,telefon,viloyat,hudud,agent_id,holat,created_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+          ("Typed Write Dokon", "Egasi", "+998900000001", "Toshkent", "Yunusobod", AGENT, "faol", datetime.now().isoformat()))
+dokon_id = c.fetchone()[0]
+c.execute("INSERT INTO mahsulotlar (nomi,narx,birlik,faol) VALUES (%s,%s,%s,%s) RETURNING id",
+          ("Arqon 8mm", 15000, "dona", 1))
+mid = c.fetchone()[0]
+conn.commit(); conn.close()
+
+# ── Two nasiya sales through create_sale (also exercises revisit scheduling:
+#    the 2nd sale must supersede the 1st sale's pending revisit).
+#    foto is None or a Telegram file-id str at runtime — cover both.
+sid1, owner1, q1 = create_sale(dokon_id, AGENT, [(mid, 2, 15000)], 30000, "nasiya", None, 30000)
+sid2, owner2, q2 = create_sale(dokon_id, AGENT, [(mid, 1, 15000)], 15000, "nasiya", "AgACAgTESTFOTO", 15000)
+
+conn = main.get_db(); c = conn.cursor()
+c.execute("SELECT status, COUNT(*) FROM revisitlar WHERE dokon_id=%s GROUP BY status", (dokon_id,))
+revisits = {row[0]: int(row[1]) for row in c.fetchall()}
+
+# ── Partial FIFO payment across the two nasiya rows: 40000 vs 45000 owed.
+pay_nasiya_fifo(dokon_id, AGENT, 40000)
+c.execute("SELECT savdo_id, tolangan, qoldiq FROM nasiya WHERE dokon_id=%s ORDER BY created_at", (dokon_id,))
+after_fifo = [(int(r[0]), int(r[1]), int(r[2])) for r in c.fetchall()]
+
+# ── Plain cash pickup with no debt applied.
+record_pul_olish(dokon_id, AGENT, 7000)
+
+# ── Overpayment branch: apply 5000 to debt, credit 2000 to customer balance.
+owner_tg = pay_nasiya_fifo(dokon_id, AGENT, 7000, apply_amount=5000, ortiqcha=2000)
+c.execute("SELECT COALESCE(SUM(qoldiq),0) FROM nasiya WHERE dokon_id=%s", (dokon_id,))
+final_qoldiq = int(c.fetchone()[0])
+c.execute("SELECT COUNT(*), COALESCE(SUM(summa),0) FROM pul_olish WHERE dokon_id=%s", (dokon_id,))
+pul_cnt, pul_sum = c.fetchone()
+balans = int(main.get_balans(dokon_id))
+
+# ── Agent-plan upsert — same statement + param types as the admin handler
+#    (main.py plan flow). Second execute hits the DO UPDATE branch.
+plan_sql = """INSERT INTO agent_plans (agent_id,oy,savdo_plan,dokon_plan,created_at)
+             VALUES (%s,%s,%s,%s,%s)
+             ON CONFLICT(agent_id,oy) DO UPDATE SET savdo_plan=%s, dokon_plan=%s"""
+oy = "2026-07"
+c.execute(plan_sql, (AGENT, oy, 5000000, 10, datetime.now().isoformat(), 5000000, 10))
+conn.commit()
+c.execute(plan_sql, (AGENT, oy, 8000000, 15, datetime.now().isoformat(), 8000000, 15))
+conn.commit()
+sp, dp = main.get_agent_plan(AGENT, oy)
+c.execute("SELECT COUNT(*) FROM agent_plans WHERE agent_id=%s AND oy=%s", (AGENT, oy))
+plan_rows = int(c.fetchone()[0])
+
+# ── Olmagan-dokon logging — same statement + param types as the handler:
+#    lat/lon are floats from msg.location, qaytish_sanasi a date str, foto None.
+c.execute("INSERT INTO olmagan_dokonlar (dokon_id,agent_id,sabab,sabab_text,latitude,longitude,qaytish_sanasi,foto,created_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+          (dokon_id, AGENT, "tovari_bor", "Tovari bor", 41.311081, 69.240562, "2026-07-18", None, datetime.now().isoformat()))
+conn.commit()
+c.execute("SELECT sabab, qaytish_sanasi, latitude FROM olmagan_dokonlar WHERE dokon_id=%s", (dokon_id,))
+olm = c.fetchone()
+conn.close()
+
+print(json.dumps({
+    "sids_distinct": sid1 != sid2,
+    "q2": int(q2),                          # qoldiq right after 2nd sale
+    "revisits": revisits,
+    "after_fifo": after_fifo,
+    "final_qoldiq": final_qoldiq,
+    "pul_cnt": int(pul_cnt), "pul_sum": int(pul_sum),
+    "balans": balans,
+    "owner_tg_is_none": owner_tg is None,
+    "plan": [int(sp), int(dp)], "plan_rows": plan_rows,
+    "olmagan_sabab": olm[0], "olmagan_qaytish": olm[1], "olmagan_lat": float(olm[2]),
+    "sid1": sid1,
+}))
+`;
+    const out = execFileSync("python3", ["-c", py], { cwd: botDir, env: botEnv, stdio: "pipe" })
+      .toString()
+      .trim();
+    const r = JSON.parse(out.split("\n").pop()!);
+
+    expect(r.sids_distinct).toBe(true);
+    expect(r.q2).toBe(45000);                       // 30000 + 15000 owed after both sales
+    expect(r.revisits).toEqual({ superseded: 1, pending: 1 }); // 2nd sale superseded the 1st
+    // FIFO: oldest row fully paid, remainder applied to the newer row.
+    expect(r.after_fifo).toEqual([
+      [r.sid1, 30000, 0],
+      [r.after_fifo[1][0], 10000, 5000],
+    ]);
+    expect(r.final_qoldiq).toBe(0);                 // 5000 applied by the overpay call
+    expect(r.pul_cnt).toBe(3);                      // fifo + plain + overpay pickups
+    expect(r.pul_sum).toBe(54000);                  // 40000 + 7000 + 7000
+    expect(r.balans).toBe(2000);                    // ortiqcha credited to balance
+    expect(r.owner_tg_is_none).toBe(true);          // dokon has no owner_telegram_id
+    expect(r.plan).toEqual([8000000, 15]);          // DO UPDATE branch won
+    expect(r.plan_rows).toBe(1);                    // upsert, not a duplicate row
+    expect(r.olmagan_sabab).toBe("tovari_bor");
+    expect(r.olmagan_qaytish).toBe("2026-07-18");
+    expect(r.olmagan_lat).toBeCloseTo(41.311081, 5);
+  }, 60_000);
+});

@@ -681,7 +681,7 @@ print(json.dumps({
     "owner_tg_is_none": owner_tg is None,
     "plan": [int(sp), int(dp)], "plan_rows": plan_rows,
     "olmagan_sabab": olm[0], "olmagan_qaytish": olm[1], "olmagan_lat": float(olm[2]),
-    "sid1": sid1,
+    "sid1": sid1, "sid2": sid2,
 }))
 `;
     const out = execFileSync("python3", ["-c", py], { cwd: botDir, env: botEnv, stdio: "pipe" })
@@ -695,7 +695,7 @@ print(json.dumps({
     // FIFO: oldest row fully paid, remainder applied to the newer row.
     expect(r.after_fifo).toEqual([
       [r.sid1, 30000, 0],
-      [r.after_fifo[1][0], 10000, 5000],
+      [r.sid2, 10000, 5000],
     ]);
     expect(r.final_qoldiq).toBe(0);                 // 5000 applied by the overpay call
     expect(r.pul_cnt).toBe(3);                      // fifo + plain + overpay pickups

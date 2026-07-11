@@ -1,0 +1,318 @@
+Men ham shu screenshotga qarab birinchi bo'lib shuni sezdim.
+
+**Ma'lumot bor, lekin boshqarish qiyin.**
+
+Hozirgi sahifa faqat jadval ko'rsatmoqda. Distribution boshqaruvi uchun esa "operatsion dashboard" kerak.
+
+## Men bunday qilardim
+
+### 1. KPI kartalar (yuqorida)
+
+```
+👥 Faol Agentlar      2
+🏪 Faol Do'konlar     131
+💰 Bugungi Savdo      2 313 354 so'm
+📦 Bugungi Buyurtma   12 ta
+💵 Yig'ilgan Pul      226 500 so'm
+🧾 Nasiya             525 000 so'm
+```
+
+---
+
+# 2. Filter Panel (eng muhim)
+
+Jadvalning tepasida:
+
+```
+📅 Sana
+
+[ Bugun ]
+[ Kecha ]
+[ Shu hafta ]
+[ Shu oy ]
+[ Maxsus sana ]
+```
+
+---
+
+```
+👤 Agent
+
+[ Barcha agentlar ▼ ]
+```
+
+Misol:
+
+```
+Barcha
+
+Elyorbek
+
+Navro'zbek
+
+Eldorbek
+```
+
+---
+
+```
+📍 Viloyat
+
+Barcha ▼
+```
+
+---
+
+```
+🏘 Tuman
+
+Barcha ▼
+```
+
+---
+
+```
+💳 To'lov turi
+
+Barchasi
+
+Naqd
+
+Nasiya
+
+Aralash
+```
+
+---
+
+```
+🔍 Do'kon qidirish
+
+____________________
+```
+
+---
+
+```
+📦 Mahsulot
+
+Barchasi ▼
+```
+
+Masalan:
+
+```
+Reja ip
+
+Arqon
+
+Tulpor
+
+Shakar
+```
+
+---
+
+# 3. Jadval
+
+Jadval yaxshi.
+
+Lekin ustunlar o'zgarishi kerak.
+
+```
+Sana
+
+Do'kon
+
+Agent
+
+Mahsulotlar
+
+Summa
+
+To'lov
+
+Status
+
+...
+```
+
+---
+
+# 4. Bosilganda
+
+Masalan:
+
+```
+Elektro Market
+```
+
+bosilsa
+
+Drawer ochiladi.
+
+```
+Elektro Market
+
+Telefon
+
+Lokatsiya
+
+Oxirgi kirish
+
+Oxirgi 10 ta savdo
+
+Nasiya
+
+Repeat
+
+SKU lar
+
+Izohlar
+
+Harakatlar
+```
+
+---
+
+# 5. Agent tabi
+
+Agentlarni oddiy ro'yxat emas.
+
+Kartochka.
+
+```
+👤 Navro'zbek
+
+Bugun:
+
+7 ta tashrif
+
+5 ta savdo
+
+1 280 000
+
+Repeat 83%
+
+Nasiya 120 ming
+
+[ Batafsil ]
+```
+
+---
+
+# 6. Do'kon tabi
+
+```
+🏪 Asiya Santex
+
+Oxirgi kirish
+
+Bugungi savdo
+
+Oxirgi 10 ta savdo
+
+Agent
+
+Repeat
+
+Nasiya
+
+Xarita
+```
+
+---
+
+# 7. Nasiya tabi
+
+```
+Do'kon
+
+Agent
+
+Qarz
+
+Oxirgi to'lov
+
+Qolgan
+
+Status
+```
+
+---
+
+# 8. Men yana bitta tab qo'shardim
+
+## Marshrut
+
+```
+Bugun
+
+Navro'zbek
+
+25 ta do'kon
+
+✓ 18
+
+✗ 7
+
+GPS
+
+Vaqt
+
+Xarita
+```
+
+---
+
+# Men yana bitta katta o'zgarish qilardim
+
+Bu sahifa:
+
+> **Distributsiya**
+
+emas.
+
+Uni:
+
+# **Sales Center**
+
+ga aylantirardim.
+
+Ya'ni:
+
+```
+📊 Dashboard
+
+↓
+
+Sales
+
+↓
+
+Agents
+
+↓
+
+Stores
+
+↓
+
+Routes
+
+↓
+
+Credits
+
+↓
+
+Analytics
+```
+
+---
+
+## Replit uchun prompt
+
+> **Distributsiya modulini to'liq qayta dizayn qiling. Maqsad jadval emas, operatsion boshqaruv paneli yaratish. Jadval tepasiga professional filter panel qo'shing: Sana (Bugun, Kecha, Shu hafta, Shu oy, Custom), Agent, Viloyat, Tuman, To'lov turi, Mahsulot va Do'kon qidiruvi. Filterlar birgalikda ishlasin va URL state saqlansin. Har bir satr bosilganda drawer ochilib do'kon yoki savdoning batafsil ma'lumotlari ko'rinsin. Agentlar, Do'konlar va Nasiya bo'limlari kartochkali ko'rinishda KPI lar bilan chiqsin. Dizayn Billz, BoxHero va zamonaviy ERP tizimlari darajasida sodda, tez va tushunarli bo'lsin. Barcha filterlar PostgreSQL orqali server-side ishlasin (client-side emas), chunki kelajakda 18 000+ do'kon va millionlab savdo yozuvlari bo'ladi.**
+
+Bu o'zgarishdan keyin Distribution moduli shunchaki ro'yxat emas, **boshqaruv markazi**ga aylanadi. Hozirgi jadval ma'lumotni ko'rsatadi, lekin rahbar uchun kerakli savollarga ("Bugun Navro'zbek qancha sotdi?", "Shu haftada qaysi tuman past natija berdi?", "Qaysi do'kon 2 haftadan beri buyurtma bermadi?") tez javob bermaydi. Kuchli filterlar va drill-down aynan shu muammoni hal qiladi.

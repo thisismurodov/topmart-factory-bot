@@ -1,0 +1,425 @@
+Menimcha bu joyda eng katta xato shunday bo'ladi:
+
+> "Agentga xarita ko'rsatamiz."
+
+Yo'q.
+
+**Biz agentga xarita emas, ish jarayonini beramiz.**
+
+Agentning vazifasi xaritani o'rganish emas.
+
+Vazifasi:
+
+> Keyingi do'konga borish → natijani belgilash → keyingi do'konga o'tish.
+
+Shuning uchun men bu modulni **TopMart Field Assistant** sifatida loyihalagan bo'lardim.
+
+---
+
+# Replit Prompt
+
+# TopMart Field Assistant (Delivery Agent Experience)
+
+## Mission
+
+Delivery Agent interfeysi oddiy Telegram bot emas.
+
+Bu agentning kun davomida ishlaydigan yagona ish quroli bo'lishi kerak.
+
+Maqsad:
+
+* Agent kamroq o'ylasin.
+* Kamroq bosish qilsin.
+* Kamroq yo'l yursin.
+* Ko'proq savdo qilsin.
+
+Butun UX "bir qo'l bilan ishlatish" tamoyiliga asoslanadi.
+
+---
+
+# 1. Agent botni ochadi
+
+Agent hech qanday menu qidirmaydi.
+
+To'g'ridan-to'g'ri:
+
+```text
+Assalomu alaykum, Elyorbek.
+
+Bugungi marshrut tayyor.
+
+🏪 25 ta do'kon
+
+🟡 Kutilmoqda: 25
+
+🟢 Yakunlandi: 0
+
+📦 Savdo: 0
+
+💰 Summa: 0
+
+🗺 BOSHLASH
+```
+
+Faqat bitta katta tugma.
+
+---
+
+# 2. Xarita ochiladi
+
+Google Maps emas.
+
+TopMart Route.
+
+Xaritada:
+
+🟡 Bugungi barcha do'konlar
+
+Ko'k chiziq:
+
+Optimal marshrut.
+
+Har marker ustida:
+
+1
+
+2
+
+3
+
+4
+
+...
+
+25
+
+---
+
+# 3. Pastki panel
+
+Doim ekranning pastida:
+
+```text
+Keyingi do'kon
+
+🏪 Kamol Market
+
+📍 650 m
+
+ETA: 2 min
+
+[ Navigatsiyani boshlash ]
+```
+
+Agent qidirib yurmaydi.
+
+---
+
+# 4. GPS
+
+GPS agentni kuzatadi.
+
+Agent do'kondan 100 metr ichiga kirsa:
+
+Telefon vibratsiya qiladi.
+
+Bot yozadi:
+
+```text
+Siz
+
+Kamol Market
+
+oldidasiz.
+
+Tashrifni boshlaysizmi?
+
+[ HA ]
+```
+
+---
+
+# 5. Tashrif
+
+Agent "Ha" bosadi.
+
+Endi faqat ikkita tugma:
+
+🟢
+
+Savdo bo'ldi
+
+🔴
+
+Mahsulot olinmadi
+
+Boshqa hech narsa yo'q.
+
+---
+
+# 6. Savdo
+
+Savdo bo'lsa.
+
+Bot:
+
+Savdo formasini ochadi.
+
+Yakunlangach.
+
+Marker:
+
+🟢
+
+bo'ladi.
+
+---
+
+# 7. Savdo bo'lmasa
+
+Agent:
+
+🔴
+
+bosadi.
+
+Sabablar:
+
+•
+
+Mahsulot bor
+
+•
+
+Pul yo'q
+
+•
+
+Raqobatchidan oldi
+
+•
+
+Do'kon yopiq
+
+•
+
+Egasi yo'q
+
+•
+
+Boshqa
+
+Keyin:
+
+Qayta kirish sanasi.
+
+Tamom.
+
+Marker:
+
+🔴
+
+bo'ladi.
+
+---
+
+# 8. Progress
+
+Har safar:
+
+```text
+████████░░░░░░
+
+10 / 25
+
+40%
+```
+
+yangilanadi.
+
+---
+
+# 9. Xarita
+
+Markerlar:
+
+🟢
+
+Savdo.
+
+---
+
+🔴
+
+Savdo bo'lmadi.
+
+---
+
+🟡
+
+Hali bormagan.
+
+---
+
+Agent xaritaga qarasa hammasini tushunsin.
+
+---
+
+# 10. AI
+
+Har safar tugagach.
+
+Bot:
+
+```text
+Keyingi do'kon:
+
+Shohrux Market
+
+420 metr.
+
+3 daqiqa.
+
+Navigatsiya boshlansinmi?
+```
+
+---
+
+# 11. Kun oxiri
+
+Agentga:
+
+```text
+Bugungi natija
+
+25 / 25
+
+Savdo
+
+17
+
+Savdo yo'q
+
+8
+
+7 240 000
+
+km
+
+119
+
+Vaqt
+
+8 soat
+```
+
+---
+
+# 12. Supervisor
+
+Supervisor ayni shu xaritani ko'radi.
+
+Faqat barcha agentlar bilan.
+
+Kim qayerda.
+
+Qaysi marker:
+
+🟢
+
+🔴
+
+🟡
+
+hammasi real vaqt.
+
+---
+
+# 13. Smart Reminder
+
+Masalan.
+
+Agent o'tib ketmoqda.
+
+300 metr narida.
+
+Tizim:
+
+> Siz o'tgan safar kirilmagan do'kon yonidan o'tyapsiz.
+
+Kirishni tavsiya qilamiz.
+
+---
+
+# 14. Offline
+
+Internet bo'lmasa.
+
+GPS va natijalar telefonda saqlansin.
+
+Internet kelganda avtomatik yuborilsin.
+
+---
+
+# 15. UX Rules
+
+❌ 10 ta menu yo'q.
+
+❌ 20 ta tugma yo'q.
+
+❌ Agent qidirib yurmaydi.
+
+Har ekran:
+
+Bitta maqsad.
+
+Bitta qaror.
+
+Bitta bosish.
+
+---
+
+# 16. Performance
+
+Agent bir do'konni yakunlagandan keyin keyingi do'konga o'tish 1 soniyadan kam bo'lishi kerak.
+
+---
+
+# 17. Mission
+
+Bu Telegram Bot emas.
+
+Bu Delivery Agent uchun operatsion tizim.
+
+Agent kun davomida faqat shu ekran bilan ishlaydi.
+
+---
+
+# 18. Golden Rule
+
+Har qanday UX qarori quyidagi savol bilan tekshirilsin:
+
+> Bu agentning vaqtini tejaydimi?
+
+Agar javob "yo'q" bo'lsa, bu funksiya qo'shilmasin.
+
+---
+
+## Men yana bitta 10/10 g'oya qo'shgan bo'lardim
+
+**"Drive Mode"**
+
+Agent mashinada ketayotganda ekranda faqat:
+
+* Keyingi do'kon nomi.
+* Masofa.
+* ETA.
+* Katta "Yetib keldim" tugmasi.
+
+Do'konga yetgach interfeys avtomatik tashrif rejimiga o'tadi. Savdo yakunlangach esa hech qanday qo'shimcha qidiruvsiz keyingi do'konni ochadi.
+
+Shu oqim bilan agentning kuni quyidagicha bo'ladi:
+
+**Boshlash → Haydash → Yetib kelish → Natijani belgilash → Keyingi do'kon.**
+
+Agar shu darajada soddalashtirilsa, tizim nafaqat qulay bo'ladi, balki agentlarni o'qitish ham ancha osonlashadi. Bu yerda asosiy maqsad ko'proq funksiyalar emas, **kamroq fikrlash bilan ko'proq ish bajarish**. Bu esa 10/10 foydalanuvchi tajribasining asosiy belgisi hisoblanadi.

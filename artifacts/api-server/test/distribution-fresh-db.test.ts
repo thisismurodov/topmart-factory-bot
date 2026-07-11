@@ -475,6 +475,50 @@ describe("Distribution summary API: period nasiya (davr) vs nasiya qoldiq (outst
     expect(jOut.nasiyaSalesCount).toBe(0);
     expect(jOut.outstandingTotal).toBe(20000);
   });
+
+  it("shops lastVisit is null-safe: sales-only, visit-only, both, neither", async () => {
+    // PostgreSQL GREATEST ignores NULL args (unlike Oracle) — lastVisit must be
+    // correct when a shop has activity in only ONE source (savdolar OR
+    // olmagan_dokonlar), in both, or in neither.
+    const ins = async (nomi: string): Promise<number> => {
+      const r = await client.query(
+        `INSERT INTO distribution.dokonlar (nomi, agent_id, holat, created_at)
+         VALUES ($1, 111, 'faol', '2026-07-10 08:00:00') RETURNING id`,
+        [nomi],
+      );
+      return r.rows[0].id as number;
+    };
+    const visitOnly = await ins("LV Visit Only");
+    const both = await ins("LV Both");
+    await ins("LV Neither");
+    await client.query(
+      `INSERT INTO distribution.olmagan_dokonlar (dokon_id, agent_id, sabab, created_at)
+       VALUES ($1, 111, 'yopiq', '2026-07-09 12:00:00')`,
+      [visitOnly],
+    );
+    // Sale in a PREVIOUS month (2026-06) so the monthly-rating test below is
+    // unaffected; the later "olmagan" visit (2026-07-10) must win via GREATEST.
+    await client.query(
+      `INSERT INTO distribution.savdolar (dokon_id, agent_id, jami_summa, tolov_turi, created_at)
+       VALUES ($1, 111, 5000, 'naqd', '2026-06-08 10:00:00')`,
+      [both],
+    );
+    await client.query(
+      `INSERT INTO distribution.olmagan_dokonlar (dokon_id, agent_id, sabab, created_at)
+       VALUES ($1, 111, 'yopiq', '2026-07-10 12:00:00')`,
+      [both],
+    );
+
+    const r = await fetch(`${apiUrl}/distribution/shops?pageSize=100`);
+    expect(r.status).toBe(200);
+    const j = await r.json();
+    const by = (n: string) => j.rows.find((x: { nomi: string | null }) => x.nomi === n);
+
+    expect(by("Fresh Test Dokon").lastVisit).toBe("2026-07-11"); // sales only, no olmagan
+    expect(by("LV Visit Only").lastVisit).toBe("2026-07-09");    // olmagan only, no sales
+    expect(by("LV Both").lastVisit).toBe("2026-07-10");          // max across both sources
+    expect(by("LV Neither").lastVisit).toBeNull();               // no activity at all
+  });
 });
 
 describe("Distribution reporting & route flows execute with real typed params", () => {

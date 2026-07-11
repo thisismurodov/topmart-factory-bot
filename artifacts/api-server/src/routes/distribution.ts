@@ -590,6 +590,10 @@ router.get("/distribution/shops", async (req, res): Promise<void> => {
         d.total_orders, d.repeat_orders, d.total_sales, d.last_order_date,
         (d.latitude IS NOT NULL AND d.longitude IS NOT NULL) AS has_location,
         u.name AS agent_name,
+        -- Oxirgi tashrif: savdo YOKI "olmagan" yozuvining eng so'nggi sanasi.
+        -- PostgreSQL'da GREATEST NULL argumentlarni e'tiborsiz qoldiradi (Oracle'dan
+        -- farqli) — faqat ikkala manba ham bo'sh bo'lsa NULL qaytadi. Regressiya
+        -- testi: distribution-fresh-db.test.ts ("lastVisit is null-safe").
         GREATEST(
           (SELECT MAX(substr(s.created_at,1,10)) FROM distribution.savdolar s WHERE s.dokon_id = d.id),
           (SELECT MAX(substr(o.created_at,1,10)) FROM distribution.olmagan_dokonlar o WHERE o.dokon_id = d.id)

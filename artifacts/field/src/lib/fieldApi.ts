@@ -163,9 +163,12 @@ export interface GpsInput {
 }
 
 // Hooks
+// staleTime: bir nechta komponent (AuthGate, StartScreen, ...) shu so'rovga
+// obuna — har mount'da qayta so'rov ketmasligi uchun 1 daqiqa yangi hisoblanadi.
 export const useFieldMe = () => useQuery<MeResponse, FieldApiError>({
   queryKey: ["field", "me"],
   queryFn: () => fetchFieldApi("/me"),
+  staleTime: 60_000,
 });
 
 // Dev-only: ?kun=1..7 bilan boshqa kun marshrutini ko'rish (server FIELD_DEV_BYPASS

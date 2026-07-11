@@ -22,6 +22,7 @@
 - [Distribution bot PostgreSQL layer](distribution-db-layer.md) — native %s/RETURNING only; AST guard test blocks ? placeholders/.lastrowid; rows stay raw tuples; main.py must re-export db helpers.
 - [E2E dashboard auth](e2e-dashboard-auth.md) — create throwaway bcrypt admin in RAILWAY DB for Playwright login; screenshot tool can't pass the login wall; always clean up user+sessions.
 - [Ledger backfill ordering](ledger-backfill-ordering.md) — backfilled ledger rows have new ids but old timestamps; history queries must ORDER BY created_at, not id, or timelines/balances corrupt.
+- [react-query single-gate rule](react-query-gate-loop.md) — only ONE stable component may early-return on a query's pending/error; split gates unmount each other → refetchOnMount storm until 429.
 - [Offline sync queue pitfalls](offline-sync-queue.md) — flush must remove from FRESH storage (not snapshot); optimistic setQueryData needs exact query key via shared factory; drop only 400/404/422.
 - [Leaflet map in flex layouts](leaflet-in-flex-layout.md) — blank map: import leaflet.css in main.tsx (not CDN) + layout root needs h-[100dvh] not min-h (h-full chain collapses to 0).
 - [Sandbox kills bash background processes](sandbox-background-process-kill.md) — setsid/nohup don't survive tool-call end; run long tests via workflows and poll /tmp/logs.

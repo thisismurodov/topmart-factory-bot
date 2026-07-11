@@ -3,6 +3,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import NotFound from "@/pages/not-found";
 import { AppLayout } from "@/components/layout/AppLayout";
+import { AuthGate } from "@/components/AuthGate";
+import { FieldApiError } from "@/lib/fieldApi";
 
 import StartScreen from "@/pages/StartScreen";
 import RouteMap from "@/pages/RouteMap";
@@ -12,7 +14,20 @@ import SaleForm from "@/pages/SaleForm";
 import NoSaleForm from "@/pages/NoSaleForm";
 import SummaryScreen from "@/pages/SummaryScreen";
 
-const queryClient = new QueryClient();
+// 401/403 — avtorizatsiya xatosi: qayta urinish foydasiz, darhol xabar
+// ko'rsatamiz. Boshqa xatolar 2 martagacha qayta uriniladi.
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: (failureCount, error) => {
+        if (error instanceof FieldApiError && (error.status === 401 || error.status === 403)) {
+          return false;
+        }
+        return failureCount < 2;
+      },
+    },
+  },
+});
 
 function Router() {
   return (
@@ -34,7 +49,9 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
         <AppLayout>
-          <Router />
+          <AuthGate>
+            <Router />
+          </AuthGate>
         </AppLayout>
       </WouterRouter>
       <Toaster />

@@ -36,7 +36,7 @@ import {
 // 1. Tashlanadigan (throwaway) baza yaratadi
 // 2. Bot init_db() va API initDb() ni o'sha bazaga qarshi ishga tushiradi —
 //    ya'ni aynan runtime DDL natijasini oladi (dev bazadagi eski holat emas)
-// 3. Natijaviy ustunlar + turlarni Drizzle sxemasi bilan solishtiradi
+// 3. Natijaviy ustunlar + turlar + nullability'ni Drizzle sxemasi bilan solishtiradi
 //
 // Bir tomonga ustun qo'shilsa-yu ikkinchisiga qo'shilmasa — non-zero exit.
 //
@@ -146,11 +146,18 @@ async function main(): Promise<void> {
 
   for (const [tableName, table] of Object.entries(TABLES)) {
     const expected = new Map(
-      Object.values(getTableColumns(table)).map((c) => [c.name, normalizeType(c.getSQLType())]),
+      Object.values(getTableColumns(table)).map((c) => [
+        c.name,
+        { type: normalizeType(c.getSQLType()), notNull: c.notNull },
+      ]),
     );
 
-    const { rows } = await driftPool.query<{ column_name: string; data_type: string }>(
-      `SELECT column_name, data_type FROM information_schema.columns
+    const { rows } = await driftPool.query<{
+      column_name: string;
+      data_type: string;
+      is_nullable: string;
+    }>(
+      `SELECT column_name, data_type, is_nullable FROM information_schema.columns
         WHERE table_schema = 'public' AND table_name = $1`,
       [tableName],
     );
@@ -161,24 +168,39 @@ async function main(): Promise<void> {
       continue;
     }
 
-    const actual = new Map(rows.map((r) => [r.column_name, r.data_type.toLowerCase()]));
+    const actual = new Map(
+      rows.map((r) => [
+        r.column_name,
+        { type: r.data_type.toLowerCase(), notNull: r.is_nullable.toUpperCase() === "NO" },
+      ]),
+    );
 
     const missing = [...expected.keys()].filter((c) => !actual.has(c));
     const extra = [...actual.keys()].filter((c) => !expected.has(c));
     const typeMismatch = [...expected.entries()]
-      .filter(([name, type]) => actual.has(name) && actual.get(name) !== type)
-      .map(([name, type]) => `${name} (Drizzle: ${type}, runtime: ${actual.get(name)})`);
+      .filter(([name, e]) => actual.has(name) && actual.get(name)!.type !== e.type)
+      .map(([name, e]) => `${name} (Drizzle: ${e.type}, runtime: ${actual.get(name)!.type})`);
+    const nullMismatch = [...expected.entries()]
+      .filter(([name, e]) => actual.has(name) && actual.get(name)!.notNull !== e.notNull)
+      .map(
+        ([name, e]) =>
+          `${name} (Drizzle: ${e.notNull ? "NOT NULL" : "nullable"}, runtime: ${
+            actual.get(name)!.notNull ? "NOT NULL" : "nullable"
+          })`,
+      );
 
-    if (missing.length || extra.length || typeMismatch.length) {
+    if (missing.length || extra.length || typeMismatch.length || nullMismatch.length) {
       if (missing.length)
         console.error(`✗ ${tableName}: runtime DDL'da yo'q ustun(lar): ${missing.join(", ")}`);
       if (extra.length)
         console.error(`✗ ${tableName}: Drizzle sxemasida yo'q ustun(lar): ${extra.join(", ")}`);
       if (typeMismatch.length)
         console.error(`✗ ${tableName}: tur mos emas: ${typeMismatch.join("; ")}`);
+      if (nullMismatch.length)
+        console.error(`✗ ${tableName}: nullability mos emas: ${nullMismatch.join("; ")}`);
       drift = true;
     } else {
-      console.log(`✓ ${tableName}: ${expected.size} ustun mos (nom + tur)`);
+      console.log(`✓ ${tableName}: ${expected.size} ustun mos (nom + tur + nullability)`);
     }
   }
 

@@ -9,15 +9,15 @@ import { z } from "zod/v4";
 // migrations.
 export const wipMovementsTable = pgTable("wip_movements", {
   id: serial("id").primaryKey(),
-  lineId: integer("line_id"),
+  lineId: integer("line_id").notNull(),
   movementType: text("movement_type").notNull(), // 'RECEIVE' | 'PRODUCE'
   rawMaterial: text("raw_material"),
   product: text("product"),
   weightKg: numeric("weight_kg", { precision: 12, scale: 3 }).notNull().default("0"),
   fromWarehouseId: integer("from_warehouse_id"),
   batchId: integer("batch_id"),
-  note: text("note"),
-  createdBy: text("created_by"),
+  note: text("note").notNull().default(""),
+  createdBy: text("created_by").notNull().default("admin"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

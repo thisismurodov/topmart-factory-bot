@@ -24,6 +24,15 @@ DDL to both init paths, keep column types/defaults identical (e.g. sale_items:
 quantity NUMERIC(12,3), unit_price NUMERIC(12,2), line_total NUMERIC(14,2),
 currency default 'UZS'), and rely on the schema-drift validation workflow to
 catch divergence: it creates a throwaway DB, runs BOTH init paths against it,
-then diffs the resulting columns+types against the Drizzle schema for the
-warehouse tables (warehouses, inventory, stock_movements, wip_movements).
-This caught a real drift (warehouses.created_at existed only in Drizzle).
+then diffs the resulting columns against the Drizzle schema for every covered
+table. It now compares name + type + **nullability** (information_schema
+is_nullable vs Drizzle column `.notNull`), not just name+type.
+This caught real drift (warehouses.created_at existed only in Drizzle; later
+sales.product was NOT NULL in Drizzle but nullable at runtime, and
+wip_movements line_id/note/created_by were NOT NULL at runtime but nullable in
+Drizzle).
+
+**Source-of-truth rule:** for these bot-owned runtime tables the runtime DDL
+wins. When the drift check flags a nullability mismatch, sync the Drizzle mirror
+in `lib/db/src/schema/` to match runtime — do NOT alter the runtime DDL to match
+Drizzle (Drizzle is never used for migrations here).

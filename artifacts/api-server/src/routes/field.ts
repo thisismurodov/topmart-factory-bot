@@ -92,7 +92,8 @@ router.get("/field/route/today", async (req, res) => {
   }
   const today = tkToday();
   try {
-    if (kun === 7) {
+    // Juma (kun=5) — dam olish kuni (bot _today_kun() bilan sinxron bo'lishi shart)
+    if (kun === 5) {
       res.json({ kun, sana: today, dam: true, shops: [], stats: emptyStats() });
       return;
     }

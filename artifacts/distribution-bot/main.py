@@ -395,7 +395,7 @@ def dlv_menu_kb():
     return kb
 
 DAYS=[(1,"Dushanba"),(2,"Seshanba"),(3,"Chorshanba"),
-      (4,"Payshanba"),(5,"Juma"),(6,"Shanba")]
+      (4,"Payshanba"),(6,"Shanba"),(7,"Yakshanba")]
 DAYS_BY_NAME={n:i for i,n in DAYS}
 def day_name(i):
     for x,n in DAYS:
@@ -520,7 +520,7 @@ def _start_route_day_picker(uid, dlv_id, dlv_name):
         kb.add(f"📅 {n} ({cnt}/20)")
     kb.add("⬅️ Delivery menyu")
     today=datetime.now().isoweekday()  # 1=Mon..7=Sun
-    today_name=DAYS[today-1][1] if 1<=today<=6 else "—"
+    today_name=day_name(today)
     set_state(uid,"rt_pick_day",{"dlv_id":dlv_id,"dlv_name":dlv_name})
     bot.send_message(uid,
         f"🚚 {dlv_name} — Haftalik marshrut\n\n"
@@ -1146,7 +1146,7 @@ def dlv_my_route(msg):
         bot.send_message(uid,"❗ Bog'lanish topilmadi."); return
     today=_today_kun()
     if not today:
-        bot.send_message(uid,"😴 Bugun Yakshanba — dam olish kuni. Marshrut yo'q."); return
+        bot.send_message(uid,"😴 Bugun Juma — dam olish kuni. Marshrut yo'q."); return
     conn=get_db();c=conn.cursor()
     c.execute("""SELECT r.tartib,d.nomi,d.egasi,d.telefon,d.hudud,d.latitude,d.longitude,
                         COALESCE(r.added_by_dlv,0)
@@ -1210,7 +1210,7 @@ def dlv_new_dokon_start(msg):
         bot.send_message(uid,"❗ Bog'lanish topilmadi."); return
     kun=_today_kun()
     if not kun:
-        bot.send_message(uid,"😴 Bugun Yakshanba — marshrut yo'q."); return
+        bot.send_message(uid,"😴 Bugun Juma — dam olish kuni. Marshrut yo'q."); return
     added=_dlv_adhoc_count(dlv[0],kun)
     if added>=DLV_ADHOC_MAX:
         bot.send_message(uid,f"🚫 Bugungi limit to'ldi ({DLV_ADHOC_MAX}/{DLV_ADHOC_MAX}). Ertaga urinib ko'ring."); return
@@ -1770,9 +1770,9 @@ def _get_delivery_agent_by_tid(tid):
     r=c.fetchone(); conn.close(); return r
 
 def _today_kun():
-    """Returns 1=Du..6=Sh, or None if Sunday."""
+    """Returns 1..7 (isoweekday), or None if Friday (dam kuni)."""
     iw=datetime.now().isoweekday()
-    return iw if 1<=iw<=6 else None
+    return None if iw==5 else iw
 
 def _record_agent_location(uid,lat,lon,source="manual"):
     """GPS nuqtasini agent_locations ga yozadi — xato bo'lsa asosiy oqimni buzmaydi."""
@@ -1918,7 +1918,7 @@ def tovar_berish(msg):
         if status=="no_agent":
             bot.send_message(uid,"❗ Siz delivery agent sifatida bog'lanmagansiz."); return
         if status=="sunday":
-            bot.send_message(uid,"😴 Bugun Yakshanba — dam olish kuni. Marshrut yo'q."); return
+            bot.send_message(uid,"😴 Bugun Juma — dam olish kuni. Marshrut yo'q."); return
         set_state(uid,"savdo_dokon",{"mahsulotlar":mahsulotlar,"tanlangan":{}})
         if n==0:
             bot.send_message(uid,
@@ -2544,7 +2544,7 @@ def tovar_olmadi(msg):
             conn.close(); bot.send_message(uid,"❗ Bog'lanish topilmadi."); return
         kun=_today_kun()
         if not kun:
-            conn.close(); bot.send_message(uid,"😴 Bugun Yakshanba — marshrut yo'q."); return
+            conn.close(); bot.send_message(uid,"😴 Bugun Juma — dam olish kuni. Marshrut yo'q."); return
         c.execute("""SELECT d.id,d.nomi FROM delivery_routes r
                      JOIN dokonlar d ON d.id=r.dokon_id
                      WHERE r.delivery_agent_id=%s AND r.kun=%s AND d.holat='faol'
@@ -3878,7 +3878,7 @@ def qayta_kirish_cmd(msg):
 def send_morning_routes():
     """Har kuni ertalab faol delivery agentlarga bugungi marshrutni yuborish."""
     kun=_today_kun()
-    if not kun: return 0  # Yakshanba — dam olish kuni
+    if not kun: return 0  # Juma — dam olish kuni
     conn=get_db();c=conn.cursor()
     c.execute("SELECT id,name,telegram_id FROM delivery_agents WHERE faol=1 AND telegram_id IS NOT NULL")
     agents=c.fetchall()

@@ -200,7 +200,7 @@ def get_balans(dokon_id):
     c.execute("SELECT balans FROM mijoz_balans WHERE dokon_id=?",(dokon_id,))
     row=c.fetchone(); conn.close(); return row[0] if row else 0
 def update_balans_delta(c,dokon_id,delta):
-    c.execute("INSERT INTO mijoz_balans (dokon_id,balans) VALUES (?,?) ON CONFLICT(dokon_id) DO UPDATE SET balans=balans+?",(dokon_id,delta,delta))
+    c.execute("INSERT INTO mijoz_balans (dokon_id,balans) VALUES (?,?) ON CONFLICT(dokon_id) DO UPDATE SET balans=mijoz_balans.balans+?",(dokon_id,delta,delta))
 def get_user(tid):
     conn=get_db();c=conn.cursor()
     c.execute("SELECT * FROM users WHERE telegram_id=?",(tid,))

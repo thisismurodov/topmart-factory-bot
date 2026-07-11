@@ -25,8 +25,12 @@ The distribution Telegram bot (originally a standalone SQLite single-file app, p
 The shim handles paramstyle + lastrowid, but SQL *dialect* differences still leak through and the shim cannot catch them. Two classes bit us:
 - **GROUP BY strictness.** SQLite lets you `SELECT` bare non-aggregated columns not in `GROUP BY`; Postgres rejects them unless they are functionally dependent — and Postgres recognizes functional dependency ONLY from a table's PRIMARY KEY. `GROUP BY u.telegram_id` (a UNIQUE col, not the PK) while selecting `u.name` FAILS; `GROUP BY d.id` (PK) selecting `d.nomi` is fine, but selecting a *joined* table's column still needs that column in GROUP BY. Fix: add every selected non-aggregated column (including joined-table cols) to GROUP BY.
 - **`GROUP_CONCAT(expr, sep)` → `string_agg(expr::text, sep)`.** Postgres has no GROUP_CONCAT; also cast integer operands in a `||` chain to `::text` to be safe.
+- **Unqualified column in `ON CONFLICT ... DO UPDATE SET col=col+?` is ambiguous in Postgres** (SQLite allows it). Qualify with the table name: `SET balans=mijoz_balans.balans+?` — valid in both dialects. This bit `update_balans_delta` (every nasiya sale touching a customer balance would have crashed).
 **Why:** these parse fine as strings so the shim passes them straight through; they only fail at plan time in Postgres.
 **How to apply:** when reviewing/adding bot SQL, grep case-INSENSITIVELY (`rg -i`) for `group_concat`, and audit every `GROUP BY` for bare columns — SQLite-era queries are routinely non-conformant.
+
+## Fresh-DB guard
+`artifacts/api-server/test/distribution-fresh-db.test.ts` (runs inside the `api-tests` validation step) creates a throwaway DB, brings `distribution` up via the REAL bot `main.init_db()` (python3 subprocess, dummy token — importing main.py is side-effect-free), auto-extracts every table name from main.py SQL (case-SENSITIVE FROM/JOIN/INTO/UPDATE regex — case-insensitive matches Python `from x import`), asserts a column manifest, asserts `users` column ORDER (bot indexes `SELECT *` rows positionally, u[3]=role), and runs a sale flow end-to-end through the shim. A green run is required before distribution-schema changes are safe.
 
 ## Schema source of truth
 Drizzle mirror in `lib/db/src/schema/distribution.ts` (pgSchema `distribution`) and an idempotent DDL script `scripts/src/init-distribution.ts` (`pnpm --filter @workspace/scripts run init-distribution`). The bot's own `init_db()` runs the same CREATE SCHEMA + CREATE TABLE IF NOT EXISTS on startup, so it is self-sufficient on Railway.

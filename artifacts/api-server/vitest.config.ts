@@ -9,5 +9,8 @@ export default defineConfig({
     fileParallelism: false,
     testTimeout: 30000,
     hookTimeout: 30000,
+    // Local (Neon) baza suite o'rtasidagi Railway-only bo'limda uxlab
+    // qolmasligi uchun keepalive ping (flaky connect xatolarining oldini oladi).
+    globalSetup: ["./test/global-setup.ts"],
   },
 });

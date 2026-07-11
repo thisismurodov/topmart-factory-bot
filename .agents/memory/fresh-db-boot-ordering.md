@@ -43,3 +43,23 @@ self-created by init, in dependency order.
   sales_product_tiers, missing sales.currency/payment_type/paid_amount/debt_amount,
   customers.deleted_at, and a `sales.product NOT NULL` mismatch (API inserts without
   product — needed `DROP NOT NULL` in init).
+
+## Local Neon DB suspends during Railway-only stretches of the test suite
+
+The api-server vitest suite has a long stretch (distribution-fresh-db +
+fresh-db-boot, ~110s) that talks ONLY to throwaway Railway DBs. During that
+gap the local Replit dev Postgres (Neon, scale-to-zero) can suspend; the next
+schema-isolated local-DB test files (ombor-weight, raw-in, flow-raw-in) then
+flake with wake-up connect errors: `pool.connect()` rejects OUTSIDE the route
+try-block → Express 5 renders the default HTML error page → tests report
+`SyntaxError: Unexpected token '<', "<!DOCTYPE"` plus cascading zero/stale
+assertions. Failures hop between files run-to-run.
+
+**Fix in place:** `artifacts/api-server/test/global-setup.ts` (vitest
+`globalSetup`) pings the local `DATABASE_URL` with a fresh connection every
+10s for the whole run.
+
+**How to apply:** if these local-DB tests flake again with HTML-instead-of-JSON
+errors, suspect DB suspend/connect instability first, not test logic. Never
+kill a full-suite vitest run via bash timeout — orphaned runs clobber the
+fixed-schema tests of concurrent runs (use the api-tests workflow instead).

@@ -1239,6 +1239,18 @@ def create_batch_session(
                 )
                 updated = cur.fetchone()
                 new_stock = float(updated["current_stock"]) if updated else 0.0
+                # Sarflangan xom ashyoni harakatlar tarixiga yozamiz (OUT, raw) —
+                # shu tranzaksiya ichida, current_stock kamayishi bilan birga.
+                if consumed > 0:
+                    cur.execute(
+                        """INSERT INTO stock_movements
+                             (product, quantity, movement_type, from_warehouse_id,
+                              to_warehouse_id, note, created_by, product_type)
+                           VALUES (%s,%s,'OUT',NULL,NULL,%s,%s,'raw')""",
+                        (req["name"], consumed,
+                         f"Ishlab chiqarish: {batch_code} ({product} × {quantity})",
+                         worker),
+                    )
                 min_stock = float(req["minimum_stock"] or 0)
                 if min_stock > 0 and new_stock <= min_stock:
                     low_by_name[req["name"]] = {

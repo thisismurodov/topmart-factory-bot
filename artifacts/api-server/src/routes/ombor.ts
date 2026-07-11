@@ -637,7 +637,7 @@ router.get("/ombor/movements", async (req, res): Promise<void> => {
 
   const { rows } = await pool.query(
     `SELECT sm.id, sm.product, sm.quantity, sm.movement_type, sm.product_type,
-            fw.name AS from_warehouse, tw.name AS to_warehouse,
+            sm.from_warehouse_id, fw.name AS from_warehouse, tw.name AS to_warehouse,
             sm.note, sm.created_by, sm.created_at
      FROM stock_movements sm
      LEFT JOIN warehouses fw ON fw.id = sm.from_warehouse_id
@@ -651,11 +651,20 @@ router.get("/ombor/movements", async (req, res): Promise<void> => {
   // Running stock balance per raw material. For a single-material raw history
   // we anchor the newest movement to the material's live current_stock, then
   // walk backward subtracting each movement's signed delta. This guarantees the
-  // most recent row matches current stock (BOM consumption changes current_stock
-  // without a movement row, so a forward-summed ledger would drift; anchoring at
-  // the live value avoids that). Only computed for a specific raw material whose
-  // newest movement is guaranteed present (no upper date bound excluding it).
-  let balances: Record<number, number> | null = null;
+  // most recent row matches current stock even if legacy rows are missing
+  // (older batches deducted BOM without writing a movement row; new batches
+  // write an OUT row in the same transaction). Only computed for a specific raw
+  // material whose newest movement is guaranteed present (no upper date bound
+  // excluding it).
+  //
+  // Not every raw movement touches global raw_materials.current_stock:
+  //  - OUT with from_warehouse_id (konteynerdan bo'limga berish) faqat
+  //    konteyner inventory'sini kamaytiradi — global zahira o'zgarmaydi
+  //    (BOM partiya paytida kamayadi).
+  //  - TRANSFER konteynerlar orasida — global zahira o'zgarmaydi.
+  // Bunday qatorlar uchun delta 0 va balanceAfter ko'rsatilmaydi (null),
+  // aks holda balans noto'g'ri siljiydi.
+  let balances: Record<number, number | null> | null = null;
   if (typeFilter === "raw" && prodFilter && !toFilter && rows.length) {
     const stockRes = await pool.query(
       "SELECT current_stock FROM raw_materials WHERE name = $1 LIMIT 1",
@@ -666,8 +675,15 @@ router.get("/ombor/movements", async (req, res): Promise<void> => {
       // rows are newest-first; walk from the top anchoring at current_stock.
       let running = Number(stockRes.rows[0].current_stock) || 0;
       for (const r of rows) {
-        balances[r.id] = running;
         const qty = Number(r.quantity) || 0;
+        const containerOnly =
+          r.movement_type === "TRANSFER" ||
+          (r.movement_type === "OUT" && r.from_warehouse_id != null);
+        if (containerOnly) {
+          balances[r.id] = null;
+          continue;
+        }
+        balances[r.id] = running;
         const signed = r.movement_type === "OUT" ? -qty : qty;
         running -= signed;
       }

@@ -15,7 +15,7 @@ import {
   Users, Store, ShoppingBag, CreditCard, Banknote, Wallet,
   MapPin, Phone, Search, X, Route as RouteIcon, CheckCircle2, XCircle, Truck,
 } from "lucide-react";
-import MapTab, { GeoNavLinks } from "@/components/distribution/MapTab";
+import MapTab, { GeoNavLinks, sababLabel } from "@/components/distribution/MapTab";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────────
 const fmtSom = (n: number) => `${Math.round(n).toLocaleString("uz-UZ")} so'm`;
@@ -575,7 +575,7 @@ function ShopDrawer({ shopId, onClose }: { shopId: number | null; onClose: () =>
                     <div key={v.id} className="border rounded-md p-2.5 text-sm">
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-xs text-muted-foreground">{fmtDateTime(v.createdAt)}</span>
-                        <span className="text-xs font-medium text-amber-700">{v.sababText || v.sabab || "—"}</span>
+                        <span className="text-xs font-medium text-amber-700">{sababLabel(v.sabab, v.sababText) || "—"}</span>
                       </div>
                       <div className="flex items-center justify-between gap-2 mt-0.5 text-[11px] text-muted-foreground">
                         <span>{v.agentName ? `Agent: ${v.agentName}` : ""}</span>

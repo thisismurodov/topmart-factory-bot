@@ -911,6 +911,11 @@ router.get("/distribution/map", async (req, res): Promise<void> => {
             u.name AS agent_name,
             EXISTS (SELECT 1 FROM distribution.savdolar s
                      WHERE s.dokon_id = d.id AND substr(s.created_at,1,10) = $1)      AS sold,
+            EXISTS (SELECT 1 FROM distribution.olmagan_dokonlar o
+                     WHERE o.dokon_id = d.id AND substr(o.created_at,1,10) = $1)      AS nosale,
+            (SELECT o.sabab FROM distribution.olmagan_dokonlar o
+              WHERE o.dokon_id = d.id AND substr(o.created_at,1,10) = $1
+              ORDER BY o.id DESC LIMIT 1)                                             AS sabab,
             (SELECT o.sabab_text FROM distribution.olmagan_dokonlar o
               WHERE o.dokon_id = d.id AND substr(o.created_at,1,10) = $1
               ORDER BY o.id DESC LIMIT 1)                                             AS sabab_text,
@@ -971,7 +976,7 @@ router.get("/distribution/map", async (req, res): Promise<void> => {
     shops: shops.rows.map((r) => {
       const status = r.sold
         ? "sold"
-        : r.sabab_text !== null
+        : r.nosale
           ? "nosale"
           : r.paid
             ? "visited"
@@ -989,6 +994,7 @@ router.get("/distribution/map", async (req, res): Promise<void> => {
         lng: Number(r.longitude),
         agentName: r.agent_name,
         status,
+        sabab: r.sabab,
         sababText: r.sabab_text,
         qaytishSanasi: r.qaytish_sanasi,
       };

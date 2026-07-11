@@ -25,9 +25,28 @@ type MapShop = {
   lng: number;
   agentName: string | null;
   status: "sold" | "nosale" | "visited" | "planned" | "none";
+  sabab: string | null;
   sababText: string | null;
   qaytishSanasi: string | null;
 };
+
+// Bot SABAB_MAP kodlari → o'zbekcha yorliq (sabab_text bo'lmasa fallback)
+export const SABAB_LABELS: Record<string, string> = {
+  narx_qimmat: "💸 Narx qimmat",
+  tovari_bor: "📦 Hozir tovari bor",
+  boshqa_firma: "🏢 Boshqa firma",
+  sifat: "😕 Sifat yoqmadi",
+  egasi_yoq: "🚪 Egasi yo'q edi",
+  keyin_keling: "🕐 Keyin keling dedi",
+  sotilmaydi: "🚫 Sotilmaydi dedi",
+  boshqa: "📝 Boshqa sabab",
+};
+
+export function sababLabel(sabab: string | null, sababText: string | null): string | null {
+  if (sababText) return sababText;
+  if (sabab) return SABAB_LABELS[sabab] ?? sabab;
+  return null;
+}
 type MapRouteStop = {
   agentId: number;
   agentName: string | null;
@@ -261,7 +280,8 @@ export default function MapTab({ date, agentId, viloyat, hudud, search, active, 
       const meta = STATUS_META[s.status];
       const m = L.marker([s.lat, s.lng], { icon: dotIcon(meta.color) });
       let tip = `<b>${esc(s.nomi ?? "Do'kon")}</b><br/>${esc(meta.label)}`;
-      if (s.sababText) tip += `<br/>❌ ${esc(s.sababText)}`;
+      const sbl = sababLabel(s.sabab, s.sababText);
+      if (sbl) tip += `<br/>❌ ${esc(sbl)}`;
       if (s.qaytishSanasi) tip += `<br/>🔁 Qaytish: ${esc(s.qaytishSanasi)}`;
       if (s.agentName) tip += `<br/>👤 ${esc(s.agentName)}`;
       m.bindTooltip(tip);

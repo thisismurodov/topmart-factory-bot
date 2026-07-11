@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS distribution.savdo_tafsilot (
   id SERIAL PRIMARY KEY,
   savdo_id BIGINT,
   mahsulot_id BIGINT,
-  miqdor INTEGER,
+  miqdor DOUBLE PRECISION,
   narx BIGINT,
   summa BIGINT
 );

@@ -210,7 +210,7 @@ CREATE TABLE IF NOT EXISTS distribution.savdolar (
     tolov_turi TEXT, foto TEXT, created_at TEXT
 );
 CREATE TABLE IF NOT EXISTS distribution.savdo_tafsilot (
-    id SERIAL PRIMARY KEY, savdo_id BIGINT, mahsulot_id BIGINT, miqdor INTEGER, narx BIGINT, summa BIGINT
+    id SERIAL PRIMARY KEY, savdo_id BIGINT, mahsulot_id BIGINT, miqdor DOUBLE PRECISION, narx BIGINT, summa BIGINT
 );
 CREATE TABLE IF NOT EXISTS distribution.olmagan_dokonlar (
     id SERIAL PRIMARY KEY, dokon_id BIGINT, agent_id BIGINT, sabab TEXT, sabab_text TEXT,

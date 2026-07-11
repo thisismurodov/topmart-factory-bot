@@ -65,7 +65,7 @@ export const savdoTafsilotTable = distribution.table("savdo_tafsilot", {
   id: serial("id").primaryKey(),
   savdoId: bigint("savdo_id", { mode: "number" }),
   mahsulotId: bigint("mahsulot_id", { mode: "number" }),
-  miqdor: integer("miqdor"),
+  miqdor: doublePrecision("miqdor"),
   narx: bigint("narx", { mode: "number" }),
   summa: bigint("summa", { mode: "number" }),
 });

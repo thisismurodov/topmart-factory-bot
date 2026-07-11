@@ -516,7 +516,32 @@ router.get("/distribution/shops", async (req, res): Promise<void> => {
   const status = typeof q.status === "string" && ["faol", "risk", "muammo"].includes(q.status) ? q.status : undefined;
 
   const params: unknown[] = [];
-  const w = shopsWhere(f, params);
+  let w = shopsWhere(f, params);
+
+  // Savdoga oid filtrlar (sana oralig'i, to'lov turi, mahsulot) — shu shartlarga
+  // mos KAMIDA BITTA savdosi bo'lgan do'konlargina qoladi (EXISTS orqali).
+  if (f.from || f.to || f.tolovTuri || f.mahsulotId) {
+    let sw = "";
+    if (f.from) {
+      params.push(f.from);
+      sw += ` AND substr(s.created_at,1,10) >= $${params.length}`;
+    }
+    if (f.to) {
+      params.push(f.to);
+      sw += ` AND substr(s.created_at,1,10) <= $${params.length}`;
+    }
+    if (f.tolovTuri) {
+      params.push(f.tolovTuri);
+      sw += ` AND s.tolov_turi = $${params.length}`;
+    }
+    if (f.mahsulotId) {
+      params.push(f.mahsulotId);
+      sw += ` AND EXISTS (SELECT 1 FROM distribution.savdo_tafsilot st
+                           WHERE st.savdo_id = s.id AND st.mahsulot_id = $${params.length})`;
+    }
+    w += ` AND EXISTS (SELECT 1 FROM distribution.savdolar s
+                        WHERE s.dokon_id = d.id${sw})`;
+  }
 
   // Asosiy so'rov: har bir do'kon uchun status va oxirgi tashrif (savdo ∪ olmagan)
   let statusFilter = "";

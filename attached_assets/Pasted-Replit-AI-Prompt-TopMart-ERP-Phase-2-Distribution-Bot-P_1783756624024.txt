@@ -1,0 +1,127 @@
+Replit AI Prompt
+TopMart ERP — Phase 2: Distribution Bot → PostgreSQL Migration
+Biz Distribution Bot'ni ishlab chiqarish (production) uchun tayyorlayapmiz.
+Hozir markaziy PostgreSQL bazasi tayyor va barcha distribution ma'lumotlari (distribution schema) muvaffaqiyatli migratsiya qilingan.
+Endi Distribution Bot'ni SQLite'dan butunlay ajratish kerak.
+Asosiy maqsad
+Distribution Bot endi hech qachon SQLite ishlatmasin.
+Botdagi barcha:
+SELECT
+INSERT
+UPDATE
+DELETE
+amallari faqat PostgreSQL orqali bajarilsin.
+SQLite faqat tarixiy backup sifatida qoldiriladi va ishlab chiqarishda ishlatilmaydi.
+Nimalarni o'zgartirish kerak
+1.
+Bot ichidagi barcha:
+sqlite3.connect(...)
+yoki SQLite connectionlarini olib tashlang.
+Buning o'rniga ERP ishlatayotgan PostgreSQL connectionidan foydalaning.
+2.
+Botning barcha CRUD funksiyalari
+Do'kon qo'shish
+Savdo qo'shish
+Tashrif yozish
+Marshrut
+Supervisor
+Delivery Agent
+Nasiya
+SKU
+Mahsulotlar
+PostgreSQL'dagi distribution schema bilan ishlasin.
+3.
+Barcha SQL querylarni PostgreSQL sintaksisiga moslashtiring.
+SQLite'ga xos query qolmasin.
+4.
+Bot ichida bitta Database Layer yarating.
+Masalan:
+database/
+    connection.py
+    distribution.py
+    customers.py
+    visits.py
+    sales.py
+Bot hech qachon SQL yozmasin.
+Faqat database layer orqali ishlasin.
+5.
+Transaction ishlating.
+Masalan savdo yozilganda:
+Savdo
+
+↓
+
+Do'kon
+
+↓
+
+Nasiya
+
+↓
+
+Visit History
+Bularning biri xato bersa rollback bo'lsin.
+Partial save bo'lmasin.
+6.
+Error Handling
+Agar PostgreSQL vaqtincha ulanmasa:
+foydalanuvchiga tushunarli xabar chiqsin
+log yozilsin
+bot ishlashdan to'xtab qolmasin
+7.
+Connection Pool ishlating.
+Har bir command uchun yangi connection ochilmasin.
+8.
+Environment Variables
+Database URL kod ichida yozilmasin.
+Faqat:
+DATABASE_URL
+orqali ishlasin.
+9.
+Migration tugagach quyidagilarni test qiling:
+✅ Yangi do'kon
+✅ Savdo
+✅ Tovar olmadi
+✅ Repeat
+✅ Marshrut
+✅ Supervisor
+✅ Delivery Agent
+✅ Nasiya
+✅ Hisobotlar
+Barcha ma'lumotlar PostgreSQL'da saqlanayotganini tekshiring.
+Muhim talab
+Distribution Bot PostgreSQL ishlatayotganini foydalanuvchi sezmasligi kerak.
+Botning barcha funksiyalari o'zgarmaydi.
+Faqat ichki Database Engine SQLite'dan PostgreSQL'ga almashtiriladi.
+Arxitektura
+TopMart ERP endi quyidagi arxitekturada ishlaydi:
+                 PostgreSQL
+
+      ┌──────────┼──────────┐
+      │          │          │
+
+ Factory Bot  Distribution Bot  Dashboard
+
+      │          │          │
+
+──────────── TopMart ERP ────────────
+
+Production
+Distribution
+Warehouse
+Finance
+CRM
+Stores
+Analytics
+Kod sifati
+Kod Production darajasida yozilsin.
+Maqsad faqat SQLite'ni almashtirish emas.
+Maqsad — kelajakdagi:
+18 000+ do'kon
+250+ TopMart Store
+120+ Delivery Agent
+12+ Supervisor
+mobil ilova
+API
+AI Analytics
+uchun barqaror Database Layer yaratish.

@@ -33,7 +33,7 @@ isValidation = true
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "pnpm --filter @workspace/scripts run check-schema-drift"
+args = "pnpm --filter @workspace/scripts run check-schema-drift && pnpm --filter @workspace/scripts run check-distribution-drift"
 
 [[workflows.workflow]]
 name = "api-tests"

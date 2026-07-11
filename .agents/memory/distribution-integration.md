@@ -35,6 +35,7 @@ The shim handles paramstyle + lastrowid, but SQL *dialect* differences still lea
 
 ## Schema source of truth
 Drizzle mirror in `lib/db/src/schema/distribution.ts` (pgSchema `distribution`) and an idempotent DDL script `scripts/src/init-distribution.ts` (`pnpm --filter @workspace/scripts run init-distribution`). The bot's own `init_db()` runs the same CREATE SCHEMA + CREATE TABLE IF NOT EXISTS on startup, so it is self-sufficient on Railway.
+**Drift guard:** `check-distribution-drift` (part of the `schema-drift` validation) runs bot `_INIT_DDL` and `init-distribution.ts` on TWO separate throwaway DBs (one DB would let IF NOT EXISTS mask the second DDL) and compares both against the Drizzle mirror at table+column level (name/type/nullability/default). Any new distribution table must be added in all three places AND to the script's TABLES map.
 
 ## Deploy / running notes
 - Deploys on Railway as its own service (Dockerfile + railway.json + nixpacks.toml, mirroring the factory bot). reportlab PDF needs `fonts-dejavu-core`.

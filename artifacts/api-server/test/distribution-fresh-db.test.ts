@@ -170,6 +170,104 @@ print(json.dumps(bad))
   });
 });
 
+describe("Distribution bot: every SQL statement plans on PostgreSQL (dialect sweep)", () => {
+  // SQLite-era dialect errors (bare non-aggregated GROUP BY columns,
+  // GROUP_CONCAT, strftime, unqualified columns in ON CONFLICT ... DO UPDATE)
+  // parse fine as strings and only fail at PLAN time in Postgres. This test
+  // AST-extracts every execute() SQL literal from the bot sources and runs
+  // EXPLAIN on each against the fresh throwaway DB, so ANY new query with a
+  // dialect trap fails here instead of in production. (Verified: EXPLAIN
+  // catches all four trap classes above.)
+  it("EXPLAIN succeeds for every execute() SQL literal in bot sources", () => {
+    const py = `
+import ast, glob, json, main
+
+TABLES = ["users","dokonlar","mahsulotlar","savdolar","savdo_tafsilot","nasiya",
+          "pul_olish","mijoz_balans","olmagan_dokonlar","revisitlar","agent_plans",
+          "delivery_agents","delivery_routes"]
+# Known f-string fragments assembled at runtime; substituted with
+# representative, syntactically-equivalent SQL so the statement still plans.
+KNOWN_SUBS = {
+    "extra": "",  # optional scope clause appended after a WHERE condition
+    "vil_clause": "(viloyat=NULL OR (viloyat IS NULL AND NULL='x') OR (viloyat='' AND NULL='x'))",
+    "hud_clause": "(hudud=NULL OR (hudud IS NULL AND NULL='x') OR (hudud='' AND NULL='x'))",
+    "ph": "NULL",  # expanded IN (...) placeholder list
+}
+
+def sql_from_node(node):
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        parts = []
+        for v in node.values:
+            if isinstance(v, ast.Constant):
+                parts.append(v.value)
+            else:
+                name = ast.unparse(v.value)
+                if name == "t":
+                    parts.append("{t}")  # expanded per-table below
+                elif name in KNOWN_SUBS:
+                    parts.append(KNOWN_SUBS[name])
+                else:
+                    return None  # unknown dynamic fragment -> reported as skipped
+        return "".join(parts)
+    return None
+
+stmts, skipped = [], []
+for path in ["main.py"] + sorted(glob.glob("database/*.py")):
+    tree = ast.parse(open(path).read())
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "execute" and node.args):
+            sql = sql_from_node(node.args[0])
+            loc = f"{path}:{node.args[0].lineno}"
+            if sql is None:
+                skipped.append(loc)
+                continue
+            if "{t}" in sql:
+                for t in TABLES:
+                    stmts.append((loc, sql.replace("{t}", t)))
+            else:
+                stmts.append((loc, sql))
+
+conn = main.get_db(); c = conn.cursor()
+failures = []
+checked = 0
+for loc, raw in stmts:
+    sql = raw.replace("%%", "\\x00").replace("%s", "NULL").replace("\\x00", "%").strip()
+    if not sql:
+        continue
+    head = sql.split(None, 1)[0].upper()
+    if head in ("SET", "CREATE", "BEGIN", "COMMIT", "ROLLBACK"):
+        continue
+    try:
+        c.execute("EXPLAIN " + sql)
+        checked += 1
+    except Exception as ex:
+        failures.append(f"{loc}: {str(ex).strip().splitlines()[0]}")
+        conn.rollback()
+        c = conn.cursor()
+conn.rollback()
+conn.close()
+print(json.dumps({"checked": checked, "failures": failures, "skipped": skipped}))
+`;
+    const out = execFileSync("python3", ["-c", py], { cwd: botDir, env: botEnv, stdio: "pipe" })
+      .toString()
+      .trim();
+    const r = JSON.parse(out.split("\n").pop()!) as {
+      checked: number;
+      failures: string[];
+      skipped: string[];
+    };
+    expect(r.failures, `SQL fails to plan on PostgreSQL:\n${r.failures.join("\n")}`).toEqual([]);
+    expect(r.checked).toBeGreaterThanOrEqual(200); // sanity: extraction worked
+    // Statements assembled from fragments we cannot resolve statically. Keep
+    // this list tiny and known — a growing list means new dynamic SQL is
+    // escaping the sweep.
+    expect(r.skipped.length).toBeLessThanOrEqual(3);
+  }, 120_000);
+});
+
 describe("Distribution bot: fresh DB boots via init_db() alone", () => {
   it("bot init_db() completes without error on a brand-new database", () => {
     const detail =
@@ -293,5 +391,74 @@ print(json.dumps({
       `SELECT jami_summa FROM distribution.savdolar WHERE id = $1`, [r.sid],
     );
     expect(Number(rows[0].jami_summa)).toBe(24000);
+  }, 60_000);
+});
+
+describe("Distribution reporting & route flows execute with real typed params", () => {
+  // The EXPLAIN sweep proves every statement PLANS; these run the riskiest
+  // read flows end-to-end with real parameter types (aggregate joins over
+  // substr(created_at,...), LIKE-month filters, delivery-route listing) using
+  // the data inserted by the sale-flow test above.
+  it("monthly rating, old-nasiya report, sales report aggregates, route listing", () => {
+    const py = `
+import json, main
+
+# Monthly rating: three LEFT JOIN aggregations grouped per agent.
+rating = main._build_monthly_rating("2026-07")
+
+# Old-nasiya aging report (JOIN + scope variants).
+all_text, all_cnt, all_sum = main._build_old_nasiya_report()
+own_text, own_cnt, own_sum = main._build_old_nasiya_report(scope_agent_id=111)
+
+conn = main.get_db(); c = conn.cursor()
+
+# Sales-report style aggregation (CASE WHEN ... LIKE month/day buckets).
+c.execute("""SELECT u.telegram_id,
+                    COALESCE(SUM(CASE WHEN s.created_at LIKE %s THEN s.jami_summa ELSE 0 END),0) as oy_savdo,
+                    COUNT(DISTINCT CASE WHEN s.created_at LIKE %s THEN s.id END) as oy_n
+             FROM users u
+             LEFT JOIN savdolar s ON s.agent_id=u.telegram_id
+             WHERE u.role IN ('agent','supervisor')
+             GROUP BY u.telegram_id ORDER BY oy_savdo DESC""", ("2026-07%", "2026-07%"))
+oy_savdo_row = c.fetchone()
+
+# Delivery-route flow: create agent + routes, then count and list.
+c.execute("INSERT INTO delivery_agents (telegram_id,name,telefon,created_at) VALUES (%s,%s,%s,%s) RETURNING id",
+          (222, "Fresh Dlv Agent", "+998911111111", "2026-07-11 09:00:00"))
+dlv_id = c.fetchone()[0]
+c.execute("SELECT id FROM dokonlar ORDER BY id LIMIT 1")
+dokon_id = c.fetchone()[0]
+c.execute("INSERT INTO delivery_routes (delivery_agent_id,dokon_id,kun,tartib) VALUES (%s,%s,%s,%s)",
+          (dlv_id, dokon_id, 1, 1))
+conn.commit()
+route_count = main._route_count(dlv_id, 1)
+c.execute("""SELECT r.tartib,d.nomi,d.egasi,d.telefon,d.hudud,d.latitude,d.longitude
+             FROM delivery_routes r
+             JOIN dokonlar d ON d.id=r.dokon_id
+             WHERE r.delivery_agent_id=%s AND r.kun=%s
+             ORDER BY r.tartib""", (dlv_id, 1))
+route_rows = c.fetchall()
+conn.close()
+
+print(json.dumps({
+    "rating_has_agent": "Fresh Test Agent" in rating,
+    "old_nasiya_ok": isinstance(all_text, str) and isinstance(own_text, str),
+    "oy_savdo": int(oy_savdo_row[1]), "oy_n": int(oy_savdo_row[2]),
+    "route_count": route_count, "route_rows": len(route_rows),
+    "route_first_tartib": route_rows[0][0],
+}))
+`;
+    const out = execFileSync("python3", ["-c", py], { cwd: botDir, env: botEnv, stdio: "pipe" })
+      .toString()
+      .trim();
+    const r = JSON.parse(out.split("\n").pop()!);
+
+    expect(r.rating_has_agent).toBe(true);  // agent from sale-flow test surfaced with sales
+    expect(r.old_nasiya_ok).toBe(true);
+    expect(r.oy_savdo).toBe(24000);         // month-bucket aggregation over TEXT dates
+    expect(r.oy_n).toBe(1);
+    expect(r.route_count).toBe(1);
+    expect(r.route_rows).toBe(1);
+    expect(r.route_first_tartib).toBe(1);
   }, 60_000);
 });

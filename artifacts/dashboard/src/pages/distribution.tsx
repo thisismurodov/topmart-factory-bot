@@ -16,6 +16,7 @@ import {
   MapPin, Phone, Search, X, Route as RouteIcon, CheckCircle2, XCircle, Truck,
 } from "lucide-react";
 import MapTab, { GeoNavLinks, sababLabel } from "@/components/distribution/MapTab";
+import AnalyticsTab from "@/components/distribution/AnalyticsTab";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────────
 const fmtSom = (n: number) => `${Math.round(n).toLocaleString("uz-UZ")} so'm`;
@@ -976,6 +977,7 @@ export default function Distribution() {
               <TabsTrigger value="debts">Nasiya</TabsTrigger>
               <TabsTrigger value="routes">Marshrut</TabsTrigger>
               <TabsTrigger value="map">Xarita</TabsTrigger>
+              <TabsTrigger value="analytics">Tahlil</TabsTrigger>
             </TabsList>
             <TabsContent value="sales" className="border rounded-md mt-4 overflow-x-auto">
               <SalesTab f={f} active={f.tab === "sales"} onShop={setShopId} />
@@ -1002,6 +1004,9 @@ export default function Distribution() {
                 active={f.tab === "map"}
                 onShop={setShopId}
               />
+            </TabsContent>
+            <TabsContent value="analytics" className="border rounded-md mt-4">
+              <AnalyticsTab qs={filterQuery(f)} active={f.tab === "analytics"} />
             </TabsContent>
           </Tabs>
         </CardContent>

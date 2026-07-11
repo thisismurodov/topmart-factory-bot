@@ -11,7 +11,7 @@ const router: IRouter = Router();
 // ── Filtr parametrlari ──────────────────────────────────────────────────────────
 // from/to: YYYY-MM-DD (Asia/Tashkent kalendari bo'yicha, ikkalasi ham inklyuziv)
 // agentId, viloyat, hudud, tolovTuri, mahsulotId, search (do'kon nomi bo'yicha)
-type Filters = {
+export type Filters = {
   from?: string;
   to?: string;
   agentId?: string;
@@ -22,9 +22,9 @@ type Filters = {
   search?: string;
 };
 
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+export const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-function parseFilters(req: Request): Filters {
+export function parseFilters(req: Request): Filters {
   const q = req.query as Record<string, unknown>;
   const s = (k: string): string | undefined => {
     const v = q[k];
@@ -49,7 +49,7 @@ function parseFilters(req: Request): Filters {
 
 // Savdolar (s alias) + dokonlar (d alias) uchun WHERE bo'laklari.
 // params massiviga qiymatlar qo'shiladi, natija " AND ..." satri.
-function salesWhere(f: Filters, params: unknown[]): string {
+export function salesWhere(f: Filters, params: unknown[]): string {
   let w = "";
   if (f.from) {
     params.push(f.from);
@@ -88,7 +88,7 @@ function salesWhere(f: Filters, params: unknown[]): string {
 }
 
 // Do'konlarga tegishli filtrlar (d alias)
-function shopsWhere(f: Filters, params: unknown[]): string {
+export function shopsWhere(f: Filters, params: unknown[]): string {
   let w = "";
   if (f.agentId) {
     params.push(f.agentId);

@@ -1,0 +1,305 @@
+Men screenshotlarni diqqat bilan ko'rdim. Bu juda yaxshi progress, lekin aynan sen aytayotgan muammolar ham ko'rinib turibdi.
+
+## 1-muammo — Filter va xarita sinxron emas ❌ (kritik)
+
+Bu eng katta bug.
+
+Sen tepada:
+
+> **Kecha**
+
+ni tanlagansan.
+
+Lekin xarita:
+
+> **Bugungi markerlar**ni ko'rsatayotganga o'xshaydi.
+
+Bu foydalanuvchini chalg'itadi.
+
+To'g'ri ishlashi kerak bo'lgan oqim:
+
+```text
+Sana o'zgardi
+        ↓
+Backend yangi ma'lumotni oladi
+        ↓
+KPI yangilanadi
+        ↓
+Jadval yangilanadi
+        ↓
+Xarita markerlari yangilanadi
+        ↓
+Marshrut chizig'i yangilanadi
+        ↓
+Heatmap yangilanadi
+```
+
+**Bitta ham komponent eski ma'lumotni ko'rsatmasligi kerak.**
+
+---
+
+# 2-muammo — Xarita juda "xom"
+
+Hozir:
+
+* markerlar oddiy
+* chiziqlar tushunarsiz
+* route professional emas
+
+Men buni quyidagicha qilardim.
+
+### Marshrut
+
+```text
+1 ─────► 2 ─────► 3 ─────► 4
+```
+
+Arrow bilan.
+
+Faqat nuqtalarni ulash emas.
+
+---
+
+### Marker
+
+Hozir
+
+```
+2
+```
+
+chiqib turibdi.
+
+Men:
+
+```
+①
+
+②
+
+③
+
+④
+```
+
+ko'rinishida qilardim.
+
+Raqam katta.
+
+Status esa rang bilan.
+
+---
+
+### Marker rangi
+
+🟢
+
+Savdo bo'lgan
+
+---
+
+🔴
+
+Mahsulot olinmagan
+
+---
+
+🟡
+
+Bugungi marshrutda.
+
+Hali bormagan.
+
+---
+
+🔵
+
+Kirilgan.
+
+Savdo yo'q.
+
+---
+
+⚪
+
+Bugungi marshrutga kirmaydi.
+
+---
+
+# 3-muammo
+
+Markerlar ustma-ust tushgan.
+
+Masalan.
+
+Pop.
+
+2 ta.
+
+Bitta yashil.
+
+Bitta ko'k.
+
+Tushunish qiyin.
+
+Cluster yoki spiderfy ishlatish kerak.
+
+---
+
+# 4-muammo
+
+Marshrutning boshlanishi yo'q.
+
+Men xohlayman:
+
+```
+🚗 START
+
+↓
+
+①
+
+↓
+
+②
+
+↓
+
+③
+
+↓
+
+🏁 END
+```
+
+---
+
+# 5-muammo
+
+Agent qayerda?
+
+Hozir agent yo'q.
+
+Men agentni:
+
+🚚
+
+ikonkasi bilan ko'rsatardim.
+
+GPS bo'yicha.
+
+---
+
+# 6-muammo
+
+Popup juda kambag'al.
+
+Bosganda chiqishi kerak.
+
+```
+Kamol Market
+
+Oxirgi savdo
+
+540 000
+
+Oxirgi tashrif
+
+3 kun oldin
+
+Repeat
+
+7 kun
+
+Nasiya
+
+0
+
+Telefon
+
+...
+
+[Yo'nalish]
+
+[Savdo]
+
+[Olmadi]
+```
+
+---
+
+# 7-muammo
+
+Marshrut Google Maps kabi emas.
+
+Men Route Planning kutyapman.
+
+Masalan.
+
+```
+START
+
+↓
+
+1
+
+↓
+
+2
+
+↓
+
+3
+
+↓
+
+4
+
+↓
+
+END
+```
+
+va
+
+```
+18 km
+
+32 min
+```
+
+tepada yozilishi kerak.
+
+---
+
+# 8-muammo
+
+Tepada:
+
+```
+42 ta do'kon
+```
+
+yozilgan.
+
+Lekin xaritada 42 tasi yo'q.
+
+Bu ham chalkashtiradi.
+
+Filtrlangan natija bilan xarita mos bo'lishi kerak.
+
+---
+
+# Replit uchun topshiriq
+
+> **Map modulini professional darajaga olib chiqing. Hozir xarita filterlar bilan to'liq sinxron emas: sana, agent, viloyat, tuman yoki marshrut o'zgarganda KPI, jadval, markerlar, marshrut chiziqlari va heatmap barchasi bir xil filter natijasini ko'rsatishi shart. Xarita har doim joriy filterlangan ma'lumotni aks ettirsin. Markerlarni status bo'yicha ranglang (🟢 savdo bo'ldi, 🔵 kirildi savdo bo'lmadi, 🔴 mahsulot olinmadi, 🟡 hali kirilmagan, ⚪ marshrutdan tashqari). Marshrut arrowlar bilan ketma-ket chizilsin va START hamda END nuqtalari aniq ko'rsatilsin. Markerlar ustma-ust tushganda clustering yoki spiderfy ishlatilsin. Marker bosilganda to'liq do'kon kartasi (savdo tarixi, tashrif, nasiya, telefon, tavsiya, navigatsiya) ochilsin. Tepadagi do'kon soni va xaritadagi markerlar soni doimo mos bo'lsin.**
+
+---
+
+## Mening umumiy bahom
+
+**Dashboard:** 8.8/10
+
+**Xarita:** 6.5/10
+
+Lekin yaxshi tomoni shundaki, **poydevor tayyor**. Hozir muammo arxitekturada emas, ko'proq UX va vizualizatsiyada. Shularni to'g'rilasa, bu modul juda kuchli ko'rinishga ega bo'ladi.

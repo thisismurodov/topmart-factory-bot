@@ -9,6 +9,12 @@ import schedule
 import time
 from datetime import datetime, date, timedelta
 
+# Railway/serverlar UTC'da ishlaydi — barcha datetime.now() chaqiruvlari
+# Toshkent vaqtida bo'lishi uchun jarayon TZ'sini majburan o'rnatamiz.
+# Aks holda yarim tundan keyin (00:00-05:00) bot "kecha"gi kunni ko'rsatadi.
+os.environ["TZ"] = "Asia/Tashkent"
+time.tzset()
+
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 if not TOKEN:
     raise RuntimeError("TELEGRAM_BOT_TOKEN must be set")

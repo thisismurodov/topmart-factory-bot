@@ -345,6 +345,67 @@ export async function initDb(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_wip_type ON wip_movements (movement_type)
   `);
 
+  // ── Bir martalik backfill: eski partiyalarning xom ashyo sarfi ────────────
+  // Harakat logi qo'shilishidan OLDIN yaratilgan partiyalar xom ashyoni
+  // jimgina kamaytirgan (stock_movements yozuvi yo'q edi). Har bir eski
+  // partiya qatori × BOM (product_materials.quantity_required) aniq sarfni
+  // beradi — shu yerda OUT/raw yozuvlarini created_at = partiya vaqti bilan
+  // qayta tiklaymiz. Idempotent QATOR darajasida: bitta batch_code ostida bir
+  // nechta mahsulot qatori (batch session) bo'lishi mumkin, shuning uchun
+  // tekshiruv aynan shu qator+material uchun yoziladigan yozuv (to'liq note +
+  // material nomi) bo'yicha — kod darajasida emas. Aks holda sessionning bitta
+  // mahsuloti loglangan bo'lsa, qolganlari abadiy o'tkazib yuborilardi.
+  // batches/product_materials/raw_materials jadvallari
+  // botniki — mavjud bo'lmasa (yangi bo'sh DB) backfill shunchaki o'tkaziladi.
+  const backfillTables = await pool.query(`
+    SELECT to_regclass('public.batches')           AS b,
+           to_regclass('public.product_materials') AS pm,
+           to_regclass('public.raw_materials')     AS rm
+  `);
+  if (backfillTables.rows[0].b && backfillTables.rows[0].pm && backfillTables.rows[0].rm) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      // Parallel boot bo'lsa ham ikki nusxa kirmasin (advisory lock, txn oxirida bo'shaydi)
+      await client.query("SELECT pg_advisory_xact_lock(748321057)");
+      const ins = await client.query(`
+        INSERT INTO stock_movements
+          (product, quantity, movement_type, from_warehouse_id, to_warehouse_id,
+           note, created_by, product_type, created_at)
+        SELECT rm.name,
+               pm.quantity_required * b.quantity,
+               'OUT', NULL, NULL,
+               'Ishlab chiqarish: ' || b.batch_code || ' (' || b.product || ' × ' || b.quantity || ')',
+               b.worker,
+               'raw',
+               b.created_at
+        FROM batches b
+        JOIN product_materials pm ON pm.product_name = b.product
+        JOIN raw_materials rm     ON rm.id = pm.raw_material_id
+        WHERE (pm.quantity_required * b.quantity) > 0
+          AND NOT EXISTS (
+            SELECT 1 FROM stock_movements sm
+            WHERE sm.movement_type = 'OUT'
+              AND sm.product_type  = 'raw'
+              AND sm.product       = rm.name
+              -- Note format MUST mirror bot create_batch_session exactly:
+              -- "Ishlab chiqarish: {batch_code} ({product} × {quantity})"
+              AND sm.note = 'Ishlab chiqarish: ' || b.batch_code || ' (' || b.product || ' × ' || b.quantity || ')'
+          )
+        ORDER BY b.created_at, b.id
+      `);
+      await client.query("COMMIT");
+      if (ins.rowCount) {
+        logger.info(`Backfilled ${ins.rowCount} legacy raw-consumption stock_movements rows`);
+      }
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
   // Admin userni seed qilish (mavjud bo'lmasa)
   const existing = await db.select().from(adminUsersTable).where(eq(adminUsersTable.username, "thisismurodov"));
   if (existing.length === 0) {

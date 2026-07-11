@@ -21,3 +21,4 @@
 - [Shared-DB test schema contention](test-schema-contention.md) — api-server tests run on shared Railway DB; schema/DB names MUST be unique per run (pid+timestamp) or parallel agent validations DROP each other's schemas.
 - [Distribution bot PostgreSQL layer](distribution-db-layer.md) — native %s/RETURNING only; AST guard test blocks ? placeholders/.lastrowid; rows stay raw tuples; main.py must re-export db helpers.
 - [E2E dashboard auth](e2e-dashboard-auth.md) — create throwaway bcrypt admin in RAILWAY DB for Playwright login; screenshot tool can't pass the login wall; always clean up user+sessions.
+- [Ledger backfill ordering](ledger-backfill-ordering.md) — backfilled ledger rows have new ids but old timestamps; history queries must ORDER BY created_at, not id, or timelines/balances corrupt.

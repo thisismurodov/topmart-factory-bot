@@ -643,7 +643,7 @@ router.get("/ombor/movements", async (req, res): Promise<void> => {
      LEFT JOIN warehouses fw ON fw.id = sm.from_warehouse_id
      LEFT JOIN warehouses tw ON tw.id = sm.to_warehouse_id
      ${where}
-     ORDER BY sm.id DESC
+     ORDER BY sm.created_at DESC, sm.id DESC
      LIMIT $1`,
     params,
   );

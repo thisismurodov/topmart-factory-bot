@@ -18,3 +18,4 @@
 - [Distribution bot integration](distribution-integration.md) — SQLite bot folded into monorepo on central Postgres `distribution` schema via psycopg2 shim; watch SQLite→PG GROUP BY strictness + GROUP_CONCAT.
 - [Dual init schema (bot + API)](dual-init-schema.md) — any table written at runtime must be CREATEd in BOTH bot init_db (py) and API initDb (ts), or fresh DBs crash (sale_items did).
 - [Fresh-DB boot ordering](fresh-db-boot-ordering.md) — empty DB exposes ALTER-before-CREATE (42P01, not caught) + never-created tables (sale_items); guard test runs bot init_db()+API initDb() on a throwaway Railway DB.
+- [Shared-DB test schema contention](test-schema-contention.md) — api-server tests run on shared Railway DB; schema/DB names MUST be unique per run (pid+timestamp) or parallel agent validations DROP each other's schemas.

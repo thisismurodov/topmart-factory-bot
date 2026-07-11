@@ -37,7 +37,7 @@ const adminUrl = process.env.RAILWAY_DATABASE_URL || process.env.DATABASE_URL;
 if (!adminUrl) throw new Error("RAILWAY_DATABASE_URL or DATABASE_URL must be set to run these tests");
 
 // Unique throwaway DB name (lowercase, no special chars — valid identifier).
-const TMP_DB = `topmart_freshboot_test_${process.pid}`;
+const TMP_DB = `topmart_freshboot_test_${process.pid}_${Date.now()}`;
 const ssl = { rejectUnauthorized: false } as const;
 
 function tmpUrl(extraParams = false): string {

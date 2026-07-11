@@ -8,7 +8,7 @@ import type { Pool } from "pg";
 // Every query runs in a throwaway schema (search_path) so the test never
 // touches real Ombor data. The search_path is injected via the libpq `options`
 // connection parameter, applied to every new pool connection at connect time.
-const SCHEMA = "topmart_kg_api_test";
+const SCHEMA = `topmart_kg_api_test_${process.pid}_${Date.now()}`;
 
 const baseUrl = process.env.RAILWAY_DATABASE_URL || process.env.DATABASE_URL;
 if (!baseUrl) throw new Error("DATABASE_URL must be set to run these tests");

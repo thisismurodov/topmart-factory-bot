@@ -179,7 +179,7 @@ router.get("/distribution/summary", async (req, res): Promise<void> => {
   const shp: unknown[] = [];
   const shw = shopsWhere({ agentId: f.agentId, viloyat: f.viloyat, hudud: f.hudud }, shp);
 
-  const [sales, activeAgents, shops, collected, outstanding] = await Promise.all([
+  const [sales, activeAgents, shops, collected, outstanding, lastSale] = await Promise.all([
     pool.query(
       `SELECT COUNT(*)::int AS c, COALESCE(SUM(s.jami_summa),0)::bigint AS total
          FROM distribution.savdolar s
@@ -213,6 +213,8 @@ router.get("/distribution/summary", async (req, res): Promise<void> => {
         WHERE n.qoldiq > 0${nw}`,
       np
     ),
+    // Oxirgi savdo sanasi (sana filtrisiz — bo'sh davr uchun ko'rsatma)
+    pool.query(`SELECT MAX(s.created_at) AS m FROM distribution.savdolar s`),
   ]);
 
   res.json({
@@ -222,6 +224,7 @@ router.get("/distribution/summary", async (req, res): Promise<void> => {
     salesTotal: Number(sales.rows[0].total),
     collectedTotal: Number(collected.rows[0].total),
     outstandingTotal: Number(outstanding.rows[0].total),
+    lastSaleAt: lastSale.rows[0].m ?? null,
   });
 });
 

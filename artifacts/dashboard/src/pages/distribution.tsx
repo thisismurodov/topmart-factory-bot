@@ -135,6 +135,7 @@ type Summary = {
   activeAgents: number; shopsCount: number;
   salesCount: number; salesTotal: number;
   collectedTotal: number; outstandingTotal: number;
+  lastSaleAt: string | null;
 };
 type FilterDict = {
   agents: { id: number; name: string }[];
@@ -191,7 +192,7 @@ function useDist<T>(key: unknown[], path: string, enabled = true) {
 }
 
 // ── KPI kartalar ────────────────────────────────────────────────────────────────
-function KpiCards({ f }: { f: Filters }) {
+function KpiCards({ f, update }: { f: Filters; update: (p: Partial<Filters>) => void }) {
   const qs = filterQuery(f);
   const { data, isLoading } = useDist<Summary>(["summary", qs], `summary${qs}`);
   const periodLabel =
@@ -210,21 +211,41 @@ function KpiCards({ f }: { f: Filters }) {
     { label: "Nasiya qoldiq", value: data ? fmtSom(data.outstandingTotal) : undefined, icon: CreditCard, tone: "text-red-600" },
   ];
 
+  const showEmptyHint = !!data && data.salesCount === 0 && f.preset !== "all";
+
   return (
-    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-      {cards.map((c) => (
-        <Card key={c.label}>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2 mb-2">
-              <c.icon className={`w-4 h-4 ${c.tone}`} />
-              <span className="text-xs text-muted-foreground">{c.label}</span>
-            </div>
-            {isLoading || c.value === undefined
-              ? <Skeleton className="h-6 w-20" />
-              : <div className="text-lg font-bold leading-tight">{c.value}</div>}
-          </CardContent>
-        </Card>
-      ))}
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        {cards.map((c) => (
+          <Card key={c.label}>
+            <CardContent className="p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <c.icon className={`w-4 h-4 ${c.tone}`} />
+                <span className="text-xs text-muted-foreground">{c.label}</span>
+              </div>
+              {isLoading || c.value === undefined
+                ? <Skeleton className="h-6 w-20" />
+                : <div className="text-lg font-bold leading-tight">{c.value}</div>}
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+      {showEmptyHint && (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <span>
+            Tanlangan davr va filtrlar bo'yicha savdolar topilmadi.
+            {data.lastSaleAt && <> Oxirgi savdo: <b>{fmtDate(data.lastSaleAt)}</b>.</>}
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 border-amber-300 text-amber-800 hover:bg-amber-100"
+            onClick={() => update({ preset: "all", from: undefined, to: undefined, agentId: undefined, viloyat: undefined, hudud: undefined, tolovTuri: undefined, mahsulotId: undefined, search: undefined })}
+          >
+            Hammasini ko'rish
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -745,7 +766,7 @@ export default function Distribution() {
 
   return (
     <div className="space-y-4">
-      <KpiCards f={f} />
+      <KpiCards f={f} update={update} />
       <FilterPanel f={f} update={update} />
       <Card>
         <CardContent className="pt-4">

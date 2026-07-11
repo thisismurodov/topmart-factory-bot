@@ -853,6 +853,13 @@ def rt_edit_move(msg):
     set_state(uid,"rt_edit",data)
     _show_route_edit(uid, dlv_id, data["dlv_name"], kun)
 
+def _clear_delivery_role(c, agent_id):
+    """Agent o'chirilganda users jadvalidagi 'delivery' rolini ham olib tashlaydi."""
+    c.execute("SELECT telegram_id FROM delivery_agents WHERE id=%s",(agent_id,))
+    r=c.fetchone()
+    if r and r[0]:
+        c.execute("DELETE FROM users WHERE telegram_id=%s AND role='delivery'",(r[0],))
+
 @bot.message_handler(func=lambda m:m.text=="🗑 Delivery agent o'chirish")
 def dlv_del_start(msg):
     uid=msg.from_user.id
@@ -890,6 +897,7 @@ def dlv_del_pick(msg):
         # No replacement available — soft delete directly
         conn=get_db();c=conn.cursor()
         c.execute("UPDATE delivery_agents SET faol=0 WHERE id=%s",(did,))
+        _clear_delivery_role(c,did)
         conn.commit(); conn.close()
         set_state(uid,None,{})
         bot.send_message(uid,f"✅ '{name}' o'chirildi.\n\n💡 Boshqa delivery agent yo'q (almashtirish kerak emas).",reply_markup=dlv_menu_kb()); return
@@ -920,6 +928,7 @@ def dlv_del_reassign(msg):
     new_name=nr[0]
     # NOTE: Route reassignment will be wired in next stage when delivery_routes table exists
     c.execute("UPDATE delivery_agents SET faol=0 WHERE id=%s",(del_id,))
+    _clear_delivery_role(c,del_id)
     conn.commit(); conn.close()
     set_state(uid,None,{})
     bot.send_message(uid,
@@ -1170,6 +1179,13 @@ def cmd_start(msg):
     if dlv and (not user or user[3]!="delivery"):
         _ensure_delivery_user(uid, dlv[1])
         user=get_user(uid)
+    # Agent o'chirilgan (faol=0) bo'lsa — delivery rolini ham bekor qilamiz
+    if user and user[3]=="delivery" and not dlv:
+        conn=get_db();c=conn.cursor()
+        c.execute("DELETE FROM users WHERE telegram_id=%s AND role='delivery'",(uid,))
+        conn.commit(); conn.close()
+        user=None
+        bot.send_message(uid,"ℹ️ Delivery agent profilingiz admin tomonidan o'chirilgan.")
     if not user:
         # Offer role choice
         kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=1)

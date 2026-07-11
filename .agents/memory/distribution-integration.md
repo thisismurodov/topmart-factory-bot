@@ -36,6 +36,7 @@ Drizzle mirror in `lib/db/src/schema/distribution.ts` (pgSchema `distribution`) 
 - Needs its OWN `TELEGRAM_BOT_TOKEN` (distinct from the factory bot's — two bots cannot share one token/polling). Hardcoded token fallback was removed; token is env-only.
 - Do NOT run it as a Replit dev workflow with the factory token — polling would conflict.
 
-## Still open
-- One-time data migration from the old Railway SQLite volume file (`/data/topmart.db`) into `distribution.*` needs the user to supply that file.
-- Dashboard "Distribution" section + read API routes not yet built.
+## Migration status
+- One-time SQLite→Postgres data migration COMPLETED 2026-07-11 (452 rows across all 13 tables, IDs preserved, sequences reset via setval). Do NOT re-run — any migration script must guard on non-empty target tables.
+- Snapshot caveat: the old SQLite bot on Railway may still be live and writing; records created after the backup exist only in SQLite until the user switches Railway to the monorepo Postgres bot.
+- Dashboard "Distribution" section + read-only API routes are built and live.

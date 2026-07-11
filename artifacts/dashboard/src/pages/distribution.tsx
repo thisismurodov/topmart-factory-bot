@@ -136,6 +136,13 @@ type Summary = {
   salesCount: number; salesTotal: number;
   collectedTotal: number; outstandingTotal: number;
   lastSaleAt: string | null;
+  newShops: number; visitedShops: number;
+  stale7: number; stale14: number; stale30: number;
+};
+type TodayActivity = {
+  today: string;
+  addedToday: number; visitedToday: number; soldToday: number;
+  visitedNoSale: number; routePlanned: number; routeNotVisited: number;
 };
 type FilterDict = {
   agents: { id: number; name: string }[];
@@ -154,6 +161,11 @@ type Shop = {
   totalOrders: number; totalSales: number; lastOrderDate: string | null;
   agentName: string | null; outstanding: number;
 };
+type ShopIntel = Shop & {
+  hasLocation: boolean; repeatOrders: number;
+  lastVisit: string | null; status: "faol" | "risk" | "muammo";
+};
+type ShopsPage = { page: number; pageSize: number; total: number; rows: ShopIntel[] };
 type Sale = {
   id: number; createdAt: string | null; total: number; tolovTuri: string | null;
   agentName: string | null; dokonId: number | null; dokonName: string | null;
@@ -209,13 +221,21 @@ function KpiCards({ f, update }: { f: Filters; update: (p: Partial<Filters>) => 
     { label: `${periodLabel} buyurtma`, value: data ? `${data.salesCount} ta` : undefined, icon: Truck, tone: "text-indigo-600" },
     { label: "Yig'ilgan pul", value: data ? fmtSom(data.collectedTotal) : undefined, icon: Wallet, tone: "text-green-600" },
     { label: "Nasiya qoldiq", value: data ? fmtSom(data.outstandingTotal) : undefined, icon: CreditCard, tone: "text-red-600" },
+    { label: "Kirilgan do'konlar", value: data ? `${data.visitedShops} ta` : undefined, icon: CheckCircle2, tone: "text-teal-600" },
+    { label: "Yangi do'konlar", value: data ? `${data.newShops} ta` : undefined, icon: MapPin, tone: "text-purple-600" },
   ];
 
   const showEmptyHint = !!data && data.salesCount === 0 && f.preset !== "all";
 
+  const staleChips = data ? [
+    { label: "7+ kun buyurtma yo'q", value: data.stale7, cls: "border-amber-300 bg-amber-50 text-amber-800", status: "risk" },
+    { label: "14+ kun buyurtma yo'q", value: data.stale14, cls: "border-orange-300 bg-orange-50 text-orange-800", status: "risk" },
+    { label: "30+ kun buyurtma yo'q", value: data.stale30, cls: "border-red-300 bg-red-50 text-red-800", status: "muammo" },
+  ] : [];
+
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
         {cards.map((c) => (
           <Card key={c.label}>
             <CardContent className="p-4">
@@ -230,6 +250,21 @@ function KpiCards({ f, update }: { f: Filters; update: (p: Partial<Filters>) => 
           </Card>
         ))}
       </div>
+      {staleChips.some((s) => s.value > 0) && (
+        <div className="flex flex-wrap gap-2">
+          {staleChips.filter((s) => s.value > 0).map((s) => (
+            <button
+              key={s.label}
+              type="button"
+              className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium ${s.cls}`}
+              onClick={() => update({ tab: "shops" })}
+              title="Do'konlar tabida ko'rish"
+            >
+              ⚠️ {s.label}: <b>{s.value} ta</b>
+            </button>
+          ))}
+        </div>
+      )}
       {showEmptyHint && (
         <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
           <span>
@@ -247,6 +282,52 @@ function KpiCards({ f, update }: { f: Filters; update: (p: Partial<Filters>) => 
         </div>
       )}
     </div>
+  );
+}
+
+// ── Bugungi do'kon faolligi vidjeti (har doim bugungi kun) ─────────────────────
+function TodayActivityWidget({ f }: { f: Filters }) {
+  // Faqat geo/agent filtrlarini uzatamiz — sana har doim bugun
+  const p = new URLSearchParams();
+  if (f.agentId) p.set("agentId", f.agentId);
+  if (f.viloyat) p.set("viloyat", f.viloyat);
+  if (f.hudud) p.set("hudud", f.hudud);
+  const qs = p.toString() ? `?${p.toString()}` : "";
+  const { data, isLoading } = useDist<TodayActivity>(["today-activity", qs], `today-activity${qs}`);
+
+  const items = [
+    { label: "Qo'shildi", value: data?.addedToday, tone: "text-purple-700" },
+    { label: "Kirildi", value: data?.visitedToday, tone: "text-blue-700" },
+    { label: "Savdo qilindi", value: data?.soldToday, tone: "text-green-700" },
+    { label: "Kirildi, savdo yo'q", value: data?.visitedNoSale, tone: "text-amber-700" },
+    { label: "Marshrutda, kirilmadi", value: data?.routeNotVisited, tone: "text-red-700" },
+  ];
+
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+          <div className="flex items-center gap-1.5 text-sm font-semibold">
+            <Store className="w-4 h-4 text-emerald-600" />
+            Bugungi do'kon faolligi
+            {data && <span className="text-[11px] font-normal text-muted-foreground">({data.today})</span>}
+          </div>
+          {items.map((it) => (
+            <div key={it.label} className="flex items-baseline gap-1.5">
+              {isLoading || it.value === undefined
+                ? <Skeleton className="h-5 w-8" />
+                : <span className={`text-base font-bold ${it.tone}`}>{it.value}</span>}
+              <span className="text-xs text-muted-foreground">{it.label}</span>
+            </div>
+          ))}
+          {data && data.routePlanned > 0 && (
+            <span className="text-[11px] text-muted-foreground ml-auto">
+              Bugungi marshrutda {data.routePlanned} ta do'kon
+            </span>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -593,42 +674,120 @@ function AgentsTab({ f, active }: { f: Filters; active: boolean }) {
   );
 }
 
-// ── Do'konlar tab (kartochkalar) ─────────────────────────────────────────────────
+// ── Do'konlar tab (Stores Intelligence jadvali) ──────────────────────────────────
+function ShopStatusBadge({ status }: { status: ShopIntel["status"] }) {
+  if (status === "faol")
+    return <Badge className="bg-green-100 text-green-700 border-green-200 h-5 text-[10px]">🟢 Faol</Badge>;
+  if (status === "risk")
+    return <Badge className="bg-amber-100 text-amber-700 border-amber-200 h-5 text-[10px]">🟡 Risk</Badge>;
+  return <Badge className="bg-red-100 text-red-700 border-red-200 h-5 text-[10px]">🔴 Muammo</Badge>;
+}
+
+const SHOP_STATUSES = [
+  { v: "all", label: "Barchasi" },
+  { v: "faol", label: "🟢 Faol" },
+  { v: "risk", label: "🟡 Risk" },
+  { v: "muammo", label: "🔴 Muammo" },
+];
+
 function ShopsTab({ f, active, onShop }: { f: Filters; active: boolean; onShop: (id: number) => void }) {
-  const qs = filterQuery(f);
-  const { data, isLoading } = useDist<Shop[]>(["shops", qs], `shops${qs}`, active);
-  if (isLoading) return <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3 p-4">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-32" />)}</div>;
-  if (!data || data.length === 0) return <div className="text-center text-muted-foreground py-10">Do'konlar yo'q</div>;
+  const [page, setPage] = useState(1);
+  const [status, setStatus] = useState("all");
+  const baseQs = filterQuery(f);
+
+  // Filtr o'zgarsa birinchi sahifaga qaytamiz
+  useEffect(() => { setPage(1); }, [baseQs, status]);
+
+  const qs = filterQuery(f, {
+    page: String(page),
+    pageSize: "25",
+    ...(status !== "all" ? { status } : {}),
+  });
+  const { data, isLoading } = useDist<ShopsPage>(["shops-intel", qs], `shops${qs}`, active);
+
+  const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
+
   return (
-    <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3 p-4">
-      {data.map((d) => (
-        <Card key={d.id} className="cursor-pointer transition-colors hover:border-primary/40" onClick={() => onShop(d.id)}>
-          <CardContent className="p-4 space-y-2">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <div className="font-semibold text-sm truncate">{d.nomi || "—"}</div>
-                <div className="text-[11px] text-muted-foreground flex items-center gap-1">
-                  <MapPin className="w-2.5 h-2.5 shrink-0" />{[d.viloyat, d.hudud].filter(Boolean).join(", ") || "—"}
-                </div>
-              </div>
-              {d.holat === "faol"
-                ? <Badge className="bg-green-100 text-green-700 border-green-200 h-5 text-[10px] shrink-0">Faol</Badge>
-                : <Badge variant="outline" className="h-5 text-[10px] shrink-0">{d.holat || "—"}</Badge>}
-            </div>
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span className="flex items-center gap-1">{d.telefon && <><Phone className="w-2.5 h-2.5" />{d.telefon}</>}</span>
-              <span>{d.agentName || ""}</span>
-            </div>
-            <div className="flex items-center justify-between text-sm pt-1 border-t">
-              <span className="text-muted-foreground text-xs">{d.totalOrders} buyurtma • oxirgisi {fmtDate(d.lastOrderDate)}</span>
-              <span className="font-bold whitespace-nowrap">{fmtSom(d.totalSales)}</span>
-            </div>
-            {d.outstanding > 0 && (
-              <div className="text-xs text-red-600 font-medium">Nasiya: {fmtSom(d.outstanding)}</div>
+    <div>
+      <div className="px-4 py-2.5 border-b bg-muted/40 flex flex-wrap items-center gap-2">
+        {SHOP_STATUSES.map((s) => (
+          <Button
+            key={s.v}
+            size="sm"
+            variant={status === s.v ? "default" : "outline"}
+            className="h-7 text-xs"
+            onClick={() => setStatus(s.v)}
+          >
+            {s.label}
+          </Button>
+        ))}
+        {data && (
+          <span className="text-xs text-muted-foreground ml-auto">{data.total} ta do'kon</span>
+        )}
+      </div>
+      {isLoading ? (
+        <TableSkeleton cols={8} />
+      ) : (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Do'kon</TableHead>
+              <TableHead>Hudud</TableHead>
+              <TableHead>Agent</TableHead>
+              <TableHead>Oxirgi tashrif</TableHead>
+              <TableHead>Oxirgi savdo</TableHead>
+              <TableHead className="text-right">Buyurtma</TableHead>
+              <TableHead className="text-right">Nasiya</TableHead>
+              <TableHead>Status</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {!data || data.rows.length === 0 ? (
+              <EmptyRow colSpan={8} text="Tanlangan filtrlar bo'yicha do'konlar yo'q" />
+            ) : (
+              data.rows.map((d) => (
+                <TableRow key={d.id} className="cursor-pointer" onClick={() => onShop(d.id)}>
+                  <TableCell className="font-medium">
+                    <span className="flex items-center gap-1.5">
+                      {d.nomi || "—"}
+                      {d.hasLocation && <MapPin className="w-3 h-3 text-emerald-600 shrink-0" />}
+                    </span>
+                    {d.telefon && <span className="flex items-center gap-1 text-[11px] text-muted-foreground"><Phone className="w-2.5 h-2.5" />{d.telefon}</span>}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground text-xs">{[d.viloyat, d.hudud].filter(Boolean).join(", ") || "—"}</TableCell>
+                  <TableCell className="text-xs">{d.agentName || "—"}</TableCell>
+                  <TableCell className="text-muted-foreground whitespace-nowrap">{fmtDate(d.lastVisit)}</TableCell>
+                  <TableCell className="text-muted-foreground whitespace-nowrap">{fmtDate(d.lastOrderDate)}</TableCell>
+                  <TableCell className="text-right whitespace-nowrap">
+                    {d.totalOrders} ta
+                    {d.repeatOrders > 0 && <span className="text-[11px] text-muted-foreground"> ({d.repeatOrders} repeat)</span>}
+                  </TableCell>
+                  <TableCell className={`text-right whitespace-nowrap ${d.outstanding > 0 ? "text-red-600 font-semibold" : "text-muted-foreground"}`}>
+                    {d.outstanding > 0 ? fmtSom(d.outstanding) : "—"}
+                  </TableCell>
+                  <TableCell><ShopStatusBadge status={d.status} /></TableCell>
+                </TableRow>
+              ))
             )}
-          </CardContent>
-        </Card>
-      ))}
+          </TableBody>
+        </Table>
+      )}
+      {data && data.total > data.pageSize && (
+        <div className="flex items-center justify-between px-4 py-2.5 border-t text-sm">
+          <span className="text-xs text-muted-foreground">
+            {(data.page - 1) * data.pageSize + 1}–{Math.min(data.page * data.pageSize, data.total)} / {data.total}
+          </span>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" className="h-7" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+              Oldingi
+            </Button>
+            <span className="text-xs text-muted-foreground">{data.page} / {totalPages}</span>
+            <Button size="sm" variant="outline" className="h-7" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
+              Keyingi
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -767,6 +926,7 @@ export default function Distribution() {
   return (
     <div className="space-y-4">
       <KpiCards f={f} update={update} />
+      <TodayActivityWidget f={f} />
       <FilterPanel f={f} update={update} />
       <Card>
         <CardContent className="pt-4">

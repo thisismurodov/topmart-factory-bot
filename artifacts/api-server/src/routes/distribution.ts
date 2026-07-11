@@ -179,7 +179,68 @@ router.get("/distribution/summary", async (req, res): Promise<void> => {
   const shp: unknown[] = [];
   const shw = shopsWhere({ agentId: f.agentId, viloyat: f.viloyat, hudud: f.hudud }, shp);
 
-  const [sales, activeAgents, shops, collected, outstanding, lastSale] = await Promise.all([
+  // Yangi qo'shilgan do'konlar (davr bo'yicha) — dokonlar.created_at TEXT ISO
+  const nsp: unknown[] = [];
+  let nsw = shopsWhere({ agentId: f.agentId, viloyat: f.viloyat, hudud: f.hudud }, nsp);
+  if (f.from) {
+    nsp.push(f.from);
+    nsw += ` AND substr(d.created_at,1,10) >= $${nsp.length}`;
+  }
+  if (f.to) {
+    nsp.push(f.to);
+    nsw += ` AND substr(d.created_at,1,10) <= $${nsp.length}`;
+  }
+
+  // Kirilgan do'konlar (davr bo'yicha): savdo YOKI "olmagan" yozuvi bor
+  const vp: unknown[] = [];
+  const visitPart = (table: string): string => {
+    let w = "";
+    if (f.from) {
+      vp.push(f.from);
+      w += ` AND substr(x.created_at,1,10) >= $${vp.length}`;
+    }
+    if (f.to) {
+      vp.push(f.to);
+      w += ` AND substr(x.created_at,1,10) <= $${vp.length}`;
+    }
+    if (f.agentId) {
+      vp.push(f.agentId);
+      w += ` AND x.agent_id = $${vp.length}`;
+    }
+    if (f.viloyat) {
+      vp.push(f.viloyat);
+      w += ` AND d.viloyat = $${vp.length}`;
+    }
+    if (f.hudud) {
+      vp.push(f.hudud);
+      w += ` AND d.hudud = $${vp.length}`;
+    }
+    return `SELECT x.dokon_id FROM distribution.${table} x
+              JOIN distribution.dokonlar d ON d.id = x.dokon_id WHERE 1=1${w}`;
+  };
+  const visitedSql = `SELECT COUNT(DISTINCT dokon_id)::int AS c
+                        FROM (${visitPart("savdolar")} UNION ALL ${visitPart("olmagan_dokonlar")}) v`;
+
+  // 7/14/30 kundan beri buyurtma bermagan faol do'konlar (joriy holat, sana filtrisiz).
+  // Hech qachon buyurtma bermaganlar uchun qo'shilgan sana asos qilinadi.
+  const stp: unknown[] = [];
+  const stw = shopsWhere({ agentId: f.agentId, viloyat: f.viloyat, hudud: f.hudud }, stp);
+  const staleSql = `
+    SELECT
+      COUNT(*) FILTER (WHERE ref_date <= today - 7)::int  AS s7,
+      COUNT(*) FILTER (WHERE ref_date <= today - 14)::int AS s14,
+      COUNT(*) FILTER (WHERE ref_date <= today - 30)::int AS s30
+    FROM (
+      SELECT
+        COALESCE(NULLIF(substr(d.last_order_date,1,10),'')::date,
+                 NULLIF(substr(d.created_at,1,10),'')::date) AS ref_date,
+        (now() AT TIME ZONE 'Asia/Tashkent')::date AS today
+      FROM distribution.dokonlar d
+      WHERE d.holat = 'faol'${stw}
+    ) t
+    WHERE ref_date IS NOT NULL`;
+
+  const [sales, activeAgents, shops, collected, outstanding, lastSale, newShops, visited, stale] = await Promise.all([
     pool.query(
       `SELECT COUNT(*)::int AS c, COALESCE(SUM(s.jami_summa),0)::bigint AS total
          FROM distribution.savdolar s
@@ -215,6 +276,9 @@ router.get("/distribution/summary", async (req, res): Promise<void> => {
     ),
     // Oxirgi savdo sanasi (sana filtrisiz — bo'sh davr uchun ko'rsatma)
     pool.query(`SELECT MAX(s.created_at) AS m FROM distribution.savdolar s`),
+    pool.query(`SELECT COUNT(*)::int AS c FROM distribution.dokonlar d WHERE 1=1${nsw}`, nsp),
+    pool.query(visitedSql, vp),
+    pool.query(staleSql, stp),
   ]);
 
   res.json({
@@ -225,6 +289,107 @@ router.get("/distribution/summary", async (req, res): Promise<void> => {
     collectedTotal: Number(collected.rows[0].total),
     outstandingTotal: Number(outstanding.rows[0].total),
     lastSaleAt: lastSale.rows[0].m ?? null,
+    newShops: newShops.rows[0].c,
+    visitedShops: visited.rows[0].c,
+    stale7: stale.rows[0].s7,
+    stale14: stale.rows[0].s14,
+    stale30: stale.rows[0].s30,
+  });
+});
+
+// ── Bugungi do'kon faolligi (har doim bugungi kun, Asia/Tashkent) ───────────────
+router.get("/distribution/today-activity", async (req, res): Promise<void> => {
+  const f = parseFilters(req);
+
+  const tq = await pool.query(
+    `SELECT to_char(now() AT TIME ZONE 'Asia/Tashkent','YYYY-MM-DD') AS today,
+            EXTRACT(ISODOW FROM (now() AT TIME ZONE 'Asia/Tashkent'))::int AS dow`
+  );
+  const today = tq.rows[0].today as string;
+  const dow = tq.rows[0].dow as number;
+
+  // Do'kon darajasidagi filtrlar (agent/viloyat/hudud)
+  const geo = { agentId: f.agentId, viloyat: f.viloyat, hudud: f.hudud };
+
+  // Bugun qo'shilgan do'konlar
+  const ap: unknown[] = [];
+  let aw = shopsWhere(geo, ap);
+  ap.push(today);
+  aw += ` AND substr(d.created_at,1,10) = $${ap.length}`;
+
+  // Bugun kirilgan (savdo YOKI olmagan) va savdo qilgan do'konlar
+  const vp: unknown[] = [today];
+  let vGeo = "";
+  if (f.agentId) {
+    vp.push(f.agentId);
+    vGeo += ` AND x.agent_id = $${vp.length}`;
+  }
+  if (f.viloyat) {
+    vp.push(f.viloyat);
+    vGeo += ` AND d.viloyat = $${vp.length}`;
+  }
+  if (f.hudud) {
+    vp.push(f.hudud);
+    vGeo += ` AND d.hudud = $${vp.length}`;
+  }
+  const visitSql = `
+    WITH sold AS (
+      SELECT DISTINCT x.dokon_id FROM distribution.savdolar x
+        JOIN distribution.dokonlar d ON d.id = x.dokon_id
+       WHERE substr(x.created_at,1,10) = $1${vGeo}
+    ), noorder AS (
+      SELECT DISTINCT x.dokon_id FROM distribution.olmagan_dokonlar x
+        JOIN distribution.dokonlar d ON d.id = x.dokon_id
+       WHERE substr(x.created_at,1,10) = $1${vGeo}
+    )
+    SELECT
+      (SELECT COUNT(*) FROM (SELECT dokon_id FROM sold UNION SELECT dokon_id FROM noorder) v)::int AS visited,
+      (SELECT COUNT(*) FROM sold)::int AS sold,
+      (SELECT COUNT(*) FROM noorder n WHERE NOT EXISTS (SELECT 1 FROM sold s WHERE s.dokon_id = n.dokon_id))::int AS no_sale`;
+
+  // Bugungi marshrutdagi do'konlar orasidan kirilmaganlari
+  const rp: unknown[] = [dow, today];
+  let rGeo = "";
+  if (f.agentId) {
+    rp.push(f.agentId);
+    rGeo += ` AND da.telegram_id = $${rp.length}`;
+  }
+  if (f.viloyat) {
+    rp.push(f.viloyat);
+    rGeo += ` AND d.viloyat = $${rp.length}`;
+  }
+  if (f.hudud) {
+    rp.push(f.hudud);
+    rGeo += ` AND d.hudud = $${rp.length}`;
+  }
+  const routeSql = `
+    SELECT
+      COUNT(DISTINCT r.dokon_id)::int AS planned,
+      COUNT(DISTINCT r.dokon_id) FILTER (
+        WHERE NOT EXISTS (SELECT 1 FROM distribution.savdolar s
+                           WHERE s.dokon_id = r.dokon_id AND substr(s.created_at,1,10) = $2)
+          AND NOT EXISTS (SELECT 1 FROM distribution.olmagan_dokonlar o
+                           WHERE o.dokon_id = r.dokon_id AND substr(o.created_at,1,10) = $2)
+      )::int AS not_visited
+    FROM distribution.delivery_routes r
+    JOIN distribution.delivery_agents da ON da.id = r.delivery_agent_id
+    JOIN distribution.dokonlar d ON d.id = r.dokon_id
+    WHERE r.kun = $1 AND da.faol = 1${rGeo}`;
+
+  const [added, visits, route] = await Promise.all([
+    pool.query(`SELECT COUNT(*)::int AS c FROM distribution.dokonlar d WHERE 1=1${aw}`, ap),
+    pool.query(visitSql, vp),
+    pool.query(routeSql, rp),
+  ]);
+
+  res.json({
+    today,
+    addedToday: added.rows[0].c,
+    visitedToday: visits.rows[0].visited,
+    soldToday: visits.rows[0].sold,
+    visitedNoSale: visits.rows[0].no_sale,
+    routePlanned: route.rows[0].planned,
+    routeNotVisited: route.rows[0].not_visited,
   });
 });
 
@@ -337,28 +502,79 @@ router.get("/distribution/agents", async (req, res): Promise<void> => {
   );
 });
 
-// ── Do'konlar (filtrlangan) ─────────────────────────────────────────────────────
+// ── Do'konlar Intelligence (status, oxirgi tashrif, server-side pagination) ────
+// status: faol (oxirgi 7 kunda buyurtma) / risk (8-14 kun) / muammo (15+ kun).
+// Hech qachon buyurtma bermaganlar uchun qo'shilgan sana asos qilinadi —
+// summary'dagi stale7/14/30 hisobi bilan bir xil qoida (COALESCE last_order_date, created_at).
 router.get("/distribution/shops", async (req, res): Promise<void> => {
   const f = parseFilters(req);
+  const q = req.query as Record<string, unknown>;
+  const pageRaw = typeof q.page === "string" ? Number(q.page) : 1;
+  const sizeRaw = typeof q.pageSize === "string" ? Number(q.pageSize) : 25;
+  const page = Number.isInteger(pageRaw) && pageRaw >= 1 ? pageRaw : 1;
+  const pageSize = Number.isInteger(sizeRaw) && sizeRaw >= 1 && sizeRaw <= 100 ? sizeRaw : 25;
+  const status = typeof q.status === "string" && ["faol", "risk", "muammo"].includes(q.status) ? q.status : undefined;
+
   const params: unknown[] = [];
   const w = shopsWhere(f, params);
-  const { rows } = await pool.query(
-    `SELECT
-       d.id, d.nomi, d.egasi, d.telefon, d.viloyat, d.hudud, d.holat,
-       d.total_orders, d.total_sales, d.last_order_date,
-       u.name AS agent_name,
-       COALESCE((SELECT SUM(n.qoldiq) FROM distribution.nasiya n
-                  WHERE n.dokon_id = d.id AND n.qoldiq > 0),0)::bigint AS outstanding
-     FROM distribution.dokonlar d
-     LEFT JOIN distribution.users u ON u.telegram_id = d.agent_id
-     WHERE 1=1${w}
-     ORDER BY d.total_sales DESC NULLS LAST
-     LIMIT 500`,
-    params
-  );
 
-  res.json(
-    rows.map((r) => ({
+  // Asosiy so'rov: har bir do'kon uchun status va oxirgi tashrif (savdo ∪ olmagan)
+  let statusFilter = "";
+  if (status) {
+    params.push(status);
+    statusFilter = ` WHERE t.status = $${params.length}`;
+  }
+
+  const cte = `
+    WITH base AS (
+      SELECT
+        d.id, d.nomi, d.egasi, d.telefon, d.viloyat, d.hudud, d.holat,
+        d.total_orders, d.repeat_orders, d.total_sales, d.last_order_date,
+        (d.latitude IS NOT NULL AND d.longitude IS NOT NULL) AS has_location,
+        u.name AS agent_name,
+        GREATEST(
+          (SELECT MAX(substr(s.created_at,1,10)) FROM distribution.savdolar s WHERE s.dokon_id = d.id),
+          (SELECT MAX(substr(o.created_at,1,10)) FROM distribution.olmagan_dokonlar o WHERE o.dokon_id = d.id)
+        ) AS last_visit,
+        COALESCE((SELECT SUM(n.qoldiq) FROM distribution.nasiya n
+                   WHERE n.dokon_id = d.id AND n.qoldiq > 0),0)::bigint AS outstanding,
+        COALESCE(NULLIF(substr(d.last_order_date,1,10),'')::date,
+                 NULLIF(substr(d.created_at,1,10),'')::date) AS ref_date,
+        (now() AT TIME ZONE 'Asia/Tashkent')::date AS today
+      FROM distribution.dokonlar d
+      LEFT JOIN distribution.users u ON u.telegram_id = d.agent_id
+      WHERE 1=1${w}
+    ), t AS (
+      SELECT *,
+        CASE
+          WHEN ref_date IS NULL THEN 'muammo'
+          WHEN ref_date >= today - 7  THEN 'faol'
+          WHEN ref_date >= today - 14 THEN 'risk'
+          ELSE 'muammo'
+        END AS status
+      FROM base
+    )`;
+
+  const dataParams = [...params, pageSize, (page - 1) * pageSize];
+  const sql = `${cte}
+    SELECT t.*
+    FROM t${statusFilter}
+    ORDER BY t.total_sales DESC NULLS LAST, t.id
+    LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}`;
+  const countSql = `${cte}
+    SELECT COUNT(*)::int AS c FROM t${statusFilter}`;
+
+  // total alohida hisoblanadi — sahifa chegaradan tashqarida bo'lsa ham to'g'ri qoladi
+  const [{ rows }, cnt] = await Promise.all([
+    pool.query(sql, dataParams),
+    pool.query(countSql, params),
+  ]);
+
+  res.json({
+    page,
+    pageSize,
+    total: cnt.rows[0].c,
+    rows: rows.map((r) => ({
       id: r.id,
       nomi: r.nomi,
       egasi: r.egasi,
@@ -366,13 +582,17 @@ router.get("/distribution/shops", async (req, res): Promise<void> => {
       viloyat: r.viloyat,
       hudud: r.hudud,
       holat: r.holat,
+      hasLocation: r.has_location,
       totalOrders: r.total_orders,
+      repeatOrders: r.repeat_orders,
       totalSales: Number(r.total_sales),
       lastOrderDate: r.last_order_date,
+      lastVisit: r.last_visit,
       agentName: r.agent_name,
       outstanding: Number(r.outstanding),
-    }))
-  );
+      status: r.status,
+    })),
+  });
 });
 
 // ── Do'kon tafsiloti (drawer uchun) ─────────────────────────────────────────────

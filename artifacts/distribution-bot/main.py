@@ -397,9 +397,11 @@ def dlv_menu_kb():
 DAYS=[(1,"Dushanba"),(2,"Seshanba"),(3,"Chorshanba"),
       (4,"Payshanba"),(6,"Shanba"),(7,"Yakshanba")]
 DAYS_BY_NAME={n:i for i,n in DAYS}
+DAY_NAMES_ALL={1:"Dushanba",2:"Seshanba",3:"Chorshanba",4:"Payshanba",5:"Juma",6:"Shanba",7:"Yakshanba"}
 def day_name(i):
     for x,n in DAYS:
         if x==i: return n
+    if i in DAY_NAMES_ALL: return DAY_NAMES_ALL[i]
     return "—"
 
 @bot.message_handler(func=lambda m:m.text=="🚚 Delivery agent")
@@ -513,11 +515,20 @@ def _route_dokon_ids(dlv_id, kun):
     c.execute("SELECT dokon_id FROM delivery_routes WHERE delivery_agent_id=%s AND kun=%s",(dlv_id,kun))
     ids=[r[0] for r in c.fetchall()]; conn.close(); return ids
 
+def _route_resequence(c, dlv_id, kun):
+    """Tartib raqamlarini 1..N qilib qayta teradi (o'chirish/ko'chirishdan keyin)."""
+    c.execute("SELECT id FROM delivery_routes WHERE delivery_agent_id=%s AND kun=%s ORDER BY tartib,id",(dlv_id,kun))
+    for i,(rid,) in enumerate(c.fetchall(),1):
+        c.execute("UPDATE delivery_routes SET tartib=%s WHERE id=%s",(i,rid))
+
 def _start_route_day_picker(uid, dlv_id, dlv_name):
     kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=2)
     for i,n in DAYS:
         cnt=_route_count(dlv_id,i)
         kb.add(f"📅 {n} ({cnt}/20)")
+    # Juma endi dam kuni — lekin eski marshrutlar qolgan bo'lsa, tahrirlash uchun ko'rsatamiz
+    jcnt=_route_count(dlv_id,5)
+    if jcnt>0: kb.add(f"📅 Juma ({jcnt}/20) — dam kuni!")
     kb.add("⬅️ Delivery menyu")
     today=datetime.now().isoweekday()  # 1=Mon..7=Sun
     today_name=day_name(today)
@@ -572,9 +583,14 @@ def rt_pick_day(msg):
     name=txt[2:].strip()
     if " (" in name: name=name.rsplit(" (",1)[0]
     kun=DAYS_BY_NAME.get(name)
+    if kun is None and name=="Juma": kun=5
     if not kun: return
     data=get_state(uid)["data"]
     data["kun"]=kun
+    if kun==5:
+        # Juma — dam kuni: faqat tahrirlash (o'chirish/ko'chirish), yangi qo'shish yo'q
+        set_state(uid,"rt_edit",data)
+        _show_route_edit(uid, data["dlv_id"], data["dlv_name"], 5); return
     set_state(uid,"rt_pick_viloyat",data)
     _show_route_viloyat_picker(uid, data["dlv_id"], data["dlv_name"], kun)
 
@@ -590,7 +606,9 @@ def _show_route_viloyat_picker(uid, dlv_id, dlv_name, kun):
         row.append(f"📍 {v}")
         if len(row)==2: kb.add(*row); row=[]
     if row: kb.add(*row)
-    if cnt>0: kb.add("✅ Marshrutni yakunlash")
+    if cnt>0:
+        kb.add("✏️ Marshrutni tahrirlash")
+        kb.add("✅ Marshrutni yakunlash")
     kb.add("⬅️ Kunni o'zgartirish")
     bot.send_message(uid,
         f"🚚 {dlv_name} — 📅 {day_name(kun)}\n"
@@ -607,6 +625,9 @@ def rt_pick_viloyat(msg):
         _start_route_day_picker(uid, data["dlv_id"], data["dlv_name"]); return
     if txt=="✅ Marshrutni yakunlash":
         _show_route_summary(uid, data["dlv_id"], data["dlv_name"], data["kun"]); return
+    if txt=="✏️ Marshrutni tahrirlash":
+        set_state(uid,"rt_edit",data)
+        _show_route_edit(uid, data["dlv_id"], data["dlv_name"], data["kun"]); return
     if not txt.startswith("📍 "): return
     vil=txt[2:].strip()
     data["viloyat"]=vil
@@ -727,6 +748,110 @@ def _show_route_summary(uid, dlv_id, dlv_name, kun):
     _send_long(uid,text)
     set_state(uid,None,{})
     bot.send_message(uid,"✅ Saqlandi. Yana marshrut qo'shamizmi?",reply_markup=dlv_menu_kb())
+
+def _show_route_edit(uid, dlv_id, dlv_name, kun):
+    conn=get_db();c=conn.cursor()
+    c.execute("""SELECT d.id,r.tartib,d.nomi FROM delivery_routes r
+                 JOIN dokonlar d ON d.id=r.dokon_id
+                 WHERE r.delivery_agent_id=%s AND r.kun=%s ORDER BY r.tartib""",(dlv_id,kun))
+    rows=c.fetchall(); conn.close()
+    if not rows:
+        bot.send_message(uid,f"📭 {day_name(kun)} marshruti bo'sh.")
+        data=get_state(uid)["data"]
+        if kun==5:
+            _start_route_day_picker(uid, dlv_id, dlv_name); return
+        set_state(uid,"rt_pick_viloyat",data)
+        _show_route_viloyat_picker(uid, dlv_id, dlv_name, kun); return
+    kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=1)
+    for did,t,n in rows:
+        kb.add(f"🏪 {did}||{t}. {n}")
+    kb.add("⬅️ Kunni o'zgartirish")
+    hint="\n⚠️ Juma endi dam kuni — do'konlarni boshqa kunga ko'chiring yoki o'chiring.\n" if kun==5 else ""
+    bot.send_message(uid,
+        f"✏️ {dlv_name} — 📅 {day_name(kun)}\n"
+        f"📦 {len(rows)} ta dokon\n{hint}\n"
+        f"Tahrirlash uchun dokonni tanlang:",reply_markup=kb)
+
+@bot.message_handler(func=lambda m:get_state(m.from_user.id)["state"]=="rt_edit")
+def rt_edit_pick(msg):
+    uid=msg.from_user.id
+    txt=(msg.text or "").strip()
+    data=get_state(uid)["data"]
+    if txt=="⬅️ Kunni o'zgartirish":
+        _start_route_day_picker(uid, data["dlv_id"], data["dlv_name"]); return
+    if not (txt.startswith("🏪 ") and "||" in txt): return
+    try: did=int(txt.replace("🏪 ","").split("||")[0])
+    except: return
+    nomi=txt.split("||",1)[1].strip()
+    data["edit_did"]=did; data["edit_nomi"]=nomi
+    set_state(uid,"rt_edit_action",data)
+    kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=1)
+    kb.add("📅 Boshqa kunga ko'chirish")
+    kb.add("🗑 Marshrutdan o'chirish")
+    kb.add("⬅️ Orqaga")
+    bot.send_message(uid,f"🏪 {nomi}\n📅 {day_name(data['kun'])}\n\nNima qilamiz?",reply_markup=kb)
+
+@bot.message_handler(func=lambda m:get_state(m.from_user.id)["state"]=="rt_edit_action")
+def rt_edit_action(msg):
+    uid=msg.from_user.id
+    txt=(msg.text or "").strip()
+    data=get_state(uid)["data"]
+    dlv_id=data["dlv_id"]; kun=data["kun"]; did=data.get("edit_did")
+    if txt=="⬅️ Orqaga":
+        set_state(uid,"rt_edit",data)
+        _show_route_edit(uid, dlv_id, data["dlv_name"], kun); return
+    if txt=="🗑 Marshrutdan o'chirish":
+        conn=get_db();c=conn.cursor()
+        c.execute("DELETE FROM delivery_routes WHERE delivery_agent_id=%s AND kun=%s AND dokon_id=%s",(dlv_id,kun,did))
+        _route_resequence(c,dlv_id,kun)
+        conn.commit(); conn.close()
+        bot.send_message(uid,f"🗑 O'chirildi: {data.get('edit_nomi','')}")
+        set_state(uid,"rt_edit",data)
+        _show_route_edit(uid, dlv_id, data["dlv_name"], kun); return
+    if txt=="📅 Boshqa kunga ko'chirish":
+        kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=2)
+        for i,n in DAYS:
+            if i==kun: continue
+            kb.add(f"📅 {n} ({_route_count(dlv_id,i)}/20)")
+        kb.add("⬅️ Orqaga")
+        set_state(uid,"rt_edit_move",data)
+        bot.send_message(uid,f"🏪 {data.get('edit_nomi','')}\n\n📅 Qaysi kunga ko'chiramiz?",reply_markup=kb); return
+
+@bot.message_handler(func=lambda m:get_state(m.from_user.id)["state"]=="rt_edit_move")
+def rt_edit_move(msg):
+    uid=msg.from_user.id
+    txt=(msg.text or "").strip()
+    data=get_state(uid)["data"]
+    dlv_id=data["dlv_id"]; kun=data["kun"]; did=data.get("edit_did")
+    if txt=="⬅️ Orqaga":
+        set_state(uid,"rt_edit",data)
+        _show_route_edit(uid, dlv_id, data["dlv_name"], kun); return
+    if not txt.startswith("📅 "): return
+    name=txt[2:].strip()
+    if " (" in name: name=name.rsplit(" (",1)[0]
+    target=DAYS_BY_NAME.get(name)
+    if not target or target==kun or target==5: return
+    if _route_count(dlv_id,target)>=20:
+        bot.send_message(uid,f"❗ {day_name(target)} to'lgan (20/20). Boshqa kunni tanlang."); return
+    if did in _route_dokon_ids(dlv_id,target):
+        conn=get_db();c=conn.cursor()
+        c.execute("DELETE FROM delivery_routes WHERE delivery_agent_id=%s AND kun=%s AND dokon_id=%s",(dlv_id,kun,did))
+        _route_resequence(c,dlv_id,kun)
+        conn.commit(); conn.close()
+        bot.send_message(uid,f"ℹ️ {day_name(target)}da bu dokon allaqachon bor — {day_name(kun)}dan o'chirildi.")
+    else:
+        conn=get_db();c=conn.cursor()
+        c.execute("""UPDATE delivery_routes
+                     SET kun=%s,
+                         tartib=(SELECT COALESCE(MAX(tartib),0)+1 FROM delivery_routes
+                                 WHERE delivery_agent_id=%s AND kun=%s)
+                     WHERE delivery_agent_id=%s AND kun=%s AND dokon_id=%s""",
+                  (target,dlv_id,target,dlv_id,kun,did))
+        _route_resequence(c,dlv_id,kun)
+        conn.commit(); conn.close()
+        bot.send_message(uid,f"✅ {data.get('edit_nomi','')} → {day_name(target)}ga ko'chirildi.")
+    set_state(uid,"rt_edit",data)
+    _show_route_edit(uid, dlv_id, data["dlv_name"], kun)
 
 @bot.message_handler(func=lambda m:m.text=="🗑 Delivery agent o'chirish")
 def dlv_del_start(msg):

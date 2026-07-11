@@ -1,0 +1,102 @@
+
+
+cooperative-spontaneity
+
+production
+
+
+
+Agent
+
+
+web
+Deployments
+Backups
+Variables
+Metrics
+Console
+Settings
+web-production-a18bc.up.railway.app
+US East
+1 Replica
+
+HISTORY
+Hide Skipped
+web
+/
+12a49833
+Crashed
+
+Jul 11, 2026 at 3:50 PM GMT+5
+web-production-a18bc.up.railway.app
+Get Help
+Details
+Build Logs
+Deploy Logs
+HTTP Logs
+Network Flow Logs
+Filter and search logs
+
+You reached the start of the range
+Jul 11, 2026 at 3:50 PM
+Traceback (most recent call last):
+  File "/app/main.py", line 14, in <module>
+    raise RuntimeError("TELEGRAM_BOT_TOKEN must be set")
+RuntimeError: TELEGRAM_BOT_TOKEN must be set
+Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/8ed53fa7-a171-4353-b42d-d6315329dedf/vol_16yub6fjo8f4y2gd
+Starting Container
+Traceback (most recent call last):
+  File "/app/main.py", line 14, in <module>
+    raise RuntimeError("TELEGRAM_BOT_TOKEN must be set")
+RuntimeError: TELEGRAM_BOT_TOKEN must be set
+Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/8ed53fa7-a171-4353-b42d-d6315329dedf/vol_16yub6fjo8f4y2gd
+Traceback (most recent call last):
+  File "/app/main.py", line 14, in <module>
+    raise RuntimeError("TELEGRAM_BOT_TOKEN must be set")
+RuntimeError: TELEGRAM_BOT_TOKEN must be set
+Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/8ed53fa7-a171-4353-b42d-d6315329dedf/vol_16yub6fjo8f4y2gd
+Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/8ed53fa7-a171-4353-b42d-d6315329dedf/vol_16yub6fjo8f4y2gd
+Traceback (most recent call last):
+  File "/app/main.py", line 14, in <module>
+    raise RuntimeError("TELEGRAM_BOT_TOKEN must be set")
+RuntimeError: TELEGRAM_BOT_TOKEN must be set
+Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/8ed53fa7-a171-4353-b42d-d6315329dedf/vol_16yub6fjo8f4y2gd
+Traceback (most recent call last):
+  File "/app/main.py", line 14, in <module>
+    raise RuntimeError("TELEGRAM_BOT_TOKEN must be set")
+RuntimeError: TELEGRAM_BOT_TOKEN must be set
+Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/8ed53fa7-a171-4353-b42d-d6315329dedf/vol_16yub6fjo8f4y2gd
+Traceback (most recent call last):
+  File "/app/main.py", line 14, in <module>
+    raise RuntimeError("TELEGRAM_BOT_TOKEN must be set")
+RuntimeError: TELEGRAM_BOT_TOKEN must be set
+Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/8ed53fa7-a171-4353-b42d-d6315329dedf/vol_16yub6fjo8f4y2gd
+Traceback (most recent call last):
+  File "/app/main.py", line 14, in <module>
+    raise RuntimeError("TELEGRAM_BOT_TOKEN must be set")
+RuntimeError: TELEGRAM_BOT_TOKEN must be set
+Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/8ed53fa7-a171-4353-b42d-d6315329dedf/vol_16yub6fjo8f4y2gd
+Traceback (most recent call last):
+  File "/app/main.py", line 14, in <module>
+    raise RuntimeError("TELEGRAM_BOT_TOKEN must be set")
+RuntimeError: TELEGRAM_BOT_TOKEN must be set
+Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/8ed53fa7-a171-4353-b42d-d6315329dedf/vol_16yub6fjo8f4y2gd
+Traceback (most recent call last):
+  File "/app/main.py", line 14, in <module>
+    raise RuntimeError("TELEGRAM_BOT_TOKEN must be set")
+RuntimeError: TELEGRAM_BOT_TOKEN must be set
+Traceback (most recent call last):
+  File "/app/main.py", line 14, in <module>
+    raise RuntimeError("TELEGRAM_BOT_TOKEN must be set")
+RuntimeError: TELEGRAM_BOT_TOKEN must be set
+Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/8ed53fa7-a171-4353-b42d-d6315329dedf/vol_16yub6fjo8f4y2gd
+Traceback (most recent call last):
+  File "/app/main.py", line 14, in <module>
+    raise RuntimeError("TELEGRAM_BOT_TOKEN must be set")
+RuntimeError: TELEGRAM_BOT_TOKEN must be set
+Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/8ed53fa7-a171-4353-b42d-d6315329dedf/vol_16yub6fjo8f4y2gd
+You reached the end of the range
+Jul 11, 2026 at 3:50 PM
+
+
+50.00

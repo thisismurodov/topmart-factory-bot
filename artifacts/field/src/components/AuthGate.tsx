@@ -41,6 +41,22 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
           {error?.message ? (
             <p className="text-sm text-muted-foreground/70 mt-6">{error.message}</p>
           ) : null}
+          {/* Diagnostika qatori — auth ishlamay qolganda muammoni masofadan
+              aniqlash uchun (Telegram obyekti bormi, initData uzunligi,
+              platforma/versiya). Maxfiy ma'lumot ko'rsatilmaydi. */}
+          <p className="text-xs text-muted-foreground/50 mt-3 break-all">
+            {(() => {
+              const wa = window.Telegram?.WebApp;
+              const hash = window.location.hash || "";
+              return [
+                `TG: ${window.Telegram ? "bor" : "yo'q"}`,
+                `initData: ${wa?.initData?.length ?? 0}`,
+                `plat: ${wa?.platform ?? "-"}`,
+                `ver: ${wa?.version ?? "-"}`,
+                `hash: ${hash.length > 0 ? hash.slice(0, 24) + "…" : "bo'sh"}`,
+              ].join(" | ");
+            })()}
+          </p>
         </>
       ) : (
         <>

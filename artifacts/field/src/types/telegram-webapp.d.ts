@@ -15,6 +15,8 @@ interface TelegramWebApp {
   HapticFeedback?: TelegramHapticFeedback;
   colorScheme?: "light" | "dark";
   viewportHeight?: number;
+  platform?: string;
+  version?: string;
 }
 
 interface Window {

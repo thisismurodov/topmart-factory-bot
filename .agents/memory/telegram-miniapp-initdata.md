@@ -12,3 +12,9 @@ Rule: serve `telegram-web-app.js` from the app's own origin (public dir), never 
 **Diagnosis tip:** in server logs, a 401 with ~2ms response time means the initData header was absent (early return); a slower 401 means HMAC/agent-lookup failed. A synthetic HMAC-signed initData (secret = HMAC("WebAppData", bot_token)) curl'ed against prod distinguishes server config problems from client-side delivery problems.
 
 Also: initData is signed by the bot the app was opened from — the server's validation token must belong to that exact bot (getMe on the token shows the username).
+
+Rule: launch Mini Apps from an INLINE keyboard button (`InlineKeyboardButton(web_app=...)` on a message), not only from a reply-keyboard `KeyboardButton(web_app=...)`.
+
+**Why:** official iOS Telegram sometimes launches reply-keyboard web_app buttons with NO `tgWebAppData` in the location hash (hash has only tgWebAppVersion/platform/themeParams) → `WebApp.initData` is empty → server 401 even though the app runs in a genuine Mini App context. Inline-button launches reliably deliver initData.
+
+**How to apply:** send a separate message carrying an InlineKeyboardMarkup web_app button wherever the delivery menu is shown (reply markup cannot hold inline buttons). Diagnose by printing hash param NAMES (never values — tgWebAppData's value is the signed user payload).

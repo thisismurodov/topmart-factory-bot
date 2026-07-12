@@ -53,7 +53,15 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
                 `initData: ${wa?.initData?.length ?? 0}`,
                 `plat: ${wa?.platform ?? "-"}`,
                 `ver: ${wa?.version ?? "-"}`,
-                `hash: ${hash.length > 0 ? hash.slice(0, 24) + "…" : "bo'sh"}`,
+                `hash: ${
+                  hash.length > 1
+                    ? hash
+                        .slice(1)
+                        .split("&")
+                        .map((p) => p.split("=")[0])
+                        .join(",")
+                    : "bo'sh"
+                }`,
               ].join(" | ");
             })()}
           </p>

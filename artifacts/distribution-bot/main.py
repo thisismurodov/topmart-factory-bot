@@ -422,6 +422,7 @@ def dlv_back(msg):
     if not user: return
     set_state(uid,None,{})
     bot.send_message(uid,"🏠 Asosiy menyu",reply_markup=main_kb(user[3]))
+    if user[3]=="delivery": send_field_btn(uid)
 
 @bot.message_handler(func=lambda m:m.text=="📋 Delivery agentlar ro'yxati")
 def dlv_list(msg):
@@ -1142,6 +1143,22 @@ def main_kb(role):
         kb.add("💸 Eski nasiyalar","🎯 Reja boshqaruv")
         kb.add("🏆 Oylik reyting","🚚 Delivery agent")
     return kb
+
+def send_field_btn(uid):
+    """Mini App'ni INLINE (xabar ichidagi) tugma orqali ochirish.
+
+    Muhim: iOS Telegram'da reply-keyboard'dagi web_app tugmasi ba'zan
+    initData (imzo) BERMAYDI — Mini App 401 oladi ("Telegram orqali oching").
+    Inline tugmadan ochilganda esa Telegram initData'ni har doim beradi.
+    Shu sabab delivery menyusi ko'rsatilgan joylarda qo'shimcha shu xabar
+    yuboriladi."""
+    if not FIELD_APP_URL: return
+    ikb=types.InlineKeyboardMarkup()
+    ikb.add(types.InlineKeyboardButton("🗺 BOSHLASH — bugungi marshrut",web_app=types.WebAppInfo(FIELD_APP_URL)))
+    try:
+        bot.send_message(uid,"👇 Marshrut xaritasini shu tugma orqali oching:",reply_markup=ikb)
+    except Exception as e:
+        log.warning("Field inline tugma yuborilmadi (uid=%s): %s", uid, e)
 def cancel_kb():
     kb=types.ReplyKeyboardMarkup(resize_keyboard=True)
     kb.add("❌ Bekor qilish"); return kb
@@ -1200,6 +1217,7 @@ def cmd_start(msg):
         bot.send_message(uid,"👋 TOP MART botiga xush kelibsiz!\n\nKim sifatida kirasiz?",reply_markup=kb)
         return
     bot.send_message(uid,f"✅ Xush kelibsiz, {user[2]}!\n🔰 Rol: {user[3].upper()}",reply_markup=main_kb(user[3]))
+    if user[3]=="delivery": send_field_btn(uid)
 
 @bot.message_handler(func=lambda m:m.text=="👤 Men sotuvchi / agent" and not get_user(m.from_user.id))
 def role_pick_agent(msg):
@@ -1279,6 +1297,7 @@ def dlv_link_phone(msg):
         f"📦 Tovar berish — bugungi marshrutingiz\n"
         f"🗺 Mening marshrutim — haftalik reja",
         reply_markup=main_kb("delivery"))
+    send_field_btn(uid)
     # Notify admins
     for aid in all_admin_ids():
         try: bot.send_message(aid,f"🔗 Delivery agent ulandi:\n👤 {name}\n📞 {tel}\n🆔 {uid}")
@@ -1327,6 +1346,7 @@ def dlv_route_gps(msg):
     _record_agent_location(uid,msg.location.latitude,msg.location.longitude,"route_start")
     clear_state(uid)
     bot.send_message(uid,"✅ Joylashuv qabul qilindi — marshrut boshlandi. Yaxshi yo'l! 🚚",reply_markup=main_kb("delivery"))
+    send_field_btn(uid)
 
 @bot.message_handler(func=lambda m:m.text=="👤 Profil")
 def dlv_profile(msg):
@@ -4059,6 +4079,7 @@ def send_morning_routes():
         kb.add("🗺 Mening marshrutim","👤 Profil")
         try:
             bot.send_message(tid,text,reply_markup=kb,disable_web_page_preview=True); sent+=1
+            send_field_btn(tid)
         except Exception as e:
             log.warning("Morning route yuborilmadi (tid=%s): %s", tid, e)
     conn.close()

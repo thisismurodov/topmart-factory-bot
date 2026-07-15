@@ -65,7 +65,7 @@ export default function SaleForm() {
     setItems(prev => ({ ...prev, [id]: Math.max(0, q) }));
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (selectedItemsList.length === 0 || submitted) return;
     
     let nasiyaQism: number | undefined = undefined;
@@ -79,7 +79,8 @@ export default function SaleForm() {
 
     setSubmitted(true);
 
-    enqueueSale({
+    // Avval IndexedDB'ga yoziladi (offline'da ham), keyin navigatsiya
+    await enqueueSale({
       clientOpId: crypto.randomUUID(),
       dokonId,
       tolovTuri,

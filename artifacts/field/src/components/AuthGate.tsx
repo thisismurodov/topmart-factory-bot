@@ -1,4 +1,6 @@
+import { useEffect } from "react";
 import { useFieldMe } from "@/lib/fieldApi";
+import { rememberAgentId } from "@/lib/eventQueue";
 import { Button } from "@/components/ui/button";
 import { AlertTriangle, Send } from "lucide-react";
 
@@ -8,7 +10,12 @@ import { AlertTriangle, Send } from "lucide-react";
 // unmount/mount qilib, cheksiz refetch sikli paydo bo'ladi (har mount
 // refetchOnMount tufayli yangi so'rov yuboradi).
 export function AuthGate({ children }: { children: React.ReactNode }) {
-  const { error, refetch, isError, isPending } = useFieldMe();
+  const { data, error, refetch, isError, isPending } = useFieldMe();
+
+  // Offline hodisalar konvertidagi agentId metadatasi uchun (T002)
+  useEffect(() => {
+    if (data?.agent?.id != null) rememberAgentId(data.agent.id);
+  }, [data?.agent?.id]);
 
   if (isPending) {
     return (

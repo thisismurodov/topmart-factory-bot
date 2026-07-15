@@ -22,11 +22,12 @@ export default function NewShopForm() {
   const [hudud, setHudud] = useState("");
   const [submitted, setSubmitted] = useState(false);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (nomi.trim().length < 2 || submitted) return;
     setSubmitted(true);
 
-    enqueueNewShop({
+    // Avval IndexedDB'ga yoziladi (offline'da ham), keyin navigatsiya
+    await enqueueNewShop({
       clientOpId: crypto.randomUUID(),
       nomi: nomi.trim(),
       egasi: egasi.trim() || undefined,

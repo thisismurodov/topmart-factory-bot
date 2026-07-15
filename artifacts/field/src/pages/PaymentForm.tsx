@@ -30,11 +30,12 @@ export default function PaymentForm() {
   const summa = parseInt(summaStr.replace(/\D/g, ""), 10) || 0;
   const nasiyaQoldiq = detail?.nasiyaQoldiq ?? null;
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (summa <= 0 || submitted) return;
     setSubmitted(true);
 
-    enqueuePayment({
+    // Avval IndexedDB'ga yoziladi (offline'da ham), keyin navigatsiya
+    await enqueuePayment({
       clientOpId: crypto.randomUUID(),
       dokonId,
       summa,

@@ -37,12 +37,13 @@ export default function NoSaleForm() {
   const [sana, setSana] = useState("");
   const [submitted, setSubmitted] = useState(false);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!sabab || submitted) return;
 
     setSubmitted(true);
 
-    enqueueNoSale({
+    // Avval IndexedDB'ga yoziladi (offline'da ham), keyin navigatsiya
+    await enqueueNoSale({
       clientOpId: crypto.randomUUID(),
       dokonId,
       sabab,

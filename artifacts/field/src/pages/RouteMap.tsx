@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { useLocation } from "wouter";
-import { MapContainer, TileLayer, Marker, Polyline, useMap } from "react-leaflet";
+import { MapContainer, Marker, Polyline, useMap } from "react-leaflet";
 import L from "leaflet";
 import { useFieldRouteToday } from "@/lib/fieldApi";
 import { useGps } from "@/hooks/useGps";
@@ -15,6 +15,8 @@ import { Button } from "@/components/ui/button";
 import NavButtons from "@/components/NavButtons";
 import RatingStars from "@/components/RatingStars";
 import ShopSheet from "@/components/ShopSheet";
+import { OfflineTileLayer } from "@/components/OfflineTileLayer";
+import { prefetchRouteTiles } from "@/lib/tileCache";
 import { Navigation2, Car, Store, Check, Clock, Info } from "lucide-react";
 
 // Fix for leaflet markers in react — ikonkalar LOKAL bundle'dan (unpkg CDN
@@ -73,6 +75,16 @@ export default function RouteMap() {
   const pendingShops = useMemo(() => {
     if (!route) return [];
     return route.shops.filter(s => s.status === "pending").sort((a, b) => a.tartib - b.tartib);
+  }, [route]);
+
+  // T006 — marshrut hududi plitkalarini fonda oldindan yuklab qo'yamiz
+  // (kuniga bir marta): internet yo'q joyda ham xarita ochiladi.
+  useEffect(() => {
+    if (!route || route.shops.length === 0) return;
+    const points = route.shops
+      .filter(s => s.latitude != null && s.longitude != null)
+      .map(s => ({ lat: s.latitude!, lon: s.longitude! }));
+    void prefetchRouteTiles(points);
   }, [route]);
 
   const nextShop = pendingShops[0];
@@ -172,10 +184,8 @@ export default function RouteMap() {
 
       <div className="flex-1 z-0 relative">
         <MapContainer center={mapCenter} zoom={13} className="w-full h-full" zoomControl={false}>
-          <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
+          {/* T006 — IndexedDB keshli plitkalar: offline'da ham xarita ishlaydi */}
+          <OfflineTileLayer />
           <MapUpdater center={mapCenter} />
           
           {segments.map((seg, i) => (

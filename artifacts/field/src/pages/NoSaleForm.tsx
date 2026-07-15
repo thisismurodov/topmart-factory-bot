@@ -3,6 +3,7 @@ import { useRoute, useLocation } from "wouter";
 import { useFieldRouteToday } from "@/lib/fieldApi";
 import { useOptimisticStatus } from "@/hooks/useOptimisticStatus";
 import { enqueueNoSale } from "@/lib/sync";
+import { markVisitSaved } from "@/lib/utils";
 import { useGps } from "@/hooks/useGps";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -57,6 +58,7 @@ export default function NoSaleForm() {
       window.Telegram.WebApp.HapticFeedback.notificationOccurred("success");
     }
 
+    markVisitSaved();
     setLocation("/map");
   };
 

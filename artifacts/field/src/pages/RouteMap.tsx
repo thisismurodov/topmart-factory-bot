@@ -4,17 +4,29 @@ import { MapContainer, TileLayer, Marker, Polyline, useMap } from "react-leaflet
 import L from "leaflet";
 import { useFieldRouteToday } from "@/lib/fieldApi";
 import { useGps } from "@/hooks/useGps";
-import { calculateDistance, estimateEtaMinutes } from "@/lib/utils";
+import {
+  calculateDistance,
+  estimateEtaMinutes,
+  estimateFinishTime,
+  formatCurrency,
+  consumeVisitSaved,
+} from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import NavButtons from "@/components/NavButtons";
-import { Navigation2, Car, Store, Check, Target, Clock } from "lucide-react";
+import RatingStars from "@/components/RatingStars";
+import ShopSheet from "@/components/ShopSheet";
+import { Navigation2, Car, Store, Check, Clock, Info } from "lucide-react";
 
-// Fix for leaflet markers in react
+// Fix for leaflet markers in react — ikonkalar LOKAL bundle'dan (unpkg CDN
+// ba'zi provayderlarda bloklangan, xuddi telegram.org kabi)
+import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
+import markerIcon from "leaflet/dist/images/marker-icon.png";
+import markerShadow from "leaflet/dist/images/marker-shadow.png";
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
-  iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
-  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
-  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
+  iconRetinaUrl: markerIcon2x,
+  iconUrl: markerIcon,
+  shadowUrl: markerShadow,
 });
 
 function createNumberedIcon(number: number, status: string, isNext = false) {
@@ -47,6 +59,16 @@ export default function RouteMap() {
   const { data: route, isLoading } = useFieldRouteToday();
   const { location } = useGps();
   const [promptedShop, setPromptedShop] = useState<number | null>(null);
+  // T008 — do'kon bo'yicha bottom sheet (marker yoki karta bosilganda)
+  const [sheetShop, setSheetShop] = useState<number | null>(null);
+  // T007 — forma saqlagach bir martalik "✓ Saqlandi" animatsiyasi
+  const [showSaved, setShowSaved] = useState(() => consumeVisitSaved());
+
+  useEffect(() => {
+    if (!showSaved) return;
+    const t = setTimeout(() => setShowSaved(false), 1500);
+    return () => clearTimeout(t);
+  }, [showSaved]);
 
   const pendingShops = useMemo(() => {
     if (!route) return [];
@@ -125,17 +147,26 @@ export default function RouteMap() {
 
   return (
     <div className="flex-1 flex flex-col relative h-full">
-      {/* Top progress bar */}
+      {/* T003 — Jonli marshrut sarlavhasi */}
       <div className="absolute top-4 left-4 right-4 z-[400] bg-background/95 backdrop-blur shadow-md rounded-lg p-3 border">
         <div className="flex justify-between items-end mb-2">
-          <span className="text-sm font-semibold text-muted-foreground">Jarayon</span>
+          <span className="text-sm font-semibold text-muted-foreground">
+            {nextShop ? `Keyingi: #${nextShop.tartib}` : "Jarayon"}
+          </span>
           <span className="font-bold">{route.stats.done} / {route.stats.total}</span>
         </div>
-        <div className="h-3 w-full bg-muted rounded-full overflow-hidden">
+        <div className="h-3 w-full bg-muted rounded-full overflow-hidden mb-2">
           <div 
             className="h-full bg-primary transition-all duration-500" 
             style={{ width: `${(route.stats.done / route.stats.total) * 100}%` }}
           />
+        </div>
+        <div className="flex justify-between text-xs text-muted-foreground font-medium">
+          <span>Qoldi: <b className="text-foreground">{route.stats.pending}</b></span>
+          <span className="inline-flex items-center gap-1">
+            <Clock className="w-3.5 h-3.5" />
+            Tugash: <b className="text-foreground">{estimateFinishTime(route.stats.pending, distance)}</b>
+          </span>
         </div>
       </div>
 
@@ -167,6 +198,7 @@ export default function RouteMap() {
               position={[shop.latitude!, shop.longitude!]}
               icon={createNumberedIcon(shop.tartib, shop.status, shop.dokonId === nextShop?.dokonId)}
               zIndexOffset={shop.dokonId === nextShop?.dokonId ? 1000 : 0}
+              eventHandlers={{ click: () => setSheetShop(shop.dokonId) }}
             />
           ))}
 
@@ -216,22 +248,41 @@ export default function RouteMap() {
       {/* Bottom Panel */}
       {nextShop && (
         <div className="bg-card border-t rounded-t-3xl shadow-[0_-10px_40px_rgba(0,0,0,0.1)] p-5 pb-8 z-[400] relative">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <p className="text-sm font-medium text-muted-foreground mb-1 uppercase tracking-wider">Keyingi do'kon</p>
+          <div className="flex items-center justify-between mb-3">
+            <button
+              type="button"
+              className="text-left min-w-0"
+              onClick={() => setSheetShop(nextShop.dokonId)}
+            >
+              <p className="text-sm font-medium text-muted-foreground mb-1 uppercase tracking-wider flex items-center gap-1.5">
+                Keyingi do'kon <Info className="w-3.5 h-3.5" />
+              </p>
               <h2 className="text-2xl font-bold line-clamp-1">{nextShop.nomi}</h2>
-            </div>
+            </button>
             <Button 
               variant="secondary" 
               size="icon" 
-              className="rounded-full w-12 h-12"
+              className="rounded-full w-12 h-12 shrink-0"
               onClick={() => setLocation("/drive")}
             >
               <Car className="w-6 h-6" />
             </Button>
           </div>
 
-          <div className="flex gap-4 mb-6">
+          {/* T004 — boyitilgan ma'lumot: reyting, oxirgi tashrif, oxirgi xarid */}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-3 text-sm">
+            <RatingStars rating={nextShop.rating} className="text-base" />
+            {nextShop.daysSinceVisit !== null && (
+              <span className="text-muted-foreground">{nextShop.daysSinceVisit} kun oldin</span>
+            )}
+            {nextShop.lastPurchase !== null && nextShop.lastPurchase > 0 && (
+              <span className="text-muted-foreground">
+                Oxirgi xarid: <b className="text-foreground">{formatCurrency(nextShop.lastPurchase)}</b>
+              </span>
+            )}
+          </div>
+
+          <div className="flex gap-4 mb-5">
             <div className="flex items-center gap-2 text-lg">
               <Navigation2 className="w-5 h-5 text-blue-500" />
               <span className="font-semibold">{distance !== null ? `${distance} m` : "Hisoblanmoqda..."}</span>
@@ -254,6 +305,22 @@ export default function RouteMap() {
             >
               TASHRIF
             </Button>
+          </div>
+        </div>
+      )}
+
+      {/* T008 — do'kon bottom sheet */}
+      <ShopSheet dokonId={sheetShop} onClose={() => setSheetShop(null)} />
+
+      {/* T007 — "Saqlandi" animatsiyasi */}
+      {showSaved && (
+        <div className="absolute inset-0 z-[700] bg-black/50 backdrop-blur-sm flex items-center justify-center pointer-events-none">
+          <div className="bg-card rounded-3xl shadow-2xl px-10 py-8 flex flex-col items-center animate-in zoom-in-90 fade-in duration-300">
+            <div className="w-20 h-20 bg-green-500 text-white rounded-full flex items-center justify-center mb-4 animate-in zoom-in-50 duration-500">
+              <Check className="w-11 h-11" strokeWidth={3} />
+            </div>
+            <div className="text-xl font-bold mb-1">Saqlandi!</div>
+            <div className="text-sm text-muted-foreground">Keyingi do'kon...</div>
           </div>
         </div>
       )}

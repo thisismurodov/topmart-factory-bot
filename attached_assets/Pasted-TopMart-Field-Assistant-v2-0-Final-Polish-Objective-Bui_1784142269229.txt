@@ -1,0 +1,215 @@
+TopMart Field Assistant v2.0 (Final Polish)
+Objective
+Build the final production-ready experience for agents.
+The application should feel like a professional logistics system rather than a Telegram Mini App.
+Every screen must reduce unnecessary taps, increase speed, and make the agent's next action obvious.
+T001 — Beautiful Home Dashboard
+Current page is good.
+Make it feel alive.
+Improvements
+Greeting:
+Assalomu alaykum
+Navro'zbek 👋
+
+Bugungi marshrutingiz tayyor.
+Progress Ring instead of plain numbers.
+11 Total
+
+8 Completed
+
+3 Remaining
+
+72%
+Large Today's Earnings card.
+394 240 so'm
+
+↑ +18%
+vs yesterday
+Small cards:
+Today's Distance
+Estimated Finish Time
+Sales
+No Sale
+Return Visits
+T002 — Smart Start Button
+Current:
+BOSHLASH
+Instead:
+▶ Marshrutni boshlash
+When already working:
+▶ Davom etish
+When finished:
+✅ Bugungi ish tugadi
+T003 — Live Route Screen
+This is the most important screen.
+Need to make it feel like Uber.
+Show:
+Progress
+████████░░
+
+8 / 11
+Today's progress
+72%
+Current stop
+#9
+Next stop
+#10
+Remaining
+3 Shops
+Estimated finish
+17:10
+T004 — Next Shop Card
+Current card is clean.
+Improve:
+NEXT SHOP
+
+Zavod Torisi
+
+★★★★☆
+
+Visited:
+12 days ago
+
+Last Purchase:
+340 000
+
+Distance:
+1.8 km
+
+ETA:
+4 min
+Buttons
+Navigate
+
+Visit
+T005 — Navigation
+Instead of only Google.
+Buttons:
+Google Maps
+Yandex
+Apple
+Waze
+OpenStreetMap
+Auto detect installed app.
+T006 — Visit Screen
+When pressing Visit.
+Large buttons.
+Sold Product
+
+No Sale
+
+Payment
+
+Credit
+
+Add Shop
+
+Call Owner
+One tap.
+T007 — End Visit Animation
+When visit completed.
+Small animation.
+✓ Visit Saved
+
+Next shop loading...
+Automatically move map.
+T008 — Floating Bottom Sheet
+Instead of static card.
+Collapsible.
+Half screen.
+Full screen.
+Shows
+Current shop
+Notes
+History
+Products
+Buttons
+T009 — Telegram Bot Polish
+Current bot works.
+Need cleaner UX.
+Main Menu
+📍 Today's Route
+
+📦 Deliver Goods
+
+💰 Collect Payment
+
+🆕
+
+New Shop
+
+📅 Return Visits
+
+📊 My Statistics
+
+⚙ Settings
+Avoid showing unnecessary buttons.
+T010 — Statistics
+Agent page
+Today's Sales
+
+Today's Distance
+
+Completed
+
+Efficiency
+
+Conversion
+
+Collections
+
+Credits
+
+Weekly Progress
+T011 — Offline Mode
+Very important.
+If internet disappears.
+Save locally.
+Sync automatically.
+No data loss.
+T012 — Voice Notes
+One tap.
+🎤
+
+Owner said:
+
+Come next week.
+Automatically attached to visit.
+T013 — AI Assistant
+After every visit.
+AI recommends.
+Example
+This shop usually buys Rope.
+
+Recommend visiting again in 10 days.
+or
+Customer purchased every month.
+
+Potential High Value.
+T014 — Performance
+Mini App must open under
+2 seconds
+Map
+<1 second
+No lag while moving.
+T015 — Final UI Polish
+Consistent spacing
+Consistent typography
+Consistent icon sizes
+Smooth transitions
+Professional shadows
+Rounded cards
+Responsive
+Dark mode ready
+Final Acceptance
+✅ Dashboard loads under 2s.
+✅ Telegram Bot requires minimum taps.
+✅ Mini App feels like a native mobile application.
+✅ Route navigation is smooth.
+✅ Offline safe.
+✅ Zero unnecessary screens.
+✅ Fully integrated with ERP.
+Bitta strategik tavsiya
+Senga eng yoqqan gaping: "We don't guess. We know."
+Shu falsafa Mini App'ning har bir ekranida sezilishi kerak. Agent hech qachon "endi nima qilaman?" deb o'ylamasligi kerak. Tizim unga har doim navbatdagi eng to'g'ri amalni ko'rsatadi.
+Shu tamoyil saqlansa, bugungi 100 ta do'kon bilan ishlaydigan tajriba ertaga 18 000 ta do'konni boshqarishga ham mos keladigan asos bo'lib qoladi.

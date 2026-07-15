@@ -1,4 +1,4 @@
-import { Router, type IRouter, type Response } from "express";
+import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
 import { pool } from "@workspace/db";
 import type { PoolClient } from "pg";
@@ -65,6 +65,58 @@ function agentOf(req: FieldRequest): FieldAgent {
   return req.fieldAgent!;
 }
 
+// Bugungi hafta kuni; dev rejimida ?kun=1..7 override (FIELD_DEV_BYPASS=1 bo'lsa)
+function todayKun(req: Request): number {
+  const devBypassEnabled =
+    process.env.NODE_ENV !== "production" && process.env.FIELD_DEV_BYPASS === "1";
+  if (
+    devBypassEnabled &&
+    typeof req.query.kun === "string" &&
+    /^[1-7]$/.test(req.query.kun)
+  ) {
+    return Number(req.query.kun);
+  }
+  return tkIsoWeekday();
+}
+
+function tkDateNDaysAgo(n: number): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: TK }).format(
+    new Date(Date.now() - n * 86400000),
+  );
+}
+
+// TEXT ISO sanadan bugungacha kunlar (Asia/Tashkent taqvimida). Buzuq sana → null.
+export function daysSinceIso(iso: string | null | undefined): number | null {
+  if (!iso) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso.trim());
+  if (!m) return null;
+  const then = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const t = tkToday();
+  const now = Date.UTC(
+    Number(t.slice(0, 4)),
+    Number(t.slice(5, 7)) - 1,
+    Number(t.slice(8, 10)),
+  );
+  return Math.max(0, Math.round((now - then) / 86400000));
+}
+
+// Do'kon reytingi (1-5 yulduz) — buyurtmalar soni, jami savdo va faollikka qarab.
+// route/today va shops/:id da bir xil hisoblanadi (dashboard ham qayta ishlatishi mumkin).
+export function computeShopRating(
+  totalOrders: number,
+  totalSales: number,
+  avgRepeatDays: number,
+  lastOrderDate: string | null,
+): number {
+  let r = 1;
+  if (totalOrders >= 3) r += 1;
+  if (totalOrders >= 10) r += 1;
+  if (totalSales >= 1_000_000) r += 1;
+  const days = daysSinceIso(lastOrderDate);
+  if (days !== null && avgRepeatDays > 0 && days <= 1.5 * avgRepeatDays) r += 1;
+  return Math.min(5, r);
+}
+
 // ── GET /field/me — agent profili + bugungi kun ───────────────────────────────
 router.get("/field/me", async (req, res) => {
   const agent = agentOf(req as FieldRequest);
@@ -78,18 +130,8 @@ router.get("/field/me", async (req, res) => {
 // ── GET /field/route/today — bugungi marshrut + tashrif holati ────────────────
 router.get("/field/route/today", async (req, res) => {
   const agent = agentOf(req as FieldRequest);
-  let kun = tkIsoWeekday();
-  // Dev-only kun override (?kun=1..7) — faqat FIELD_DEV_BYPASS yoqilganda,
-  // dam kunida ham marshrut ko'rinishini test qilish uchun.
-  const devBypassEnabled =
-    process.env.NODE_ENV !== "production" && process.env.FIELD_DEV_BYPASS === "1";
-  if (
-    devBypassEnabled &&
-    typeof req.query.kun === "string" &&
-    /^[1-7]$/.test(req.query.kun)
-  ) {
-    kun = Number(req.query.kun);
-  }
+  // Dev rejimida ?kun=1..7 override — dam kunida ham marshrutni test qilish uchun
+  const kun = todayKun(req);
   const today = tkToday();
   try {
     // Juma (kun=5) — dam olish kuni (bot _today_kun() bilan sinxron bo'lishi shart)
@@ -100,6 +142,10 @@ router.get("/field/route/today", async (req, res) => {
     const { rows } = await pool.query(
       `SELECT r.dokon_id, r.tartib, d.nomi, d.egasi, d.telefon, d.hudud,
               d.latitude, d.longitude, d.last_order_date, d.total_orders,
+              d.total_sales, d.avg_repeat_days,
+              (SELECT ls.jami_summa FROM distribution.savdolar ls
+                WHERE ls.dokon_id = r.dokon_id
+                ORDER BY ls.id DESC LIMIT 1) AS last_purchase,
               (SELECT s.id FROM distribution.savdolar s
                 WHERE s.dokon_id = r.dokon_id AND s.agent_id = $3
                   AND substr(s.created_at,1,10) = $4
@@ -134,6 +180,10 @@ router.get("/field/route/today", async (req, res) => {
       } else if (status === "nosale") {
         nosale += 1;
       }
+      const totalOrders = Number(r.total_orders) || 0;
+      const totalSales = Number(r.total_sales) || 0;
+      const avgRepeatDays = Number(r.avg_repeat_days) || 0;
+      const lastOrderDate = (r.last_order_date as string) || null;
       return {
         dokonId: Number(r.dokon_id),
         tartib: Number(r.tartib) || 0,
@@ -143,8 +193,12 @@ router.get("/field/route/today", async (req, res) => {
         hudud: (r.hudud as string) || "",
         latitude: r.latitude != null ? Number(r.latitude) : null,
         longitude: r.longitude != null ? Number(r.longitude) : null,
-        lastOrderDate: (r.last_order_date as string) || null,
-        totalOrders: Number(r.total_orders) || 0,
+        lastOrderDate,
+        totalOrders,
+        lastPurchase: r.last_purchase != null ? Number(r.last_purchase) : null,
+        daysSinceVisit: daysSinceIso(lastOrderDate),
+        rating: computeShopRating(totalOrders, totalSales, avgRepeatDays, lastOrderDate),
+        avgRepeatDays,
         status,
       };
     });
@@ -638,6 +692,506 @@ router.get("/field/summary/today", async (req, res) => {
   } catch (err) {
     req.log.error({ err }, "field summary xatosi");
     res.status(500).json({ error: "Natijalarni olishda xato" });
+  }
+});
+
+// ── POST /field/visits/payment — pul olish (bot pay_nasiya_fifo porti) ───────
+const paymentSchema = z.object({
+  clientOpId: z.string().min(8).max(64),
+  dokonId: z.number().int().positive(),
+  summa: z.number().int().positive().max(2_000_000_000),
+  // true → nasiyaga FIFO hisoblash (ortiqcha balansga), false → oddiy pul olish
+  nasiyagaHisoblash: z.boolean().default(true),
+});
+
+export type FieldPaymentInput = z.infer<typeof paymentSchema>;
+
+export type FieldPaymentResult =
+  | { kind: "duplicate"; pulOlishId: number | null }
+  | { kind: "not_found"; message: string }
+  | {
+      kind: "ok";
+      pulOlishId: number;
+      nasiyagaHisoblandi: number;
+      ortiqcha: number;
+      yangiQoldiq: number;
+    };
+
+// Bot payments.py pay_nasiya_fifo + record_pul_olish porti — BITTA tranzaksiya.
+// summa > qoldiq bo'lsa ortiqcha mijoz_balans'ga yoziladi (bot bilan bir xil).
+export async function performFieldPayment(
+  client: PoolClient,
+  agentTelegramId: number,
+  input: FieldPaymentInput,
+): Promise<FieldPaymentResult> {
+  const { clientOpId, dokonId, summa, nasiyagaHisoblash } = input;
+  await client.query("BEGIN");
+  try {
+    const existing = await findExistingOp(client, clientOpId);
+    if (existing) {
+      await client.query("ROLLBACK");
+      return { kind: "duplicate", pulOlishId: existing.resultId };
+    }
+    const dokonQ = await client.query(
+      `SELECT id FROM distribution.dokonlar WHERE id = $1`,
+      [dokonId],
+    );
+    if (dokonQ.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return { kind: "not_found", message: "Do'kon topilmadi" };
+    }
+
+    const nowIso = tkNowIso();
+    let applied = 0;
+    let ortiqcha = 0;
+    let yangiQoldiq = 0;
+
+    if (nasiyagaHisoblash) {
+      // FIFO: eng eski nasiyadan boshlab yopamiz (bot ORDER BY created_at)
+      const nasiyaQ = await client.query(
+        `SELECT id, qoldiq FROM distribution.nasiya
+          WHERE dokon_id = $1 AND agent_id = $2 AND qoldiq > 0
+          ORDER BY created_at FOR UPDATE`,
+        [dokonId, agentTelegramId],
+      );
+      const totalQoldiq = nasiyaQ.rows.reduce((s, r) => s + (Number(r.qoldiq) || 0), 0);
+      const applyAmount = Math.min(summa, totalQoldiq);
+      ortiqcha = summa - applyAmount;
+      let remaining = applyAmount;
+      for (const r of nasiyaQ.rows) {
+        if (remaining <= 0) break;
+        const pay = Math.min(remaining, Number(r.qoldiq) || 0);
+        await client.query(
+          `UPDATE distribution.nasiya
+              SET tolangan = tolangan + $1, qoldiq = qoldiq - $1, updated_at = $2
+            WHERE id = $3`,
+          [pay, nowIso, r.id],
+        );
+        remaining -= pay;
+      }
+      applied = applyAmount;
+      yangiQoldiq = totalQoldiq - applyAmount;
+    }
+
+    const pulIns = await client.query(
+      `INSERT INTO distribution.pul_olish (dokon_id, agent_id, summa, created_at)
+       VALUES ($1,$2,$3,$4) RETURNING id`,
+      [dokonId, agentTelegramId, summa, nowIso],
+    );
+    const pid = Number(pulIns.rows[0].id);
+
+    if (ortiqcha > 0) {
+      // customers.py update_balans_delta porti (upsert)
+      await client.query(
+        `INSERT INTO distribution.mijoz_balans (dokon_id, balans) VALUES ($1,$2)
+         ON CONFLICT (dokon_id) DO UPDATE SET balans = distribution.mijoz_balans.balans + $2`,
+        [dokonId, ortiqcha],
+      );
+    }
+
+    await client.query(
+      `INSERT INTO distribution.field_ops (client_op_id, agent_id, op_type, dokon_id, result_id, created_at)
+       VALUES ($1,$2,'payment',$3,$4,$5)`,
+      [clientOpId, agentTelegramId, dokonId, pid, nowIso],
+    );
+
+    await client.query("COMMIT");
+    return {
+      kind: "ok",
+      pulOlishId: pid,
+      nasiyagaHisoblandi: applied,
+      ortiqcha,
+      yangiQoldiq,
+    };
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  }
+}
+
+router.post("/field/visits/payment", async (req, res) => {
+  const agent = agentOf(req as FieldRequest);
+  const parsed = paymentSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Noto'g'ri ma'lumot", details: parsed.error.issues });
+    return;
+  }
+  const client = await pool.connect();
+  try {
+    const result = await performFieldPayment(client, agent.telegramId, parsed.data);
+    switch (result.kind) {
+      case "duplicate":
+        res.json({ ok: true, duplicate: true, pulOlishId: result.pulOlishId });
+        return;
+      case "not_found":
+        res.status(404).json({ error: result.message });
+        return;
+      case "ok":
+        res.json({
+          ok: true,
+          duplicate: false,
+          pulOlishId: result.pulOlishId,
+          nasiyagaHisoblandi: result.nasiyagaHisoblandi,
+          ortiqcha: result.ortiqcha,
+          yangiQoldiq: result.yangiQoldiq,
+        });
+        return;
+    }
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      res.json({ ok: true, duplicate: true, pulOlishId: null });
+      return;
+    }
+    req.log.error({ err }, "field visits/payment xatosi");
+    res.status(500).json({ error: "To'lovni saqlashda xato" });
+  } finally {
+    client.release();
+  }
+});
+
+// ── POST /field/shops — yangi do'kon qo'shish (bot _save_dokon porti) ─────────
+// Bot bilan bir xil: dokonlar INSERT + bugungi marshrutga avto-qo'shish
+// (added_by_dlv=1, kuniga maks 5 ta — DLV_ADHOC_MAX).
+const DLV_ADHOC_MAX = 5;
+const shopSchema = z.object({
+  clientOpId: z.string().min(8).max(64),
+  nomi: z.string().min(2).max(120),
+  egasi: z.string().max(120).optional().default(""),
+  telefon: z.string().max(32).optional().default(""),
+  hudud: z.string().max(120).optional().default(""),
+  lat: z.number().min(-90).max(90).nullable().optional(),
+  lon: z.number().min(-180).max(180).nullable().optional(),
+});
+
+router.post("/field/shops", async (req, res) => {
+  const agent = agentOf(req as FieldRequest);
+  const parsed = shopSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Noto'g'ri ma'lumot", details: parsed.error.issues });
+    return;
+  }
+  const { clientOpId, nomi, egasi, telefon, hudud, lat, lon } = parsed.data;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const existing = await findExistingOp(client, clientOpId);
+    if (existing) {
+      await client.query("ROLLBACK");
+      res.json({ ok: true, duplicate: true, dokonId: existing.resultId });
+      return;
+    }
+    // Bot user[4] (users.viloyat) bilan bir xil manba
+    const userQ = await client.query(
+      `SELECT viloyat FROM distribution.users WHERE telegram_id = $1`,
+      [agent.telegramId],
+    );
+    const viloyat = userQ.rows.length > 0 ? (userQ.rows[0].viloyat as string) : null;
+    const nowIso = tkNowIso();
+    const ins = await client.query(
+      `INSERT INTO distribution.dokonlar
+         (nomi, egasi, telefon, viloyat, hudud, latitude, longitude, foto, agent_id, created_at, owner_telegram_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,NULL,$8,$9,NULL) RETURNING id`,
+      [nomi, egasi, telefon, viloyat, hudud, lat ?? null, lon ?? null, agent.telegramId, nowIso],
+    );
+    const dokonId = Number(ins.rows[0].id);
+
+    // Bugungi marshrutga avto-qo'shish (juma dam — qo'shilmaydi)
+    const kun = todayKun(req);
+    let routeAdded = false;
+    if (kun !== 5) {
+      const cntQ = await client.query(
+        `SELECT COUNT(*)::int AS n FROM distribution.delivery_routes
+          WHERE delivery_agent_id = $1 AND kun = $2 AND COALESCE(added_by_dlv,0) = 1`,
+        [agent.id, kun],
+      );
+      if (Number(cntQ.rows[0].n) < DLV_ADHOC_MAX) {
+        const tartibQ = await client.query(
+          `SELECT COALESCE(MAX(tartib),0) + 1 AS t FROM distribution.delivery_routes
+            WHERE delivery_agent_id = $1 AND kun = $2`,
+          [agent.id, kun],
+        );
+        await client.query(
+          `INSERT INTO distribution.delivery_routes
+             (delivery_agent_id, kun, dokon_id, tartib, created_at, added_by_dlv)
+           VALUES ($1,$2,$3,$4,$5,1)`,
+          [agent.id, kun, dokonId, Number(tartibQ.rows[0].t), nowIso],
+        );
+        routeAdded = true;
+      }
+    }
+
+    await client.query(
+      `INSERT INTO distribution.field_ops (client_op_id, agent_id, op_type, dokon_id, result_id, created_at)
+       VALUES ($1,$2,'shop',$3,$4,$5)`,
+      [clientOpId, agent.telegramId, dokonId, dokonId, nowIso],
+    );
+    await client.query("COMMIT");
+    res.json({ ok: true, duplicate: false, dokonId, routeAdded });
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    if (isUniqueViolation(err)) {
+      res.json({ ok: true, duplicate: true, dokonId: null });
+      return;
+    }
+    req.log.error({ err }, "field shops POST xatosi");
+    res.status(500).json({ error: "Do'konni saqlashda xato" });
+  } finally {
+    client.release();
+  }
+});
+
+// ── GET /field/stats/today — bosh sahifa + statistika KPI'lari ────────────────
+// Bitta so'rovda: bugungi savdo (kecha bilan %), olinmadi, masofa, yig'ilgan
+// pul (pul_olish), ochiq nasiya qoldig'i, bugungi qaytish tashriflari.
+router.get("/field/stats/today", async (req, res) => {
+  const agent = agentOf(req as FieldRequest);
+  const today = tkToday();
+  const yesterday = tkDateNDaysAgo(1);
+  try {
+    const [salesQ, nosaleQ, gpsQ, collectQ, nasiyaQ, revisitQ] = await Promise.all([
+      pool.query(
+        `SELECT
+           COUNT(*) FILTER (WHERE substr(created_at,1,10) = $2)::int AS today_n,
+           COALESCE(SUM(jami_summa) FILTER (WHERE substr(created_at,1,10) = $2),0) AS today_summa,
+           COALESCE(SUM(jami_summa) FILTER (WHERE substr(created_at,1,10) = $3),0) AS yesterday_summa
+           FROM distribution.savdolar
+          WHERE agent_id = $1 AND substr(created_at,1,10) IN ($2,$3)`,
+        [agent.telegramId, today, yesterday],
+      ),
+      pool.query(
+        `SELECT COUNT(*)::int AS n FROM distribution.olmagan_dokonlar
+          WHERE agent_id = $1 AND substr(created_at,1,10) = $2`,
+        [agent.telegramId, today],
+      ),
+      pool.query(
+        `SELECT latitude, longitude FROM distribution.agent_locations
+          WHERE agent_id = $1 AND substr(created_at,1,10) = $2
+          ORDER BY created_at`,
+        [agent.telegramId, today],
+      ),
+      pool.query(
+        `SELECT COALESCE(SUM(summa),0) AS s FROM distribution.pul_olish
+          WHERE agent_id = $1 AND substr(created_at,1,10) = $2`,
+        [agent.telegramId, today],
+      ),
+      pool.query(
+        `SELECT COALESCE(SUM(qoldiq),0) AS s, COUNT(*) FILTER (WHERE qoldiq > 0)::int AS n
+           FROM distribution.nasiya WHERE agent_id = $1 AND qoldiq > 0`,
+        [agent.telegramId],
+      ),
+      pool.query(
+        `SELECT COUNT(*)::int AS n FROM distribution.revisitlar
+          WHERE agent_id = $1 AND status = 'pending' AND revisit_date <= $2`,
+        [agent.telegramId, today],
+      ),
+    ]);
+    let km = 0;
+    const pts = gpsQ.rows;
+    for (let i = 1; i < pts.length; i++) {
+      const seg = haversineKm(
+        Number(pts[i - 1].latitude),
+        Number(pts[i - 1].longitude),
+        Number(pts[i].latitude),
+        Number(pts[i].longitude),
+      );
+      if (seg < 10) km += seg;
+    }
+    const todaySumma = Number(salesQ.rows[0].today_summa) || 0;
+    const yesterdaySumma = Number(salesQ.rows[0].yesterday_summa) || 0;
+    // Foiz faqat kecha savdo bo'lganda hisoblanadi (0 ga bo'lish yo'q)
+    const pctVsYesterday =
+      yesterdaySumma > 0
+        ? Math.round(((todaySumma - yesterdaySumma) / yesterdaySumma) * 100)
+        : null;
+    res.json({
+      sana: today,
+      savdolar: Number(salesQ.rows[0].today_n),
+      savdoSumma: todaySumma,
+      kechaSumma: yesterdaySumma,
+      pctVsYesterday,
+      olinmadi: Number(nosaleQ.rows[0].n),
+      km: Math.round(km * 10) / 10,
+      yigilganPul: Number(collectQ.rows[0].s) || 0,
+      nasiyaQoldiq: Number(nasiyaQ.rows[0].s) || 0,
+      nasiyaSoni: Number(nasiyaQ.rows[0].n) || 0,
+      qaytishTashriflar: Number(revisitQ.rows[0].n) || 0,
+    });
+  } catch (err) {
+    req.log.error({ err }, "field stats/today xatosi");
+    res.status(500).json({ error: "Statistikani olishda xato" });
+  }
+});
+
+// ── GET /field/stats/week — so'nggi 7 kun dinamikasi ─────────────────────────
+router.get("/field/stats/week", async (req, res) => {
+  const agent = agentOf(req as FieldRequest);
+  const days: string[] = [];
+  for (let i = 6; i >= 0; i--) days.push(tkDateNDaysAgo(i));
+  try {
+    const [salesQ, nosaleQ, collectQ] = await Promise.all([
+      pool.query(
+        `SELECT substr(created_at,1,10) AS d, COUNT(*)::int AS n, COALESCE(SUM(jami_summa),0) AS summa
+           FROM distribution.savdolar
+          WHERE agent_id = $1 AND substr(created_at,1,10) = ANY($2)
+          GROUP BY 1`,
+        [agent.telegramId, days],
+      ),
+      pool.query(
+        `SELECT substr(created_at,1,10) AS d, COUNT(*)::int AS n
+           FROM distribution.olmagan_dokonlar
+          WHERE agent_id = $1 AND substr(created_at,1,10) = ANY($2)
+          GROUP BY 1`,
+        [agent.telegramId, days],
+      ),
+      pool.query(
+        `SELECT substr(created_at,1,10) AS d, COALESCE(SUM(summa),0) AS s
+           FROM distribution.pul_olish
+          WHERE agent_id = $1 AND substr(created_at,1,10) = ANY($2)
+          GROUP BY 1`,
+        [agent.telegramId, days],
+      ),
+    ]);
+    const saleMap = new Map(salesQ.rows.map((r) => [r.d as string, r]));
+    const nosaleMap = new Map(nosaleQ.rows.map((r) => [r.d as string, r]));
+    const collectMap = new Map(collectQ.rows.map((r) => [r.d as string, r]));
+    res.json({
+      days: days.map((d) => ({
+        sana: d,
+        savdolar: Number(saleMap.get(d)?.n) || 0,
+        summa: Number(saleMap.get(d)?.summa) || 0,
+        olinmadi: Number(nosaleMap.get(d)?.n) || 0,
+        yigilganPul: Number(collectMap.get(d)?.s) || 0,
+      })),
+    });
+  } catch (err) {
+    req.log.error({ err }, "field stats/week xatosi");
+    res.status(500).json({ error: "Haftalik statistikani olishda xato" });
+  }
+});
+
+// ── GET /field/shops/:id — do'kon tafsiloti (bottom sheet uchun) ─────────────
+// Tarix, nasiya balansi, eng ko'p olinadigan mahsulot + qoida asosidagi tavsiya.
+router.get("/field/shops/:id", async (req, res) => {
+  const dokonId = Number(req.params.id);
+  if (!Number.isInteger(dokonId) || dokonId <= 0) {
+    res.status(400).json({ error: "Noto'g'ri do'kon ID" });
+    return;
+  }
+  try {
+    const dokonQ = await pool.query(
+      `SELECT id, nomi, egasi, telefon, hudud, latitude, longitude,
+              total_orders, total_sales, avg_repeat_days, last_order_date, first_order_date
+         FROM distribution.dokonlar WHERE id = $1`,
+      [dokonId],
+    );
+    if (dokonQ.rows.length === 0) {
+      res.status(404).json({ error: "Do'kon topilmadi" });
+      return;
+    }
+    const d = dokonQ.rows[0];
+    const [salesQ, nosaleQ, nasiyaQ, balansQ, topQ] = await Promise.all([
+      pool.query(
+        `SELECT s.id, s.jami_summa, s.tolov_turi, s.created_at,
+                COALESCE(string_agg(m.nomi || ' ×' || t.miqdor, ', ' ORDER BY t.id), '') AS items
+           FROM distribution.savdolar s
+           LEFT JOIN distribution.savdo_tafsilot t ON t.savdo_id = s.id
+           LEFT JOIN distribution.mahsulotlar m ON m.id = t.mahsulot_id
+          WHERE s.dokon_id = $1
+          GROUP BY s.id, s.jami_summa, s.tolov_turi, s.created_at
+          ORDER BY s.id DESC LIMIT 10`,
+        [dokonId],
+      ),
+      pool.query(
+        `SELECT sabab, sabab_text, created_at FROM distribution.olmagan_dokonlar
+          WHERE dokon_id = $1 ORDER BY id DESC LIMIT 5`,
+        [dokonId],
+      ),
+      pool.query(
+        `SELECT COALESCE(SUM(qoldiq),0) AS s FROM distribution.nasiya
+          WHERE dokon_id = $1 AND qoldiq > 0`,
+        [dokonId],
+      ),
+      pool.query(`SELECT balans FROM distribution.mijoz_balans WHERE dokon_id = $1`, [
+        dokonId,
+      ]),
+      pool.query(
+        `SELECT m.nomi, SUM(t.miqdor) AS jami
+           FROM distribution.savdo_tafsilot t
+           JOIN distribution.savdolar s ON s.id = t.savdo_id
+           JOIN distribution.mahsulotlar m ON m.id = t.mahsulot_id
+          WHERE s.dokon_id = $1
+          GROUP BY m.nomi ORDER BY jami DESC LIMIT 1`,
+        [dokonId],
+      ),
+    ]);
+    const totalOrders = Number(d.total_orders) || 0;
+    const totalSales = Number(d.total_sales) || 0;
+    const avgRepeatDays = Number(d.avg_repeat_days) || 0;
+    const lastOrderDate = (d.last_order_date as string) || null;
+    const daysSince = daysSinceIso(lastOrderDate);
+    const topProduct = topQ.rows.length > 0 ? (topQ.rows[0].nomi as string) : null;
+
+    // T013 — qoida asosidagi tavsiya (LLM'siz: tez, deterministik, oflaynga mos)
+    const tavsiyalar: string[] = [];
+    if (topProduct && totalOrders >= 2) {
+      tavsiyalar.push(`Bu do'kon odatda "${topProduct}" oladi.`);
+    }
+    if (avgRepeatDays >= 1 && totalOrders >= 2) {
+      const cycle = Math.max(1, Math.round(avgRepeatDays));
+      if (daysSince !== null && daysSince >= cycle) {
+        tavsiyalar.push(
+          `Odatda har ${cycle} kunda oladi — oxirgi xariddan ${daysSince} kun o'tdi, bugun taklif qiling.`,
+        );
+      } else {
+        tavsiyalar.push(`Taxminan ${cycle} kunda qayta tashrif tavsiya etiladi.`);
+      }
+    }
+    if (totalOrders >= 10 && totalSales >= 1_000_000) {
+      tavsiyalar.push("Doimiy mijoz — yuqori qiymatli. Alohida e'tibor bering.");
+    } else if (totalOrders === 0) {
+      tavsiyalar.push("Hali xarid qilmagan — birinchi savdoni yopishga harakat qiling.");
+    }
+    const nasiyaQoldiq = Number(nasiyaQ.rows[0].s) || 0;
+    if (nasiyaQoldiq > 0) {
+      tavsiyalar.push("Ochiq nasiyasi bor — to'lov haqida so'rang.");
+    }
+
+    res.json({
+      dokon: {
+        id: Number(d.id),
+        nomi: d.nomi as string,
+        egasi: (d.egasi as string) || "",
+        telefon: (d.telefon as string) || "",
+        hudud: (d.hudud as string) || "",
+        latitude: d.latitude != null ? Number(d.latitude) : null,
+        longitude: d.longitude != null ? Number(d.longitude) : null,
+        totalOrders,
+        totalSales,
+        avgRepeatDays,
+        lastOrderDate,
+        daysSinceVisit: daysSince,
+        rating: computeShopRating(totalOrders, totalSales, avgRepeatDays, lastOrderDate),
+      },
+      nasiyaQoldiq,
+      balans: balansQ.rows.length > 0 ? Number(balansQ.rows[0].balans) || 0 : 0,
+      topProduct,
+      tavsiyalar,
+      savdolar: salesQ.rows.map((r) => ({
+        id: Number(r.id),
+        summa: Number(r.jami_summa) || 0,
+        tolovTuri: (r.tolov_turi as string) || "",
+        sana: (r.created_at as string) || "",
+        items: (r.items as string) || "",
+      })),
+      olinmadi: nosaleQ.rows.map((r) => ({
+        sabab: (r.sabab as string) || "",
+        sababText: (r.sabab_text as string) || "",
+        sana: (r.created_at as string) || "",
+      })),
+    });
+  } catch (err) {
+    req.log.error({ err }, "field shops/:id xatosi");
+    res.status(500).json({ error: "Do'kon ma'lumotini olishda xato" });
   }
 });
 

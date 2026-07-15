@@ -1,8 +1,20 @@
-import { submitSale, submitNoSale, SaleInput, NoSaleInput, FieldApiError } from "./fieldApi";
+import {
+  submitSale,
+  submitNoSale,
+  submitPayment,
+  submitNewShop,
+  SaleInput,
+  NoSaleInput,
+  PaymentInput,
+  NewShopInput,
+  FieldApiError,
+} from "./fieldApi";
 
 type SyncItem = 
   | { type: "sale"; id: string; data: SaleInput }
-  | { type: "nosale"; id: string; data: NoSaleInput };
+  | { type: "nosale"; id: string; data: NoSaleInput }
+  | { type: "payment"; id: string; data: PaymentInput }
+  | { type: "shop"; id: string; data: NewShopInput };
 
 const QUEUE_KEY = "field_sync_queue";
 
@@ -34,6 +46,20 @@ export function enqueueNoSale(data: NoSaleInput) {
   triggerSync();
 }
 
+export function enqueuePayment(data: PaymentInput) {
+  const q = getQueue();
+  q.push({ type: "payment", id: data.clientOpId, data });
+  saveQueue(q);
+  triggerSync();
+}
+
+export function enqueueNewShop(data: NewShopInput) {
+  const q = getQueue();
+  q.push({ type: "shop", id: data.clientOpId, data });
+  saveQueue(q);
+  triggerSync();
+}
+
 let isSyncing = false;
 
 // MUHIM: har doim localStorage'dagi ENG YANGI holatdan o'chiramiz.
@@ -54,8 +80,12 @@ export async function triggerSync() {
       try {
         if (item.type === "sale") {
           await submitSale(item.data);
-        } else {
+        } else if (item.type === "nosale") {
           await submitNoSale(item.data);
+        } else if (item.type === "payment") {
+          await submitPayment(item.data);
+        } else {
+          await submitNewShop(item.data);
         }
         // Success (including duplicate: true) -> remove from queue
         removeFromQueue(item.id);

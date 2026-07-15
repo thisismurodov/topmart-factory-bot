@@ -3,7 +3,7 @@ import { useRoute, useLocation } from "wouter";
 import { useFieldRouteToday, useFieldProducts } from "@/lib/fieldApi";
 import { useOptimisticStatus } from "@/hooks/useOptimisticStatus";
 import { enqueueSale } from "@/lib/sync";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, markVisitSaved } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Plus, Minus, ArrowLeft, ShoppingCart, Check } from "lucide-react";
@@ -22,7 +22,14 @@ export default function SaleForm() {
   const shop = route?.shops.find(s => s.dokonId === dokonId);
 
   const [items, setItems] = useState<Record<number, number>>({});
-  const [tolovTuri, setTolovTuri] = useState<"naqd" | "karta" | "nasiya" | "aralash">("naqd");
+  // "Nasiya savdo" tugmasidan kelinsa (?nasiya=1) — to'lov turi oldindan nasiya
+  const [tolovTuri, setTolovTuri] = useState<"naqd" | "karta" | "nasiya" | "aralash">(() => {
+    if (typeof window !== "undefined") {
+      const qs = new URLSearchParams(window.location.search);
+      if (qs.get("nasiya") === "1") return "nasiya";
+    }
+    return "naqd";
+  });
   const [nasiyaQismStr, setNasiyaQismStr] = useState("");
   const [submitted, setSubmitted] = useState(false);
 
@@ -86,6 +93,7 @@ export default function SaleForm() {
       window.Telegram.WebApp.HapticFeedback.notificationOccurred("success");
     }
 
+    markVisitSaved();
     setLocation("/map");
   };
 

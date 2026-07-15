@@ -20,6 +20,9 @@ function wazeHref(lat: number, lng: number) {
 function appleHref(lat: number, lng: number) {
   return `https://maps.apple.com/?daddr=${lat},${lng}&dirflg=d`;
 }
+function osmHref(lat: number, lng: number) {
+  return `https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=;${lat},${lng}`;
+}
 
 function openNav(href: string) {
   const tg = window.Telegram?.WebApp;
@@ -42,6 +45,7 @@ export default function NavButtons({ lat, lng, dark = false }: NavButtonsProps) 
     { label: "Google", icon: "🗺", href: googleHref(lat, lng) },
     { label: "Waze", icon: "🚗", href: wazeHref(lat, lng) },
     { label: "Apple", icon: "🍎", href: appleHref(lat, lng) },
+    { label: "OSM", icon: "🧭", href: osmHref(lat, lng) },
   ];
 
   return (
@@ -56,7 +60,7 @@ export default function NavButtons({ lat, lng, dark = false }: NavButtonsProps) 
         <span className="text-sm">Yandex Maps bilan borish</span>
       </button>
 
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-4 gap-2">
         {secondary.map((s) => (
           <button
             key={s.label}

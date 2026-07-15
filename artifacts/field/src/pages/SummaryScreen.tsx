@@ -1,11 +1,13 @@
-import { useFieldSummaryToday } from "@/lib/fieldApi";
+import { useFieldSummaryToday, useFieldStatsToday } from "@/lib/fieldApi";
 import { formatCurrency } from "@/lib/utils";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, MapPin, Clock, Target, CheckCircle2, XCircle } from "lucide-react";
+import { ArrowLeft, MapPin, Clock, CheckCircle2, XCircle, Wallet, BarChart3 } from "lucide-react";
 
 export default function SummaryScreen() {
   const { data: summary, isLoading } = useFieldSummaryToday();
+  // Ixtiyoriy qo'shimcha — bu so'rovga qarab early-return QILMAYMIZ (bitta gate qoidasi)
+  const { data: stats } = useFieldStatsToday();
   const [, setLocation] = useLocation();
 
   if (isLoading || !summary) {
@@ -64,7 +66,25 @@ export default function SummaryScreen() {
             <div className="text-3xl font-bold mb-1">{Math.floor(summary.daqiqa / 60)}s {summary.daqiqa % 60}m</div>
             <div className="text-sm text-muted-foreground font-medium">Vaqt</div>
           </div>
+
+          {stats && (
+            <div className="bg-card border rounded-xl p-5 flex flex-col col-span-2">
+              <Wallet className="w-6 h-6 text-emerald-500 mb-2" />
+              <div className="text-3xl font-bold text-emerald-600 mb-1">
+                {formatCurrency(stats.yigilganPul)} <span className="text-base font-semibold">so'm</span>
+              </div>
+              <div className="text-sm text-muted-foreground font-medium">Yig'ilgan pul (naqd + nasiya to'lovlari)</div>
+            </div>
+          )}
         </div>
+
+        <Button
+          variant="outline"
+          className="mt-6 h-14 text-base font-bold"
+          onClick={() => setLocation("/stats")}
+        >
+          <BarChart3 className="mr-2 w-5 h-5" /> To'liq statistika
+        </Button>
       </div>
     </div>
   );

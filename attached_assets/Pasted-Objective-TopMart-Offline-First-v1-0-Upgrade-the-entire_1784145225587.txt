@@ -1,0 +1,277 @@
+Objective
+TopMart Offline First v1.0
+Upgrade the entire Field Assistant to a production-grade offline-first architecture.
+The application must continue working normally when there is no internet connection.
+No sales, payments, visits or new shops may ever be lost.
+The ERP must eventually receive every event exactly once.
+Offline mode must be transparent to the agent.
+Principles
+The application must become:
+Offline First
+Event Driven
+Sync Safe
+Idempotent
+Production Ready
+Never block the user because of missing internet.
+Store first.
+Sync later.
+T001 — Local Offline Database
+Create a persistent local database.
+Use IndexedDB (preferred).
+Persist:
+Today's route
+Shop information
+Products
+Visit history
+Pending operations
+User session
+Route progress
+Application must fully restore after browser restart.
+T002 — Offline Event Queue
+Every write operation must first create a local event.
+Supported events:
+SALE
+
+NO_SALE
+
+PAYMENT
+
+NEW_SHOP
+
+UPDATE_SHOP
+
+RETURN_VISIT
+
+CREDIT
+Every event must contain:
+eventId (UUID)
+
+deviceId
+
+agentId
+
+createdAt
+
+operation
+
+payload
+
+retryCount
+
+syncStatus
+
+schemaVersion
+States:
+pending
+
+syncing
+
+synced
+
+failed
+T003 — Sync Engine
+Create background sync service.
+Automatically runs:
+App start
+Internet restored
+Every 30 seconds while online
+Manual Sync button
+Flow:
+Pending Queue
+
+↓
+
+POST API
+
+↓
+
+Success
+
+↓
+
+Mark Synced
+
+↓
+
+Remove From Queue
+If request fails:
+Retry using exponential backoff.
+Never duplicate operations.
+T004 — Idempotent API
+Every POST endpoint must accept
+eventId
+Server rules:
+If event already exists
+Return existing result.
+Never create duplicates.
+Supported endpoints:
+Sale
+
+Payment
+
+New Shop
+
+No Sale
+
+Credit
+T005 — Offline Route
+Today's route must be downloaded once.
+After download:
+Agent can:
+View shops
+Navigate
+Complete visits
+See history
+See notes
+Without internet.
+T006 — Cached Maps
+Keep Leaflet.
+Cache map tiles.
+Cache:
+Current area
+Today's route area
+Nearby tiles
+If tiles unavailable
+Show cached tiles.
+Never display blank map.
+T007 — Connection Monitor
+Create global connection service.
+States:
+🟢 Online
+🟡 Syncing
+🔴 Offline
+Display in app header.
+T008 — Sync Center
+New page.
+Display:
+Status
+
+Last Sync
+
+Pending Operations
+
+Failed Operations
+
+Queue Size
+
+Current Network
+Buttons
+Sync Now
+
+Retry Failed
+
+Clear Cache (Admin)
+T009 — Offline Banner
+When offline
+Show
+⚠ Internet mavjud emas.
+
+TopMart offline rejimda ishlayapti.
+
+Ma'lumotlar internet qaytganda avtomatik yuboriladi.
+When synced
+✅ Barcha ma'lumotlar ERP bilan sinxronlashtirildi.
+T010 — Dashboard Compatibility
+Dashboard must NOT change.
+Offline events eventually become normal ERP events.
+Dashboard continues using the same database.
+No special handling required.
+T011 — Crash Recovery
+If application crashes
+or
+Telegram closes
+or
+Phone restarts
+Restore:
+Route
+Progress
+Pending Queue
+Last Screen
+Nothing lost.
+T012 — Conflict Resolution
+If same shop changes both locally and server-side.
+Rules:
+Visits:
+Append only.
+Payments:
+FIFO.
+Shop Info:
+Latest timestamp wins.
+Never overwrite sales.
+T013 — Production Tests
+Verify:
+✅ Airplane Mode
+✅ Restart Phone
+✅ Kill Telegram
+✅ Restart Mini App
+✅ Multiple Pending Events
+✅ Slow Network
+✅ Duplicate POST
+✅ Retry Logic
+✅ Queue Recovery
+T014 — Performance
+Requirements:
+Cold Start
+<2 sec
+Offline Start
+<1 sec
+Sync
+Background
+No UI blocking.
+T015 — Acceptance
+Application must successfully complete:
+Internet OFF
+
+↓
+
+Agent visits 15 shops
+
+↓
+
+8 Sales
+
+↓
+
+3 No Sales
+
+↓
+
+2 Payments
+
+↓
+
+2 New Shops
+
+↓
+
+Internet ON
+
+↓
+
+Automatic Sync
+
+↓
+
+ERP Updated
+
+↓
+
+Dashboard Updated
+
+↓
+
+Queue Empty
+No duplicated data.
+No lost data.
+No manual intervention.
+IMPORTANT
+Do NOT use Service Workers for business data synchronization.
+Business data must be managed through an IndexedDB event queue.
+The queue is the single source of truth while offline.
+ERP remains the single source of truth after synchronization.
+All sync operations must be idempotent and production-safe.
+Expected Result
+TopMart Field Assistant should operate reliably even in villages or areas with unstable internet.
+The agent must never stop working because of connectivity issues.
+Every business event must eventually reach the ERP exactly once.
+The user experience should feel identical whether online or offline.

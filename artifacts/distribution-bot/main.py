@@ -1122,10 +1122,13 @@ def fmt_miq(q):
 def main_kb(role):
     kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=2)
     if role=="delivery":
+        # T009: toza menyu — asosiy ish Mini App'da, bot zaxira/tezkor amallar
         if FIELD_APP_URL:
             kb.add(types.KeyboardButton("🗺 BOSHLASH",web_app=types.WebAppInfo(FIELD_APP_URL)))
-        kb.add("📦 Tovar berish","❌ Tovar olmadi")
-        kb.add("🗺 Mening marshrutim","👤 Profil")
+        kb.add("📦 Tovar berish","💰 Pul olish")
+        kb.add("❌ Tovar olmadi","📋 Qaytib kirish kerak")
+        kb.add("📊 Statistikam","👤 Profil")
+        kb.add("🗺 Mening marshrutim")
         return kb
     if role in("agent","supervisor") and FIELD_APP_URL:
         # Mini App agent/supervisorlar uchun ham (delivery'dan tashqari)
@@ -1301,8 +1304,9 @@ def dlv_link_phone(msg):
     bot.send_message(uid,
         f"✅ Tabriklaymiz, {name}!\n"
         f"🚚 Siz delivery agent sifatida kirdingiz.\n\n"
-        f"📦 Tovar berish — bugungi marshrutingiz\n"
-        f"🗺 Mening marshrutim — haftalik reja",
+        f"🗺 BOSHLASH — bugungi marshrut (Mini App)\n"
+        f"📦 Tovar berish | 💰 Pul olish\n"
+        f"📊 Statistikam — kunlik natijalar",
         reply_markup=main_kb("delivery"))
     send_field_btn(uid)
     # Notify admins
@@ -1373,6 +1377,48 @@ def dlv_profile(msg):
         f"🚗 Mashina: {r[3] or '—'} | 🔢 {r[4] or '—'}\n"
         f"📍 Hudud: {r[5] or '—'}\n"
         f"🆔 Telegram: {uid}")
+
+@bot.message_handler(func=lambda m:m.text=="📊 Statistikam")
+def dlv_statistikam(msg):
+    """T009/T010: delivery agent uchun bugungi + haftalik qisqa statistika."""
+    uid=msg.from_user.id; user=get_user(uid)
+    if not user or user[3]!="delivery": return
+    dlv=_get_delivery_agent_by_tid(uid)
+    bugun=date.today().isoformat()
+    hafta_boshi=(date.today()-timedelta(days=6)).isoformat()
+    conn=get_db();c=conn.cursor()
+    c.execute("SELECT COUNT(*),COALESCE(SUM(jami_summa),0) FROM savdolar WHERE agent_id=%s AND substr(created_at,1,10)=%s",(uid,bugun))
+    s_cnt,s_sum=c.fetchone()
+    c.execute("SELECT COUNT(*) FROM olmagan_dokonlar WHERE agent_id=%s AND substr(created_at,1,10)=%s",(uid,bugun))
+    o_cnt=c.fetchone()[0]
+    c.execute("SELECT COALESCE(SUM(summa),0) FROM pul_olish WHERE agent_id=%s AND substr(created_at,1,10)=%s",(uid,bugun))
+    pul=c.fetchone()[0]
+    c.execute("SELECT COALESCE(SUM(qoldiq),0) FROM nasiya WHERE agent_id=%s AND qoldiq>0",(uid,))
+    nasiya=c.fetchone()[0]
+    c.execute("SELECT COUNT(*),COALESCE(SUM(jami_summa),0) FROM savdolar WHERE agent_id=%s AND substr(created_at,1,10)>=%s",(uid,hafta_boshi))
+    h_cnt,h_sum=c.fetchone()
+    jami_route=0
+    kun=_today_kun()
+    if dlv and kun:
+        c.execute("""SELECT COUNT(*) FROM delivery_routes r JOIN dokonlar d ON d.id=r.dokon_id
+                     WHERE r.delivery_agent_id=%s AND r.kun=%s AND d.holat='faol'""",(dlv[0],kun))
+        jami_route=c.fetchone()[0]
+    conn.close()
+    tashrif=s_cnt+o_cnt
+    conv=round(s_cnt*100/tashrif) if tashrif else 0
+    prog=f"{tashrif}/{jami_route}" if jami_route else str(tashrif)
+    text=(f"📊 MENING STATISTIKAM\n{'━'*26}\n"
+          f"🗓 Bugun ({bugun}):\n"
+          f"  ✅ Tashriflar: {prog}\n"
+          f"  📦 Savdolar: {s_cnt} ta — {fmt(s_sum)}\n"
+          f"  ❌ Olmadi: {o_cnt} ta\n"
+          f"  🎯 Konversiya: {conv}%\n"
+          f"  💰 Yig'ilgan pul: {fmt(pul)}\n\n"
+          f"🔴 Ochiq nasiya: {fmt(nasiya)}\n\n"
+          f"📅 Hafta (oxirgi 7 kun):\n"
+          f"  📦 {h_cnt} ta savdo — {fmt(h_sum)}\n\n"
+          f"💡 To'liq statistika Mini App'da: 🗺 BOSHLASH → 📊")
+    bot.send_message(uid,text)
 
 # ───── DELIVERY: ➕ Yangi do'kon (full create flow → auto-add to today's route) ─────
 @bot.message_handler(func=lambda m:m.text and m.text.startswith("➕ Yangi do'kon qo'shish"))
@@ -2379,7 +2425,19 @@ def pul_olish(msg):
     if not user: return
     if check_pending(uid): return
     conn=get_db();c=conn.cursor()
-    if is_admin(uid):
+    if user[3]=="delivery":
+        # Delivery agent: bugungi marshrut dokonlaridan pul olish
+        dlv=_get_delivery_agent_by_tid(uid)
+        if not dlv:
+            conn.close(); bot.send_message(uid,"❗ Bog'lanish topilmadi."); return
+        kun=_today_kun()
+        if not kun:
+            conn.close(); bot.send_message(uid,"😴 Bugun Juma — dam olish kuni. Marshrut yo'q."); return
+        c.execute("""SELECT d.id,d.nomi FROM delivery_routes r
+                     JOIN dokonlar d ON d.id=r.dokon_id
+                     WHERE r.delivery_agent_id=%s AND r.kun=%s AND d.holat='faol'
+                     ORDER BY r.tartib""",(dlv[0],kun))
+    elif is_admin(uid):
         c.execute("SELECT id,nomi FROM dokonlar WHERE holat='faol' ORDER BY nomi")
     else:
         c.execute("SELECT id,nomi FROM dokonlar WHERE agent_id=%s AND holat='faol' ORDER BY nomi",(uid,))
@@ -4113,8 +4171,9 @@ def send_morning_routes():
         text+="\n\n🚀 \"Marshrutni boshlash\" tugmasini bosib joylashuvingizni yuboring."
         kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=2)
         kb.add("🚀 Marshrutni boshlash")
-        kb.add("📦 Tovar berish","❌ Tovar olmadi")
-        kb.add("🗺 Mening marshrutim","👤 Profil")
+        kb.add("📦 Tovar berish","💰 Pul olish")
+        kb.add("❌ Tovar olmadi","📋 Qaytib kirish kerak")
+        kb.add("📊 Statistikam","👤 Profil")
         try:
             bot.send_message(tid,text,reply_markup=kb,disable_web_page_preview=True); sent+=1
             send_field_btn(tid)

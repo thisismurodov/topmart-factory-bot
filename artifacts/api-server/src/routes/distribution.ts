@@ -881,6 +881,81 @@ router.get("/distribution/routes", async (req, res): Promise<void> => {
   });
 });
 
+// ── Haftalik marshrut xaritasi (Marshrut tab) ──────────────────────────────────
+// Bir agentning (yoki hammasining) butun haftalik marshrutlari — har kun alohida
+// chiziq sifatida chiziladi. Marshrutga kirmagan do'konlar ham qaytariladi,
+// shunda "qolib ketgan" do'konlarni xaritada osongina ko'rish mumkin.
+router.get("/distribution/route-map", async (req, res): Promise<void> => {
+  const agentParam = typeof req.query.agentId === "string" ? Number(req.query.agentId) : NaN;
+  const agentId = Number.isInteger(agentParam) && agentParam > 0 ? agentParam : null;
+
+  const agentsQ = pool.query(
+    `SELECT DISTINCT da.id, da.name, da.mashina_nomeri
+       FROM distribution.delivery_routes r
+       JOIN distribution.delivery_agents da ON da.id = r.delivery_agent_id
+      WHERE da.faol = 1
+      ORDER BY da.name`
+  );
+
+  const stopsQ = pool.query(
+    `SELECT r.kun, r.tartib, da.id AS agent_id, da.name AS agent_name,
+            d.id AS dokon_id, d.nomi, d.hudud, d.latitude, d.longitude
+       FROM distribution.delivery_routes r
+       JOIN distribution.delivery_agents da ON da.id = r.delivery_agent_id
+       JOIN distribution.dokonlar d ON d.id = r.dokon_id
+      WHERE da.faol = 1 AND ($1::int IS NULL OR da.id = $1)
+      ORDER BY r.kun, r.tartib`,
+    [agentId]
+  );
+
+  // Hech qanday marshrutga kiritilmagan do'konlar (barcha agentlar bo'yicha).
+  // Nofaol do'konlar chiqarilmaydi — ular marshrutga baribir qo'shilmaydi.
+  const unassignedQ = pool.query(
+    `SELECT d.id, d.nomi, d.viloyat, d.hudud, d.holat, d.latitude, d.longitude
+       FROM distribution.dokonlar d
+      WHERE (d.holat IS NULL OR d.holat <> 'nofaol')
+        AND NOT EXISTS (SELECT 1 FROM distribution.delivery_routes r
+                          JOIN distribution.delivery_agents da ON da.id = r.delivery_agent_id AND da.faol = 1
+                         WHERE r.dokon_id = d.id)
+      ORDER BY d.nomi`
+  );
+
+  const [agents, stops, unassigned] = await Promise.all([agentsQ, stopsQ, unassignedQ]);
+
+  const withCoord = stops.rows.filter((r) => r.latitude != null && r.longitude != null);
+  const noCoord = stops.rows.filter((r) => r.latitude == null || r.longitude == null);
+  const unWith = unassigned.rows.filter((r) => r.latitude != null && r.longitude != null);
+  const unNo = unassigned.rows.filter((r) => r.latitude == null || r.longitude == null);
+
+  res.json({
+    kunlar: KUNLAR,
+    agentId,
+    agents: agents.rows.map((a) => ({ id: a.id, name: a.name, mashinaNomeri: a.mashina_nomeri })),
+    stops: withCoord.map((r) => ({
+      kun: r.kun,
+      tartib: r.tartib,
+      agentId: r.agent_id,
+      agentName: r.agent_name,
+      dokonId: r.dokon_id,
+      nomi: r.nomi,
+      hudud: r.hudud,
+      lat: Number(r.latitude),
+      lng: Number(r.longitude),
+    })),
+    noCoord: noCoord.map((r) => ({ kun: r.kun, dokonId: r.dokon_id, nomi: r.nomi, hudud: r.hudud })),
+    unassigned: unWith.map((r) => ({
+      id: r.id,
+      nomi: r.nomi,
+      viloyat: r.viloyat,
+      hudud: r.hudud,
+      holat: r.holat,
+      lat: Number(r.latitude),
+      lng: Number(r.longitude),
+    })),
+    unassignedNoCoord: unNo.map((r) => ({ id: r.id, nomi: r.nomi, viloyat: r.viloyat, hudud: r.hudud, holat: r.holat })),
+  });
+});
+
 // ── Xarita (Leaflet tab) ────────────────────────────────────────────────────────
 // Tanlangan sana bo'yicha do'kon markerlari holati:
 //   sold    — shu kuni savdo bo'lgan (yashil)

@@ -16,6 +16,7 @@ import {
   MapPin, Phone, Search, X, Route as RouteIcon, CheckCircle2, XCircle, Truck, User,
 } from "lucide-react";
 import MapTab, { GeoNavLinks, sababLabel } from "@/components/distribution/MapTab";
+import RouteWeekMap from "@/components/distribution/RouteWeekMap";
 import AnalyticsTab from "@/components/distribution/AnalyticsTab";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────────
@@ -914,6 +915,9 @@ function RoutesTab({ f, update, active, onShop }: { f: Filters; update: (p: Part
 
   return (
     <div className="p-4 space-y-4">
+      {/* Haftalik marshrut xaritasi — har kun o'z rangida, marshrutsiz do'konlar kulrang */}
+      <RouteWeekMap active={active} onShop={onShop} />
+
       <div className="flex flex-wrap gap-2">
         {(data?.kunlar ?? ["dushanba", "seshanba", "chorshanba", "payshanba", "juma", "shanba", "yakshanba"]).map((k, i) => (
           <Button

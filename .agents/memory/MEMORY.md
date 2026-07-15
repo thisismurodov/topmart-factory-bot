@@ -30,4 +30,5 @@
 - [Distribution olmagan sabab semantics](distribution-sabab-semantics.md) — sabab (enum code) is canonical, sabab_text nullable; classify no-sale visits by row existence, never sabab_text IS NOT NULL.
 - [Constraint drift comparison](constraint-drift-comparison.md) — diff CHECK/UNIQUE by materializing both sides into throwaway DBs and comparing pg catalogs; never string-compare source DDL.
 - [Distribution free-text date quirks](distribution-date-text-quirks.md) — qaytish_sanasi is mixed-format TEXT (regexp-parse, never ::date); avg_repeat_days all zeros → overdue logic needs fallback; centroids can be null.
+- [Distribution route planner design](route-planner-design.md) — filter >60km-from-median GPS outliers BEFORE clustering (badCoord[]); 6-day cap means ~168 shops/region max at 22–28/day.
 - [Distribution data restore paths](distribution-data-restore.md) — bot agent-delete cascades wipe shops/sales; recover from attached_assets/topmart_*.db SQLite snapshots; role='blok' shows name without access.

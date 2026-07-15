@@ -357,3 +357,35 @@
   border: 3px solid rgba(255, 255, 255, 0.85);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
 }
+
+/* Marker hover — kursor ostida biroz kattarish */
+.tm-marker {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.tm-marker:hover {
+  transform: scale(1.18);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.5);
+}
+
+/* Jonli agent markeri — setLatLng silliq siljiydi */
+.leaflet-marker-icon.tm-live-marker {
+  transition: transform 1.4s linear;
+}
+
+/* LIVE indikator nuqtasi — pulsatsiya */
+.tm-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: #10b981;
+  animation: tm-live-pulse 1.6s ease-in-out infinite;
+}
+@keyframes tm-live-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5); }
+  50% { box-shadow: 0 0 0 5px rgba(16, 185, 129, 0); }
+}
+
+/* Marker gradient — yuqori chapdan yumshoq yorug'lik (premium ko'rinish) */
+.tm-marker {
+  background-image: linear-gradient(145deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0) 45%, rgba(0, 0, 0, 0.15));
+}

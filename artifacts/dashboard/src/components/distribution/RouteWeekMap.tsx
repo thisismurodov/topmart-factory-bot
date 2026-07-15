@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { esc } from "@/components/distribution/MapTab";
+import RoutePlanDialog from "@/components/distribution/RoutePlanDialog";
 
 // ── Turlar ──────────────────────────────────────────────────────────────────────
 type WeekStop = {
@@ -29,14 +30,25 @@ type UnassignedShop = {
   lat: number;
   lng: number;
 };
+type RouteStat = {
+  kun: number;
+  agentId: number;
+  agentName: string | null;
+  shopCount: number;
+  totalKm: number;
+  driveMinutes: number;
+  score: number;
+};
 type RouteMapData = {
   kunlar: string[];
   agentId: number | null;
   agents: { id: number; name: string | null; mashinaNomeri: string | null }[];
+  allAgents: { id: number; name: string | null; mashinaNomeri: string | null }[];
   stops: WeekStop[];
   noCoord: { kun: number; dokonId: number; nomi: string | null; hudud: string | null }[];
   unassigned: UnassignedShop[];
   unassignedNoCoord: { id: number; nomi: string | null; viloyat: string | null; hudud: string | null; holat: string | null }[];
+  routeStats: RouteStat[];
 };
 
 // Har hafta kuni uchun o'z rangi (juma=5 — dam kuni, kulrang)
@@ -50,6 +62,13 @@ const KUN_COLORS: Record<number, string> = {
   7: "#0d9488", // yakshanba — feruza
 };
 const UNASSIGNED_COLOR = "#94a3b8";
+
+// Daqiqani "2s 15d" ko'rinishiga keltiradi
+function fmtMin(min: number): string {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return h > 0 ? `${h}s ${m}d` : `${m}d`;
+}
 
 function stopIcon(n: number, color: string): L.DivIcon {
   return L.divIcon({
@@ -95,6 +114,21 @@ export default function RouteWeekMap({ active, onShop }: { active: boolean; onSh
   const kunStats = useMemo(() => {
     const m = new Map<number, number>();
     for (const s of data?.stops ?? []) m.set(s.kun, (m.get(s.kun) ?? 0) + 1);
+    return m;
+  }, [data]);
+
+  // Har kun uchun jamlangan statistika (bir nechta agent bo'lsa qiymatlar qo'shiladi,
+  // ball — o'rtacha olinadi)
+  const kunRouteStats = useMemo(() => {
+    const m = new Map<number, { km: number; min: number; scoreSum: number; n: number }>();
+    for (const rs of data?.routeStats ?? []) {
+      const cur = m.get(rs.kun) ?? { km: 0, min: 0, scoreSum: 0, n: 0 };
+      cur.km += rs.totalKm;
+      cur.min += rs.driveMinutes;
+      cur.scoreSum += rs.score;
+      cur.n += 1;
+      m.set(rs.kun, cur);
+    }
     return m;
   }, [data]);
 
@@ -194,25 +228,28 @@ export default function RouteWeekMap({ active, onShop }: { active: boolean; onSh
 
   return (
     <div className="space-y-2">
-      {/* Agent tanlovi */}
-      {data && data.agents.length > 1 && (
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" variant={agentSel === "" ? "default" : "outline"} className="h-7 text-xs" onClick={() => setAgentSel("")}>
-            Hammasi
-          </Button>
-          {data.agents.map((a) => (
-            <Button
-              key={a.id}
-              size="sm"
-              variant={agentSel === String(a.id) ? "default" : "outline"}
-              className="h-7 text-xs"
-              onClick={() => setAgentSel(String(a.id))}
-            >
-              🚚 {a.name || "Agent"}
+      {/* Agent tanlovi + AI marshrut tuzish */}
+      <div className="flex flex-wrap items-center gap-2">
+        {data && data.agents.length > 1 && (
+          <>
+            <Button size="sm" variant={agentSel === "" ? "default" : "outline"} className="h-7 text-xs" onClick={() => setAgentSel("")}>
+              Hammasi
             </Button>
-          ))}
-        </div>
-      )}
+            {data.agents.map((a) => (
+              <Button
+                key={a.id}
+                size="sm"
+                variant={agentSel === String(a.id) ? "default" : "outline"}
+                className="h-7 text-xs"
+                onClick={() => setAgentSel(String(a.id))}
+              >
+                🚚 {a.name || "Agent"}
+              </Button>
+            ))}
+          </>
+        )}
+        <div className="ml-auto">{data && <RoutePlanDialog agents={data.allAgents} />}</div>
+      </div>
 
       {/* Kunlar legendasi — bosib yoqish/o'chirish mumkin */}
       {data && (
@@ -222,6 +259,7 @@ export default function RouteWeekMap({ active, onShop }: { active: boolean; onSh
             const count = kunStats.get(kun) ?? 0;
             if (count === 0) return null;
             const off = hiddenKuns.has(kun);
+            const st = kunRouteStats.get(kun);
             return (
               <button
                 key={kun}
@@ -231,6 +269,11 @@ export default function RouteWeekMap({ active, onShop }: { active: boolean; onSh
               >
                 <span className="inline-block w-4 h-1 rounded" style={{ background: KUN_COLORS[kun] }} />
                 {nomi} · {count}
+                {st && (
+                  <span className="font-normal opacity-80 normal-case">
+                    · {Math.round(st.km)} km · ~{fmtMin(st.min)} · ⭐{Math.round(st.scoreSum / st.n)}
+                  </span>
+                )}
               </button>
             );
           })}

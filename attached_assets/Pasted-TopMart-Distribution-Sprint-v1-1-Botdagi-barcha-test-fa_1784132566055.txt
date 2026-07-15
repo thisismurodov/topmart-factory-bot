@@ -1,0 +1,129 @@
+TopMart Distribution Sprint v1.1
+Botdagi barcha test (fake) do'konlar o'chirildi. Endi tizim faqat haqiqiy do'konlar bilan ishlaydi.
+Yangi test agent yaratildi:
+Navruzbek Test
+U Route Planning algoritmini tekshirish uchun ishlatiladi.
+TASK 1 — Namangan Route Planning (AI)
+Objective
+Namangan viloyatidagi barcha haqiqiy do'konlarni AI yordamida optimal marshrutlarga ajrat.
+Rules
+Faqat Namangan viloyati do'konlarini ishlat.
+GPS koordinatalari asosida klasterlash.
+Har bir marshrut taxminan 25 ta do'kon (22–28 oralig'i mumkin).
+Traveling Salesman / Nearest Neighbor asosida tashrif tartibini optimallashtir.
+Bir mahalla yoki yaqin ko'chadagi do'konlar ajralmasin.
+Zig-zag va ortga qaytishlar maksimal kamaytirilsin.
+Har bir do'kon faqat bitta marshrutga biriktirilsin.
+Marshrutlar hafta kunlariga avtomatik taqsimlansin.
+Marshrutlar Dashboard va Mini App'da bir xil ko'rinsin.
+Har bir marshrut uchun hisobla:
+Do'konlar soni
+Umumiy kilometr
+Taxminiy haydash vaqti
+Boshlanish nuqtasi
+Tugash nuqtasi
+AI Route Score
+Mini App'da:
+Keyingi do'kon
+Progress
+Google Maps
+Waze
+Apple Maps
+Yandex
+hammasi ishlashi kerak.
+Validation:
+Duplicate do'kon yo'q.
+Marshrutsiz do'kon qolmagan.
+Route order GPS bo'yicha to'g'ri.
+Dashboard va Mini App bir xil ma'lumot ko'rsatmoqda.
+TASK 2 — Distribution Map v2 Polish
+Maqsad: xaritani premium darajaga olib chiqish.
+Markerlar
+Markerlarni professional qilib yangila.
+Statuslar:
+🟢 Savdo qilindi
+🔴 Olmadi
+🔵 Kirildi, savdo yo'q
+🟡 Marshrutda
+⚪ Faoliyat yo'q
+🟣 Keyingi do'kon
+Markerlar:
+yumshoq shadow
+gradient
+hover animation
+zoom animation
+retina display support
+Route
+Polyline'larni yaxshila.
+Bosib o'tilgan yo'l:
+🟢 qalin yashil
+Hozirgi yo'l:
+🔵 yorqin ko'k
+Keyingi yo'l:
+🟣 binafsha
+Rejalashtirilgan:
+⚪ kulrang punktir
+Animatsiya silliq bo'lsin.
+Cluster
+Cluster'lar professional ko'rinsin.
+rang statusga moslashsin
+zoom paytida silliq ajralsin
+marker overlap qilmasin
+katta dataset (18 000+) uchun optimallashtirilsin
+Agent
+Agent mashinasi:
+🚚
+Blue halo
+Pulse animation
+LIVE belgisi
+GPS yangilanganda silliq harakatlansin
+Shop Drawer
+Drawer'ni premium qil.
+Ko'rsatilsin:
+Do'kon nomi
+Egasi
+Telefon
+Agent
+GPS
+Oxirgi savdo
+Nasiya
+Balans
+Oxirgi tashriflar timeline
+Sabablar tarixi
+Google
+Apple
+Yandex
+Waze
+Map UX
+Qo'shilsin:
+Fullscreen
+Auto Fit Bounds
+Legend collapse
+Zoom Home
+Current Agent tugmasi
+Bugungi marshrutga qaytish tugmasi
+Performance
+18 000+ do'kon uchun tayyor bo'lsin.
+Talablar:
+Lazy loading
+Marker virtualization
+Efficient clustering
+Memoization
+Minimal redraw
+Console error 0 ta
+Acceptance
+Yakunida quyidagilarni tekshir:
+Typecheck ✅
+Build ✅
+Dashboard Map ✅
+Mini App Map ✅
+Route Planner ✅
+Performance ✅
+Responsive ✅
+Final Goal
+Bu sprint yakunida TopMart Distribution tizimi:
+AI asosida marshrut tuzadigan,
+real vaqt xaritasida agentlarni kuzatadigan,
+18 000+ do'konni boshqarishga tayyor,
+professional operatsion boshqaruv paneli
+darajasiga chiqishi kerak. Barcha yangi funksiyalar mavjud ERP arxitekturasiga mos yozilsin, eski ishlayotgan funksiyalar buzilmasin va kod ishlab chiqarish (production) sifati darajasida bo'lsin.

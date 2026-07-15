@@ -1,5 +1,6 @@
 import { Router, type IRouter, type Request } from "express";
 import { pool } from "@workspace/db";
+import { planRoutes, computeRouteStats, splitOutliers, type PlanShop } from "../lib/routePlanner";
 
 // Distribyutsiya moduli o'zining `distribution` sxemasida yashaydi (o'zbekcha jadval
 // nomlari — savdolar, dokonlar, nasiya ...). Bu yerdagi barcha endpointlar faqat
@@ -897,6 +898,13 @@ router.get("/distribution/route-map", async (req, res): Promise<void> => {
       ORDER BY da.name`
   );
 
+  // Barcha faol yetkazib beruvchi agentlar (marshruti yo'qlari ham) —
+  // AI marshrut rejalashtirish dialogi uchun kerak
+  const allAgentsQ = pool.query(
+    `SELECT id, name, mashina_nomeri FROM distribution.delivery_agents
+      WHERE faol = 1 ORDER BY name`
+  );
+
   const stopsQ = pool.query(
     `SELECT r.kun, r.tartib, da.id AS agent_id, da.name AS agent_name,
             d.id AS dokon_id, d.nomi, d.hudud, d.latitude, d.longitude
@@ -920,17 +928,36 @@ router.get("/distribution/route-map", async (req, res): Promise<void> => {
       ORDER BY d.nomi`
   );
 
-  const [agents, stops, unassigned] = await Promise.all([agentsQ, stopsQ, unassignedQ]);
+  const [agents, allAgents, stops, unassigned] = await Promise.all([agentsQ, allAgentsQ, stopsQ, unassignedQ]);
 
   const withCoord = stops.rows.filter((r) => r.latitude != null && r.longitude != null);
   const noCoord = stops.rows.filter((r) => r.latitude == null || r.longitude == null);
   const unWith = unassigned.rows.filter((r) => r.latitude != null && r.longitude != null);
   const unNo = unassigned.rows.filter((r) => r.latitude == null || r.longitude == null);
 
+  // Har (kun, agent) juftligi uchun statistika: km, vaqt, boshlanish/tugash, AI ball
+  const statGroups = new Map<string, { kun: number; agentId: number; agentName: string; pts: { lat: number; lng: number; nomi: string | null }[] }>();
+  for (const r of withCoord) {
+    const key = `${r.kun}|${r.agent_id}`;
+    let g = statGroups.get(key);
+    if (!g) {
+      g = { kun: r.kun as number, agentId: r.agent_id as number, agentName: r.agent_name as string, pts: [] };
+      statGroups.set(key, g);
+    }
+    g.pts.push({ lat: Number(r.latitude), lng: Number(r.longitude), nomi: r.nomi as string | null });
+  }
+  const routeStats = [...statGroups.values()].map((g) => ({
+    kun: g.kun,
+    agentId: g.agentId,
+    agentName: g.agentName,
+    ...computeRouteStats(g.pts),
+  }));
+
   res.json({
     kunlar: KUNLAR,
     agentId,
     agents: agents.rows.map((a) => ({ id: a.id, name: a.name, mashinaNomeri: a.mashina_nomeri })),
+    allAgents: allAgents.rows.map((a) => ({ id: a.id, name: a.name, mashinaNomeri: a.mashina_nomeri })),
     stops: withCoord.map((r) => ({
       kun: r.kun,
       tartib: r.tartib,
@@ -953,6 +980,138 @@ router.get("/distribution/route-map", async (req, res): Promise<void> => {
       lng: Number(r.longitude),
     })),
     unassignedNoCoord: unNo.map((r) => ({ id: r.id, nomi: r.nomi, viloyat: r.viloyat, hudud: r.hudud, holat: r.holat })),
+    routeStats,
+  });
+});
+
+// ── AI marshrut rejalashtirish ──────────────────────────────────────────────────
+// Tanlangan viloyatdagi barcha faol (koordinatali) do'konlarni deterministik
+// geo-algoritm bilan optimal kunlik marshrutlarga bo'ladi (balanslangan k-means
+// klasterlash + nearest-neighbor + 2-opt). save=true bo'lsa natija delivery_routes jadvaliga
+// yoziladi (agentning eski marshrutlari O'CHIRILADI — shuning uchun mavjud
+// marshruti bor agentga replace=true talab qilinadi).
+router.post("/distribution/route-plan", async (req, res): Promise<void> => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const viloyat = typeof body.viloyat === "string" ? body.viloyat.trim() : "";
+  const agentId = Number(body.agentId);
+  const save = body.save === true;
+  const replace = body.replace === true;
+
+  if (!viloyat) {
+    res.status(400).json({ error: "viloyat majburiy" });
+    return;
+  }
+  if (!Number.isInteger(agentId) || agentId <= 0) {
+    res.status(400).json({ error: "agentId noto'g'ri" });
+    return;
+  }
+
+  const agentQ = await pool.query(
+    `SELECT id, name, faol FROM distribution.delivery_agents WHERE id = $1`,
+    [agentId]
+  );
+  if (agentQ.rows.length === 0) {
+    res.status(404).json({ error: "Agent topilmadi" });
+    return;
+  }
+  if (Number(agentQ.rows[0].faol) !== 1) {
+    res.status(400).json({ error: "Agent nofaol — marshrut biriktirib bo'lmaydi" });
+    return;
+  }
+
+  const existingQ = await pool.query(
+    `SELECT count(*)::int AS c FROM distribution.delivery_routes WHERE delivery_agent_id = $1`,
+    [agentId]
+  );
+  const existing = existingQ.rows[0].c as number;
+
+  const shopsQ = await pool.query(
+    `SELECT d.id, d.nomi, d.hudud, d.latitude, d.longitude
+       FROM distribution.dokonlar d
+      WHERE d.viloyat = $1 AND (d.holat IS NULL OR d.holat <> 'nofaol')
+      ORDER BY d.id`,
+    [viloyat]
+  );
+  const shops: PlanShop[] = shopsQ.rows
+    .filter((r) => r.latitude != null && r.longitude != null)
+    .map((r) => ({
+      id: Number(r.id),
+      nomi: r.nomi as string | null,
+      hudud: r.hudud as string | null,
+      lat: Number(r.latitude),
+      lng: Number(r.longitude),
+    }));
+  const skippedNoCoord = shopsQ.rows
+    .filter((r) => r.latitude == null || r.longitude == null)
+    .map((r) => ({ id: Number(r.id), nomi: r.nomi as string | null }));
+
+  if (shops.length === 0) {
+    res.status(400).json({ error: `${viloyat} viloyatida koordinatali faol do'kon topilmadi` });
+    return;
+  }
+
+  // GPS xatosi bo'lgan do'konlar (mintaqa medianidan 60+ km) rejaga kirmaydi —
+  // ular alohida qaytariladi, koordinatasini to'g'rilash kerak
+  const { inliers, outliers } = splitOutliers(shops);
+  const plan = planRoutes(inliers);
+
+  let saved = false;
+  if (save) {
+    if (existing > 0 && !replace) {
+      res.status(409).json({
+        error: `Agentda ${existing} ta mavjud marshrut nuqtasi bor. Almashtirish uchun replace=true yuboring.`,
+        existing,
+      });
+      return;
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(`DELETE FROM distribution.delivery_routes WHERE delivery_agent_id = $1`, [agentId]);
+      const nowIso = new Date().toLocaleString("sv-SE", { timeZone: "Asia/Tashkent" }).replace(" ", "T");
+      for (const r of plan.routes) {
+        for (const st of r.stops) {
+          await client.query(
+            `INSERT INTO distribution.delivery_routes (delivery_agent_id, kun, dokon_id, tartib, created_at, added_by_dlv)
+             VALUES ($1, $2, $3, $4, $5, 0)`,
+            [agentId, r.kun, st.id, st.tartib, nowIso]
+          );
+        }
+      }
+      await client.query("COMMIT");
+      saved = true;
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  res.json({
+    viloyat,
+    agentId,
+    agentName: agentQ.rows[0].name,
+    saved,
+    existing,
+    totalShops: plan.totalShops,
+    totalKm: plan.totalKm,
+    avgScore: plan.avgScore,
+    skippedNoCoord,
+    badCoord: outliers.map((o) => ({ id: o.id, nomi: o.nomi, hudud: o.hudud, lat: o.lat, lng: o.lng })),
+    routes: plan.routes.map((r) => ({
+      kun: r.kun,
+      stats: r.stats,
+      stops: r.stops.map((st) => ({
+        dokonId: st.id,
+        nomi: st.nomi,
+        hudud: st.hudud,
+        tartib: st.tartib,
+        lat: st.lat,
+        lng: st.lng,
+      })),
+    })),
   });
 });
 

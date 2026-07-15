@@ -1123,16 +1123,20 @@ def main_kb(role):
     kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=2)
     if role=="delivery":
         # T009: toza menyu — asosiy ish Mini App'da, bot zaxira/tezkor amallar
+        # MUHIM: reply-keyboard'da web_app tugma ISHLATILMAYDI — Telegram Web
+        # va ba'zan iOS bu turdan ochilganda initData bermaydi (401 gate).
+        # Oddiy tugma bosilganda bot inline BOSHLASH tugmasini yuboradi.
         if FIELD_APP_URL:
-            kb.add(types.KeyboardButton("🗺 BOSHLASH",web_app=types.WebAppInfo(FIELD_APP_URL)))
+            kb.add("🗺 BOSHLASH")
         kb.add("📦 Tovar berish","💰 Pul olish")
         kb.add("❌ Tovar olmadi","📋 Qaytib kirish kerak")
         kb.add("📊 Statistikam","👤 Profil")
         kb.add("🗺 Mening marshrutim")
         return kb
     if role in("agent","supervisor") and FIELD_APP_URL:
-        # Mini App agent/supervisorlar uchun ham (delivery'dan tashqari)
-        kb.add(types.KeyboardButton("🗺 BOSHLASH",web_app=types.WebAppInfo(FIELD_APP_URL)))
+        # Mini App agent/supervisorlar uchun ham (delivery'dan tashqari).
+        # Oddiy tugma — sababi yuqoridagi delivery izohida (initData muammosi).
+        kb.add("🗺 BOSHLASH")
     if role in("agent","supervisor","admin"):
         kb.add("🏪 Yangi dokon","📦 Tovar berish")
         kb.add("💰 Pul olish","❌ Tovar olmadi")
@@ -1313,6 +1317,15 @@ def dlv_link_phone(msg):
     for aid in all_admin_ids():
         try: bot.send_message(aid,f"🔗 Delivery agent ulandi:\n👤 {name}\n📞 {tel}\n🆔 {uid}")
         except: pass
+
+@bot.message_handler(func=lambda m:m.text=="🗺 BOSHLASH")
+def field_start_btn(msg):
+    """Pastki klaviaturadagi BOSHLASH — inline web_app tugmasini yuboradi.
+    (Reply-keyboard web_app tugmasi Telegram Web/iOS'da initData bermasligi
+    mumkin, shu sabab ochish faqat inline tugma orqali.)"""
+    uid=msg.from_user.id; user=get_user(uid)
+    if not user or user[3] not in("delivery","agent","supervisor"): return
+    send_field_btn(uid)
 
 @bot.message_handler(func=lambda m:m.text=="🗺 Mening marshrutim")
 def dlv_my_route(msg):

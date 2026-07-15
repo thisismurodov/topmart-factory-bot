@@ -3,7 +3,12 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import pg from "pg";
-import { performFieldPayment, computeShopRating, daysSinceIso } from "../src/routes/field";
+import {
+  performFieldPayment,
+  computeShopRating,
+  daysSinceIso,
+  dokonInAgentScope,
+} from "../src/routes/field";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Field Assistant PUL OLISH (payment) PARITY testi.
@@ -286,6 +291,65 @@ describe("Oddiy pul olish (nasiyaga hisoblanmaydi) va idempotentlik", () => {
   it("mavjud bo'lmagan do'kon → not_found", async () => {
     const r = await apiPayment("payment-op-missing-1", 99999999, 1000);
     expect(r.kind).toBe("not_found");
+  });
+});
+
+describe("dokonInAgentScope — IDOR himoyasi (begona do'kon rad etiladi)", () => {
+  const FOREIGN_TG = 555000111; // boshqa agent telegram id
+  let dlvAgentId = 0; // AGENT_TG uchun delivery_agents.id
+  let foreignDokon = 0; // begona do'kon (routes/nasiya/savdo yo'q)
+  let routeDokon = 0; // faqat marshrut orqali doiraga kiruvchi do'kon
+
+  beforeAll(async () => {
+    const da = await client.query(
+      `INSERT INTO delivery_agents (name, telegram_id, faol, created_at)
+       VALUES ('Scope Test DLV', $1, 1, '2026-01-01T09:00:00') RETURNING id`,
+      [AGENT_TG],
+    );
+    dlvAgentId = Number(da.rows[0].id);
+
+    const fd = await client.query(
+      `INSERT INTO dokonlar (nomi, egasi, telefon, viloyat, hudud, agent_id, holat, created_at)
+       VALUES ('FOREIGN DOKON', 'Begona', '', 'Namangan', 'Boshqa tuman', $1, 'faol', '2026-01-01T09:00:00') RETURNING id`,
+      [FOREIGN_TG],
+    );
+    foreignDokon = Number(fd.rows[0].id);
+
+    const rd = await client.query(
+      `INSERT INTO dokonlar (nomi, egasi, telefon, viloyat, hudud, agent_id, holat, created_at)
+       VALUES ('ROUTE-ONLY DOKON', 'Begona', '', 'Namangan', 'Boshqa tuman', $1, 'faol', '2026-01-01T09:00:00') RETURNING id`,
+      [FOREIGN_TG],
+    );
+    routeDokon = Number(rd.rows[0].id);
+    await client.query(
+      `INSERT INTO delivery_routes (delivery_agent_id, kun, dokon_id, tartib, created_at)
+       VALUES ($1, 1, $2, 1, '2026-01-01T09:00:00')`,
+      [dlvAgentId, routeDokon],
+    );
+  }, 60_000);
+
+  it("o'z do'koni (nasiya/savdo tarixi yoki egalik) → ruxsat", async () => {
+    expect(
+      await dokonInAgentScope(testPool, { id: dlvAgentId, telegramId: AGENT_TG }, dokonB),
+    ).toBe(true);
+  });
+
+  it("marshrutdagi do'kon (boshqa egalik bo'lsa ham) → ruxsat", async () => {
+    expect(
+      await dokonInAgentScope(testPool, { id: dlvAgentId, telegramId: AGENT_TG }, routeDokon),
+    ).toBe(true);
+  });
+
+  it("begona do'kon (marshrut/egalik/tarix yo'q) → RAD", async () => {
+    expect(
+      await dokonInAgentScope(testPool, { id: dlvAgentId, telegramId: AGENT_TG }, foreignDokon),
+    ).toBe(false);
+  });
+
+  it("mavjud bo'lmagan do'kon → RAD", async () => {
+    expect(
+      await dokonInAgentScope(testPool, { id: dlvAgentId, telegramId: AGENT_TG }, 99999999),
+    ).toBe(false);
   });
 });
 

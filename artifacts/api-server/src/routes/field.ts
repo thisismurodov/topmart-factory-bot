@@ -65,6 +65,34 @@ function agentOf(req: FieldRequest): FieldAgent {
   return req.fieldAgent!;
 }
 
+// IDOR himoyasi: dokonId agent doirasiga kiradimi?
+// Ruxsat shartlari (kamida bittasi):
+//  1) do'kon agentning haftalik marshrutida (istalgan kun, delivery_agents.id);
+//  2) do'konni shu agent yaratgan (dokonlar.agent_id = telegram id);
+//  3) shu agent bilan savdo yoki nasiya tarixi bor (telegram id).
+// UI faqat bugungi marshrutni ko'rsatadi, lekin bu server tomonda majburiy
+// tekshiruv — to'g'ridan-to'g'ri API chaqiruvi begona do'konga o'tolmaydi.
+export async function dokonInAgentScope(
+  q: Pick<PoolClient, "query">,
+  agent: { id: number; telegramId: number },
+  dokonId: number,
+): Promise<boolean> {
+  const { rows } = await q.query(
+    `SELECT (
+        EXISTS(SELECT 1 FROM distribution.delivery_routes
+                WHERE delivery_agent_id = $1 AND dokon_id = $3)
+     OR EXISTS(SELECT 1 FROM distribution.dokonlar
+                WHERE id = $3 AND agent_id = $2)
+     OR EXISTS(SELECT 1 FROM distribution.nasiya
+                WHERE dokon_id = $3 AND agent_id = $2)
+     OR EXISTS(SELECT 1 FROM distribution.savdolar
+                WHERE dokon_id = $3 AND agent_id = $2)
+     ) AS ok`,
+    [agent.id, agent.telegramId, dokonId],
+  );
+  return rows.length > 0 && rows[0].ok === true;
+}
+
 // Bugungi hafta kuni; dev rejimida ?kun=1..7 override (FIELD_DEV_BYPASS=1 bo'lsa)
 function todayKun(req: Request): number {
   const devBypassEnabled =
@@ -470,6 +498,10 @@ router.post("/field/visits/sale", async (req, res) => {
     res.status(400).json({ error: "Noto'g'ri ma'lumot", details: parsed.error.issues });
     return;
   }
+  if (!(await dokonInAgentScope(pool, agent, parsed.data.dokonId))) {
+    res.status(404).json({ error: "Do'kon topilmadi" });
+    return;
+  }
   const client = await pool.connect();
   try {
     const result = await performFieldSale(client, agent.telegramId, parsed.data);
@@ -549,6 +581,10 @@ router.post("/field/visits/no-sale", async (req, res) => {
   }
   const { clientOpId, dokonId, sabab, sababText, qaytishSanasi, lat, lon } = parsed.data;
 
+  if (!(await dokonInAgentScope(pool, agent, dokonId))) {
+    res.status(404).json({ error: "Do'kon topilmadi" });
+    return;
+  }
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -816,6 +852,10 @@ router.post("/field/visits/payment", async (req, res) => {
     res.status(400).json({ error: "Noto'g'ri ma'lumot", details: parsed.error.issues });
     return;
   }
+  if (!(await dokonInAgentScope(pool, agent, parsed.data.dokonId))) {
+    res.status(404).json({ error: "Do'kon topilmadi" });
+    return;
+  }
   const client = await pool.connect();
   try {
     const result = await performFieldPayment(client, agent.telegramId, parsed.data);
@@ -1072,12 +1112,18 @@ router.get("/field/stats/week", async (req, res) => {
 // ── GET /field/shops/:id — do'kon tafsiloti (bottom sheet uchun) ─────────────
 // Tarix, nasiya balansi, eng ko'p olinadigan mahsulot + qoida asosidagi tavsiya.
 router.get("/field/shops/:id", async (req, res) => {
+  const agent = agentOf(req as FieldRequest);
   const dokonId = Number(req.params.id);
   if (!Number.isInteger(dokonId) || dokonId <= 0) {
     res.status(400).json({ error: "Noto'g'ri do'kon ID" });
     return;
   }
   try {
+    // Begona do'kon ID enumeration'iga qarshi: doiradan tashqarida ham 404
+    if (!(await dokonInAgentScope(pool, agent, dokonId))) {
+      res.status(404).json({ error: "Do'kon topilmadi" });
+      return;
+    }
     const dokonQ = await pool.query(
       `SELECT id, nomi, egasi, telefon, hudud, latitude, longitude,
               total_orders, total_sales, avg_repeat_days, last_order_date, first_order_date

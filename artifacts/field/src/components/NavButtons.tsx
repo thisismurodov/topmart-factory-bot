@@ -1,5 +1,5 @@
-// Bepul navigatsiya deep-linklari — API kaliti talab qilinmaydi.
-// Telegram Mini App ichida tashqi havolalar openLink orqali ochiladi.
+// Yandex Maps navigatsiya — radarlar, kameralar va tezlik chegaralarini ko'rsatadi.
+// Telegram Mini App ichida tashqi havola openLink orqali ochiladi.
 
 type NavButtonsProps = {
   lat: number;
@@ -7,12 +7,9 @@ type NavButtonsProps = {
   dark?: boolean;
 };
 
-const NAV_APPS = (lat: number, lng: number) => [
-  { label: "Google", emoji: "📍", href: `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}` },
-  { label: "Yandex", emoji: "🟡", href: `https://yandex.com/maps/?rtext=~${lat},${lng}&rtt=auto` },
-  { label: "Waze", emoji: "🌍", href: `https://waze.com/ul?ll=${lat},${lng}&navigate=yes` },
-  { label: "Apple", emoji: "🍎", href: `https://maps.apple.com/?daddr=${lat},${lng}` },
-];
+function yandexHref(lat: number, lng: number) {
+  return `https://yandex.com/maps/?rtext=~${lat},${lng}&rtt=auto`;
+}
 
 function openNav(href: string) {
   const tg = window.Telegram?.WebApp;
@@ -25,21 +22,16 @@ function openNav(href: string) {
 
 export default function NavButtons({ lat, lng, dark = false }: NavButtonsProps) {
   const cls = dark
-    ? "border-gray-700 bg-gray-900/80 text-gray-200 active:bg-gray-800"
-    : "border-input bg-background text-foreground active:bg-muted";
+    ? "border-yellow-600/60 bg-gray-900/80 text-yellow-300 active:bg-gray-800"
+    : "border-yellow-400 bg-yellow-50 text-yellow-900 active:bg-yellow-100";
   return (
-    <div className="grid grid-cols-4 gap-2">
-      {NAV_APPS(lat, lng).map((l) => (
-        <button
-          key={l.label}
-          type="button"
-          onClick={() => openNav(l.href)}
-          className={`flex flex-col items-center justify-center gap-0.5 rounded-xl border h-14 ${cls}`}
-        >
-          <span className="text-lg leading-none">{l.emoji}</span>
-          <span className="text-[10px] font-semibold">{l.label}</span>
-        </button>
-      ))}
-    </div>
+    <button
+      type="button"
+      onClick={() => openNav(yandexHref(lat, lng))}
+      className={`flex w-full items-center justify-center gap-2 rounded-xl border h-14 font-semibold ${cls}`}
+    >
+      <span className="text-xl leading-none">🟡</span>
+      <span className="text-sm">Yandex Maps bilan borish</span>
+    </button>
   );
 }

@@ -532,10 +532,10 @@ def _start_route_day_picker(uid, dlv_id, dlv_name):
     kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=2)
     for i,n in DAYS:
         cnt=_route_count(dlv_id,i)
-        kb.add(f"📅 {n} ({cnt}/20)")
+        kb.add(f"📅 {n} ({cnt}/25)")
     # Juma endi dam kuni — lekin eski marshrutlar qolgan bo'lsa, tahrirlash uchun ko'rsatamiz
     jcnt=_route_count(dlv_id,5)
-    if jcnt>0: kb.add(f"📅 Juma ({jcnt}/20) — dam kuni!")
+    if jcnt>0: kb.add(f"📅 Juma ({jcnt}/25) — dam kuni!")
     kb.add("⬅️ Delivery menyu")
     today=datetime.now().isoweekday()  # 1=Mon..7=Sun
     today_name=day_name(today)
@@ -586,7 +586,7 @@ def rt_pick_day(msg):
     uid=msg.from_user.id
     txt=(msg.text or "").strip()
     if not txt.startswith("📅 "): return
-    # Strip "📅 " prefix and " (N/20)" suffix
+    # Strip "📅 " prefix and " (N/25)" suffix
     name=txt[2:].strip()
     if " (" in name: name=name.rsplit(" (",1)[0]
     kun=DAYS_BY_NAME.get(name)
@@ -619,7 +619,7 @@ def _show_route_viloyat_picker(uid, dlv_id, dlv_name, kun):
     kb.add("⬅️ Kunni o'zgartirish")
     bot.send_message(uid,
         f"🚚 {dlv_name} — 📅 {day_name(kun)}\n"
-        f"📦 Qo'shilgan: {cnt}/20 dokon\n\n"
+        f"📦 Qo'shilgan: {cnt}/25 dokon\n\n"
         f"📍 Viloyatni tanlang (dokon qo'shish uchun):",
         reply_markup=kb)
 
@@ -687,7 +687,7 @@ def _show_route_dokon_picker(uid):
     if not available:
         bot.send_message(uid,
             f"❗ Bu hududda yangi qo'shiladigan dokon qolmadi (hammasi marshrutda).\n\n"
-            f"📦 Qo'shilgan: {cnt}/20")
+            f"📦 Qo'shilgan: {cnt}/25")
         set_state(uid,"rt_pick_viloyat",data)
         _show_route_viloyat_picker(uid, dlv_id, data["dlv_name"], kun); return
     kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=1)
@@ -696,7 +696,7 @@ def _show_route_dokon_picker(uid):
     kb.add("⬅️ Hududni o'zgartirish")
     if cnt>0: kb.add("✅ Marshrutni yakunlash")
     bot.send_message(uid,
-        f"📍 {vil} → 🏘 {hud}\n📦 Qo'shilgan: {cnt}/20\n\n"
+        f"📍 {vil} → 🏘 {hud}\n📦 Qo'shilgan: {cnt}/25\n\n"
         f"🏪 Dokonni tanlang (qo'shish uchun):",reply_markup=kb)
 
 @bot.message_handler(func=lambda m:get_state(m.from_user.id)["state"]=="rt_pick_dokon")
@@ -714,8 +714,8 @@ def rt_pick_dokon(msg):
     except: return
     dlv_id=data["dlv_id"]; kun=data["kun"]
     # Check limit
-    if _route_count(dlv_id,kun)>=20:
-        bot.send_message(uid,"❗ 20 ta dokon to'ldi. ✅ Marshrutni yakunlash ni bosing."); return
+    if _route_count(dlv_id,kun)>=25:
+        bot.send_message(uid,"❗ 25 ta dokon to'ldi. ✅ Marshrutni yakunlash ni bosing."); return
     conn=get_db();c=conn.cursor()
     c.execute("SELECT id,nomi,egasi,telefon,hudud,latitude,longitude FROM dokonlar WHERE id=%s",(did,))
     d=c.fetchone()
@@ -731,7 +731,7 @@ def rt_pick_dokon(msg):
     except: pass
     conn.close()
     _,nomi,egasi,tel,hud,lat,lon=d
-    info=(f"✅ {tartib}/20 — {nomi}\n"
+    info=(f"✅ {tartib}/25 — {nomi}\n"
           f"   👤 {egasi or '—'}\n"
           f"   📞 {tel or '—'}\n"
           f"   📍 {hud or '—'}")
@@ -819,7 +819,7 @@ def rt_edit_action(msg):
         kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=2)
         for i,n in DAYS:
             if i==kun: continue
-            kb.add(f"📅 {n} ({_route_count(dlv_id,i)}/20)")
+            kb.add(f"📅 {n} ({_route_count(dlv_id,i)}/25)")
         kb.add("⬅️ Orqaga")
         set_state(uid,"rt_edit_move",data)
         bot.send_message(uid,f"🏪 {data.get('edit_nomi','')}\n\n📅 Qaysi kunga ko'chiramiz?",reply_markup=kb); return
@@ -838,8 +838,8 @@ def rt_edit_move(msg):
     if " (" in name: name=name.rsplit(" (",1)[0]
     target=DAYS_BY_NAME.get(name)
     if not target or target==kun or target==5: return
-    if _route_count(dlv_id,target)>=20:
-        bot.send_message(uid,f"❗ {day_name(target)} to'lgan (20/20). Boshqa kunni tanlang."); return
+    if _route_count(dlv_id,target)>=25:
+        bot.send_message(uid,f"❗ {day_name(target)} to'lgan (25/25). Boshqa kunni tanlang."); return
     if did in _route_dokon_ids(dlv_id,target):
         conn=get_db();c=conn.cursor()
         c.execute("DELETE FROM delivery_routes WHERE delivery_agent_id=%s AND kun=%s AND dokon_id=%s",(dlv_id,kun,did))

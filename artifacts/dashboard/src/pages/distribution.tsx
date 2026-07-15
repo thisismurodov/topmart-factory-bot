@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import {
   Users, Store, ShoppingBag, CreditCard, Banknote, Wallet,
-  MapPin, Phone, Search, X, Route as RouteIcon, CheckCircle2, XCircle, Truck,
+  MapPin, Phone, Search, X, Route as RouteIcon, CheckCircle2, XCircle, Truck, User,
 } from "lucide-react";
 import MapTab, { GeoNavLinks, sababLabel } from "@/components/distribution/MapTab";
 import AnalyticsTab from "@/components/distribution/AnalyticsTab";
@@ -483,12 +483,35 @@ function EmptyRow({ colSpan, text }: { colSpan: number; text: string }) {
 // ── Do'kon drawer (drill-down) ──────────────────────────────────────────────────
 function ShopDrawer({ shopId, onClose }: { shopId: number | null; onClose: () => void }) {
   const { data, isLoading } = useDist<ShopDetail>(["shop", shopId], `shops/${shopId}`, shopId !== null);
+
+  // Tashriflar tarixi (timeline): savdolar (yashil) + olmagan tashriflar (qizil) birga, sana bo'yicha
+  type TimelineEv = {
+    key: string; at: string | null; kind: "sale" | "visit";
+    total?: number; tolovTuri?: string | null; items?: string | null;
+    sabab?: string | null; sababText?: string | null; qaytishSanasi?: string | null; bajarildi?: number | null;
+    agentName: string | null;
+  };
+  const timeline: TimelineEv[] = data
+    ? [
+        ...data.recentSales.map<TimelineEv>((s) => ({
+          key: `s${s.id}`, at: s.createdAt, kind: "sale",
+          total: s.total, tolovTuri: s.tolovTuri, items: s.items, agentName: s.agentName,
+        })),
+        ...(data.recentVisits ?? []).map<TimelineEv>((v) => ({
+          key: `v${v.id}`, at: v.createdAt, kind: "visit",
+          sabab: v.sabab, sababText: v.sababText, qaytishSanasi: v.qaytishSanasi, bajarildi: v.bajarildi, agentName: v.agentName,
+        })),
+      ].sort((a, b) => (b.at ?? "").localeCompare(a.at ?? ""))
+    : [];
+
   return (
     <Sheet open={shopId !== null} onOpenChange={(o) => { if (!o) onClose(); }}>
       <SheetContent className="w-full sm:max-w-lg overflow-y-auto">
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2">
-            <Store className="w-4 h-4 text-emerald-600" />
+            <span className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0">
+              <Store className="w-4 h-4 text-emerald-700" />
+            </span>
             {isLoading ? <Skeleton className="h-5 w-40" /> : data?.nomi || "Do'kon"}
           </SheetTitle>
         </SheetHeader>
@@ -496,14 +519,22 @@ function ShopDrawer({ shopId, onClose }: { shopId: number | null; onClose: () =>
           <div className="space-y-3 mt-4">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-10" />)}</div>
         ) : (
           <div className="space-y-5 mt-4 pb-8">
-            {/* Asosiy ma'lumot */}
+            {/* Holat + asosiy ma'lumot */}
+            <div className="flex items-center gap-2">
+              {data.holat === "faol"
+                ? <Badge className="bg-green-100 text-green-700 border-green-200 h-6 px-2.5">✓ Faol do'kon</Badge>
+                : <Badge variant="outline" className="h-6 px-2.5">{data.holat || "Holat noma'lum"}</Badge>}
+              {data.outstanding > 0 && <Badge className="bg-red-100 text-red-700 border-red-200 h-6 px-2.5">Nasiya bor</Badge>}
+            </div>
             <div className="grid grid-cols-2 gap-3 text-sm">
-              <div><div className="text-xs text-muted-foreground">Egasi</div><div className="font-medium">{data.egasi || "—"}</div></div>
-              <div><div className="text-xs text-muted-foreground">Telefon</div><div className="font-medium">{data.telefon || "—"}</div></div>
-              <div><div className="text-xs text-muted-foreground">Manzil</div><div className="font-medium flex items-center gap-1"><MapPin className="w-3 h-3" />{[data.viloyat, data.hudud].filter(Boolean).join(", ") || "—"}</div></div>
-              <div><div className="text-xs text-muted-foreground">Agent</div><div className="font-medium">{data.agentName || "—"}</div></div>
-              <div><div className="text-xs text-muted-foreground">Oxirgi buyurtma</div><div className="font-medium">{fmtDate(data.lastOrderDate)}</div></div>
-              <div><div className="text-xs text-muted-foreground">Holat</div><div>{data.holat === "faol" ? <Badge className="bg-green-100 text-green-700 border-green-200 h-5 text-[10px]">Faol</Badge> : <Badge variant="outline" className="h-5 text-[10px]">{data.holat || "—"}</Badge>}</div></div>
+              <div><div className="text-xs text-muted-foreground flex items-center gap-1"><User className="w-3 h-3" /> Egasi</div><div className="font-medium">{data.egasi || "—"}</div></div>
+              <div>
+                <div className="text-xs text-muted-foreground flex items-center gap-1"><Phone className="w-3 h-3" /> Telefon</div>
+                <div className="font-medium">{data.telefon ? <a href={`tel:${data.telefon}`} className="hover:underline text-blue-700">{data.telefon}</a> : "—"}</div>
+              </div>
+              <div><div className="text-xs text-muted-foreground flex items-center gap-1"><MapPin className="w-3 h-3" /> Manzil</div><div className="font-medium">{[data.viloyat, data.hudud].filter(Boolean).join(", ") || "—"}</div></div>
+              <div><div className="text-xs text-muted-foreground flex items-center gap-1"><Truck className="w-3 h-3" /> Agent</div><div className="font-medium">{data.agentName || "—"}</div></div>
+              <div><div className="text-xs text-muted-foreground flex items-center gap-1"><ShoppingBag className="w-3 h-3" /> Oxirgi buyurtma</div><div className="font-medium">{fmtDate(data.lastOrderDate)}</div></div>
             </div>
 
             {/* Yo'l ko'rsatish (navigatsiya) */}
@@ -511,41 +542,58 @@ function ShopDrawer({ shopId, onClose }: { shopId: number | null; onClose: () =>
               <GeoNavLinks lat={data.latitude} lng={data.longitude} />
             )}
 
-            {/* Moliyaviy xulosalar */}
-            <div className="grid grid-cols-3 gap-2">
-              <div className="rounded-md border p-3">
+            {/* Moliyaviy xulosalar — teng balandlikdagi kartalar */}
+            <div className="grid grid-cols-3 gap-2 items-stretch">
+              <div className="rounded-md border p-3 flex flex-col justify-between">
                 <div className="text-[11px] text-muted-foreground">Jami savdo</div>
                 <div className="text-sm font-bold">{fmtSom(data.totalSales)}</div>
                 <div className="text-[11px] text-muted-foreground">{data.totalOrders} buyurtma</div>
               </div>
-              <div className="rounded-md border p-3">
+              <div className="rounded-md border p-3 flex flex-col justify-between">
                 <div className="text-[11px] text-muted-foreground">Nasiya qoldiq</div>
                 <div className={`text-sm font-bold ${data.outstanding > 0 ? "text-red-600" : ""}`}>{data.outstanding > 0 ? fmtSom(data.outstanding) : "—"}</div>
+                <div className="text-[11px] text-transparent select-none">.</div>
               </div>
-              <div className="rounded-md border p-3">
+              <div className="rounded-md border p-3 flex flex-col justify-between">
                 <div className="text-[11px] text-muted-foreground">Balans</div>
                 <div className={`text-sm font-bold ${data.balans > 0 ? "text-green-700" : ""}`}>{data.balans !== 0 ? fmtSom(data.balans) : "—"}</div>
+                <div className="text-[11px] text-transparent select-none">.</div>
               </div>
             </div>
 
-            {/* Oxirgi savdolar */}
+            {/* Tashriflar tarixi — timeline (savdo=yashil, olmagan=qizil) */}
             <div>
-              <div className="text-sm font-semibold mb-2 flex items-center gap-1.5"><ShoppingBag className="w-3.5 h-3.5" /> Oxirgi savdolar</div>
-              {data.recentSales.length === 0 ? (
-                <div className="text-sm text-muted-foreground py-3 text-center border rounded-md">Savdolar yo'q</div>
+              <div className="text-sm font-semibold mb-2 flex items-center gap-1.5"><ShoppingBag className="w-3.5 h-3.5" /> Tashriflar tarixi</div>
+              {timeline.length === 0 ? (
+                <div className="text-sm text-muted-foreground py-3 text-center border rounded-md">Hozircha tarix yo'q</div>
               ) : (
-                <div className="space-y-2">
-                  {data.recentSales.map((s) => (
-                    <div key={s.id} className="border rounded-md p-2.5 text-sm">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs text-muted-foreground">{fmtDateTime(s.createdAt)}</span>
-                        <div className="flex items-center gap-2">
-                          <PaymentBadge type={s.tolovTuri} />
-                          <span className="font-semibold whitespace-nowrap">{fmtSom(s.total)}</span>
+                <div className="relative pl-4 space-y-3">
+                  <span className="absolute left-[5px] top-2 bottom-2 w-px bg-border" aria-hidden />
+                  {timeline.map((ev) => (
+                    <div key={ev.key} className="relative">
+                      <span
+                        className="absolute -left-4 top-1.5 w-3 h-3 rounded-full border-2 border-background shadow"
+                        style={{ background: ev.kind === "sale" ? "#16a34a" : "#dc2626" }}
+                        aria-hidden
+                      />
+                      <div className="border rounded-md p-2.5 text-sm ml-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs text-muted-foreground">{fmtDateTime(ev.at ?? null)}</span>
+                          {ev.kind === "sale" ? (
+                            <div className="flex items-center gap-2">
+                              <PaymentBadge type={ev.tolovTuri ?? null} />
+                              <span className="font-semibold whitespace-nowrap text-green-700">{fmtSom(ev.total ?? 0)}</span>
+                            </div>
+                          ) : (
+                            <span className="text-xs font-medium text-red-600">{sababLabel(ev.sabab ?? null, ev.sababText ?? null) || "Olmadi"}</span>
+                          )}
+                        </div>
+                        {ev.kind === "sale" && ev.items && <div className="text-xs text-muted-foreground mt-1 line-clamp-2">{ev.items}</div>}
+                        <div className="flex items-center justify-between gap-2 mt-0.5 text-[11px] text-muted-foreground">
+                          <span>{ev.agentName ? `Agent: ${ev.agentName}` : ""}</span>
+                          {ev.kind === "visit" && ev.qaytishSanasi && <span>🔁 Qaytish: {ev.qaytishSanasi}{ev.bajarildi ? " ✅" : ""}</span>}
                         </div>
                       </div>
-                      {s.items && <div className="text-xs text-muted-foreground mt-1 line-clamp-2">{s.items}</div>}
-                      {s.agentName && <div className="text-[11px] text-muted-foreground mt-0.5">Agent: {s.agentName}</div>}
                     </div>
                   ))}
                 </div>
@@ -561,27 +609,6 @@ function ShopDrawer({ shopId, onClose }: { shopId: number | null; onClose: () =>
                     <div key={n.id} className="flex items-center justify-between border rounded-md p-2.5 text-sm">
                       <span className="text-xs text-muted-foreground">{fmtDate(n.updatedAt)} • to'langan {fmtSom(n.paid)}</span>
                       <span className="font-bold text-red-600">{fmtSom(n.remaining)}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Oxirgi tashriflar (mahsulot olinmagan) */}
-            {data.recentVisits && data.recentVisits.length > 0 && (
-              <div>
-                <div className="text-sm font-semibold mb-2 flex items-center gap-1.5 text-amber-700"><XCircle className="w-3.5 h-3.5" /> Oxirgi tashriflar (olmagan)</div>
-                <div className="space-y-1.5">
-                  {data.recentVisits.map((v) => (
-                    <div key={v.id} className="border rounded-md p-2.5 text-sm">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs text-muted-foreground">{fmtDateTime(v.createdAt)}</span>
-                        <span className="text-xs font-medium text-amber-700">{sababLabel(v.sabab, v.sababText) || "—"}</span>
-                      </div>
-                      <div className="flex items-center justify-between gap-2 mt-0.5 text-[11px] text-muted-foreground">
-                        <span>{v.agentName ? `Agent: ${v.agentName}` : ""}</span>
-                        {v.qaytishSanasi && <span>🔁 Qaytish: {v.qaytishSanasi}{v.bajarildi ? " ✅" : ""}</span>}
-                      </div>
                     </div>
                   ))}
                 </div>

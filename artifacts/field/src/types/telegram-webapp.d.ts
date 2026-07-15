@@ -12,6 +12,7 @@ interface TelegramWebApp {
   expand(): void;
   close(): void;
   disableVerticalSwipes?: () => void;
+  openLink?: (url: string, options?: { try_instant_view?: boolean }) => void;
   HapticFeedback?: TelegramHapticFeedback;
   colorScheme?: "light" | "dark";
   viewportHeight?: number;

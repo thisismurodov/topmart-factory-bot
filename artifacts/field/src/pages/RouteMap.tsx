@@ -6,7 +6,8 @@ import { useFieldRouteToday } from "@/lib/fieldApi";
 import { useGps } from "@/hooks/useGps";
 import { calculateDistance, estimateEtaMinutes } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Navigation2, Car, Store, Check, Target, Clock, MapPin } from "lucide-react";
+import NavButtons from "@/components/NavButtons";
+import { Navigation2, Car, Store, Check, Target, Clock } from "lucide-react";
 
 // Fix for leaflet markers in react
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -16,23 +17,27 @@ L.Icon.Default.mergeOptions({
   shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
 });
 
-function createNumberedIcon(number: number, status: string) {
+function createNumberedIcon(number: number, status: string, isNext = false) {
   let bgColor = "#f59e0b"; // amber (pending)
-  if (status === "sold") bgColor = "#10b981"; // green
-  else if (status === "nosale") bgColor = "#ef4444"; // red
+  let glyph = String(number);
+  if (status === "sold") { bgColor = "#10b981"; glyph = "✓"; } // green
+  else if (status === "nosale") { bgColor = "#ef4444"; glyph = "✕"; } // red
+  if (isNext) bgColor = "#7c3aed"; // violet — keyingi do'kon
 
+  const size = isNext ? 40 : 30;
+  const ring = isNext ? `<span class="tm-ring" style="border-color:${bgColor}"></span>` : "";
   return L.divIcon({
     className: "custom-div-icon",
-    html: `<div style="background-color: ${bgColor}; width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; border: 2px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.3); font-size: 14px;">${number}</div>`,
-    iconSize: [30, 30],
-    iconAnchor: [15, 15],
+    html: `<div class="tm-pop" style="position:relative;background-color: ${bgColor}; width: ${size}px; height: ${size}px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; border: 3px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.35); font-size: ${isNext ? 18 : 14}px;">${ring}<span style="position:relative;z-index:1">${isNext ? number : glyph}</span></div>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
   });
 }
 
 function MapUpdater({ center }: { center: [number, number] }) {
   const map = useMap();
   useEffect(() => {
-    map.setView(center, map.getZoom());
+    map.flyTo(center, Math.max(map.getZoom(), 14), { duration: 0.8 });
   }, [center, map]);
   return null;
 }
@@ -103,9 +108,20 @@ export default function RouteMap() {
     ? [nextShop.latitude, nextShop.longitude]
     : [41.2995, 69.2401]; // Tashkent fallback
 
-  const routePositions: [number, number][] = route.shops
+  // Tartib bo'yicha saralangan, koordinatali do'konlar — segmentli marshrut uchun
+  const orderedShops = route.shops
     .filter(s => s.latitude && s.longitude)
-    .map(s => [s.latitude!, s.longitude!]);
+    .sort((a, b) => a.tartib - b.tartib);
+  const firstPendingIdx = orderedShops.findIndex(s => s.status === "pending");
+  // Segmentlar: bajarilgan=yashil, keyingisiga yo'l=ko'k, qolgani=kulrang shtrix
+  const segments = orderedShops.slice(0, -1).map((a, i) => {
+    const b = orderedShops[i + 1];
+    return {
+      pts: [[a.latitude!, a.longitude!], [b.latitude!, b.longitude!]] as [number, number][],
+      done: a.status !== "pending" && b.status !== "pending",
+      isNextSeg: firstPendingIdx > 0 && i === firstPendingIdx - 1,
+    };
+  });
 
   return (
     <div className="flex-1 flex flex-col relative h-full">
@@ -131,13 +147,26 @@ export default function RouteMap() {
           />
           <MapUpdater center={mapCenter} />
           
-          <Polyline positions={routePositions} color="#3b82f6" weight={4} opacity={0.6} dashArray="8, 8" />
+          {segments.map((seg, i) => (
+            <Polyline
+              key={i}
+              positions={seg.pts}
+              pathOptions={
+                seg.done
+                  ? { color: "#16a34a", weight: 5, opacity: 0.85 }
+                  : seg.isNextSeg
+                    ? { color: "#2563eb", weight: 6, opacity: 0.9 }
+                    : { color: "#9ca3af", weight: 4, opacity: 0.6, dashArray: "8, 8" }
+              }
+            />
+          ))}
 
-          {route.shops.filter(s => s.latitude && s.longitude).map((shop) => (
+          {orderedShops.map((shop) => (
             <Marker 
               key={shop.dokonId}
               position={[shop.latitude!, shop.longitude!]}
-              icon={createNumberedIcon(shop.tartib, shop.status)}
+              icon={createNumberedIcon(shop.tartib, shop.status, shop.dokonId === nextShop?.dokonId)}
+              zIndexOffset={shop.dokonId === nextShop?.dokonId ? 1000 : 0}
             />
           ))}
 
@@ -146,7 +175,7 @@ export default function RouteMap() {
               position={[location.lat, location.lon]}
               icon={L.divIcon({
                 className: "user-location",
-                html: `<div style="background-color: #3b82f6; width: 16px; height: 16px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 10px rgba(59,130,246,0.8);"></div>`,
+                html: `<div style="position:relative;width:16px;height:16px"><span class="tm-halo"></span><div style="position:relative;z-index:1;background-color: #3b82f6; width: 16px; height: 16px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 10px rgba(59,130,246,0.8);"></div></div>`,
                 iconSize: [16, 16],
                 iconAnchor: [8, 8],
               })}
@@ -215,24 +244,12 @@ export default function RouteMap() {
             )}
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
-            {nextShop.latitude && nextShop.longitude ? (
-               <Button 
-                variant="outline" 
-                className="h-14 font-semibold col-span-1"
-                onClick={() => {
-                  window.open(`https://www.google.com/maps/dir/?api=1&destination=${nextShop.latitude},${nextShop.longitude}`, '_blank');
-                }}
-              >
-                <MapPin className="mr-2 w-5 h-5" />
-                Xarita
-              </Button>
-            ) : (
-              <div className="col-span-1"></div>
+          <div className="space-y-3">
+            {nextShop.latitude != null && nextShop.longitude != null && (
+              <NavButtons lat={nextShop.latitude} lng={nextShop.longitude} />
             )}
-            
             <Button 
-              className="h-14 font-bold text-lg col-span-2 shadow-lg"
+              className="h-14 font-bold text-lg w-full shadow-lg"
               onClick={() => setLocation(`/visit/${nextShop.dokonId}`)}
             >
               TASHRIF

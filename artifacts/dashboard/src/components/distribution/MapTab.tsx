@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Route as RouteIcon, Navigation, Lightbulb, AlertTriangle, RotateCcw, MapPinned } from "lucide-react";
+import { Route as RouteIcon, Navigation, Lightbulb, AlertTriangle, RotateCcw, MapPinned, Maximize2, Minimize2, ChevronDown, ChevronUp } from "lucide-react";
 
 // ── Turlar ──────────────────────────────────────────────────────────────────────
 type MapShop = {
@@ -191,41 +191,72 @@ function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-function dotIcon(color: string): L.DivIcon {
+// Holat markerlari: sold=✓ + yumshoq pulsatsiya, nosale=✕, visited/planned rangli, none kichik kulrang
+function shopIcon(status: MapShop["status"]): L.DivIcon {
+  const meta = STATUS_META[status];
+  const size = status === "none" ? 14 : 20;
+  const glyph = status === "sold" ? "✓" : status === "nosale" ? "✕" : "";
+  const ring = status === "sold" ? `<span class="tm-ring" style="border-color:${meta.color}"></span>` : "";
   return L.divIcon({
     className: "",
-    html: `<div style="width:16px;height:16px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.45)"></div>`,
+    html: `<div class="tm-marker tm-pop" style="width:${size}px;height:${size}px;background:${meta.color}">${ring}<span class="tm-glyph">${glyph}</span></div>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+  });
+}
+
+function dotIcon(color: string, glow = false): L.DivIcon {
+  const shadow = glow ? `box-shadow:0 0 0 6px ${color}33,0 1px 3px rgba(0,0,0,.45)` : "box-shadow:0 1px 3px rgba(0,0,0,.45)";
+  return L.divIcon({
+    className: "",
+    html: `<div class="tm-pop" style="width:16px;height:16px;border-radius:50%;background:${color};border:2px solid #fff;${shadow}"></div>`,
     iconSize: [16, 16],
     iconAnchor: [8, 8],
   });
 }
 
+// Agent jonli markeri — ko'k halo + pulsatsiya
 function truckIcon(): L.DivIcon {
   return L.divIcon({
     className: "",
-    html: `<div style="width:30px;height:30px;border-radius:50%;background:#fff;border:2px solid #4f46e5;display:flex;align-items:center;justify-content:center;font-size:16px;box-shadow:0 1px 4px rgba(0,0,0,.45)">🚚</div>`,
-    iconSize: [30, 30],
-    iconAnchor: [15, 15],
+    html: `<div class="tm-truck"><span class="tm-halo"></span><div class="tm-truck-body">🚚</div></div>`,
+    iconSize: [34, 34],
+    iconAnchor: [17, 17],
   });
 }
 
-function numIcon(n: number, color: string, visited: boolean): L.DivIcon {
-  const bg = visited ? color : "#fff";
-  const fg = visited ? "#fff" : color;
+function numIcon(n: number, color: string, visited: boolean, isNext = false): L.DivIcon {
+  const size = isNext ? 32 : 22;
+  const bg = visited || isNext ? color : "#fff";
+  const fg = visited || isNext ? "#fff" : color;
+  const ring = isNext ? `<span class="tm-ring tm-ring-fast" style="border-color:${color}"></span>` : "";
   return L.divIcon({
     className: "",
-    html: `<div style="width:22px;height:22px;border-radius:50%;background:${bg};color:${fg};border:2px solid ${color};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;box-shadow:0 1px 3px rgba(0,0,0,.4)">${n}</div>`,
-    iconSize: [22, 22],
-    iconAnchor: [11, 22], // nuqta markerining tepasida turadi
+    html: `<div class="tm-marker tm-pop tm-num" style="width:${size}px;height:${size}px;background:${bg};color:${fg};border-color:${color};font-size:${isNext ? 14 : 11}px">${ring}<span class="tm-glyph">${n}</span></div>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size + 2], // nuqta markerining tepasida turadi
+  });
+}
+
+// Cluster ikonkasi — soniga qarab o'lcham
+function clusterIcon(cluster: { getChildCount(): number }): L.DivIcon {
+  const n = cluster.getChildCount();
+  const size = n >= 100 ? 46 : n >= 25 ? 40 : 34;
+  return L.divIcon({
+    className: "",
+    html: `<div class="tm-cluster" style="width:${size}px;height:${size}px">${n}</div>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
   });
 }
 
 // ── Navigatsiya havolalari (Google / Yandex / Apple) ────────────────────────────
 export function GeoNavLinks({ lat, lng }: { lat: number; lng: number }) {
   const links = [
-    { label: "Google Maps", href: `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}` },
-    { label: "Yandex", href: `https://yandex.com/maps/?rtext=~${lat},${lng}&rtt=auto` },
-    { label: "Apple", href: `https://maps.apple.com/?daddr=${lat},${lng}` },
+    { label: "📍 Google Maps", href: `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}` },
+    { label: "🟡 Yandex", href: `https://yandex.com/maps/?rtext=~${lat},${lng}&rtt=auto` },
+    { label: "🍎 Apple", href: `https://maps.apple.com/?daddr=${lat},${lng}` },
+    { label: "🌍 Waze", href: `https://waze.com/ul?ll=${lat},${lng}&navigate=yes` },
   ];
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -475,6 +506,10 @@ export default function MapTab({ date, agentId, viloyat, hudud, search, active, 
   // Xarita rejimi: markers — bugungi holat, heat — issiqlik, territory — agent hududlari
   const [mode, setMode] = useState<MapMode>("markers");
 
+  // To'liq ekran (CSS asosida — barcha brauzer/iframe'larda ishlaydi) va legenda holati
+  const [fs, setFs] = useState(false);
+  const [legendOpen, setLegendOpen] = useState(true);
+
   // Heatmap sanaga bog'liq emas — faqat hudud/agent/qidiruv filtrlari
   const hqs = useMemo(() => {
     const p = new URLSearchParams();
@@ -542,7 +577,7 @@ export default function MapTab({ date, agentId, viloyat, hudud, search, active, 
   const routeLayerRef = useRef<L.LayerGroup | null>(null);
   const liveLayerRef = useRef<L.LayerGroup | null>(null);
   const hududLayerRef = useRef<L.LayerGroup | null>(null);
-  const fittedRef = useRef(false);
+  const fittedRef = useRef<string | false>(false);
   const onShopRef = useRef(onShop);
   onShopRef.current = onShop;
 
@@ -554,7 +589,12 @@ export default function MapTab({ date, agentId, viloyat, hudud, search, active, 
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
       maxZoom: 19,
     }).addTo(map);
-    clusterRef.current = L.markerClusterGroup({ maxClusterRadius: 45, disableClusteringAtZoom: 14 }).addTo(map);
+    clusterRef.current = L.markerClusterGroup({
+      maxClusterRadius: 45,
+      disableClusteringAtZoom: 14,
+      chunkedLoading: true, // 5000+ marker uchun bloklamay yuklaydi
+      iconCreateFunction: clusterIcon,
+    }).addTo(map);
     routeLayerRef.current = L.layerGroup().addTo(map);
     liveLayerRef.current = L.layerGroup().addTo(map);
     hududLayerRef.current = L.layerGroup().addTo(map);
@@ -576,39 +616,46 @@ export default function MapTab({ date, agentId, viloyat, hudud, search, active, 
     const cluster = clusterRef.current;
     if (!cluster) return;
 
+    // Filtr yoki rejim o'zgarganda xarita avtomatik shu markerlarga moslashadi
+    const fitKey = `${mode}|${qs}|${hqs}`;
+    const fitIfNeeded = (pts: [number, number][]) => {
+      if (fittedRef.current === fitKey || pts.length === 0) return;
+      mapRef.current?.fitBounds(L.latLngBounds(pts), { padding: [40, 40], maxZoom: 15 });
+      fittedRef.current = fitKey;
+    };
+
     if (mode === "markers") {
       if (!data) return;
       cluster.clearLayers();
+      const markers: L.Marker[] = [];
       for (const s of data.shops) {
         const meta = STATUS_META[s.status];
-        const m = L.marker([s.lat, s.lng], { icon: dotIcon(meta.color) });
+        const m = L.marker([s.lat, s.lng], { icon: shopIcon(s.status) });
         let tip = `<b>${esc(s.nomi ?? "Do'kon")}</b><br/>${esc(meta.label)}`;
         const sbl = sababLabel(s.sabab, s.sababText);
         if (sbl) tip += `<br/>❌ ${esc(sbl)}`;
         if (s.qaytishSanasi) tip += `<br/>🔁 Qaytish: ${esc(s.qaytishSanasi)}`;
         if (s.agentName) tip += `<br/>👤 ${esc(s.agentName)}`;
-        m.bindTooltip(tip);
+        if (s.hudud) tip += `<br/>📍 ${esc(s.hudud)}`;
+        m.bindTooltip(tip, { direction: "top", offset: [0, -10] });
         m.on("click", () => onShopRef.current(s.id));
-        cluster.addLayer(m);
+        markers.push(m);
       }
-      if (!fittedRef.current && data.shops.length > 0) {
-        mapRef.current?.fitBounds(L.latLngBounds(data.shops.map((s) => [s.lat, s.lng] as [number, number])), {
-          padding: [30, 30],
-        });
-        fittedRef.current = true;
-      }
+      cluster.addLayers(markers);
+      fitIfNeeded(data.shops.map((s) => [s.lat, s.lng] as [number, number]));
       return;
     }
 
     // heat / territory — heatmap ma'lumotidan chizamiz
     if (!heat) return;
     cluster.clearLayers();
+    const markers: L.Marker[] = [];
     for (const s of heat.shops) {
       const color =
         mode === "heat"
           ? CLS_META[s.cls].color
           : agentColors.get(s.agentId ?? "—") ?? "#9ca3af";
-      const m = L.marker([s.lat, s.lng], { icon: dotIcon(color) });
+      const m = L.marker([s.lat, s.lng], { icon: dotIcon(color, mode === "heat") });
       let tip = `<b>${esc(s.nomi ?? "Do'kon")}</b>`;
       if (mode === "heat") {
         tip += `<br/>${esc(CLS_META[s.cls].label)}`;
@@ -616,17 +663,13 @@ export default function MapTab({ date, agentId, viloyat, hudud, search, active, 
       }
       if (s.agentName) tip += `<br/>👤 ${esc(s.agentName)}`;
       if (s.hudud) tip += `<br/>📍 ${esc(s.hudud)}`;
-      m.bindTooltip(tip);
+      m.bindTooltip(tip, { direction: "top", offset: [0, -10] });
       m.on("click", () => onShopRef.current(s.id));
-      cluster.addLayer(m);
+      markers.push(m);
     }
-    if (!fittedRef.current && heat.shops.length > 0) {
-      mapRef.current?.fitBounds(L.latLngBounds(heat.shops.map((s) => [s.lat, s.lng] as [number, number])), {
-        padding: [30, 30],
-      });
-      fittedRef.current = true;
-    }
-  }, [data, heat, mode, agentColors]);
+    cluster.addLayers(markers);
+    fitIfNeeded(heat.shops.map((s) => [s.lat, s.lng] as [number, number]));
+  }, [data, heat, mode, agentColors, qs, hqs]);
 
   // Hudud doiralari — faqat issiqlik rejimida (o'lcham = do'konlar soni)
   useEffect(() => {
@@ -669,18 +712,34 @@ export default function MapTab({ date, agentId, viloyat, hudud, search, active, 
     for (const [, stops] of groups) {
       const color = ROUTE_COLORS[idx % ROUTE_COLORS.length];
       idx++;
-      if (stops.length > 1) {
-        L.polyline(stops.map((s) => [s.lat, s.lng] as [number, number]), {
-          color,
-          weight: 3,
-          opacity: 0.7,
-          dashArray: "6 6",
-        }).addTo(layer);
+      stops.sort((a, b) => a.tartib - b.tartib);
+      // Keyingi to'xtash — birinchi kirilmagan do'kon
+      const nextIdx = stops.findIndex((s) => !s.visited);
+      // Segmentlarga bo'lib chizamiz: bajarilgan=yashil, keyingi=ko'k, reja=kulrang
+      for (let i = 0; i < stops.length - 1; i++) {
+        const a = stops[i];
+        const b = stops[i + 1];
+        const done = a.visited && b.visited;
+        const isNextSeg = nextIdx > 0 && i === nextIdx - 1;
+        L.polyline(
+          [[a.lat, a.lng], [b.lat, b.lng]],
+          done
+            ? { color: "#16a34a", weight: 4, opacity: 0.85 }
+            : isNextSeg
+              ? { color: "#2563eb", weight: 5, opacity: 0.9 }
+              : { color: "#9ca3af", weight: 3, opacity: 0.6, dashArray: "6 6" },
+        ).addTo(layer);
       }
-      for (const s of stops) {
-        const m = L.marker([s.lat, s.lng], { icon: numIcon(s.tartib, color, s.visited), zIndexOffset: 1000 });
+      for (let i = 0; i < stops.length; i++) {
+        const s = stops[i];
+        const isNext = i === nextIdx;
+        const m = L.marker([s.lat, s.lng], {
+          icon: numIcon(s.tartib, isNext ? "#7c3aed" : color, s.visited, isNext),
+          zIndexOffset: isNext ? 1500 : 1000,
+        });
         m.bindTooltip(
-          `<b>${esc(s.dokonName ?? "Do'kon")}</b><br/>${esc(s.agentName ?? "")} marshruti — ${s.tartib}-to'xtash<br/>${s.visited ? "✅ Kirildi" : "🕐 Kutilmoqda"}`
+          `<b>${esc(s.dokonName ?? "Do'kon")}</b><br/>${esc(s.agentName ?? "")} marshruti — ${s.tartib}-to'xtash<br/>${s.visited ? "✅ Kirildi" : isNext ? "🎯 Keyingi do'kon" : "🕐 Kutilmoqda"}`,
+          { direction: "top", offset: [0, -14] },
         );
         m.on("click", () => onShopRef.current(s.dokonId));
         m.addTo(layer);
@@ -704,8 +763,32 @@ export default function MapTab({ date, agentId, viloyat, hudud, search, active, 
     }
   }, [live]);
 
+  // To'liq ekran almashganda xarita o'lchamini qayta hisoblaymiz; Escape bilan chiqish
+  useEffect(() => {
+    const t = setTimeout(() => mapRef.current?.invalidateSize(), 80);
+    if (!fs) return () => clearTimeout(t);
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setFs(false); };
+    window.addEventListener("keydown", onKey);
+    return () => { clearTimeout(t); window.removeEventListener("keydown", onKey); };
+  }, [fs]);
+
   const busy = mode === "markers" ? isLoading : heatLoading;
   const shownCount = mode === "markers" ? data?.shops.length : heat?.shops.length;
+
+  // Legenda tarkibi — rejimga mos (floating panel ichida)
+  const legendItems: { color: string; label: string; count?: number }[] =
+    mode === "markers"
+      ? [
+          ...STATUS_ORDER.map((st) => ({ color: STATUS_META[st].color, label: STATUS_META[st].label, count: data ? statusCounts[st] : undefined })),
+          { color: "#7c3aed", label: "Keyingi do'kon" },
+        ]
+      : mode === "heat"
+        ? CLS_ORDER.map((cl) => ({ color: CLS_META[cl].color, label: CLS_META[cl].label, count: heat ? clsCounts[cl] : undefined }))
+        : Array.from(agentColors.entries()).map(([aid, color]) => ({
+            color,
+            label: heat?.shops.find((s) => (s.agentId ?? "—") === aid)?.agentName || (aid === "—" ? "Biriktirilmagan" : aid),
+            count: heat?.shops.filter((s) => (s.agentId ?? "—") === aid).length ?? 0,
+          }));
 
   return (
     <div className="p-4 space-y-4">
@@ -756,41 +839,50 @@ export default function MapTab({ date, agentId, viloyat, hudud, search, active, 
         </div>
       </div>
 
-      {/* Legenda — rejimga mos */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        {mode === "markers" &&
-          STATUS_ORDER.map((st) => (
-            <span key={st} className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span className="w-3 h-3 rounded-full inline-block border border-white shadow" style={{ background: STATUS_META[st].color }} />
-              {STATUS_META[st].label}
-              {data && <b className="text-foreground">({statusCounts[st]})</b>}
-            </span>
-          ))}
-        {mode === "heat" &&
-          CLS_ORDER.map((cl) => (
-            <span key={cl} className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span className="w-3 h-3 rounded-full inline-block border border-white shadow" style={{ background: CLS_META[cl].color }} />
-              {CLS_META[cl].label}
-              {heat && <b className="text-foreground">({clsCounts[cl]})</b>}
-            </span>
-          ))}
-        {mode === "territory" &&
-          Array.from(agentColors.entries()).map(([aid, color]) => {
-            const name = heat?.shops.find((s) => (s.agentId ?? "—") === aid)?.agentName;
-            const count = heat?.shops.filter((s) => (s.agentId ?? "—") === aid).length ?? 0;
-            return (
-              <span key={aid} className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                <span className="w-3 h-3 rounded-full inline-block border border-white shadow" style={{ background: color }} />
-                {name || (aid === "—" ? "Biriktirilmagan" : aid)}
-                <b className="text-foreground">({count})</b>
-              </span>
-            );
-          })}
-      </div>
-
       {/* Xarita */}
-      <div className="relative rounded-md border overflow-hidden" style={{ zIndex: 0 }}>
-        <div ref={containerRef} className="h-[560px] w-full" />
+      <div
+        className={
+          fs
+            ? "fixed inset-0 z-40 bg-background"
+            : "relative rounded-md border overflow-hidden"
+        }
+        style={fs ? undefined : { zIndex: 0 }}
+      >
+        <div ref={containerRef} className={fs ? "h-full w-full" : "h-[560px] w-full"} />
+
+        {/* To'liq ekran tugmasi */}
+        <button
+          type="button"
+          onClick={() => setFs((v) => !v)}
+          title={fs ? "To'liq ekrandan chiqish (Esc)" : "To'liq ekran"}
+          className="absolute top-3 right-3 z-[600] rounded-md border bg-background/95 backdrop-blur p-2 shadow hover:bg-muted"
+        >
+          {fs ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+        </button>
+
+        {/* Floating legenda — yig'iladigan */}
+        <div className="absolute bottom-3 left-3 z-[600] rounded-md border bg-background/95 backdrop-blur shadow max-w-[240px]">
+          <button
+            type="button"
+            onClick={() => setLegendOpen((v) => !v)}
+            className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 text-xs font-semibold"
+          >
+            Legenda
+            {legendOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
+          </button>
+          {legendOpen && (
+            <div className="px-2.5 pb-2 space-y-1">
+              {legendItems.map((it) => (
+                <div key={it.label} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <span className="w-2.5 h-2.5 rounded-full inline-block border border-white shadow shrink-0" style={{ background: it.color }} />
+                  <span className="truncate">{it.label}</span>
+                  {it.count !== undefined && <b className="text-foreground ml-auto">{it.count}</b>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         {busy && (
           <div className="absolute inset-0 z-[500] flex items-center justify-center bg-background/60">
             <span className="text-sm text-muted-foreground">Xarita yuklanmoqda…</span>

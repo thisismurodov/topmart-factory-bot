@@ -3,6 +3,7 @@ import { useFieldRouteToday } from "@/lib/fieldApi";
 import { useGps } from "@/hooks/useGps";
 import { calculateDistance, estimateEtaMinutes } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import NavButtons from "@/components/NavButtons";
 import { useMemo } from "react";
 import { Map, Navigation2 } from "lucide-react";
 
@@ -45,6 +46,9 @@ export default function DriveMode() {
       </div>
 
       <div className="w-full gap-4 flex flex-col pb-8">
+        {nextShop.latitude != null && nextShop.longitude != null && (
+          <NavButtons lat={nextShop.latitude} lng={nextShop.longitude} dark />
+        )}
         <Button 
           className="w-full h-24 text-3xl font-black bg-primary hover:bg-primary/90 text-primary-foreground rounded-2xl"
           onClick={() => setLocation(`/visit/${nextShop.dokonId}`)}

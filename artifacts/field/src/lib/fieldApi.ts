@@ -20,16 +20,14 @@ export function getAuthHeaders(): Record<string, string> {
     }
   }
 
-  // Dev fallback
+  // Dev fallback — URL'dagi ?dev_tg= har doim localStorage'dan ustun turadi
+  // (aks holda birinchi agent keshda qolib, boshqa agentni test qilib bo'lmaydi)
   if (import.meta.env.DEV) {
-    let devId = localStorage.getItem("field_dev_tg_id");
-    if (!devId) {
-      const params = new URLSearchParams(window.location.search);
-      const urlDevId = params.get("dev_tg");
-      if (urlDevId) {
-        devId = urlDevId;
-        localStorage.setItem("field_dev_tg_id", urlDevId);
-      }
+    const params = new URLSearchParams(window.location.search);
+    const urlDevId = params.get("dev_tg");
+    const devId = urlDevId || localStorage.getItem("field_dev_tg_id");
+    if (urlDevId) {
+      localStorage.setItem("field_dev_tg_id", urlDevId);
     }
     if (devId && !headers["X-Telegram-Init-Data"]) {
       headers["X-Field-Dev-Id"] = devId;

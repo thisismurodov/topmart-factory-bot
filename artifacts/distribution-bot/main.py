@@ -3023,16 +3023,23 @@ def mijozlar_bazasi(msg):
     dokonlar=c.fetchall(); conn.close()
     if not dokonlar: bot.send_message(uid,"❗ Dokonlar yo'q."); return
     kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=1)
+    kb.add("🔍 Dokon qidirish")
     for d in dokonlar:
         icon="✅" if d[3]=="faol" else "❌"
         kb.add(f"🏪{d[0]}||{d[1]} ({d[2]}) {icon}")
     kb.add("❌ Bekor qilish")
     set_state(uid,"admin_dokon_list",{})
-    bot.send_message(uid,f"👥 Mijozlar bazasi — {jami} ta dokon:\n\nDokonni tanlang:",reply_markup=kb)
+    bot.send_message(uid,f"👥 Mijozlar bazasi — {jami} ta dokon:\n\nDokonni tanlang yoki qidiring:",reply_markup=kb)
 
 @bot.message_handler(func=lambda m:get_state(m.from_user.id)["state"]=="admin_dokon_list")
 def s_admin_dokon_list(msg):
     uid=msg.from_user.id
+    if msg.text=="🔍 Dokon qidirish":
+        set_state(uid,"baza_qidiruv_input",{})
+        bot.send_message(uid,
+            "🔍 DOKON QIDIRISH\n\nDokon nomi, egasi, telefon yoki hudud kiriting:\n"
+            "Masalan: <code>Fayz</code> yoki <code>Chust</code> yoki <code>998901234567</code>",
+            parse_mode="HTML",reply_markup=cancel_kb()); return
     if not msg.text.startswith("🏪"): return
     try: did=int(msg.text[1:].split("||")[0])
     except: return
@@ -3089,6 +3096,30 @@ def s_admin_dokon_list(msg):
         try: bot.send_photo(uid,foto,caption=text,reply_markup=back_kb); return
         except: pass
     bot.send_message(uid,text,reply_markup=back_kb)
+
+@bot.message_handler(func=lambda m:get_state(m.from_user.id)["state"]=="baza_qidiruv_input")
+def s_baza_qidiruv(msg):
+    uid=msg.from_user.id
+    if not is_admin(uid): return
+    q=(msg.text or "").strip()
+    if len(q)<2:
+        bot.send_message(uid,"❗ Kamida 2 ta belgi kiriting:"); return
+    conn=get_db();c=conn.cursor()
+    like=f"%{q}%"
+    c.execute("""SELECT id,nomi,viloyat,holat FROM dokonlar
+                 WHERE nomi ILIKE %s OR egasi ILIKE %s OR telefon ILIKE %s OR hudud ILIKE %s
+                 ORDER BY nomi LIMIT 60""",(like,like,like,like))
+    rows=c.fetchall(); conn.close()
+    if not rows:
+        bot.send_message(uid,f"❌ '{q}' bo'yicha hech narsa topilmadi.\n\nQaytadan kiriting yoki bekor qiling:",reply_markup=cancel_kb()); return
+    kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=1)
+    kb.add("🔍 Dokon qidirish")
+    for d in rows:
+        icon="✅" if d[3]=="faol" else "❌"
+        kb.add(f"🏪{d[0]}||{d[1]} ({d[2] or '—'}) {icon}")
+    kb.add("❌ Bekor qilish")
+    set_state(uid,"admin_dokon_list",{})
+    bot.send_message(uid,f"🔍 Topildi: {len(rows)} ta\n\nDokonni tanlang:",reply_markup=kb)
 
 @bot.message_handler(func=lambda m:m.text=="🗑 Dokonni o'chirish" and get_state(m.from_user.id)["state"]=="admin_dokon_view")
 def dokon_ochir_start(msg):

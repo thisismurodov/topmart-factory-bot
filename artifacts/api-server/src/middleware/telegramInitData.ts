@@ -138,18 +138,44 @@ export async function fieldAuth(
         LIMIT 1`,
       [telegramId],
     );
-    if (rows.length === 0) {
+    if (rows.length > 0) {
+      const row = rows[0];
+      (req as FieldRequest).fieldAgent = {
+        id: row.id,
+        telegramId: Number(row.telegram_id),
+        name: row.name,
+        hudud: row.hudud,
+      };
+      next();
+      return;
+    }
+
+    // Fallback: delivery_agents'da yo'q, lekin botda agent/supervisor/admin
+    // sifatida ro'yxatdan o'tgan foydalanuvchilar ham Mini App'ga kira oladi.
+    // Ularda delivery_routes bo'lmasligi mumkin — id=0 sentinel: marshrut
+    // so'rovlari bo'sh qaytadi, savdo/tashrif yozuvlari telegramId bilan
+    // yoziladi (bot bilan bir xil semantika).
+    const userRows = await pool.query<{
+      name: string;
+      viloyat: string | null;
+    }>(
+      `SELECT name, viloyat
+         FROM distribution.users
+        WHERE telegram_id = $1 AND role IN ('agent','supervisor','admin')
+        LIMIT 1`,
+      [String(telegramId)],
+    );
+    if (userRows.rows.length === 0) {
       res.status(403).json({
-        error: "Siz yetkazib beruvchi sifatida ro'yxatdan o'tmagansiz",
+        error: "Siz agent sifatida ro'yxatdan o'tmagansiz — botga /start yozing",
       });
       return;
     }
-    const row = rows[0];
     (req as FieldRequest).fieldAgent = {
-      id: row.id,
-      telegramId: Number(row.telegram_id),
-      name: row.name,
-      hudud: row.hudud,
+      id: 0,
+      telegramId,
+      name: userRows.rows[0].name,
+      hudud: userRows.rows[0].viloyat || null,
     };
     next();
   } catch (err) {

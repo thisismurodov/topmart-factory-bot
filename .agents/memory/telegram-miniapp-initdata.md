@@ -18,3 +18,9 @@ Rule: launch Mini Apps from an INLINE keyboard button (`InlineKeyboardButton(web
 **Why:** official iOS Telegram sometimes launches reply-keyboard web_app buttons with NO `tgWebAppData` in the location hash (hash has only tgWebAppVersion/platform/themeParams) → `WebApp.initData` is empty → server 401 even though the app runs in a genuine Mini App context. Inline-button launches reliably deliver initData.
 
 **How to apply:** send a separate message carrying an InlineKeyboardMarkup web_app button wherever the delivery menu is shown (reply markup cannot hold inline buttons). Diagnose by printing hash param NAMES (never values — tgWebAppData's value is the signed user payload).
+
+Rule: Field Mini App auth is anchored on `delivery_agents.telegram_id`; agent/supervisor/admin users without a delivery row authenticate via a users-table fallback with an id=0 sentinel (routes empty, writes key on telegramId).
+
+**Why:** routes live only in delivery_routes (keyed to delivery_agents.id). A person can be BOTH a savdo agent (users.role) and a delivery agent (delivery_agents row) — the bot's /start auto-link must NOT demote agent/supervisor roles to 'delivery', or they lose their agent menu.
+
+**How to apply:** to give an existing agent Mini App routes, link their delivery_agents.telegram_id; never insert with the id=0 sentinel into route tables.

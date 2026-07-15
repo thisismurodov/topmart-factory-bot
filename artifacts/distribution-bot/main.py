@@ -422,7 +422,7 @@ def dlv_back(msg):
     if not user: return
     set_state(uid,None,{})
     bot.send_message(uid,"🏠 Asosiy menyu",reply_markup=main_kb(user[3]))
-    if user[3]=="delivery": send_field_btn(uid)
+    if user[3] in("delivery","agent","supervisor"): send_field_btn(uid)
 
 @bot.message_handler(func=lambda m:m.text=="📋 Delivery agentlar ro'yxati")
 def dlv_list(msg):
@@ -1127,6 +1127,9 @@ def main_kb(role):
         kb.add("📦 Tovar berish","❌ Tovar olmadi")
         kb.add("🗺 Mening marshrutim","👤 Profil")
         return kb
+    if role in("agent","supervisor") and FIELD_APP_URL:
+        # Mini App agent/supervisorlar uchun ham (delivery'dan tashqari)
+        kb.add(types.KeyboardButton("🗺 BOSHLASH",web_app=types.WebAppInfo(FIELD_APP_URL)))
     if role in("agent","supervisor","admin"):
         kb.add("🏪 Yangi dokon","📦 Tovar berish")
         kb.add("💰 Pul olish","❌ Tovar olmadi")
@@ -1197,9 +1200,13 @@ def cancel_h(msg):
 @bot.message_handler(commands=["start"])
 def cmd_start(msg):
     uid=msg.from_user.id; user=get_user(uid)
-    # Auto-detect already-linked delivery agent
+    # Auto-detect already-linked delivery agent.
+    # MUHIM: agent/supervisor/admin rolini delivery'ga TUSHIRMAYMIZ —
+    # ular o'z rolini saqlab, Mini App'dan ham foydalanadi (delivery_agents
+    # qatori ulangani kifoya). Faqat ro'yxatsiz yoki pending userlar
+    # delivery'ga aylantiriladi.
     dlv=_get_delivery_agent_by_tid(uid)
-    if dlv and (not user or user[3]!="delivery"):
+    if dlv and (not user or user[3]=="pending"):
         _ensure_delivery_user(uid, dlv[1])
         user=get_user(uid)
     # Agent o'chirilgan (faol=0) bo'lsa — delivery rolini ham bekor qilamiz
@@ -1217,7 +1224,7 @@ def cmd_start(msg):
         bot.send_message(uid,"👋 TOP MART botiga xush kelibsiz!\n\nKim sifatida kirasiz?",reply_markup=kb)
         return
     bot.send_message(uid,f"✅ Xush kelibsiz, {user[2]}!\n🔰 Rol: {user[3].upper()}",reply_markup=main_kb(user[3]))
-    if user[3]=="delivery": send_field_btn(uid)
+    if user[3] in("delivery","agent","supervisor"): send_field_btn(uid)
 
 @bot.message_handler(func=lambda m:m.text=="👤 Men sotuvchi / agent" and not get_user(m.from_user.id))
 def role_pick_agent(msg):

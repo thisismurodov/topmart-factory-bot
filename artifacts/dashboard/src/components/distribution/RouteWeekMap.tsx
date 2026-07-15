@@ -37,6 +37,14 @@ type RouteStat = {
   shopCount: number;
   totalKm: number;
   driveMinutes: number;
+  visitMinutes: number;
+  totalMinutes: number;
+  crossCount: number;
+  backtrackPct: number;
+  longJumps: number;
+  avgHopKm: number;
+  maxHopKm: number;
+  efficiency: number;
   score: number;
 };
 type RouteMapData = {
@@ -70,13 +78,49 @@ function fmtMin(min: number): string {
   return h > 0 ? `${h}s ${m}d` : `${m}d`;
 }
 
-function stopIcon(n: number, color: string): L.DivIcon {
+function stopIcon(
+  n: number,
+  color: string,
+  opt?: { kind?: "start" | "finish"; pulse?: boolean }
+): L.DivIcon {
+  const size = opt?.kind ? 26 : 22;
+  const ring =
+    opt?.kind === "start"
+      ? "box-shadow:0 0 0 3px rgba(16,185,129,.95),0 1px 4px rgba(0,0,0,.45);"
+      : opt?.kind === "finish"
+        ? "box-shadow:0 0 0 3px rgba(15,23,42,.8),0 1px 4px rgba(0,0,0,.45);"
+        : "";
+  const cls = opt?.pulse ? " tm-next-pulse" : "";
   return L.divIcon({
     className: "",
-    html: `<div class="tm-marker tm-num" style="width:22px;height:22px;background:${color};color:#fff;border-color:#fff;font-size:11px"><span class="tm-glyph">${n}</span></div>`,
-    iconSize: [22, 22],
-    iconAnchor: [11, 11],
+    html: `<div class="tm-marker tm-num${cls}" style="width:${size}px;height:${size}px;background:${color};color:#fff;border-color:#fff;font-size:${opt?.kind ? 12 : 11}px;${ring}"><span class="tm-glyph">${n}</span></div>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
   });
+}
+
+// Segment o'rtasidagi yo'nalish strelkasi (kompas bearing bo'yicha buralgan)
+function arrowIcon(color: string, deg: number): L.DivIcon {
+  return L.divIcon({
+    className: "",
+    html: `<div class="tm-route-arrow" style="border-bottom-color:${color};transform:rotate(${deg}deg)"></div>`,
+    iconSize: [10, 10],
+    iconAnchor: [5, 5],
+  });
+}
+
+// Ikki nuqta orasidagi kompas yo'nalishi (0° = shimol, soat mili bo'yicha)
+function bearingDeg(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const midLat = ((a.lat + b.lat) / 2) * (Math.PI / 180);
+  const dx = (b.lng - a.lng) * Math.cos(midLat);
+  const dy = b.lat - a.lat;
+  return (Math.atan2(dx, dy) * 180) / Math.PI;
+}
+
+// Bugungi hafta kuni (Asia/Tashkent, dushanba=1..yakshanba=7)
+function todayKun(): number {
+  const wd = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Tashkent", weekday: "short" }).format(new Date());
+  return ({ Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 } as Record<string, number>)[wd] ?? 1;
 }
 
 function unassignedIcon(): L.DivIcon {
@@ -120,12 +164,36 @@ export default function RouteWeekMap({ active, onShop }: { active: boolean; onSh
   // Har kun uchun jamlangan statistika (bir nechta agent bo'lsa qiymatlar qo'shiladi,
   // ball — o'rtacha olinadi)
   const kunRouteStats = useMemo(() => {
-    const m = new Map<number, { km: number; min: number; scoreSum: number; n: number }>();
+    const m = new Map<
+      number,
+      {
+        km: number;
+        min: number;
+        driveMin: number;
+        visitMin: number;
+        scoreSum: number;
+        effSum: number;
+        crossSum: number;
+        backtrackSum: number;
+        avgHopSum: number;
+        maxHop: number;
+        n: number;
+      }
+    >();
     for (const rs of data?.routeStats ?? []) {
-      const cur = m.get(rs.kun) ?? { km: 0, min: 0, scoreSum: 0, n: 0 };
+      const cur =
+        m.get(rs.kun) ??
+        { km: 0, min: 0, driveMin: 0, visitMin: 0, scoreSum: 0, effSum: 0, crossSum: 0, backtrackSum: 0, avgHopSum: 0, maxHop: 0, n: 0 };
       cur.km += rs.totalKm;
-      cur.min += rs.driveMinutes;
+      cur.min += rs.totalMinutes;
+      cur.driveMin += rs.driveMinutes;
+      cur.visitMin += rs.visitMinutes;
       cur.scoreSum += rs.score;
+      cur.effSum += rs.efficiency;
+      cur.crossSum += rs.crossCount;
+      cur.backtrackSum += rs.backtrackPct;
+      cur.avgHopSum += rs.avgHopKm;
+      cur.maxHop = Math.max(cur.maxHop, rs.maxHopKm);
       cur.n += 1;
       m.set(rs.kun, cur);
     }
@@ -189,18 +257,37 @@ export default function RouteWeekMap({ active, onShop }: { active: boolean; onSh
       if (!byKunAgent.has(key)) byKunAgent.set(key, []);
       byKunAgent.get(key)!.push(s);
     }
+    const today = todayKun();
     for (const [key, stops] of byKunAgent) {
       const kun = Number(key.split("|")[0]);
       if (hiddenKuns.has(kun)) continue;
       const color = KUN_COLORS[kun] ?? "#333";
       const latlngs = stops.map((s) => [s.lat, s.lng] as [number, number]);
       if (latlngs.length >= 2) {
-        layer.addLayer(L.polyline(latlngs, { color, weight: 3, opacity: 0.85 }));
+        layer.addLayer(L.polyline(latlngs, { color, weight: kun === today ? 4 : 3, opacity: 0.85 }));
+        // Yo'nalish strelkalari — har segment o'rtasida (bosib bo'lmaydi)
+        for (let i = 1; i < stops.length; i++) {
+          const a = stops[i - 1];
+          const b = stops[i];
+          const mid: [number, number] = [(a.lat + b.lat) / 2, (a.lng + b.lng) / 2];
+          layer.addLayer(
+            L.marker(mid, { icon: arrowIcon(color, bearingDeg(a, b)), interactive: false, zIndexOffset: -50 })
+          );
+        }
       }
-      for (const s of stops) {
-        const m = L.marker([s.lat, s.lng], { icon: stopIcon(s.tartib, color) });
+      const last = stops.length - 1;
+      for (let i = 0; i < stops.length; i++) {
+        const s = stops[i];
+        const kind = i === 0 ? ("start" as const) : i === last && last > 0 ? ("finish" as const) : undefined;
+        // Bugungi marshrutning birinchi nuqtasi — "keyingi manzil" sifatida pulsatsiya
+        const pulse = kun === today && i === 0;
+        const m = L.marker([s.lat, s.lng], {
+          icon: stopIcon(s.tartib, color, { kind, pulse }),
+          zIndexOffset: kind ? 200 : 0,
+        });
+        const kindLabel = kind === "start" ? " · 🏁 Boshlanish" : kind === "finish" ? " · 🎯 Tugash" : "";
         m.bindTooltip(
-          `${esc(data.kunlar[kun - 1] ?? "")} #${s.tartib} — ${esc(s.nomi ?? "Do'kon")}${s.hudud ? ` · ${esc(s.hudud)}` : ""}${data.agentId ? "" : ` (${esc(s.agentName ?? "—")})`}`,
+          `${esc(data.kunlar[kun - 1] ?? "")} #${s.tartib} — ${esc(s.nomi ?? "Do'kon")}${s.hudud ? ` · ${esc(s.hudud)}` : ""}${data.agentId ? "" : ` (${esc(s.agentName ?? "—")})`}${kindLabel}`,
           { direction: "top" }
         );
         m.on("click", () => onShopRef.current(s.dokonId));
@@ -266,12 +353,18 @@ export default function RouteWeekMap({ active, onShop }: { active: boolean; onSh
                 onClick={() => toggleKun(kun)}
                 className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium capitalize transition-opacity ${off ? "opacity-40" : ""}`}
                 style={{ borderColor: KUN_COLORS[kun], color: KUN_COLORS[kun] }}
+                title={
+                  st
+                    ? `Masofa: ${Math.round(st.km)} km\nHarakat: ~${fmtMin(st.driveMin)} · Tashrif: ~${fmtMin(st.visitMin)}\nSamaradorlik: ${Math.round(st.effSum / st.n)}% · Kesishish: ${st.crossSum}\nOrqaga qaytish: ${Math.round(st.backtrackSum / st.n)}% · O'rtacha hop: ${(st.avgHopSum / st.n).toFixed(2)} km · Eng uzun hop: ${st.maxHop} km\nAI Score: ${Math.round(st.scoreSum / st.n)}/100`
+                    : undefined
+                }
               >
                 <span className="inline-block w-4 h-1 rounded" style={{ background: KUN_COLORS[kun] }} />
                 {nomi} · {count}
                 {st && (
                   <span className="font-normal opacity-80 normal-case">
-                    · {Math.round(st.km)} km · ~{fmtMin(st.min)} · ⭐{Math.round(st.scoreSum / st.n)}
+                    · {Math.round(st.km)} km · ~{fmtMin(st.min)} · ⭐{Math.round(st.scoreSum / st.n)} · ⚡
+                    {Math.round(st.effSum / st.n)}%{st.crossSum > 0 ? ` · ✂️${st.crossSum}` : ""}
                   </span>
                 )}
               </button>

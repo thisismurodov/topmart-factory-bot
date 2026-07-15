@@ -20,6 +20,14 @@ type PlanRoute = {
     shopCount: number;
     totalKm: number;
     driveMinutes: number;
+    visitMinutes: number;
+    totalMinutes: number;
+    crossCount: number;
+    backtrackPct: number;
+    longJumps: number;
+    avgHopKm: number;
+    maxHopKm: number;
+    efficiency: number;
     score: number;
     startShop: string | null;
     endShop: string | null;
@@ -36,6 +44,7 @@ type PlanResult = {
   totalShops: number;
   totalKm: number;
   avgScore: number;
+  validation?: { ok: boolean; issues: string[]; warnings: string[] };
   skippedNoCoord: { id: number; nomi: string | null }[];
   badCoord: { id: number; nomi: string | null; hudud: string | null; lat: number; lng: number }[];
   routes: PlanRoute[];
@@ -182,13 +191,31 @@ export default function RoutePlanDialog({ agents }: { agents: PlanAgent[] }) {
             {/* Kunlik marshrutlar */}
             <div className="space-y-1">
               {plan.routes.map((r) => (
-                <div key={r.kun} className="rounded-md border px-2.5 py-1.5 space-y-0.5">
+                <div
+                  key={r.kun}
+                  className="rounded-md border px-2.5 py-1.5 space-y-0.5"
+                  title={`Masofa: ${r.stats.totalKm} km\nHarakat vaqti: ~${fmtMin(r.stats.driveMinutes)}\nTashrif vaqti: ~${fmtMin(r.stats.visitMinutes)}\nO'rtacha hop: ${r.stats.avgHopKm} km\nEng uzun hop: ${r.stats.maxHopKm} km\nAI Score: ${r.stats.score}/100`}
+                >
                   <div className="flex items-center gap-2 text-sm">
                     <span className="capitalize font-medium w-24 shrink-0">{KUNLAR[r.kun - 1]}</span>
                     <span className="text-xs text-muted-foreground">{r.stats.shopCount} do'kon</span>
                     <span className="text-xs text-muted-foreground">· {r.stats.totalKm} km</span>
-                    <span className="text-xs text-muted-foreground">· ~{fmtMin(r.stats.driveMinutes)}</span>
+                    <span className="text-xs text-muted-foreground">· ~{fmtMin(r.stats.totalMinutes)}</span>
                     <span className={`text-xs font-semibold ml-auto ${scoreColor(r.stats.score)}`}>⭐ {r.stats.score}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[11px]">
+                    <span className={r.stats.efficiency >= 90 ? "text-green-600" : r.stats.efficiency >= 70 ? "text-amber-600" : "text-red-600"}>
+                      ⚡ Samaradorlik {r.stats.efficiency}%
+                    </span>
+                    <span className={r.stats.crossCount === 0 ? "text-green-600" : "text-red-600"}>
+                      ✂️ Kesishish {r.stats.crossCount}
+                    </span>
+                    <span className={r.stats.backtrackPct <= 10 ? "text-green-600" : "text-amber-600"}>
+                      ↩️ Orqaga {r.stats.backtrackPct}%
+                    </span>
+                    {r.stats.longJumps > 0 && (
+                      <span className="text-amber-600">⤴️ {r.stats.longJumps} sakrash</span>
+                    )}
                   </div>
                   {(r.stats.startShop || r.stats.endShop) && (
                     <div className="text-[11px] text-muted-foreground truncate">
@@ -198,6 +225,26 @@ export default function RoutePlanDialog({ agents }: { agents: PlanAgent[] }) {
                 </div>
               ))}
             </div>
+
+            {/* Validatsiya natijasi */}
+            {plan.validation && !plan.validation.ok && (
+              <div className="text-xs bg-red-50 dark:bg-red-950/30 rounded-md p-2.5 space-y-1">
+                <div className="flex items-center gap-1.5 font-medium text-red-700 dark:text-red-400">
+                  <AlertTriangle className="w-3.5 h-3.5" /> Reja sifat tekshiruvidan o'tmadi — saqlab bo'lmaydi:
+                </div>
+                {plan.validation.issues.map((s, i) => (
+                  <div key={i} className="text-muted-foreground pl-5">{s}</div>
+                ))}
+              </div>
+            )}
+            {plan.validation && plan.validation.ok && plan.validation.warnings.length > 0 && (
+              <div className="text-xs bg-amber-50 dark:bg-amber-950/30 rounded-md p-2.5 space-y-1">
+                <div className="font-medium text-amber-700 dark:text-amber-400">Sifat ogohlantirishlari:</div>
+                {plan.validation.warnings.map((s, i) => (
+                  <div key={i} className="text-muted-foreground pl-5">{s}</div>
+                ))}
+              </div>
+            )}
 
             {/* Ogohlantirishlar */}
             {plan.badCoord.length > 0 && (

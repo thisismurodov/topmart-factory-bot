@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { planRoutes, haversineKm, splitOutliers, type PlanShop } from "../src/lib/routePlanner";
+import {
+  planRoutes,
+  haversineKm,
+  splitOutliers,
+  countCrossings,
+  computeRouteStats,
+  validatePlan,
+  type PlanShop,
+} from "../src/lib/routePlanner";
 
 // Namangan atrofida sun'iy, lekin real ko'rinishdagi 153 do'kon generatsiya qilamiz
 // (deterministik LCG — testlar barqaror bo'lishi uchun)
@@ -124,5 +132,138 @@ describe("routePlanner", () => {
     const { inliers, outliers } = splitOutliers(makeShops(153));
     expect(outliers).toHaveLength(0);
     expect(inliers).toHaveLength(153);
+  });
+
+  // ── v2: kesishish, orqaga qaytish, samaradorlik ──────────────────────────────
+
+  it("v2: har bir marshrutda kesishish (crossing) 0 ta", () => {
+    const plan = planRoutes(makeShops(153));
+    for (const r of plan.routes) {
+      expect(r.stats.crossCount).toBe(0);
+      expect(countCrossings(r.stops)).toBe(0);
+    }
+  });
+
+  it("v2: turli seed'larda ham kesishishsiz", () => {
+    for (const seed of [7, 99, 2026]) {
+      const plan = planRoutes(makeShops(120, seed));
+      for (const r of plan.routes) {
+        expect(r.stats.crossCount).toBe(0);
+      }
+    }
+  });
+
+  it("v2: countCrossings kesishgan yo'lni aniqlaydi", () => {
+    // X shaklidagi yo'l: (0,0)→(1,1)→(1,0)→(0,1) — 1 ta kesishish
+    const cross = countCrossings([
+      { lat: 41.0, lng: 71.0 },
+      { lat: 41.01, lng: 71.01 },
+      { lat: 41.01, lng: 71.0 },
+      { lat: 41.0, lng: 71.01 },
+    ]);
+    expect(cross).toBe(1);
+    // To'g'ri chiziq — 0 kesishish
+    const straight = countCrossings([
+      { lat: 41.0, lng: 71.0 },
+      { lat: 41.0, lng: 71.01 },
+      { lat: 41.0, lng: 71.02 },
+      { lat: 41.0, lng: 71.03 },
+    ]);
+    expect(straight).toBe(0);
+  });
+
+  it("v2: computeRouteStats yangi KPI'larni qaytaradi", () => {
+    const stats = computeRouteStats([
+      { lat: 41.0, lng: 71.0, nomi: "A" },
+      { lat: 41.0, lng: 71.02, nomi: "B" },
+      { lat: 41.0, lng: 71.04, nomi: "C" },
+      { lat: 41.0, lng: 71.06, nomi: "D" },
+    ]);
+    expect(stats.crossCount).toBe(0);
+    expect(stats.backtrackPct).toBe(0); // to'g'ri chiziq — orqaga qaytish yo'q
+    expect(stats.efficiency).toBe(100);
+    expect(stats.score).toBeGreaterThan(0);
+  });
+
+  it("v2: zig-zag yo'lda backtrackPct > 0 va efficiency < 100", () => {
+    // A→B→A' (deyarli orqaga) →B' ... sun'iy orqaga qaytish
+    const stats = computeRouteStats([
+      { lat: 41.0, lng: 71.0, nomi: "A" },
+      { lat: 41.0, lng: 71.05, nomi: "B" },
+      { lat: 41.0, lng: 71.005, nomi: "C" }, // to'liq orqaga
+      { lat: 41.0, lng: 71.045, nomi: "D" }, // yana orqaga
+    ]);
+    expect(stats.backtrackPct).toBeGreaterThan(0);
+    expect(stats.efficiency).toBeLessThan(100);
+  });
+
+  it("v2: marshrutlarda orqaga qaytish past darajada", () => {
+    const plan = planRoutes(makeShops(153));
+    for (const r of plan.routes) {
+      expect(r.stats.backtrackPct).toBeLessThanOrEqual(35);
+      expect(r.stats.efficiency).toBeGreaterThanOrEqual(50);
+    }
+  });
+
+  it("v2: efficiency va score 0-100 oralig'ida", () => {
+    for (const seed of [42, 7, 99]) {
+      const plan = planRoutes(makeShops(100, seed));
+      for (const r of plan.routes) {
+        expect(r.stats.efficiency).toBeGreaterThanOrEqual(0);
+        expect(r.stats.efficiency).toBeLessThanOrEqual(100);
+        expect(r.stats.score).toBeGreaterThanOrEqual(0);
+        expect(r.stats.score).toBeLessThanOrEqual(100);
+      }
+    }
+  });
+
+  it("v2: vaqt KPI'lari — driveMinutes + visitMinutes = totalMinutes", () => {
+    const plan = planRoutes(makeShops(50));
+    for (const r of plan.routes) {
+      expect(r.stats.visitMinutes).toBe(r.stats.shopCount * 5);
+      expect(r.stats.totalMinutes).toBe(r.stats.driveMinutes + r.stats.visitMinutes);
+      expect(r.stats.avgHopKm).toBeGreaterThan(0);
+      expect(r.stats.maxHopKm).toBeGreaterThanOrEqual(r.stats.avgHopKm);
+    }
+  });
+
+  // ── v3: validatsiya dvigateli ────────────────────────────────────────────────
+
+  it("validatePlan: sog'lom reja tekshiruvdan o'tadi", () => {
+    const shops = makeShops(153);
+    const plan = planRoutes(shops);
+    const v = validatePlan(plan, shops);
+    expect(v.ok).toBe(true);
+    expect(v.issues).toHaveLength(0);
+  });
+
+  it("validatePlan: dublikat do'konni bloklaydi", () => {
+    const shops = makeShops(30);
+    const plan = planRoutes(shops);
+    // Birinchi to'xtashni sun'iy ravishda ikkinchi marta qo'shamiz
+    const first = plan.routes[0].stops[0];
+    plan.routes[0].stops.push({ ...first, tartib: plan.routes[0].stops.length + 1 });
+    const v = validatePlan(plan, shops);
+    expect(v.ok).toBe(false);
+    expect(v.issues.some((s) => s.includes("dublikat"))).toBe(true);
+  });
+
+  it("validatePlan: yo'qolgan do'konni bloklaydi", () => {
+    const shops = makeShops(30);
+    const plan = planRoutes(shops);
+    plan.routes[0].stops.splice(0, 1); // bitta do'konni o'chirib tashlaymiz
+    plan.routes[0].stops.forEach((st, i) => (st.tartib = i + 1)); // tartibni tuzatamiz
+    const v = validatePlan(plan, shops);
+    expect(v.ok).toBe(false);
+    expect(v.issues.some((s) => s.includes("kirmagan"))).toBe(true);
+  });
+
+  it("validatePlan: buzilgan tartib raqamlarini bloklaydi", () => {
+    const shops = makeShops(30);
+    const plan = planRoutes(shops);
+    plan.routes[0].stops[0].tartib = 99;
+    const v = validatePlan(plan, shops);
+    expect(v.ok).toBe(false);
+    expect(v.issues.some((s) => s.includes("tartib"))).toBe(true);
   });
 });

@@ -1,0 +1,167 @@
+Objective
+AI Route Optimizer v2
+Build a production-grade route optimization engine for TopMart Distribution that generates natural, non-crossing, low-distance daily routes suitable for scaling from hundreds to 18,000+ shops.
+The goal is not only to minimize kilometers, but to create routes that look and behave like an experienced field agent planned them.
+T001 — Route Planner v2 (Core Engine)
+Blocked By: []
+Replace current planner with a multi-stage optimizer.
+Pipeline:
+Geo Clustering
+↓
+
+Multi-start Nearest Neighbor
+
+↓
+
+2-opt
+
+↓
+
+Or-opt (1–3 node relocation)
+
+↓
+
+Crossing Detection
+
+↓
+
+Automatic Uncross Loop
+
+↓
+
+Boundary Swap Refinement
+
+↓
+
+Final Validation
+Requirements
+Remove all route crossings whenever possible.
+Minimize total driving distance.
+Minimize travel time.
+Minimize backtracking.
+Avoid long jumps between consecutive shops.
+Preserve geographical continuity.
+Keep neighboring shops inside the same route whenever practical.
+Route numbering should naturally flow from start to finish.
+Files:
+artifacts/api-server/src/lib/routePlanner.ts
+T002 — Route Quality Metrics
+Extend computeRouteStats().
+New KPIs:
+totalKm
+estimatedDriveTime
+estimatedVisitTime
+crossCount
+backtrackPct
+longJumpCount
+avgHopDistance
+maxHopDistance
+efficiencyScore
+routeScore
+Route Score Formula
+Score should consider:
+Distance
+Crossings
+Backtracking
+Long jumps
+Average hop distance
+Compactness
+Final score:
+0–100
+T003 — Route Validation Engine
+Before saving any generated route:
+Automatically validate.
+Checks:
+✅ crossings
+✅ disconnected sequence
+✅ duplicated shops
+✅ missing shops
+✅ long jumps
+✅ isolated clusters
+If validation fails:
+Re-optimize automatically
+Do NOT save a low-quality route.
+T004 — Dashboard UI
+Show the new KPIs.
+Every daily route chip should display:
+25 Shops
+
+26 km
+
+⭐⭐⭐⭐⭐
+
+Efficiency 97%
+
+Crossings 0
+
+Backtracking 2%
+Hover tooltip:
+Distance
+
+Drive Time
+
+Visit Time
+
+Average Hop
+
+Longest Hop
+
+AI Score
+Files:
+RouteWeekMap
+
+RoutePlanDialog
+
+distribution.ts
+T005 — Better Visualization
+Improve route readability.
+Requirements:
+Route colors must never visually overlap when avoidable.
+Different routes should remain visually separated.
+Draw arrows showing travel direction.
+Highlight Start marker.
+Highlight Finish marker.
+Display current agent location separately.
+Animate next destination.
+T006 — Verification
+Run optimizer on:
+Navruzbek Test
+Generate:
+Monday–Saturday
+25 shops/day
+Compare against previous algorithm.
+Produce report:
+Old Distance
+
+New Distance
+
+Distance Saved
+
+Old Crossings
+
+New Crossings
+
+Old Backtracking
+
+New Backtracking
+
+Efficiency Improvement
+
+Final Route Score
+Acceptance Criteria
+✅ Zero route crossings in all standard datasets.
+✅ Distance never worse than previous algorithm.
+✅ No unnecessary long jumps.
+✅ Natural geographical flow.
+✅ Routes visually readable.
+✅ Route Score ≥95 on healthy datasets.
+✅ Fully scalable to 18,000+ shops.
+Men yana bitta narsani qo'shishni tavsiya qilaman
+Hozir AI faqat masofani optimallashtiryapti. Kelajakda esa unga biznes qiymatini ham qo'shish mumkin.
+Masalan Route Score quyidagilarni ham hisobga olsin:
+VIP mijozlar.
+Oxirgi tashrif sanasi.
+Sotib olish ehtimoli.
+Qarzdor do'konlar.
+Yuqori potensial yangi do'konlar.
+Shunda AI shunchaki "eng qisqa yo'l"ni emas, balki eng foydali kunlik marshrutni tuzadi. Bu esa TopMart'ni oddiy navigatsiya tizimidan haqiqiy AI Distribution Operating System darajasiga olib chiqadi.

@@ -1,0 +1,173 @@
+Ha, men ham shuni ko'rdim. Bu yerda muammo AI marshrut algoritmida, xaritada emas.
+Masalan ikkinchi rasmda:
+
+1 → 2 normal.
+Lekin 2 → 3 uzoqqa sakrayapti.
+Keyin 3 → 4 → 5 yana orqaga qaytyapti.
+Bu degani AI do'konlarni shunchaki yaqin qo'shniga qarab yoki noto'g'ri klasterlab chiqyapti. Natijada chiziqlar bir-birini kesib o'tmoqda.
+Professional logistika dasturlarida bunday holat bo'lmaydi.
+
+Muammo nimada?
+Hozirgi algoritm taxminan quyidagicha ishlayotganga o'xshaydi:
+GPS bo'yicha klaster
+↓
+
+25 ta do'kon to'ldi
+
+↓
+
+Route chizildi
+Lekin aslida buning o'rtasida yana bir bosqich bo'lishi kerak.
+GPS Cluster
+
+↓
+
+Route Optimization
+
+↓
+
+Route Validation
+
+↓
+
+Cross Detection
+
+↓
+
+Final Route
+Aynan shu bosqich yetishmayapti.
+Men buni qanday qilardim
+1-bosqich
+AI avval hududni ajratadi.
+Masalan:
+
+Chust Shimol
+
+Chust Markaz
+
+Chust Janub
+
+Olmos
+
+Toshqo'rg'on
+2-bosqich
+Har bir hudud ichida alohida optimal marshrut hisoblanadi.
+3-bosqich
+Keyin tekshiradi.
+Route crosses?
+
+YES
+
+↓
+
+Optimize again
+Agar chiziqlar kesishayotgan bo'lsa,
+marshrut qayta hisoblanadi.
+
+4-bosqich
+AI quyidagini minimallashtiradi:
+Total Distance
+
++
+
+Travel Time
+
++
+
+Cross Count
+
++
+
+Backtracking
+Men yana bitta KPI qo'shardim
+Har bir marshrutda:
+Distance
+
+84 km
+
+⭐⭐⭐⭐⭐
+
+Crossings
+
+0
+
+Backtracking
+
+2%
+
+Efficiency
+
+98%
+Masalan:
+Route Score
+
+98
+
+★★★★★
+bo'lsa, supervisor ham AI marshrut sifatini baholay oladi.
+Yana bitta katta muammo
+Mana bu.
+2-rasmda
+
+2
+
+↓
+
+19
+
+↓
+
+4
+
+↓
+
+5
+AI katta sakrash qilgan.
+Aslida esa
+
+2
+
+↓
+
+4
+
+↓
+
+5
+
+↓
+
+19
+yoki
+19
+
+↓
+
+2
+
+↓
+
+4
+
+↓
+
+5
+bo'lishi kerak edi.
+Men Replit'ga shunday vazifa berardim
+AI Route Optimizer v2
+Hozirgi route planner ishlayapti, ammo marshrutlar hali global optimal emas. AI ba'zi hollarda uzoq sakrashlar, chiziqlarning kesishishi (crossing) va backtracking hosil qilmoqda.
+
+Route algoritmini qayta yozing.
+
+Talablar:
+
+Har bir marshrut ichida umumiy masofani minimallashtirish.
+Chiziqlarning kesishishini imkon qadar 0 ga tushirish.
+Backtracking (orqaga qaytish)ni minimallashtirish.
+Do'konlar tabiiy geografik oqim bo'yicha joylashtirilsin.
+Katta sakrashlar (long jumps) bo'lmasin.
+GPS yo'llari bo'yicha mantiqiy harakat qilinsin.
+Har bir marshrut uchun Distance, Drive Time, Cross Count, Backtracking %, Efficiency Score va AI Route Score hisoblab chiqarilsin.
+Agar AI marshrutida crossing yoki katta sakrash aniqlansa, avtomatik qayta optimallashtirish ishlasin.
+Maqsad faqat 25 ta do'konni taqsimlash emas, balki eng qisqa va eng tabiiy marshrutni yaratish.
+Ochig'i, bu skrinshotlarga qarab aytsam, UI 9.8/10, lekin AI Route Engine hali 6.5–7/10 darajada. Yaxshi tomoni shundaki, bu dizayn muammosi emas — algoritm muammosi. Algoritm to'g'rilansa, shu interfeysning o'zi juda kuchli operatsion vositaga aylanadi.

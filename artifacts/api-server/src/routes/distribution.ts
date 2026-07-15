@@ -1,6 +1,6 @@
 import { Router, type IRouter, type Request } from "express";
 import { pool } from "@workspace/db";
-import { planRoutes, computeRouteStats, splitOutliers, type PlanShop } from "../lib/routePlanner";
+import { planRoutes, computeRouteStats, splitOutliers, validatePlan, type PlanShop } from "../lib/routePlanner";
 
 // Distribyutsiya moduli o'zining `distribution` sxemasida yashaydi (o'zbekcha jadval
 // nomlari — savdolar, dokonlar, nasiya ...). Bu yerdagi barcha endpointlar faqat
@@ -1055,8 +1055,19 @@ router.post("/distribution/route-plan", async (req, res): Promise<void> => {
   const { inliers, outliers } = splitOutliers(shops);
   const plan = planRoutes(inliers);
 
+  // Validatsiya dvigateli: saqlashdan oldin reja avtomatik tekshiriladi.
+  // Strukturaviy xato (dublikat/yo'qolgan do'kon, kesishish) bo'lsa — saqlanmaydi.
+  const validation = validatePlan(plan, inliers);
+
   let saved = false;
   if (save) {
+    if (!validation.ok) {
+      res.status(422).json({
+        error: `Reja sifat tekshiruvidan o'tmadi: ${validation.issues.join("; ")}`,
+        validation,
+      });
+      return;
+    }
     if (existing > 0 && !replace) {
       res.status(409).json({
         error: `Agentda ${existing} ta mavjud marshrut nuqtasi bor. Almashtirish uchun replace=true yuboring.`,
@@ -1098,6 +1109,7 @@ router.post("/distribution/route-plan", async (req, res): Promise<void> => {
     totalShops: plan.totalShops,
     totalKm: plan.totalKm,
     avgScore: plan.avgScore,
+    validation,
     skippedNoCoord,
     badCoord: outliers.map((o) => ({ id: o.id, nomi: o.nomi, hudud: o.hudud, lat: o.lat, lng: o.lng })),
     routes: plan.routes.map((r) => ({

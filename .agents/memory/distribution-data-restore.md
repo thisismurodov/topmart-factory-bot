@@ -5,7 +5,7 @@ description: How to recover deleted distribution-schema data (shops/sales) and h
 
 **Rule:** The distribution bot's admin "agent full delete" flow cascades and permanently wipes the agent's dokonlar + savdolar + nasiya + routes from Postgres. The only recovery sources are the old SQLite snapshots in `attached_assets/topmart_*.db` (July 2026 era) — DISTRIBUTION_DATABASE_URL (the old separate PG) is empty.
 
-**Why:** Two former agents' 101 shops were cascade-deleted; they were restored (2026-07-15) into `distribution.dokonlar` from the newest SQLite snapshot, keeping original ids (no collisions with the live id set) and `setval`ing `dokonlar_id_seq`.
+**Why:** Cascade-deleted shops have already had to be restored once from the SQLite snapshots; without them the data is unrecoverable. When restoring, keep original ids if free and `setval` `dokonlar_id_seq` afterwards.
 
 **How to apply:**
 - Before any destructive distribution-data op, snapshot affected tables into an in-DB backup schema (`CREATE TABLE backup.x AS SELECT ...`) — local `pg_dump` (v16) fails against the Railway server (v18) with version mismatch.

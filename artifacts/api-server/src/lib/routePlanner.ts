@@ -559,8 +559,10 @@ export function planRoutes(shops: PlanShop[], opts: PlanOptions = {}): PlanResul
     return { routes: [], totalShops: 0, totalKm: 0, avgScore: 0 };
   }
 
-  // Nechta marshrut kerak: maqsad ~targetSize, lekin kunlar sonidan oshmaydi
-  const k = Math.max(1, Math.min(days.length, Math.round(shops.length / targetSize) || 1));
+  // Nechta marshrut kerak: kunlik limit (targetSize) oshmasligi uchun CEIL —
+  // masalan 56 do'kon / 25 = 3 kun (19+19+18), 2 kun (28+28) EMAS.
+  // Kunlar sonidan oshmaydi; do'kon > days*targetSize bo'lsa limit oshishi mumkin.
+  const k = Math.max(1, Math.min(days.length, Math.ceil(shops.length / targetSize)));
 
   // Sig'imlar: base yoki base+1 — hajmlar muvozanatli bo'ladi
   const base = Math.floor(shops.length / k);

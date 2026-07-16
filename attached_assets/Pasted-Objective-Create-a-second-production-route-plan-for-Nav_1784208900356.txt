@@ -1,0 +1,139 @@
+Objective
+Create a second production route plan for Navruzbek using only shops that are NOT already assigned to Navruzbek Test.
+The system must treat route ownership as exclusive.
+One shop may belong to only one active agent route.
+Business Rules
+Current production routes:
+Navruzbek Test
+must remain completely unchanged.
+Do NOT regenerate.
+Do NOT reorder.
+Do NOT optimize them again.
+Treat them as locked.
+Generate routes only from remaining unassigned shops.
+Requirements
+T001 — Lock Existing Routes
+Freeze every shop currently assigned to:
+Navruzbek Test
+Mark them as
+assigned = true
+locked = true
+route_owner = Navruzbek Test
+Those shops are unavailable for future planning.
+T002 — Correct Wrong Region Data
+Many remaining shops were created by previous agents.
+Some have:
+Agent Region = Farg'ona
+while
+Actual GPS Location = Namangan
+Ignore agent region.
+Determine region only from:
+latitude
+longitude
+If GPS belongs to Namangan,
+treat shop as Namangan.
+Never rely on creator agent.
+T003 — Build Navruzbek Routes
+Using only:
+assigned = false
+Generate a completely new weekly plan.
+Rules:
+max 25 shops/day
+natural geography
+minimum distance
+zero duplicates
+zero crossings
+compact clusters
+T004 — Exclusive Ownership
+After generation,
+every shop must satisfy:
+One Shop
+
+↓
+
+One Route
+
+↓
+
+One Agent
+Never allow
+One Shop
+
+↓
+
+Navruzbek
+
+AND
+
+Navruzbek Test
+T005 — Assignment
+Every generated shop becomes
+assigned = true
+
+route_owner = Navruzbek
+T006 — Validation
+Verify:
+Intersection between
+
+Navruzbek
+
+and
+
+Navruzbek Test
+
+=
+
+0
+If even one duplicate exists,
+route generation fails.
+T007 — Dashboard
+Show
+Navruzbek
+
+6-day plan
+together with
+Navruzbek Test
+Each agent displays only his own shops.
+T008 — Final Report
+Print:
+Total Shops
+
+Assigned to Navruzbek Test
+
+Assigned to Navruzbek
+
+Remaining Unassigned
+
+Duplicate Shops
+
+Crossings
+
+Average Daily KM
+
+Average Daily Shops
+Acceptance:
+Duplicate Shops = 0
+
+Crossings = 0
+
+Locked Routes Modified = 0
+Future Architecture (Important)
+From now on,
+routes become company assets, not agent assets.
+Each shop has exactly one owner route.
+Agents can change.
+Routes remain.
+Example:
+Route A
+
+↓
+
+Navruzbek Test
+Later:
+Route A
+
+↓
+
+Azizbek
+The route survives.
+Only the assigned agent changes.

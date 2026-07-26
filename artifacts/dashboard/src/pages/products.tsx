@@ -21,6 +21,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Plus, Trash2, Pencil, Package } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
+import { SalesBotProductsSection } from "@/components/distribution/SalesBotProductsSection";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type ProductionLine = { id: number; name: string };
@@ -1243,6 +1244,8 @@ export default function Products() {
           </TableBody>
         </Table>
       </div>
+
+      <SalesBotProductsSection />
 
       <ProductDialog
         open={createOpen}

@@ -131,6 +131,239 @@ router.get("/distribution/filters", async (_req, res): Promise<void> => {
   });
 });
 
+// ── Savdo bot mahsulot katalogi (dashboard'dan boshqarish) ──────────────────────
+// distribution.mahsulotlar — savdo (agent) boti bilan BIR XIL jadval: bu yerdagi
+// o'zgarish botda darhol ko'rinadi (va aksincha). ERP katalogi (public.products)
+// bilan solishtirishda apostrof va bo'shliq farqlari e'tiborga olinmaydi
+// ("Po'kak" vs "Po'kak" kabi variantlar bitta deb hisoblanadi).
+const nameNorm = (expr: string): string =>
+  "regexp_replace(regexp_replace(lower(trim(" + expr + ")), '[''’ʼ`´]', '', 'g'), '\\s+', ' ', 'g')";
+
+router.get("/distribution/products", async (_req, res): Promise<void> => {
+  const { rows } = await pool.query(
+    `SELECT m.id, m.nomi, m.narx, m.birlik, m.faol,
+            COALESCE(st.sotuvlar_soni, 0) AS sotuvlar_soni,
+            COALESCE(st.jami_miqdor, 0)   AS jami_miqdor,
+            COALESCE(st.jami_summa, 0)    AS jami_summa,
+            st.oxirgi_savdo,
+            EXISTS (SELECT 1 FROM public.products p
+                    WHERE ${nameNorm("p.name")} = ${nameNorm("m.nomi")}) AS erp_bor
+     FROM distribution.mahsulotlar m
+     LEFT JOIN (
+       SELECT t.mahsulot_id,
+              COUNT(DISTINCT t.savdo_id)       AS sotuvlar_soni,
+              SUM(t.miqdor)                    AS jami_miqdor,
+              SUM(t.summa)                     AS jami_summa,
+              MAX(substr(s.created_at, 1, 10)) AS oxirgi_savdo
+       FROM distribution.savdo_tafsilot t
+       JOIN distribution.savdolar s ON s.id = t.savdo_id
+       GROUP BY t.mahsulot_id
+     ) st ON st.mahsulot_id = m.id
+     WHERE m.nomi IS NOT NULL
+     ORDER BY m.faol DESC, lower(m.nomi)`
+  );
+  res.json(
+    rows.map((r) => ({
+      id: r.id as number,
+      nomi: r.nomi as string,
+      narx: Number(r.narx ?? 0),
+      birlik: (r.birlik as string) || "dona",
+      faol: Number(r.faol) === 1,
+      sotuvlarSoni: Number(r.sotuvlar_soni),
+      jamiMiqdor: Number(r.jami_miqdor),
+      jamiSumma: Number(r.jami_summa),
+      oxirgiSavdo: (r.oxirgi_savdo as string | null) ?? null,
+      erpBor: r.erp_bor === true,
+    }))
+  );
+});
+
+router.post("/distribution/products", async (req, res): Promise<void> => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const nomi = typeof body.nomi === "string" ? body.nomi.trim().replace(/\s+/g, " ") : "";
+  const narxRaw = Number(body.narx);
+  const birlik = body.birlik === "kg" ? "kg" : "dona";
+
+  if (!nomi) {
+    res.status(400).json({ error: "Mahsulot nomi kiritilishi shart" });
+    return;
+  }
+  if (!Number.isFinite(narxRaw) || narxRaw <= 0) {
+    res.status(400).json({ error: "Narx musbat son bo'lishi kerak" });
+    return;
+  }
+  const narx = Math.round(narxRaw);
+
+  const dup = await pool.query(
+    `SELECT id, faol FROM distribution.mahsulotlar
+     WHERE ${nameNorm("nomi")} = ${nameNorm("$1")} ORDER BY faol DESC LIMIT 1`,
+    [nomi]
+  );
+  if (dup.rows.length > 0 && Number(dup.rows[0].faol) === 1) {
+    res.status(409).json({ error: "Bu nomdagi mahsulot allaqachon bor" });
+    return;
+  }
+  if (dup.rows.length > 0) {
+    // Nofaol (o'chirilgan) mahsulot qayta tiklanadi — dublikat yaratilmaydi
+    const upd = await pool.query(
+      `UPDATE distribution.mahsulotlar SET nomi = $1, narx = $2, birlik = $3, faol = 1
+       WHERE id = $4 RETURNING id`,
+      [nomi, narx, birlik, dup.rows[0].id]
+    );
+    res.json({ id: upd.rows[0].id as number, reactivated: true });
+    return;
+  }
+  const ins = await pool.query(
+    `INSERT INTO distribution.mahsulotlar (nomi, narx, birlik, faol)
+     VALUES ($1, $2, $3, 1) RETURNING id`,
+    [nomi, narx, birlik]
+  );
+  res.status(201).json({ id: ins.rows[0].id as number, reactivated: false });
+});
+
+// Savdo botida bor, lekin ERP katalogida yo'q mahsulotlarni public.products'ga
+// nusxalash (birlik + narx UZS sotuv narxi sifatida). ids berilmasa — barcha
+// yetishmayotgan faol mahsulotlar.
+router.post("/distribution/products/sync-to-erp", async (req, res): Promise<void> => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  let ids: number[] | null = null;
+  if (body.ids !== undefined) {
+    if (!Array.isArray(body.ids)) {
+      res.status(400).json({ error: "ids massiv bo'lishi kerak" });
+      return;
+    }
+    ids = body.ids.map(Number).filter((n) => Number.isInteger(n) && n > 0);
+    if (ids.length === 0) {
+      res.status(400).json({ error: "ids bo'sh" });
+      return;
+    }
+  }
+  const { rows } = await pool.query(
+    `INSERT INTO public.products (name, unit_type, rate_type, currency_type, default_sale_price, active)
+     SELECT m.nomi,
+            CASE WHEN m.birlik = 'kg' THEN 'kg' ELSE 'dona' END,
+            CASE WHEN m.birlik = 'kg' THEN 'kg' ELSE 'dona' END,
+            'UZS', COALESCE(m.narx, 0), TRUE
+     FROM distribution.mahsulotlar m
+     WHERE m.faol = 1 AND m.nomi IS NOT NULL AND trim(m.nomi) <> ''
+       AND ($1::int[] IS NULL OR m.id = ANY($1::int[]))
+       AND NOT EXISTS (SELECT 1 FROM public.products p
+                       WHERE ${nameNorm("p.name")} = ${nameNorm("m.nomi")})
+     ON CONFLICT (name) DO NOTHING
+     RETURNING name`,
+    [ids]
+  );
+  res.json({ added: rows.length, names: rows.map((r) => r.name as string) });
+});
+
+router.patch("/distribution/products/:id", async (req, res): Promise<void> => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: "id noto'g'ri" });
+    return;
+  }
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  let nomiVal: string | null = null;
+  let faolVal: number | null = null;
+
+  if (body.nomi !== undefined) {
+    const nomi = typeof body.nomi === "string" ? body.nomi.trim().replace(/\s+/g, " ") : "";
+    if (!nomi) {
+      res.status(400).json({ error: "Mahsulot nomi bo'sh bo'lishi mumkin emas" });
+      return;
+    }
+    const dup = await pool.query(
+      `SELECT id FROM distribution.mahsulotlar
+       WHERE faol = 1 AND id <> $1 AND ${nameNorm("nomi")} = ${nameNorm("$2")} LIMIT 1`,
+      [id, nomi]
+    );
+    if (dup.rows.length > 0) {
+      res.status(409).json({ error: "Bu nomdagi faol mahsulot allaqachon bor" });
+      return;
+    }
+    nomiVal = nomi;
+    params.push(nomi);
+    sets.push(`nomi = $${params.length}`);
+  }
+  if (body.narx !== undefined) {
+    const narx = Number(body.narx);
+    if (!Number.isFinite(narx) || narx <= 0) {
+      res.status(400).json({ error: "Narx musbat son bo'lishi kerak" });
+      return;
+    }
+    params.push(Math.round(narx));
+    sets.push(`narx = $${params.length}`);
+  }
+  if (body.birlik !== undefined) {
+    if (body.birlik !== "dona" && body.birlik !== "kg") {
+      res.status(400).json({ error: "Birlik 'dona' yoki 'kg' bo'lishi kerak" });
+      return;
+    }
+    params.push(body.birlik);
+    sets.push(`birlik = $${params.length}`);
+  }
+  if (body.faol !== undefined) {
+    const faol =
+      body.faol === true || body.faol === 1 ? 1 : body.faol === false || body.faol === 0 ? 0 : null;
+    if (faol === null) {
+      res.status(400).json({ error: "faol qiymati noto'g'ri" });
+      return;
+    }
+    faolVal = faol;
+    params.push(faol);
+    sets.push(`faol = $${params.length}`);
+  }
+
+  // Reaktivatsiya himoyasi: faol=1 ga o'tishda (nomi o'zgartirilmasa ham) joriy nom
+  // bilan boshqa faol mahsulot to'qnashmasligi tekshiriladi — aks holda nofaol
+  // qatorni qayta yoqish dublikat faol mahsulotlarni hosil qilar edi. Eslatma:
+  // normallashtirilgan nom bo'yicha DB-darajasida UNIQUE indeks ataylab qo'yilmagan —
+  // bot ham dublikat nazoratisiz yozadi, tarixiy ma'lumotda takror nomlar bo'lishi
+  // mumkin va mahsulotlar DDL'i 3 joyda drift-nazorat ostida turadi.
+  if (faolVal === 1 && nomiVal === null) {
+    const dupAct = await pool.query(
+      `SELECT 1 FROM distribution.mahsulotlar other
+       WHERE other.faol = 1 AND other.id <> $1
+         AND ${nameNorm("other.nomi")} =
+             ${nameNorm("(SELECT self.nomi FROM distribution.mahsulotlar self WHERE self.id = $1)")}
+       LIMIT 1`,
+      [id]
+    );
+    if (dupAct.rows.length > 0) {
+      res.status(409).json({
+        error: "Bu nomdagi faol mahsulot allaqachon bor — avval nomini o'zgartiring",
+      });
+      return;
+    }
+  }
+
+  if (sets.length === 0) {
+    res.status(400).json({ error: "O'zgartirish uchun maydon berilmadi" });
+    return;
+  }
+
+  params.push(id);
+  const upd = await pool.query(
+    `UPDATE distribution.mahsulotlar SET ${sets.join(", ")}
+     WHERE id = $${params.length} RETURNING id, nomi, narx, birlik, faol`,
+    params
+  );
+  if (upd.rows.length === 0) {
+    res.status(404).json({ error: "Mahsulot topilmadi" });
+    return;
+  }
+  const r = upd.rows[0];
+  res.json({
+    id: r.id as number,
+    nomi: r.nomi as string,
+    narx: Number(r.narx),
+    birlik: r.birlik as string,
+    faol: Number(r.faol) === 1,
+  });
+});
+
 // ── Umumiy ko'rsatkichlar (KPI kartalar) — filtrlangan davr bo'yicha ────────────
 router.get("/distribution/summary", async (req, res): Promise<void> => {
   const f = parseFilters(req);

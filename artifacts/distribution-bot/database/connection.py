@@ -227,6 +227,7 @@ CREATE TABLE IF NOT EXISTS distribution.nasiya (
 CREATE TABLE IF NOT EXISTS distribution.mijoz_balans (
     id SERIAL PRIMARY KEY, dokon_id BIGINT UNIQUE, balans BIGINT DEFAULT 0
 );
+CREATE INDEX IF NOT EXISTS idx_savdolar_agent ON distribution.savdolar (agent_id);
 CREATE TABLE IF NOT EXISTS distribution.revisitlar (
     id SERIAL PRIMARY KEY, dokon_id BIGINT, agent_id BIGINT, last_order_date TEXT,
     revisit_date TEXT, status TEXT DEFAULT 'pending', created_at TEXT

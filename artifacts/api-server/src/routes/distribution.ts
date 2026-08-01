@@ -115,7 +115,10 @@ export function shopsWhere(f: Filters, params: unknown[]): string {
 router.get("/distribution/filters", async (_req, res): Promise<void> => {
   const [agents, viloyatlar, hududlar, mahsulotlar] = await Promise.all([
     pool.query(`SELECT telegram_id, name FROM distribution.users
-                 WHERE role IN ('agent','supervisor') AND name IS NOT NULL
+                 WHERE (role IN ('agent','supervisor')
+                        OR EXISTS (SELECT 1 FROM distribution.savdolar s
+                                    WHERE s.agent_id = users.telegram_id))
+                   AND name IS NOT NULL
                  ORDER BY name`),
     pool.query(`SELECT DISTINCT viloyat FROM distribution.dokonlar
                  WHERE viloyat IS NOT NULL AND viloyat <> '' ORDER BY viloyat`),
@@ -748,7 +751,9 @@ router.get("/distribution/agents", async (req, res): Promise<void> => {
       (SELECT COALESCE(SUM(n.qoldiq),0)::bigint FROM distribution.nasiya n
          WHERE n.agent_id = u.telegram_id AND n.qoldiq > 0)                           AS outstanding
     FROM distribution.users u
-    WHERE u.role IN ('agent','supervisor')${agentWhere}
+    WHERE (u.role IN ('agent','supervisor')
+           OR EXISTS (SELECT 1 FROM distribution.savdolar sx
+                       WHERE sx.agent_id = u.telegram_id))${agentWhere}
     ORDER BY sales_total DESC NULLS LAST`,
     dp
   );

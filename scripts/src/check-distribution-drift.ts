@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { getTableColumns } from "drizzle-orm";
 import type { Column } from "drizzle-orm";
+import { getTableConfig } from "drizzle-orm/pg-core";
 import pg from "pg";
 import {
   normalizeDrizzleDefault,
@@ -74,6 +75,148 @@ const TABLES = {
 } as const;
 
 type ColSpec = { type: string; notNull: boolean; def: string | null };
+
+// ── Index / unique-constraint comparison ─────────────────────────────────────
+
+type IndexSpec = { tableName: string; unique: boolean; columns: string[] };
+
+/** Stable comparison key: table + ordered columns + uniqueness. */
+function indexKey(s: IndexSpec): string {
+  return `${s.tableName}:${s.columns.join(",")}:${s.unique}`;
+}
+
+/**
+ * Extract all non-PK indexes from a live throwaway DB via pg_catalog.
+ * Returns a Map<key, IndexSpec> where key = indexKey(spec).
+ */
+async function readActualIndexes(pool: pg.Pool): Promise<Map<string, IndexSpec>> {
+  // array_position requires the indkey to be cast to int[] for 0-based position lookups.
+  const { rows } = await pool.query<{
+    tablename: string;
+    is_unique: boolean;
+    columns: string[];
+  }>(`
+    SELECT
+      t.relname                                                        AS tablename,
+      ix.indisunique                                                   AS is_unique,
+      array_agg(
+        a.attname
+        ORDER BY array_position(ix.indkey::int[], a.attnum::int)
+      )                                                                AS columns
+    FROM pg_index     ix
+    JOIN pg_class     t  ON t.oid  = ix.indrelid
+    JOIN pg_class     i  ON i.oid  = ix.indexrelid
+    JOIN pg_namespace n  ON n.oid  = t.relnamespace
+    JOIN pg_attribute a  ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
+    WHERE n.nspname = 'distribution'
+      AND NOT ix.indisprimary
+    GROUP BY ix.indexrelid, t.relname, ix.indisunique
+    ORDER BY t.relname
+  `);
+
+  const out = new Map<string, IndexSpec>();
+  for (const r of rows) {
+    // The pg driver returns PostgreSQL arrays as strings (e.g. "{agent_id,oy}") — parse them.
+    const columns: string[] =
+      Array.isArray(r.columns)
+        ? r.columns
+        : String(r.columns)
+            .replace(/^\{/, "")
+            .replace(/\}$/, "")
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean);
+    const spec: IndexSpec = { tableName: r.tablename, unique: r.is_unique, columns };
+    out.set(indexKey(spec), spec);
+  }
+  return out;
+}
+
+/**
+ * Derive the expected index set from Drizzle table definitions.
+ *
+ * Two sources:
+ *  - table-config `index()` / `uniqueIndex()` calls  → index.config.{name,columns,unique}
+ *  - column-level `.unique()` calls                  → uniqueConstraints[].columns
+ *
+ * We normalise by (table, columns, isUnique) — not by index name — so that
+ * PostgreSQL's auto-generated constraint names (e.g. `users_telegram_id_key`)
+ * don't cause spurious mismatches against Drizzle's internal naming.
+ */
+function drizzleExpectedIndexes(): Map<string, IndexSpec> {
+  const out = new Map<string, IndexSpec>();
+
+  for (const [tableName, table] of Object.entries(TABLES)) {
+    const cfg = getTableConfig(table as Parameters<typeof getTableConfig>[0]);
+
+    // Named indexes declared in the table extra-config function
+    for (const idx of cfg.indexes) {
+      const cols: string[] = [];
+      for (const c of idx.config.columns) {
+        // IndexedColumn has a `name` property; SQL expressions do not — skip those.
+        if (c && typeof c === "object" && "name" in c && typeof (c as { name?: unknown }).name === "string") {
+          cols.push((c as { name: string }).name);
+        }
+      }
+      if (cols.length === 0) continue; // expression-only index — can't compare by column name
+      const spec: IndexSpec = { tableName, unique: idx.config.unique, columns: cols };
+      out.set(indexKey(spec), spec);
+    }
+
+    // Column-level unique constraints (.unique() on individual columns).
+    // These do NOT appear in cfg.uniqueConstraints — they're stored directly
+    // on the column as `column.isUnique = true`.
+    for (const col of cfg.columns) {
+      if ((col as unknown as { isUnique?: boolean }).isUnique) {
+        const spec: IndexSpec = { tableName, unique: true, columns: [col.name] };
+        out.set(indexKey(spec), spec);
+      }
+    }
+
+    // Table-level unique() calls (unique("name").on(col1, col2) syntax)
+    for (const uc of cfg.uniqueConstraints) {
+      const cols = uc.columns.map((c) => c.name);
+      const spec: IndexSpec = { tableName, unique: true, columns: cols };
+      out.set(indexKey(spec), spec);
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Compare expected (Drizzle) indexes against actual (runtime DDL) indexes.
+ * Returns true if drift was found.
+ */
+function compareIndexes(
+  label: string,
+  expected: Map<string, IndexSpec>,
+  actual: Map<string, IndexSpec>,
+): boolean {
+  let drift = false;
+
+  for (const [key, spec] of expected) {
+    if (!actual.has(key)) {
+      const desc = `${spec.tableName}(${spec.columns.join(", ")})${spec.unique ? " UNIQUE" : ""}`;
+      console.error(`✗ [${label}] Indeks yo'q: ${desc}`);
+      drift = true;
+    }
+  }
+
+  for (const [key, spec] of actual) {
+    if (!expected.has(key)) {
+      const desc = `${spec.tableName}(${spec.columns.join(", ")})${spec.unique ? " UNIQUE" : ""}`;
+      console.error(`✗ [${label}] Drizzle mirror'da ko'zda tutilmagan indeks: ${desc}`);
+      drift = true;
+    }
+  }
+
+  if (!drift) {
+    console.log(`✓ [${label}] ${expected.size} indeks mos (nom + ustunlar + uniqueness)`);
+  }
+
+  return drift;
+}
 
 function drizzleExpected(): Map<string, Map<string, ColSpec>> {
   const out = new Map<string, Map<string, ColSpec>>();
@@ -237,17 +380,26 @@ async function main(): Promise<void> {
 
   // 3. Har ikkala natijani Drizzle mirror bilan solishtirish
   const expected = drizzleExpected();
+  const expectedIndexes = drizzleExpectedIndexes();
 
   const botPool = new pg.Pool({ connectionString: botUrl });
-  const botActual = await readActual(botPool);
+  const [botActual, botActualIndexes] = await Promise.all([
+    readActual(botPool),
+    readActualIndexes(botPool),
+  ]);
   await botPool.end();
 
   const tsPool = new pg.Pool({ connectionString: tsUrl });
-  const tsActual = await readActual(tsPool);
+  const [tsActual, tsActualIndexes] = await Promise.all([
+    readActual(tsPool),
+    readActualIndexes(tsPool),
+  ]);
   await tsPool.end();
 
   const botDrift = compare("bot _INIT_DDL", expected, botActual);
   const tsDrift = compare("init-distribution.ts", expected, tsActual);
+  const botIndexDrift = compareIndexes("bot _INIT_DDL", expectedIndexes, botActualIndexes);
+  const tsIndexDrift = compareIndexes("init-distribution.ts", expectedIndexes, tsActualIndexes);
 
   // Toza bo'lishi uchun throwaway bazalarni o'chirish
   const cleanupPool = new pg.Pool({ connectionString: adminUrl });
@@ -256,7 +408,7 @@ async function main(): Promise<void> {
   }
   await cleanupPool.end();
 
-  if (botDrift || tsDrift) {
+  if (botDrift || tsDrift || botIndexDrift || tsIndexDrift) {
     console.error(
       "\nDistribution sxema drifti aniqlandi. UCHALA nusxani ham yangilang: " +
         "artifacts/distribution-bot/database/connection.py (_INIT_DDL), " +
@@ -265,7 +417,9 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  console.log("\nDistribution sxema mos — drift yo'q (bot DDL ↔ init skript ↔ Drizzle mirror).");
+  console.log(
+    "\nDistribution sxema mos — drift yo'q (bot DDL ↔ init skript ↔ Drizzle mirror; ustunlar + indekslar).",
+  );
 }
 
 main().catch((e) => {

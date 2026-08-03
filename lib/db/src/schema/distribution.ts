@@ -50,15 +50,19 @@ export const distMahsulotlarTable = distribution.table("mahsulotlar", {
 });
 
 // Savdolar (sales headers)
-export const savdolarTable = distribution.table("savdolar", {
-  id: serial("id").primaryKey(),
-  dokonId: bigint("dokon_id", { mode: "number" }),
-  agentId: bigint("agent_id", { mode: "number" }),
-  jamiSumma: bigint("jami_summa", { mode: "number" }),
-  tolovTuri: text("tolov_turi"),
-  foto: text("foto"),
-  createdAt: text("created_at"),
-});
+export const savdolarTable = distribution.table(
+  "savdolar",
+  {
+    id: serial("id").primaryKey(),
+    dokonId: bigint("dokon_id", { mode: "number" }),
+    agentId: bigint("agent_id", { mode: "number" }),
+    jamiSumma: bigint("jami_summa", { mode: "number" }),
+    tolovTuri: text("tolov_turi"),
+    foto: text("foto"),
+    createdAt: text("created_at"),
+  },
+  (t) => [index("idx_savdolar_agent").on(t.agentId)],
+);
 
 // Savdo tafsilot (sale line items)
 export const savdoTafsilotTable = distribution.table("savdo_tafsilot", {

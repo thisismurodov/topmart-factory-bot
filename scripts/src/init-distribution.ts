@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS distribution.savdolar (
   foto TEXT,
   created_at TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_savdolar_agent ON distribution.savdolar (agent_id);
 
 CREATE TABLE IF NOT EXISTS distribution.savdo_tafsilot (
   id SERIAL PRIMARY KEY,

@@ -1543,46 +1543,6 @@ def reject_cmd(msg):
         bot.send_message(msg.from_user.id,f"🗑 {row[0]} rad etildi va tizimdan o'chirildi.")
     except Exception as e: bot.send_message(msg.from_user.id,f"❗ /reject 123456789\n{e}")
 
-@bot.message_handler(commands=["broadcast"])
-def broadcast_start(msg):
-    if not is_admin(msg.from_user.id): return
-    set_state(msg.from_user.id,"broadcast_text",{})
-    bot.send_message(msg.from_user.id,
-        "📢 Barcha faol agentlarga yuboriladigan xabarni yozing.\n\n"
-        "Matn, emoji, har qanday format qabul qilinadi.\n"
-        "Bekor qilish uchun: ❌ Bekor qilish",
-        reply_markup=cancel_kb())
-
-@bot.message_handler(func=lambda m:get_state(m.from_user.id)["state"]=="broadcast_text")
-def broadcast_text_h(msg):
-    uid=msg.from_user.id
-    if not is_admin(uid): return
-    text=msg.text.strip()
-    conn=get_db();c=conn.cursor()
-    c.execute("SELECT telegram_id,name FROM users WHERE role IN ('agent','supervisor')")
-    agents=c.fetchall();conn.close()
-    clear_state(uid)
-    if not agents:
-        bot.send_message(uid,"❗ Faol agent yo'q.",reply_markup=main_kb("admin")); return
-    sent=0; failed=0
-    broadcast_body=(
-        f"📢 TOP MART XABARNOMASI\n{'━'*28}\n\n"
-        f"{text}\n\n"
-        f"{'━'*28}\n"
-        f"🏢 TOP MART boshqaruvi")
-    for (tid,name) in agents:
-        try:
-            bot.send_message(tid,broadcast_body)
-            sent+=1
-        except:
-            failed+=1
-    bot.send_message(uid,
-        f"✅ Xabar yuborildi!\n\n"
-        f"📨 Muvaffaqiyatli: {sent} ta\n"
-        f"❌ Yetkazilmadi: {failed} ta\n"
-        f"👥 Jami: {len(agents)} ta agent",
-        reply_markup=main_kb("admin"))
-
 @bot.message_handler(commands=["supervisor"])
 def make_sup(msg):
     if not is_admin(msg.from_user.id): return

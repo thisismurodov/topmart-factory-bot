@@ -2168,21 +2168,92 @@ def tovar_berish(msg):
         return
     kb,n=_bosh_dokon_kb(uid)
     if n==0: bot.send_message(uid,"❗ Faol dokon yo'q."); return
+    # Do'kon juda ko'p bo'lsa bitta ulkan klaviatura Telegram limitidan (~10KB)
+    # oshib ketadi va xabar umuman jo'namaydi — viloyat→hudud bosqichli tanlovga o'tamiz.
+    if n>SAVDO_KB_MAX:
+        _savdo_send_vil(uid,{"mahsulotlar":mahsulotlar,"tanlangan":{}},n)
+        return
     set_state(uid,"savdo_dokon",{"mahsulotlar":mahsulotlar,"tanlangan":{}})
     bot.send_message(uid,
         f"🏪 DOKONNI TANLANG ({n} ta faol)\n\n"
         f"🆕 Oxirgi qo'shilganlar tepada:",
         reply_markup=kb)
 
+SAVDO_KB_MAX=80  # bundan ko'p dokonli agent uchun viloyat→hudud bosqichli tanlov
+
+def _savdo_dokon_ruxsat(uid,did):
+    """Tanlangan dokon faol va shu foydalanuvchiga ochiq ekanini tekshiradi.
+    Delivery agent marshrutidagi dokonlar boshqa agentga biriktirilgan bo'ladi,
+    shuning uchun delivery/admin uchun faqat faollik tekshiriladi."""
+    user=get_user(uid)
+    conn=get_db();c=conn.cursor()
+    if is_admin(uid) or (user and user[3]=="delivery"):
+        c.execute("SELECT nomi FROM dokonlar WHERE id=%s AND holat='faol'",(did,))
+    else:
+        c.execute("SELECT nomi FROM dokonlar WHERE id=%s AND holat='faol' AND agent_id=%s",(did,uid))
+    r=c.fetchone(); conn.close()
+    return r is not None
+
+def _savdo_send_vil(uid,data,total=None):
+    kb,nv,nr=_viloyat_kb(uid)
+    set_state(uid,"savdo_vil",data)
+    sarl=f"🏪 DOKONNI TANLANG{f' ({total} ta faol)' if total else ''}\n\n"
+    bot.send_message(uid,
+        sarl+"🆕 Tepada — oxirgi savdo bo'lgan dokonlar.\n📍 Yoki viloyatni tanlang:",
+        reply_markup=kb)
+
+@bot.message_handler(func=lambda m:get_state(m.from_user.id)["state"]=="savdo_vil")
+def s_savdo_vil(msg):
+    uid=msg.from_user.id; data=get_state(uid)["data"]
+    txt=(msg.text or "").strip()
+    if txt.startswith("🏪 ") and "||" in txt:
+        try:
+            did,dnomi=txt.replace("🏪 ","").split("||",1)
+            data["dokon_id"]=int(did); data["dokon_nomi"]=dnomi
+        except: return
+        if not _savdo_dokon_ruxsat(uid,data["dokon_id"]):
+            bot.send_message(uid,"❗ Bu dokon topilmadi yoki sizga biriktirilmagan."); return
+        set_state(uid,"savdo_pick_mah",data)
+        bot.send_message(uid,
+            f"🏪 {data['dokon_nomi']}\n\n📦 Mahsulot tanlang:",
+            reply_markup=_mah_list_kb(data["mahsulotlar"],data["tanlangan"]))
+        return
+    if not txt.startswith("📍 "): return
+    vil=txt.replace("📍 ","").rsplit(" (",1)[0].strip()
+    data["sv_vil"]=vil
+    kb,nh=_hudud_kb(uid,vil)
+    set_state(uid,"savdo_hudud",data)
+    bot.send_message(uid,f"📍 {vil}\n\n🏘 Hududni tanlang:",reply_markup=kb)
+
+@bot.message_handler(func=lambda m:get_state(m.from_user.id)["state"]=="savdo_hudud")
+def s_savdo_hudud(msg):
+    uid=msg.from_user.id; data=get_state(uid)["data"]
+    txt=(msg.text or "").strip()
+    if txt=="⬅️ Viloyatga qaytish":
+        _savdo_send_vil(uid,data); return
+    if not txt.startswith("🏘 "): return
+    hud=txt.replace("🏘 ","").rsplit(" (",1)[0].strip()
+    kb,n=_dokon_in_hudud_kb(uid,data.get("sv_vil",""),hud)
+    if n==0: bot.send_message(uid,"❗ Bu hududda faol dokon yo'q."); return
+    set_state(uid,"savdo_dokon",data)
+    bot.send_message(uid,f"🏘 {hud} — {n} ta dokon\n\n🏪 Dokonni tanlang:",reply_markup=kb)
+
 @bot.message_handler(func=lambda m:get_state(m.from_user.id)["state"]=="savdo_dokon")
 def s_savdo_dokon(msg):
     uid=msg.from_user.id; data=get_state(uid)["data"]
     txt=(msg.text or "").strip()
+    if txt=="⬅️ Hududga qaytish" and data.get("sv_vil"):
+        kb,nh=_hudud_kb(uid,data["sv_vil"])
+        set_state(uid,"savdo_hudud",data)
+        bot.send_message(uid,f"📍 {data['sv_vil']}\n\n🏘 Hududni tanlang:",reply_markup=kb)
+        return
     if not (txt.startswith("🏪 ") and "||" in txt): return
     try:
         did,dnomi=txt.replace("🏪 ","").split("||",1)
         data["dokon_id"]=int(did); data["dokon_nomi"]=dnomi
     except: return
+    if not _savdo_dokon_ruxsat(uid,data["dokon_id"]):
+        bot.send_message(uid,"❗ Bu dokon topilmadi yoki sizga biriktirilmagan."); return
     set_state(uid,"savdo_pick_mah",data)
     bot.send_message(uid,
         f"🏪 {data['dokon_nomi']}\n\n📦 Mahsulot tanlang:",

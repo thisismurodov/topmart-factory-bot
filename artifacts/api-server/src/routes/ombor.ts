@@ -1191,4 +1191,143 @@ router.post("/ombor/flow/produce", async (req, res): Promise<void> => {
   }
 });
 
+// ── POST /api/ombor/raw-reconcile-resolve ─────────────────────────────────────
+// Xom ashyo uchun "Yakunlovchi tuzatish": current_stock'ni O'ZGARTIRMAYDI, lekin
+// ledger yig'indisini current_stock'ga tenglashtirish uchun bitta muvozanat
+// harakati yozadi.
+//
+//  gap = current_stock − ledger_sum
+//    > 0  → IN harakati yoziladi (ledger_sum oshadi, gap = 0)
+//    < 0  → OUT harakati (from_warehouse_id IS NULL) yoziladi (ledger_sum kamayadi, gap = 0)
+//
+// ESLATMA: raw-adjust farq qilib, BU endpoint current_stock'ni O'ZGARTIRMAYDI.
+// Faqat tarixiy nomuvofiqlikni qayd etish uchun ishlatiladi.
+router.post("/ombor/raw-reconcile-resolve", async (req, res): Promise<void> => {
+  const TOLERANCE = 0.001;
+  const { materialId, note = "" } = req.body ?? {};
+  if (!materialId || typeof materialId !== "number") {
+    res.status(400).json({ error: "materialId required" }); return;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    // Lock the material row to prevent concurrent resolves on the same material.
+    const matRes = await client.query(
+      "SELECT id, name, unit_type AS unit, current_stock FROM raw_materials WHERE id = $1 FOR UPDATE",
+      [materialId],
+    );
+    if (!matRes.rows.length) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "Xom ashyo topilmadi" }); return;
+    }
+    const mat = matRes.rows[0];
+    const currentStock = Number(mat.current_stock) || 0;
+
+    // Compute ledger sum inside the same transaction so it's consistent.
+    const ledgerRes = await client.query(
+      `SELECT COALESCE(SUM(
+          CASE
+            WHEN movement_type = 'IN'                                   THEN  quantity
+            WHEN movement_type = 'OUT' AND from_warehouse_id IS NULL    THEN -quantity
+            ELSE 0
+          END
+        ), 0)::numeric AS ledger_sum
+       FROM stock_movements
+       WHERE product = $1 AND product_type = 'raw'`,
+      [mat.name],
+    );
+    const ledgerSum = Number(ledgerRes.rows[0].ledger_sum);
+    const gap = currentStock - ledgerSum;
+
+    if (Math.abs(gap) <= TOLERANCE) {
+      await client.query("ROLLBACK");
+      res.status(400).json({ error: "Farq yo'q — zahira va ledger mos keladi" }); return;
+    }
+
+    // Write a single baseline-correction movement to close the gap.
+    // current_stock is intentionally NOT updated.
+    const movementType = gap > 0 ? "IN" : "OUT";
+    const auto = `Tarixiy tuzatish: ledger ${ledgerSum.toLocaleString("en-US", { maximumFractionDigits: 3 })} → ${currentStock.toLocaleString("en-US", { maximumFractionDigits: 3 })} ${mat.unit}`;
+    const noteText = note ? `${note} (${auto})` : auto;
+    await client.query(
+      `INSERT INTO stock_movements
+         (product, quantity, movement_type, to_warehouse_id, from_warehouse_id, note, created_by, product_type)
+       VALUES ($1,$2,$3,NULL,NULL,$4,$5,'raw')`,
+      [mat.name, Math.abs(gap), movementType, noteText, actingUser(req)],
+    );
+
+    await client.query("COMMIT");
+    res.json({ ok: true, name: mat.name, gap, movementType });
+  } catch (e: any) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+// ── GET /api/ombor/raw-reconcile ──────────────────────────────────────────────
+// Har bir faol xom ashyo uchun harakat ledgeri yig'indisini current_stock bilan
+// solishtirib, farqi katta bo'lganlarda mos yozuv qaytaradi.
+//
+// "Global zahiraga ta'sir qiluvchi" harakatlar (balance-walk bilan bir xil qoida):
+//   IN  (istalgan warehouse)           → +qty (xom ashyo keldi)
+//   OUT  from_warehouse_id IS NULL     → −qty (BOM sarflandi)
+//   OUT  from_warehouse_id IS NOT NULL → 0   (konteynerdan bo'limga berish — global o'zgarmaydi)
+//   TRANSFER                           → 0   (konteynerlar orasida — global o'zgarmaydi)
+//
+// gap = current_stock − ledger_sum
+//   > 0  → zahirada ledgerdan ORTIQ bor (tushuntirilmagan kirim / tashqi tahrir)
+//   < 0  → ledger ko'proq chiqarishni ko'rsatyapti (BOM tahrirlangani / yo'qolgan yozuvlar)
+router.get("/ombor/raw-reconcile", async (_req, res): Promise<void> => {
+  const TOLERANCE = 0.001;
+
+  const { rows } = await pool.query(`
+    SELECT
+      rm.id,
+      rm.name,
+      rm.unit_type AS unit,
+      rm.current_stock::numeric AS current_stock,
+      COALESCE(SUM(
+        CASE
+          WHEN sm.movement_type = 'IN'                                      THEN  sm.quantity
+          WHEN sm.movement_type = 'OUT' AND sm.from_warehouse_id IS NULL    THEN -sm.quantity
+          ELSE 0
+        END
+      ), 0)::numeric AS ledger_sum
+    FROM raw_materials rm
+    LEFT JOIN stock_movements sm
+      ON sm.product = rm.name
+     AND sm.product_type = 'raw'
+    WHERE rm.active = TRUE
+    GROUP BY rm.id, rm.name, rm.unit_type, rm.current_stock
+    ORDER BY ABS(rm.current_stock - COALESCE(SUM(
+        CASE
+          WHEN sm.movement_type = 'IN'                                      THEN  sm.quantity
+          WHEN sm.movement_type = 'OUT' AND sm.from_warehouse_id IS NULL    THEN -sm.quantity
+          ELSE 0
+        END
+      ), 0)) DESC, rm.name
+  `);
+
+  const results = rows.map((r) => {
+    const currentStock = Number(r.current_stock);
+    const ledgerSum    = Number(r.ledger_sum);
+    const gap          = currentStock - ledgerSum;
+    return {
+      id:           r.id as number,
+      name:         r.name as string,
+      unit:         (r.unit || "kg") as string,
+      currentStock,
+      ledgerSum,
+      gap,
+      hasMismatch:  Math.abs(gap) > TOLERANCE,
+    };
+  });
+
+  res.json(results);
+});
+
 export default router;

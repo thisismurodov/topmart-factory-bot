@@ -19,7 +19,7 @@ import {
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Plus, Trash2, Pencil, Boxes, AlertTriangle, PackageCheck, Scale, History, ArrowDownToLine, ArrowUpFromLine } from "lucide-react";
+import { Plus, Trash2, Pencil, Boxes, AlertTriangle, PackageCheck, Scale, History, ArrowDownToLine, ArrowUpFromLine, GitCompareArrows } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -34,6 +34,16 @@ type RawMaterial = {
   minimumStock: number;
   active: boolean;
   createdAt: string;
+};
+
+type ReconcileItem = {
+  id: number;
+  name: string;
+  unit: string;
+  currentStock: number;
+  ledgerSum: number;
+  gap: number;
+  hasMismatch: boolean;
 };
 
 // ── Schema ────────────────────────────────────────────────────────────────────
@@ -51,8 +61,9 @@ const rawMaterialSchema = z.object({
 type RawMaterialForm = z.infer<typeof rawMaterialSchema>;
 
 // ── Query keys ────────────────────────────────────────────────────────────────
-const RAW_MATERIALS_KEY = ["raw-materials"];
-const RAW_HISTORY_KEY = ["raw-history"];
+const RAW_MATERIALS_KEY  = ["raw-materials"];
+const RAW_HISTORY_KEY    = ["raw-history"];
+const RAW_RECONCILE_KEY  = ["raw-reconcile"];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function isLowStock(rm: RawMaterial): boolean {
@@ -76,6 +87,19 @@ function useRawMaterials() {
       if (!res.ok) throw new Error("Yuklashda xato");
       return res.json();
     },
+  });
+}
+
+function useRawReconcile() {
+  return useQuery<ReconcileItem[]>({
+    queryKey: RAW_RECONCILE_KEY,
+    queryFn: async () => {
+      const res = await authFetch("/api/ombor/raw-reconcile");
+      if (!res.ok) throw new Error("Solishtirishda xato");
+      return res.json();
+    },
+    // Refresh every 2 minutes; not critical to be real-time
+    staleTime: 2 * 60 * 1000,
   });
 }
 
@@ -139,6 +163,28 @@ function useAdjustRawStock() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: RAW_MATERIALS_KEY });
       qc.invalidateQueries({ queryKey: RAW_HISTORY_KEY });
+      qc.invalidateQueries({ queryKey: RAW_RECONCILE_KEY });
+    },
+  });
+}
+
+function useResolveReconcile() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ materialId, note }: { materialId: number; note: string }) => {
+      const res = await authFetch("/api/ombor/raw-reconcile-resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ materialId, note }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Farqni yopishda xato");
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: RAW_MATERIALS_KEY });
+      qc.invalidateQueries({ queryKey: RAW_HISTORY_KEY });
+      qc.invalidateQueries({ queryKey: RAW_RECONCILE_KEY });
     },
   });
 }
@@ -534,20 +580,151 @@ function StatCard({
   );
 }
 
+// ── Reconcile-resolve dialog ──────────────────────────────────────────────────
+// This dialog closes a ledger gap by writing a single baseline-correction
+// movement WITHOUT changing current_stock. That is the only operation that can
+// actually make gap → 0: raw-adjust changes both stock and ledger by the same
+// delta, so the gap stays invariant.
+function RawReconcileResolveDialog({
+  material,
+  reconcile,
+  onClose,
+}: {
+  material: RawMaterial | null;
+  reconcile: ReconcileItem | null;
+  onClose: () => void;
+}) {
+  const resolveMut = useResolveReconcile();
+  const [note, setNote] = useState("");
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    if (material) {
+      setNote("");
+      setErr("");
+      resolveMut.reset();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [material?.id]);
+
+  if (!material || !reconcile) return null;
+
+  const gap = reconcile.gap;
+  const absGap = Math.abs(gap);
+  const direction = gap > 0 ? "IN (kirdi)" : "OUT (chiqdi)";
+  const directionColor = gap > 0 ? "text-green-700" : "text-red-700";
+
+  function submit() {
+    if (!material) return;
+    setErr("");
+    resolveMut.mutate(
+      { materialId: material.id, note },
+      { onSuccess: onClose, onError: (e: unknown) => setErr(e instanceof Error ? e.message : "Xato") },
+    );
+  }
+
+  return (
+    <Dialog open={!!material} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <GitCompareArrows className="w-5 h-5 text-amber-600" /> Tarixi mos kelmaydigan farqni yopish
+          </DialogTitle>
+          <DialogDescription>
+            <strong>{material.name}</strong> uchun harakat tarixi va hozirgi zahira orasidagi farqni yopuvchi
+            bitta tuzatish yozuvi qo'shiladi. Zahira o'ZGARMAYDI.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="rounded-lg border bg-muted/40 p-4 text-sm space-y-2">
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">Hozirgi zahira</span>
+            <span className="font-medium">{reconcile.currentStock.toLocaleString("ru-RU")} {material.unitType}</span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">Ledger yig'indisi</span>
+            <span className="font-medium">{reconcile.ledgerSum.toLocaleString("ru-RU", { maximumFractionDigits: 3 })} {material.unitType}</span>
+          </div>
+          <div className="flex justify-between gap-4 border-t pt-2">
+            <span className="text-muted-foreground">Yoziladigan tuzatish</span>
+            <span className={`font-semibold ${directionColor}`}>
+              {absGap.toLocaleString("ru-RU", { maximumFractionDigits: 3 })} {material.unitType} · {direction}
+            </span>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <label className="block text-sm font-medium">
+            Izoh (ixtiyoriy)
+            <Input
+              className="mt-1"
+              placeholder="Masalan: BOM tahrirlangan, eski partiyalar tiklandi…"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+            />
+          </label>
+          {err && <p className="text-sm text-red-600">{err}</p>}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={resolveMut.isPending}>
+            Bekor qilish
+          </Button>
+          <Button
+            onClick={submit}
+            disabled={resolveMut.isPending}
+            className="bg-amber-600 hover:bg-amber-700 text-white"
+          >
+            {resolveMut.isPending ? "Yozilmoqda…" : "Farqni yopish"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Mismatch gap badge ────────────────────────────────────────────────────────
+function GapBadge({ item, unit, onClick }: { item: ReconcileItem; unit: string; onClick: () => void }) {
+  const abs = Math.abs(item.gap);
+  const sign = item.gap > 0 ? "+" : "−";
+  return (
+    <button
+      onClick={onClick}
+      title={`Ledger yig'indisi: ${item.ledgerSum.toLocaleString("ru-RU")} ${unit} | Hozirgi zahira: ${item.currentStock.toLocaleString("ru-RU")} ${unit} | Farq: ${item.gap > 0 ? "+" : ""}${item.gap.toLocaleString("ru-RU", { maximumFractionDigits: 3 })} ${unit}. Farqni yopish uchun bosing.`}
+      className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800 hover:bg-amber-100 transition-colors cursor-pointer"
+    >
+      <GitCompareArrows className="w-3 h-3 shrink-0" />
+      {sign}{abs.toLocaleString("ru-RU", { maximumFractionDigits: 2 })} {unit}
+    </button>
+  );
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function RawMaterials() {
   const { data: materials = [], isLoading } = useRawMaterials();
+  const { data: reconcile = [] } = useRawReconcile();
   const deleteMut = useDeleteRawMaterial();
+
+  // Build a fast id→reconcile lookup
+  const reconcileMap = useMemo(
+    () => Object.fromEntries(reconcile.map(r => [r.id, r])),
+    [reconcile],
+  );
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<RawMaterial | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<RawMaterial | null>(null);
   const [adjustTarget, setAdjustTarget] = useState<RawMaterial | null>(null);
+  const [resolveTarget, setResolveTarget] = useState<RawMaterial | null>(null);
   const [historyId, setHistoryId] = useState<number | null>(null);
 
   const lowStockCount = useMemo(
     () => materials.filter(isLowStock).length,
     [materials],
+  );
+  const mismatchCount = useMemo(
+    () => reconcile.filter(r => r.hasMismatch).length,
+    [reconcile],
   );
   const totalValue = useMemo(
     () => materials.reduce((sum, m) => sum + m.currentStock * m.calculatedUzsCost, 0),
@@ -580,11 +757,21 @@ export default function RawMaterials() {
       </div>
 
       {lowStockCount > 0 && (
-        <div className="mb-5 flex items-center gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div className="mb-4 flex items-center gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           <AlertTriangle className="w-5 h-5 shrink-0" />
           <span>
             <strong>{lowStockCount} ta</strong> xom ashyo minimal zahiradan kam yoki teng — to'ldirish kerak.
           </span>
+        </div>
+      )}
+
+      {mismatchCount > 0 && (
+        <div className="mb-5 flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <GitCompareArrows className="w-5 h-5 shrink-0 mt-0.5" />
+          <div>
+            <strong>{mismatchCount} ta</strong> xom ashyo uchun harakat tarixi va hozirgi zahira mos kelmayapti.
+            {" "}Sariq badge'li qatorlarda farqni ko'rib, <strong>Tuzatish</strong> orqali yopishingiz mumkin.
+          </div>
         </div>
       )}
 
@@ -632,13 +819,22 @@ export default function RawMaterials() {
             ) : (
               materials.map(m => {
                 const low = isLowStock(m);
+                const rec = reconcileMap[m.id] as ReconcileItem | undefined;
+                const hasMismatch = rec?.hasMismatch ?? false;
                 return (
                   <Fragment key={m.id}>
                   <TableRow className={low ? "bg-red-50/60 hover:bg-red-50" : ""}>
                     <TableCell className="font-medium">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         {m.name}
                         {!m.active && <Badge variant="secondary" className="text-xs">Nofaol</Badge>}
+                        {hasMismatch && rec && (
+                          <GapBadge
+                            item={rec}
+                            unit={m.unitType}
+                            onClick={() => setResolveTarget(m)}
+                          />
+                        )}
                       </div>
                     </TableCell>
                     <TableCell className="text-muted-foreground">{m.unitType}</TableCell>
@@ -718,6 +914,12 @@ export default function RawMaterials() {
       <RawAdjustDialog
         material={adjustTarget}
         onClose={() => setAdjustTarget(null)}
+      />
+
+      <RawReconcileResolveDialog
+        material={resolveTarget}
+        reconcile={resolveTarget ? (reconcileMap[resolveTarget.id] as ReconcileItem ?? null) : null}
+        onClose={() => setResolveTarget(null)}
       />
 
       <AlertDialog open={!!deleteTarget} onOpenChange={o => !o && setDeleteTarget(null)}>

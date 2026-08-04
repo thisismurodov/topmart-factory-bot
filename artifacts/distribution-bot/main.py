@@ -1204,6 +1204,11 @@ def cancel_h(msg):
     else:
         bot.send_message(uid,"❌ Bekor qilindi.",reply_markup=types.ReplyKeyboardRemove())
 
+BOT_VERSION="2026-08-04.1 (klaviatura 40-limit + qidiruv)"
+@bot.message_handler(commands=["version"])
+def cmd_version(msg):
+    bot.send_message(msg.from_user.id,f"🤖 Versiya: {BOT_VERSION}")
+
 @bot.message_handler(commands=["start"])
 def cmd_start(msg):
     uid=msg.from_user.id; user=get_user(uid)
@@ -2051,16 +2056,19 @@ def _delivery_today_dokon_kb(uid):
     kb.add("❌ Bekor qilish")
     return kb,len(rows),added,"ok"
 
+KB_MAX_DOKON=40  # Telegram "reply markup is too long" xatosidan saqlaydi
+
 def _bosh_dokon_kb(uid):
     """For bosh agent: list dokons ordered by created_at DESC (newest first), 2 columns."""
     conn=get_db();c=conn.cursor()
     if is_admin(uid):
         c.execute("""SELECT id,nomi FROM dokonlar
-                     WHERE holat='faol' ORDER BY created_at DESC, id DESC""")
+                     WHERE holat='faol' ORDER BY created_at DESC, id DESC
+                     LIMIT %s""",(KB_MAX_DOKON,))
     else:
         c.execute("""SELECT id,nomi FROM dokonlar
                      WHERE agent_id=%s AND holat='faol'
-                     ORDER BY created_at DESC, id DESC""",(uid,))
+                     ORDER BY created_at DESC, id DESC LIMIT %s""",(uid,KB_MAX_DOKON))
     rows=c.fetchall(); conn.close()
     kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=2)
     pair=[]
@@ -2070,6 +2078,34 @@ def _bosh_dokon_kb(uid):
     if pair: kb.add(*pair)
     kb.add("❌ Bekor qilish")
     return kb, len(rows)
+
+def _dokon_search_reply(uid, q, extra_button=None):
+    """Type-to-search: show matching dokons as keyboard (max KB_MAX_DOKON)."""
+    conn=get_db();c=conn.cursor()
+    extra,params=_scope_clause(uid)
+    c.execute(f"""SELECT id,nomi FROM dokonlar
+                  WHERE holat='faol' AND nomi ILIKE %s{extra}
+                  ORDER BY created_at DESC, id DESC LIMIT %s""",
+              (f"%{q}%",)+params+(KB_MAX_DOKON,))
+    rows=c.fetchall(); conn.close()
+    kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=1)
+    for d in rows: kb.add(f"🏪 {d[0]}||{d[1]}")
+    if extra_button: kb.add(extra_button)
+    kb.add("❌ Bekor qilish")
+    if rows:
+        bot.send_message(uid,f"🔎 \"{q}\" bo'yicha {len(rows)} ta dokon topildi:",reply_markup=kb)
+    else:
+        bot.send_message(uid,f"🔎 \"{q}\" bo'yicha dokon topilmadi.\nBoshqa nom yozib qidiring:",reply_markup=kb)
+
+def _dokon_search_maybe(uid, txt, extra_button=None):
+    """If txt looks like a search query (admin/agent typing a name), handle it."""
+    txt=(txt or "").strip()
+    if not txt or len(txt)<2: return False
+    if txt.startswith(("🏪","➕","🚫","❌","✅","🆕","⬅️","➡️","/")): return False
+    u=get_user(uid)
+    if u and u[3]=="delivery": return False
+    _dokon_search_reply(uid,txt,extra_button=extra_button)
+    return True
 
 def _viloyat_kb(uid):
     """Build viloyat-picker keyboard + recent 5 dokon shortcuts."""
@@ -2129,7 +2165,7 @@ def _dokon_in_hudud_kb(uid, viloyat, hudud):
     hud_clause="(hudud=%s OR (hudud IS NULL AND %s='— Noma''lum') OR (hudud='' AND %s='— Noma''lum'))"
     c.execute(f"""SELECT id,nomi FROM dokonlar
                   WHERE holat='faol' AND {vil_clause} AND {hud_clause}{extra}
-                  ORDER BY nomi""",(viloyat,viloyat,viloyat,hudud,hudud,hudud)+params)
+                  ORDER BY nomi LIMIT %s""",(viloyat,viloyat,viloyat,hudud,hudud,hudud)+params+(KB_MAX_DOKON,))
     rows=c.fetchall(); conn.close()
     kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=1)
     for d in rows: kb.add(f"🏪 {d[0]}||{d[1]}")
@@ -2170,15 +2206,18 @@ def tovar_berish(msg):
     if n==0: bot.send_message(uid,"❗ Faol dokon yo'q."); return
     set_state(uid,"savdo_dokon",{"mahsulotlar":mahsulotlar,"tanlangan":{}})
     bot.send_message(uid,
-        f"🏪 DOKONNI TANLANG ({n} ta faol)\n\n"
-        f"🆕 Oxirgi qo'shilganlar tepada:",
+        f"🏪 DOKONNI TANLANG\n\n"
+        f"🆕 Oxirgi qo'shilgan {n} ta dokon tugmalarda.\n"
+        f"🔎 Boshqa dokon kerakmi? Nomini (bir qismini) yozib yuboring — qidirib beraman.",
         reply_markup=kb)
 
 @bot.message_handler(func=lambda m:get_state(m.from_user.id)["state"]=="savdo_dokon")
 def s_savdo_dokon(msg):
     uid=msg.from_user.id; data=get_state(uid)["data"]
     txt=(msg.text or "").strip()
-    if not (txt.startswith("🏪 ") and "||" in txt): return
+    if not (txt.startswith("🏪 ") and "||" in txt):
+        _dokon_search_maybe(uid,txt)
+        return
     try:
         did,dnomi=txt.replace("🏪 ","").split("||",1)
         data["dokon_id"]=int(did); data["dokon_nomi"]=dnomi
@@ -2451,21 +2490,23 @@ def pul_olish(msg):
                      WHERE r.delivery_agent_id=%s AND r.kun=%s AND d.holat='faol'
                      ORDER BY r.tartib""",(dlv[0],kun))
     elif is_admin(uid):
-        c.execute("SELECT id,nomi FROM dokonlar WHERE holat='faol' ORDER BY nomi")
+        c.execute("SELECT id,nomi FROM dokonlar WHERE holat='faol' ORDER BY created_at DESC, id DESC LIMIT %s",(KB_MAX_DOKON,))
     else:
-        c.execute("SELECT id,nomi FROM dokonlar WHERE agent_id=%s AND holat='faol' ORDER BY nomi",(uid,))
+        c.execute("SELECT id,nomi FROM dokonlar WHERE agent_id=%s AND holat='faol' ORDER BY created_at DESC, id DESC LIMIT %s",(uid,KB_MAX_DOKON))
     dokonlar=c.fetchall(); conn.close()
     if not dokonlar: bot.send_message(uid,"❗ Faol dokon yo'q."); return
     kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=1)
     for d in dokonlar: kb.add(f"🏪 {d[0]}||{d[1]}")
     kb.add("❌ Bekor qilish")
     set_state(uid,"pul_dokon",{})
-    bot.send_message(uid,"🏪 Dokonni tanlang:",reply_markup=kb)
+    bot.send_message(uid,"🏪 Dokonni tanlang.\n🔎 Ro'yxatda yo'q bo'lsa, nomini yozib yuboring — qidirib beraman:",reply_markup=kb)
 
 @bot.message_handler(func=lambda m:get_state(m.from_user.id)["state"]=="pul_dokon")
 def s_pul_dokon(msg):
     uid=msg.from_user.id; data=get_state(uid)["data"]
-    if not msg.text.startswith("🏪 "): return
+    if not msg.text.startswith("🏪 "):
+        _dokon_search_maybe(uid,msg.text)
+        return
     try:
         did,dnomi=msg.text.replace("🏪 ","").split("||",1)
         data["dokon_id"]=int(did); data["dokon_nomi"]=dnomi
@@ -2803,15 +2844,15 @@ def tovar_olmadi(msg):
         set_state(uid,"olmadi_dokon",{})
         bot.send_message(uid,f"🚚 BUGUN — {day_name(kun)}\n🏪 Qaysi dokon tovar olmadi?",reply_markup=kb); return
     if is_admin(uid):
-        c.execute("SELECT id,nomi FROM dokonlar ORDER BY nomi")
+        c.execute("SELECT id,nomi FROM dokonlar ORDER BY created_at DESC, id DESC LIMIT %s",(KB_MAX_DOKON,))
     else:
-        c.execute("SELECT id,nomi FROM dokonlar WHERE agent_id=%s ORDER BY nomi",(uid,))
+        c.execute("SELECT id,nomi FROM dokonlar WHERE agent_id=%s ORDER BY created_at DESC, id DESC LIMIT %s",(uid,KB_MAX_DOKON))
     dokonlar=c.fetchall(); conn.close()
     kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=1)
     for d in dokonlar: kb.add(f"🏪 {d[0]}||{d[1]}")
     kb.add("🆕 Yangi dokon (olmagan)"); kb.add("❌ Bekor qilish")
     set_state(uid,"olmadi_dokon",{})
-    bot.send_message(uid,"🏪 Dokonni tanlang:",reply_markup=kb)
+    bot.send_message(uid,"🏪 Dokonni tanlang.\n🔎 Ro'yxatda yo'q bo'lsa, nomini yozib yuboring — qidirib beraman:",reply_markup=kb)
 
 @bot.message_handler(func=lambda m:get_state(m.from_user.id)["state"]=="olmadi_dokon")
 def s_olmadi_dokon(msg):
@@ -2819,7 +2860,9 @@ def s_olmadi_dokon(msg):
     if msg.text=="🆕 Yangi dokon (olmagan)":
         set_state(uid,"olmadi_yangi_nomi",data)
         bot.send_message(uid,"Dokon nomini kiriting:",reply_markup=cancel_kb()); return
-    if not msg.text.startswith("🏪 "): return
+    if not msg.text.startswith("🏪 "):
+        _dokon_search_maybe(uid,msg.text,extra_button="🆕 Yangi dokon (olmagan)")
+        return
     try:
         did,dnomi=msg.text.replace("🏪 ","").split("||",1)
         data["dokon_id"]=int(did); data["dokon_nomi"]=dnomi

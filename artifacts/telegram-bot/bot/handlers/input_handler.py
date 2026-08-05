@@ -13,7 +13,7 @@ from ..database import (
     create_batch_session, get_worker_chat_id, get_workers,
     get_products, get_product_weight, get_user_role, get_worker_monthly,
     get_product_method, get_containers, get_product_pieces_per_box,
-    get_worker_production_role,
+    get_worker_production_role, WipBalanceError,
 )
 from ..config import calc_earnings, SUPERADMIN_CHAT_ID
 from ..label_generator import generate_batch_session_pdf
@@ -316,7 +316,17 @@ async def _finalize(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     warehouse_id = context.user_data.get("warehouse_id")
     wh_name      = context.user_data.get("warehouse_name", "")
 
-    result        = create_batch_session(worker, prefix, items, warehouse_id=warehouse_id)
+    try:
+        result = create_batch_session(worker, prefix, items, warehouse_id=warehouse_id)
+    except WipBalanceError as e:
+        await message.reply_text(
+            f"❌ *Partiya yaratilmadi!*\n\n{e}",
+            parse_mode="Markdown",
+            reply_markup=kb,
+        )
+        context.user_data.clear()
+        return ConversationHandler.END
+
     batch_code    = result["batch_code"]
     total         = result["total_earnings"]
     low_materials = result["low_materials"]

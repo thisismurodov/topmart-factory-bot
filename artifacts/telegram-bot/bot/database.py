@@ -13,6 +13,10 @@ _log = logging.getLogger(__name__)
 _MAX_RETRIES = 5
 
 
+class WipBalanceError(Exception):
+    """Bo'limda yetarli xom ashyo yo'q (PRODUCE > RECEIVE − PRODUCE)."""
+
+
 def _connect_with_retry() -> psycopg2.extensions.connection:
     """psycopg2.connect + exponential backoff (1 2 4 8 16 s)."""
     delay = 1
@@ -1151,6 +1155,11 @@ def create_batch_session(
 
         line_entries: list[dict] = []  # Xabarnoma uchun: [{worker, role, amount}]
 
+        # WIP balans himoyasi: har bir liniya uchun bir marta qulf olamiz va
+        # qolgan balansni sessiya davomida kuzatamiz (bir nechta mahsulot bir
+        # liniyada bo'lishi mumkin).
+        locked_line_balance: dict[int, float] = {}
+
         for it in items:
             product   = it["product"]
             quantity  = int(it["quantity"])
@@ -1212,6 +1221,37 @@ def create_batch_session(
             if prod_line_id:
                 produce_kg = weight_kg if weight_kg > 0 else quantity * product_weight
                 if produce_kg > 0:
+                    # WIP balans himoyasi — API /ombor/flow/produce bilan bir xil.
+                    # Liniyani birinchi marta lock qilamiz va balansni olamiz;
+                    # keyingi mahsulotlar uchun allaqachon lock qilingan balansdan
+                    # ayirib boramiz (bir sessiya = bitta tranzaksiya).
+                    if prod_line_id not in locked_line_balance:
+                        cur.execute(
+                            "SELECT id FROM production_lines WHERE id=%s FOR UPDATE",
+                            (prod_line_id,),
+                        )
+                        cur.execute(
+                            """SELECT COALESCE(SUM(
+                                   CASE WHEN movement_type='RECEIVE' THEN weight_kg
+                                        WHEN movement_type='PRODUCE' THEN -weight_kg
+                                        ELSE 0 END
+                               ), 0)::numeric AS wip_kg
+                               FROM wip_movements WHERE line_id=%s""",
+                            (prod_line_id,),
+                        )
+                        locked_line_balance[prod_line_id] = float(cur.fetchone()["wip_kg"] or 0)
+
+                    available = locked_line_balance[prod_line_id]
+                    if produce_kg > available + 1e-9:
+                        raise WipBalanceError(
+                            f"Bo'limda yetarli xom ashyo yo'q: mavjud {available:.2f} kg, "
+                            f"so'ralgan {produce_kg:.2f} kg ({product}). "
+                            f"Avval bo'limga xom ashyo bering."
+                        )
+                    # Balansni real yozuv kiritilmasdan avval kamaytirish — keyingi
+                    # mahsulotlar uchun ham to'g'ri chegirmani ta'minlaydi.
+                    locked_line_balance[prod_line_id] = available - produce_kg
+
                     cur.execute(
                         """INSERT INTO wip_movements
                              (line_id, movement_type, product, weight_kg, note, created_by)

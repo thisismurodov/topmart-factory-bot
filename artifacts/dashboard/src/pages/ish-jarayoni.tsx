@@ -653,6 +653,9 @@ function ProduceModal({ flow, onClose }: { flow: FlowData | undefined; onClose: 
 
   const selectedProduct = useMemo(() => products?.find((p) => p.name === productName), [products, productName]);
   const isKg = selectedProduct?.unitType === "kg";
+  // Og'irligi 0 bo'lgan mahsulot uchun kg MAJBURIY — aks holda WIP ledger nolga yoziladi va drift kelib chiqadi.
+  const isZeroWeight = selectedProduct != null && selectedProduct.weight === 0;
+  const kgMissing = isZeroWeight && (kgVal === "" || Number(kgVal) <= 0);
 
   const mut = useMutation({
     mutationFn: () =>
@@ -672,7 +675,7 @@ function ProduceModal({ flow, onClose }: { flow: FlowData | undefined; onClose: 
     onError: (e: Error) => toast({ title: "Xatolik", description: e.message, variant: "destructive" }),
   });
 
-  const valid = lineId !== "" && warehouseId !== "" && productName && Number(qtyVal) > 0;
+  const valid = lineId !== "" && warehouseId !== "" && productName && Number(qtyVal) > 0 && !kgMissing;
 
   return (
     <ModalShell title="Tayyor mahsulot chiqarish" onClose={onClose}>
@@ -707,9 +710,22 @@ function ProduceModal({ flow, onClose }: { flow: FlowData | undefined; onClose: 
         <input className={fieldCls} type="number" min="0" step="any" value={qtyVal} onChange={(e) => setQtyVal(e.target.value)} placeholder="0" />
       </div>
       <div>
-        <label className={labelCls}>Og'irlik (kg, ixtiyoriy)</label>
-        <input className={fieldCls} type="number" min="0" step="any" value={kgVal} onChange={(e) => setKgVal(e.target.value)} placeholder={isKg ? "Miqdor (kg)" : "Avtomatik: miqdor × og'irlik"} />
-        {!isKg && selectedProduct && selectedProduct.weight > 0 && (
+        <label className={labelCls}>
+          Og'irlik (kg{isZeroWeight ? ", majburiy" : ", ixtiyoriy"})
+          {isZeroWeight && <span className="ml-1 text-red-500">*</span>}
+        </label>
+        <input
+          className={`${fieldCls} ${kgMissing ? "border-red-400 focus:ring-red-400" : ""}`}
+          type="number" min="0" step="any" value={kgVal}
+          onChange={(e) => setKgVal(e.target.value)}
+          placeholder={isZeroWeight ? "kg kiriting (majburiy)" : isKg ? "Miqdor (kg)" : "Avtomatik: miqdor × og'irlik"}
+        />
+        {isZeroWeight && (
+          <p className="text-[11px] text-red-500 mt-1">
+            Bu mahsulotning og'irligi 0 — WIP ledger uchun kg kiritish majburiy.
+          </p>
+        )}
+        {!isKg && !isZeroWeight && selectedProduct && selectedProduct.weight > 0 && (
           <p className="text-[11px] text-muted-foreground mt-1">Bo'sh qoldirilsa: {kg(Number(qtyVal || 0) * selectedProduct.weight)} hisoblanadi</p>
         )}
       </div>

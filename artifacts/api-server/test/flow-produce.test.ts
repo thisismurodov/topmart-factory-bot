@@ -551,15 +551,37 @@ describe("POST /ombor/flow/produce — finished-goods output integrity", () => {
     expect(await produceRows()).toHaveLength(0);
   });
 
-  it("still allows a zero-kg produce (zero-weight product, no kg given) with empty WIP", async () => {
-    // produceKg = 0 → does not exceed the 0 balance; existing behavior preserved.
+  it("rejects a zero-weight product when kg is omitted (400) and writes nothing", async () => {
+    // produceKg = 0 (kg omitted AND product.weight = 0) → ledger never decreases → reject.
     const res = await post("/ombor/flow/produce", {
       lineId, warehouseId: finishedWarehouseId, product: ZERO_WEIGHT_PRODUCT, quantity: 5,
+    });
+    expect(res.status).toBe(400);
+    expect(res.json.error).toMatch(/og'irligi 0 kg/);
+    await expectNothingWritten();
+  });
+
+  it("rejects a zero-weight product when kg is explicitly 0 (400) and writes nothing", async () => {
+    const res = await post("/ombor/flow/produce", {
+      lineId, warehouseId: finishedWarehouseId, product: ZERO_WEIGHT_PRODUCT, quantity: 5, kg: 0,
+    });
+    expect(res.status).toBe(400);
+    expect(res.json.error).toMatch(/og'irligi 0 kg/);
+    await expectNothingWritten();
+  });
+
+  it("accepts a zero-weight product when an explicit kg > 0 is provided", async () => {
+    await seedWip(25);
+    const res = await post("/ombor/flow/produce", {
+      lineId, warehouseId: finishedWarehouseId, product: ZERO_WEIGHT_PRODUCT, quantity: 5, kg: 25,
     });
     expect(res.status).toBe(200);
     const wip = await produceRows();
     expect(wip).toHaveLength(1);
-    expect(Number(wip[0].weight_kg)).toBe(0);
+    expect(Number(wip[0].weight_kg)).toBe(25);
+    const inv = await inventoryRows();
+    expect(Number(inv[0].quantity)).toBe(5);
+    expect(Number(inv[0].weight_kg)).toBe(25);
   });
 
   it("race-safe: two concurrent produces cannot BOTH spend the same WIP balance", async () => {

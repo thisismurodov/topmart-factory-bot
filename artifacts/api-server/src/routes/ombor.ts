@@ -1143,6 +1143,17 @@ router.post("/ombor/flow/produce", async (req, res): Promise<void> => {
     // PRODUCE kg = kiritilgan kg, aks holda quantity × birlik og'irligi (bot bilan bir xil).
     const produceKg = kgInput > 0 ? kgInput : qty * unitWeight;
 
+    // Og'irlik nolga teng bo'lsa — mahsulotning og'irligi ham 0, kg ham kiritilmagan.
+    // Bunday holda WIP ledger hech kamaymaydi va bo'limning "sarflangan xom ashyo" ko'rsatkichi
+    // hech qachon pasaymaydi (ko'zga ko'rinmas drift). Operatordan aniq kg talab qilinadi.
+    if (produceKg === 0) {
+      await client.query("ROLLBACK");
+      res.status(400).json({
+        error: `"${canonicalProduct}" mahsulotining og'irligi 0 kg. Iltimos, "kg" maydoniga aniq og'irlikni kiriting.`,
+      });
+      return;
+    }
+
     // WIP balans himoyasi: bo'lim qabul qilganidan (RECEIVE − PRODUCE) ko'p
     // chiqara olmaydi. Yuqoridagi FOR UPDATE qulfi tufayli bu tekshiruv
     // race-safe — parallel PRODUCE tranzaksiyalari ketma-ket bajariladi.

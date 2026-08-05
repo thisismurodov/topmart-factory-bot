@@ -62,11 +62,15 @@ async def adm_home_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return WORKER_NAME
 
     elif action == "add_product":
+        # Yagona katalog (SKU) siyosati: yangi mahsulot faqat dashboard orqali yaratiladi
         await query.edit_message_text(
-            "📦 *Yangi mahsulot nomi:*\n_(misol: Tulpor 2)_",
+            "ℹ️ Yangi mahsulot endi faqat *dashboard* orqali qo'shiladi:\n"
+            "Dashboard → Mahsulotlar → «Yangi mahsulot».\n"
+            "U yerda SKU avtomatik beriladi va narx/xarajatlar to'liq kiritiladi.",
             parse_mode="Markdown",
         )
-        return PRODUCT_NAME
+        await query.message.reply_text("⚙️ Admin paneli:", reply_markup=admin_main_keyboard())
+        return ADM_HOME
 
     elif action == "salary":
         from datetime import date as _date

@@ -1,6 +1,21 @@
 import { Router, type IRouter } from "express";
 import { pool } from "@workspace/db";
 import { getUsdToUzsRate } from "../lib/exchangeRate";
+import { uniqueProductSku } from "../lib/sku";
+
+// SKU orqali bog'langan savdo bot mahsulotiga narx/nom o'zgarishini uzatish.
+// narx faqat UZS mahsulotlarda sinxronlanadi (mahsulotlar.narx UZS'da).
+async function propagateToDistribution(productName: string): Promise<void> {
+  await pool.query(
+    `UPDATE distribution.mahsulotlar m SET
+       nomi = p.name,
+       narx = CASE WHEN p.currency_type = 'UZS' AND p.default_sale_price > 0
+                   THEN ROUND(p.default_sale_price) ELSE m.narx END
+     FROM public.products p
+     WHERE p.name = $1 AND p.sku <> '' AND m.sku = p.sku`,
+    [productName]
+  );
+}
 
 const router: IRouter = Router();
 
@@ -103,22 +118,43 @@ router.post("/products", async (req, res): Promise<void> => {
   const finalWeight   = Number(weight) > 0 ? Number(weight) : 1;
 
   try {
+    // SKU kiritilmagan bo'lsa — nomdan avtomatik unikal SKU beriladi
+    const skuProvided = typeof sku === "string" && sku.trim() !== "";
+    let finalSku = skuProvided ? sku.trim().toUpperCase() : await uniqueProductSku(name.trim());
     const finalLineId = lineId != null && !isNaN(Number(lineId)) ? Number(lineId) : null;
-    const { rows } = await pool.query(
-      `INSERT INTO products
-         (name, sku, unit_type, currency_type, default_sale_price, weight, rate, rate_type,
-          salary_cost, electricity_cost, other_cost, minimum_stock, active, pieces_per_box, line_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
-       ON CONFLICT (name) DO UPDATE SET
-         sku=$2, unit_type=$3, currency_type=$4, default_sale_price=$5, weight=$6, rate=$7, rate_type=$8,
-         salary_cost=$9, electricity_cost=$10, other_cost=$11, minimum_stock=$12, active=$13,
-         pieces_per_box=$14, line_id=$15
-       RETURNING id, name, sku, unit_type, currency_type, default_sale_price, weight, rate, rate_type,
-                 salary_cost, electricity_cost, other_cost, minimum_stock, active, pieces_per_box, line_id`,
-      [name.trim(), sku, unitType, currencyType, Number(defaultSalePrice), finalWeight, Number(rate),
-       finalRateType, Number(salaryCost), Number(electricityCost), Number(otherCost),
-       Number(minimumStock), Boolean(active), Math.max(1, Number(piecesPerBox) || 1), finalLineId]
-    );
+    let rows: any[] = [];
+    // SKU unikal indeksga (idx_products_sku_unique) urilsa — avto-SKU'ni qayta
+    // yaratib 2 marta urinamiz (parallel yaratishdagi poyga uchun)
+    for (let attempt = 0; ; attempt++) {
+      try {
+        ({ rows } = await pool.query(
+          `INSERT INTO products
+             (name, sku, unit_type, currency_type, default_sale_price, weight, rate, rate_type,
+              salary_cost, electricity_cost, other_cost, minimum_stock, active, pieces_per_box, line_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+           ON CONFLICT (name) DO UPDATE SET
+             sku = CASE WHEN products.sku <> '' THEN products.sku ELSE EXCLUDED.sku END,
+             unit_type=$3, currency_type=$4, default_sale_price=$5, weight=$6, rate=$7, rate_type=$8,
+             salary_cost=$9, electricity_cost=$10, other_cost=$11, minimum_stock=$12, active=$13,
+             pieces_per_box=$14, line_id=$15
+           RETURNING id, name, sku, unit_type, currency_type, default_sale_price, weight, rate, rate_type,
+                     salary_cost, electricity_cost, other_cost, minimum_stock, active, pieces_per_box, line_id`,
+          [name.trim(), finalSku, unitType, currencyType, Number(defaultSalePrice), finalWeight, Number(rate),
+           finalRateType, Number(salaryCost), Number(electricityCost), Number(otherCost),
+           Number(minimumStock), Boolean(active), Math.max(1, Number(piecesPerBox) || 1), finalLineId]
+        ));
+        break;
+      } catch (e: any) {
+        if (e?.code === "23505" && String(e?.constraint) === "idx_products_sku_unique") {
+          if (skuProvided) {
+            res.status(409).json({ error: `SKU '${finalSku}' allaqachon boshqa mahsulotda ishlatilgan` });
+            return;
+          }
+          if (attempt < 2) { finalSku = await uniqueProductSku(name.trim()); continue; }
+        }
+        throw e;
+      }
+    }
     const p = rows[0];
     res.status(201).json({
       id: p.id, name: p.name, sku: p.sku,
@@ -163,6 +199,8 @@ router.patch("/products/:name", async (req, res): Promise<void> => {
   vals.push(productName);
 
   await pool.query(`UPDATE products SET ${fields.join(",")} WHERE name=$${vals.length}`, vals);
+  // Narx o'zgargan bo'lsa — SKU orqali bog'langan savdo bot mahsulotiga ham uzatamiz
+  await propagateToDistribution(productName);
   res.json({ ok: true });
 });
 

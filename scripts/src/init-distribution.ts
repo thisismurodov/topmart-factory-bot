@@ -51,7 +51,8 @@ CREATE TABLE IF NOT EXISTS distribution.mahsulotlar (
   nomi TEXT,
   narx BIGINT,
   birlik TEXT DEFAULT 'dona',
-  faol INTEGER DEFAULT 1
+  faol INTEGER DEFAULT 1,
+  sku TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS distribution.savdolar (

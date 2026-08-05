@@ -1,6 +1,7 @@
 import { Router, type IRouter, type Request } from "express";
 import { pool } from "@workspace/db";
 import { computeRouteStats } from "../lib/routePlanner";
+import { uniqueProductSku } from "../lib/sku";
 import { runRoutePlan } from "../lib/routePlanService";
 
 // Distribyutsiya moduli o'zining `distribution` sxemasida yashaydi (o'zbekcha jadval
@@ -144,11 +145,16 @@ const nameNorm = (expr: string): string =>
 
 router.get("/distribution/products", async (_req, res): Promise<void> => {
   const { rows } = await pool.query(
-    `SELECT m.id, m.nomi, m.narx, m.birlik, m.faol,
+    `SELECT m.id, m.nomi, m.narx, m.birlik, m.faol, m.sku,
             COALESCE(st.sotuvlar_soni, 0) AS sotuvlar_soni,
             COALESCE(st.jami_miqdor, 0)   AS jami_miqdor,
             COALESCE(st.jami_summa, 0)    AS jami_summa,
             st.oxirgi_savdo,
+            (SELECT p.name FROM public.products p
+             WHERE p.sku <> '' AND p.sku = m.sku LIMIT 1) AS erp_nomi,
+            (SELECT p.sku FROM public.products p
+             WHERE p.sku <> '' AND ${nameNorm("p.name")} = ${nameNorm("m.nomi")}
+             LIMIT 1) AS taklif_sku,
             EXISTS (SELECT 1 FROM public.products p
                     WHERE ${nameNorm("p.name")} = ${nameNorm("m.nomi")}) AS erp_bor
      FROM distribution.mahsulotlar m
@@ -177,6 +183,9 @@ router.get("/distribution/products", async (_req, res): Promise<void> => {
       jamiSumma: Number(r.jami_summa),
       oxirgiSavdo: (r.oxirgi_savdo as string | null) ?? null,
       erpBor: r.erp_bor === true,
+      sku: (r.sku as string) || "",
+      erpNomi: (r.erp_nomi as string | null) ?? null,
+      taklifSku: (r.taklif_sku as string | null) ?? null,
     }))
   );
 });
@@ -241,22 +250,33 @@ router.post("/distribution/products/sync-to-erp", async (req, res): Promise<void
       return;
     }
   }
-  const { rows } = await pool.query(
-    `INSERT INTO public.products (name, unit_type, rate_type, currency_type, default_sale_price, active)
-     SELECT m.nomi,
-            CASE WHEN m.birlik = 'kg' THEN 'kg' ELSE 'dona' END,
-            CASE WHEN m.birlik = 'kg' THEN 'kg' ELSE 'dona' END,
-            'UZS', COALESCE(m.narx, 0), TRUE
+  const missing = await pool.query(
+    `SELECT m.id, m.nomi, m.narx, m.birlik
      FROM distribution.mahsulotlar m
      WHERE m.faol = 1 AND m.nomi IS NOT NULL AND trim(m.nomi) <> ''
        AND ($1::int[] IS NULL OR m.id = ANY($1::int[]))
        AND NOT EXISTS (SELECT 1 FROM public.products p
                        WHERE ${nameNorm("p.name")} = ${nameNorm("m.nomi")})
-     ON CONFLICT (name) DO NOTHING
-     RETURNING name`,
+     ORDER BY m.id`,
     [ids]
   );
-  res.json({ added: rows.length, names: rows.map((r) => r.name as string) });
+  const added: string[] = [];
+  for (const m of missing.rows) {
+    // Har biriga SKU beriladi va savdo bot mahsuloti darhol shu SKU'ga bog'lanadi
+    const sku = await uniqueProductSku(String(m.nomi));
+    const unit = m.birlik === "kg" ? "kg" : "dona";
+    const ins = await pool.query(
+      `INSERT INTO public.products (name, sku, unit_type, rate_type, currency_type, default_sale_price, active)
+       VALUES ($1, $2, $3, $3, 'UZS', $4, TRUE)
+       ON CONFLICT (name) DO NOTHING RETURNING name, sku`,
+      [String(m.nomi), sku, unit, Number(m.narx ?? 0)]
+    );
+    if (ins.rows.length > 0) {
+      await pool.query(`UPDATE distribution.mahsulotlar SET sku = $1 WHERE id = $2`, [sku, m.id]);
+      added.push(String(ins.rows[0].name));
+    }
+  }
+  res.json({ added: added.length, names: added });
 });
 
 router.patch("/distribution/products/:id", async (req, res): Promise<void> => {
@@ -318,6 +338,32 @@ router.patch("/distribution/products/:id", async (req, res): Promise<void> => {
     params.push(faol);
     sets.push(`faol = $${params.length}`);
   }
+  if (body.sku !== undefined) {
+    // SKU orqali ERP mahsulotiga bog'lash ('' — bog'lanishni uzish)
+    // Diqqat: mavjud ERP SKU'lar aralash registrda ("shrk35") — aynan yozilganicha solishtiriladi
+    const sku = typeof body.sku === "string" ? body.sku.trim() : null;
+    if (sku === null) {
+      res.status(400).json({ error: "sku matn bo'lishi kerak" });
+      return;
+    }
+    if (sku !== "") {
+      const erp = await pool.query(`SELECT 1 FROM public.products WHERE sku = $1`, [sku]);
+      if (erp.rows.length === 0) {
+        res.status(404).json({ error: "Bunday SKU'li ERP mahsuloti topilmadi" });
+        return;
+      }
+      const used = await pool.query(
+        `SELECT 1 FROM distribution.mahsulotlar WHERE sku = $1 AND faol = 1 AND id <> $2 LIMIT 1`,
+        [sku, id]
+      );
+      if (used.rows.length > 0) {
+        res.status(409).json({ error: "Bu SKU boshqa faol savdo mahsulotiga bog'langan" });
+        return;
+      }
+    }
+    params.push(sku);
+    sets.push(`sku = $${params.length}`);
+  }
 
   // Reaktivatsiya himoyasi: faol=1 ga o'tishda (nomi o'zgartirilmasa ham) joriy nom
   // bilan boshqa faol mahsulot to'qnashmasligi tekshiriladi — aks holda nofaol
@@ -350,7 +396,7 @@ router.patch("/distribution/products/:id", async (req, res): Promise<void> => {
   params.push(id);
   const upd = await pool.query(
     `UPDATE distribution.mahsulotlar SET ${sets.join(", ")}
-     WHERE id = $${params.length} RETURNING id, nomi, narx, birlik, faol`,
+     WHERE id = $${params.length} RETURNING id, nomi, narx, birlik, faol, sku`,
     params
   );
   if (upd.rows.length === 0) {
@@ -364,7 +410,27 @@ router.patch("/distribution/products/:id", async (req, res): Promise<void> => {
     narx: Number(r.narx),
     birlik: r.birlik as string,
     faol: Number(r.faol) === 1,
+    sku: (r.sku as string) || "",
   });
+});
+
+// Nomi mos keladigan (nameNorm) savdo bot mahsulotlarini ERP SKU'lariga
+// avtomatik bog'lash. Faqat hali bog'lanmagan (sku='') faol mahsulotlar.
+router.post("/distribution/products/auto-link", async (_req, res): Promise<void> => {
+  const { rows } = await pool.query(
+    `UPDATE distribution.mahsulotlar m
+     SET sku = p.sku
+     FROM public.products p
+     WHERE m.faol = 1 AND COALESCE(m.sku, '') = ''
+       AND p.sku <> ''
+       AND ${nameNorm("p.name")} = ${nameNorm("m.nomi")}
+       AND NOT EXISTS (SELECT 1 FROM distribution.mahsulotlar x
+                       WHERE x.sku = p.sku AND x.faol = 1)
+       AND (SELECT COUNT(*) FROM public.products p2
+            WHERE p2.sku <> '' AND ${nameNorm("p2.name")} = ${nameNorm("m.nomi")}) = 1
+     RETURNING m.id, m.nomi, m.sku`
+  );
+  res.json({ linked: rows.length, items: rows.map((r) => ({ id: r.id, nomi: r.nomi, sku: r.sku })) });
 });
 
 // ── Umumiy ko'rsatkichlar (KPI kartalar) — filtrlangan davr bo'yicha ────────────

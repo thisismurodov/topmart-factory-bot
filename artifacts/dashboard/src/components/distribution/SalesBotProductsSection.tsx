@@ -17,7 +17,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Bot, Copy, Pencil, Plus, RotateCcw, Trash2 } from "lucide-react";
+import { Bot, Copy, Link2, Pencil, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
 
@@ -36,6 +36,9 @@ type SavdoProduct = {
   jamiSumma: number;
   oxirgiSavdo: string | null;
   erpBor: boolean;
+  sku: string;
+  erpNomi: string | null;   // SKU orqali bog'langan ERP mahsuloti nomi
+  taklifSku: string | null; // nomi mos ERP mahsulotining SKU'si (bog'lash taklifi)
 };
 
 const SAVDO_PRODUCTS_KEY = ["savdo-bot-products"];
@@ -75,7 +78,7 @@ function useCreateSavdoProduct() {
   });
 }
 
-type UpdateVars = { id: number; nomi?: string; narx?: number; birlik?: string; faol?: boolean };
+type UpdateVars = { id: number; nomi?: string; narx?: number; birlik?: string; faol?: boolean; sku?: string };
 
 function useUpdateSavdoProduct() {
   const qc = useQueryClient();
@@ -110,6 +113,96 @@ function useSyncToErp() {
       qc.invalidateQueries({ queryKey: ERP_PRODUCTS_KEY });
     },
   });
+}
+
+function useAutoLink() {
+  const qc = useQueryClient();
+  return useMutation<{ linked: number }, Error, void>({
+    mutationFn: async () => {
+      const res = await authFetch("/api/distribution/products/auto-link", { method: "POST" });
+      if (!res.ok) await readError(res, "Bog'lashda xato");
+      return res.json();
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: SAVDO_PRODUCTS_KEY }),
+  });
+}
+
+// ERP katalogi (SKU tanlash uchun qisqa ro'yxat)
+type ErpProductLite = { name: string; sku: string };
+function useErpProductsLite() {
+  return useQuery<ErpProductLite[]>({
+    queryKey: ["erp-products-lite"],
+    queryFn: async () => {
+      const res = await authFetch("/api/products");
+      if (!res.ok) throw new Error("ERP katalogini yuklashda xato");
+      const all = (await res.json()) as { name: string; sku: string; active: boolean }[];
+      return all.filter((p) => p.sku).map((p) => ({ name: p.name, sku: p.sku }));
+    },
+  });
+}
+
+// ── ERP bilan bog'lash dialogi ─────────────────────────────────────────────────
+function LinkDialog({ product, onClose }: { product: SavdoProduct; onClose: () => void }) {
+  const [sku, setSku] = useState(product.sku || product.taklifSku || "");
+  const { data: erp = [], isLoading } = useErpProductsLite();
+  const update = useUpdateSavdoProduct();
+  const { toast } = useToast();
+
+  const save = (value: string) =>
+    update.mutate(
+      { id: product.id, sku: value },
+      {
+        onSuccess: () => onClose(),
+        onError: (e) => toast({ title: "Bog'lashda xato", description: e.message, variant: "destructive" }),
+      }
+    );
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>ERP mahsulotiga bog'lash</DialogTitle>
+          <DialogDescription>
+            <strong>{product.nomi}</strong> qaysi ERP (zavod) mahsuloti bilan bitta ekanini tanlang —
+            SKU orqali narx va hisobotlar bog'lanadi.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <Label>ERP mahsuloti (SKU)</Label>
+          <Select value={sku} onValueChange={setSku} disabled={isLoading}>
+            <SelectTrigger>
+              <SelectValue placeholder={isLoading ? "Yuklanmoqda..." : "Tanlang"} />
+            </SelectTrigger>
+            <SelectContent>
+              {erp.map((p) => (
+                <SelectItem key={p.sku} value={p.sku}>
+                  {p.name} · {p.sku}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {product.taklifSku && !product.sku && (
+            <p className="text-xs text-muted-foreground">
+              Nomi mos kelgani uchun <span className="font-mono">{product.taklifSku}</span> taklif qilindi.
+            </p>
+          )}
+        </div>
+        <DialogFooter className="gap-2">
+          {product.sku && (
+            <Button variant="outline" disabled={update.isPending} onClick={() => save("")}>
+              Bog'lanishni uzish
+            </Button>
+          )}
+          <Button variant="outline" onClick={onClose} disabled={update.isPending}>
+            Bekor qilish
+          </Button>
+          <Button onClick={() => sku && save(sku)} disabled={update.isPending || !sku}>
+            {update.isPending ? "Saqlanmoqda..." : "Bog'lash"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 // ── Qo'shish / tahrirlash dialogi ───────────────────────────────────────────────
@@ -207,14 +300,17 @@ export function SalesBotProductsSection() {
   const [editTarget, setEditTarget] = useState<SavdoProduct | null>(null);
   const [deactivateTarget, setDeactivateTarget] = useState<SavdoProduct | null>(null);
   const [syncAllOpen, setSyncAllOpen] = useState(false);
+  const [linkTarget, setLinkTarget] = useState<SavdoProduct | null>(null);
 
   const { data: items = [], isLoading } = useSavdoProducts();
   const update = useUpdateSavdoProduct();
   const sync = useSyncToErp();
+  const autoLink = useAutoLink();
   const { toast } = useToast();
 
   const faolCount = items.filter((p) => p.faol).length;
   const missing = items.filter((p) => p.faol && !p.erpBor);
+  const linkable = items.filter((p) => p.faol && !p.sku && p.taklifSku);
 
   const runSync = (ids?: number[]) =>
     sync.mutate(ids ? { ids } : {}, {
@@ -248,6 +344,21 @@ export function SalesBotProductsSection() {
           </p>
         </div>
         <div className="flex gap-2">
+          {linkable.length > 0 && (
+            <Button
+              variant="outline"
+              disabled={autoLink.isPending}
+              onClick={() =>
+                autoLink.mutate(undefined, {
+                  onSuccess: (r) =>
+                    toast({ title: r.linked > 0 ? `${r.linked} ta mahsulot SKU orqali bog'landi` : "Bog'lanadigan mahsulot topilmadi" }),
+                  onError: (e) => toast({ title: "Bog'lashda xato", description: e.message, variant: "destructive" }),
+                })
+              }
+            >
+              <Link2 className="w-4 h-4 mr-2" /> Avto-bog'lash ({linkable.length})
+            </Button>
+          )}
           {missing.length > 0 && (
             <Button variant="outline" onClick={() => setSyncAllOpen(true)} disabled={sync.isPending}>
               <Copy className="w-4 h-4 mr-2" /> ERP ga nusxalash ({missing.length})
@@ -314,10 +425,32 @@ export function SalesBotProductsSection() {
                         {p.oxirgiSavdo ?? "—"}
                       </TableCell>
                       <TableCell>
-                        {p.erpBor ? (
-                          <Badge className="bg-green-100 text-green-700 hover:bg-green-100 border border-green-200 shadow-none">
-                            Bor
-                          </Badge>
+                        {p.sku && p.erpNomi ? (
+                          <button
+                            type="button"
+                            title={`Bog'langan: ${p.erpNomi} — o'zgartirish uchun bosing`}
+                            onClick={() => setLinkTarget(p)}
+                          >
+                            <Badge className="bg-green-100 text-green-700 hover:bg-green-200 border border-green-200 shadow-none font-mono cursor-pointer">
+                              {p.sku}
+                            </Badge>
+                          </button>
+                        ) : p.erpBor ? (
+                          <div className="flex items-center gap-1.5">
+                            <Badge className="bg-green-100 text-green-700 hover:bg-green-100 border border-green-200 shadow-none">
+                              Bor
+                            </Badge>
+                            {p.faol && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-6 px-2 text-xs"
+                                onClick={() => setLinkTarget(p)}
+                              >
+                                Bog'lash
+                              </Button>
+                            )}
+                          </div>
                         ) : (
                           <div className="flex items-center gap-1.5">
                             <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100 border border-amber-200 shadow-none">
@@ -399,6 +532,7 @@ export function SalesBotProductsSection() {
 
       {addOpen && <SavdoProductDialog product={null} onClose={() => setAddOpen(false)} />}
       {editTarget && <SavdoProductDialog product={editTarget} onClose={() => setEditTarget(null)} />}
+      {linkTarget && <LinkDialog product={linkTarget} onClose={() => setLinkTarget(null)} />}
 
       <AlertDialog open={!!deactivateTarget} onOpenChange={(o) => !o && setDeactivateTarget(null)}>
         <AlertDialogContent>

@@ -1,4 +1,5 @@
-import { pgTable, text, numeric, serial, boolean, timestamp, integer } from "drizzle-orm/pg-core";
+import { pgTable, text, numeric, serial, boolean, timestamp, integer, uniqueIndex } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -21,7 +22,10 @@ export const productsTable = pgTable("products", {
   active:            boolean("active").notNull().default(true),
   lineId:            integer("line_id"),
   createdAt:         timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [
+  // Bo'sh bo'lmagan SKU'lar unikal — yagona katalog invarianti
+  uniqueIndex("idx_products_sku_unique").on(t.sku).where(sql`sku <> ''`),
+]);
 
 export const insertProductSchema = createInsertSchema(productsTable);
 export type InsertProduct = z.infer<typeof insertProductSchema>;

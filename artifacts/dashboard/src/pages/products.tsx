@@ -1,5 +1,5 @@
 import { authFetch } from "@/App";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -207,7 +207,12 @@ function useCreateProduct() {
       if (!res.ok) throw new Error("Saqlashda xato");
       return res.json();
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: PRODUCTS_KEY }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: PRODUCTS_KEY });
+      // SKU-bog'lanish holati savdo-bot bo'limida ham yangilansin
+      qc.invalidateQueries({ queryKey: ["savdo-bot-products"] });
+      qc.invalidateQueries({ queryKey: ["erp-products-lite"] });
+    },
   });
 }
 
@@ -223,7 +228,12 @@ function useUpdateProduct() {
       if (!res.ok) throw new Error("Saqlashda xato");
       return res.json();
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: PRODUCTS_KEY }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: PRODUCTS_KEY });
+      // PATCH narx/nomni SKU orqali savdo botiga ham tarqatadi — ro'yxat yangilansin
+      qc.invalidateQueries({ queryKey: ["savdo-bot-products"] });
+      qc.invalidateQueries({ queryKey: ["erp-products-lite"] });
+    },
   });
 }
 
@@ -668,6 +678,19 @@ function TierTab({ product }: { product: Product }) {
 }
 
 // ── Product dialog ────────────────────────────────────────────────────────────
+// Nomdan SKU taklifi — serverdagi skuFromName bilan bir xil qoida
+function suggestSku(name: string): string {
+  return name
+    .normalize("NFKD")
+    .replace(/['’ʼ`´]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-")
+    .slice(0, 24)
+    .replace(/-+$/g, "");
+}
+
 function ProductDialog({
   open, onClose, product, rawMaterials,
 }: {
@@ -701,6 +724,15 @@ function ProductDialog({
       active: product?.active ?? true,
     },
   });
+
+  // Yangi mahsulotda SKU'ni nomdan avtomatik taklif qilamiz (foydalanuvchi
+  // o'zi yozsa — taklif to'xtaydi, "mixed" rejim)
+  const [skuTouched, setSkuTouched] = useState(false);
+  const watchedName = form.watch("name");
+  useEffect(() => {
+    if (isEdit || skuTouched) return;
+    form.setValue("sku", suggestSku(watchedName ?? ""));
+  }, [watchedName, isEdit, skuTouched]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const watchedSalePrice = form.watch("defaultSalePrice");
   const watchedWeight    = form.watch("weight");
@@ -790,9 +822,13 @@ function ProductDialog({
                 name="sku"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>SKU (ixtiyoriy)</FormLabel>
+                    <FormLabel>SKU {isEdit ? "" : "(avtomatik taklif — o'zgartirish mumkin)"}</FormLabel>
                     <FormControl>
-                      <Input {...field} placeholder="RM-001" />
+                      <Input
+                        {...field}
+                        placeholder="ARQON-6MM"
+                        onChange={(e) => { setSkuTouched(true); field.onChange(e.target.value.toUpperCase()); }}
+                      />
                     </FormControl>
                   </FormItem>
                 )}

@@ -233,7 +233,9 @@ describe("Fresh DB boots via init code alone", () => {
     expect(missing, `Missing schema after init: ${missing.join(", ")}`).toEqual([]);
   });
 
-  it("GET endpoints across ALL route groups don't 500 on a fresh (empty) DB", async () => {
+  // Shared Railway DB yuk ostida har bir so'rov 5-8s ga cho'zilishi mumkin —
+  // bu testda o'nlab endpoint bor, shuning uchun timeout kattaroq (flake emas, latency).
+  it("GET endpoints across ALL route groups don't 500 on a fresh (empty) DB", { timeout: 180_000 }, async () => {
     const paths = [
       // Ombor / inventory / warehouses
       "/ombor/summary",

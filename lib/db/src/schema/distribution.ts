@@ -47,6 +47,7 @@ export const distMahsulotlarTable = distribution.table("mahsulotlar", {
   narx: bigint("narx", { mode: "number" }),
   birlik: text("birlik").default("dona"),
   faol: integer("faol").default(1),
+  sku: text("sku").default(""),
 });
 
 // Savdolar (sales headers)

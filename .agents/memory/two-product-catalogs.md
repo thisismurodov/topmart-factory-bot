@@ -1,21 +1,14 @@
 ---
 name: Two product catalogs (ERP vs savdo bot)
-description: public.products and distribution.mahsulotlar are separate by design; how they bridge and how names are matched
+description: How public.products and distribution.mahsulotlar relate, and the SKU bridge that links them
 ---
 
-# Two product catalogs
-
-The project has TWO product catalogs on the same Railway DB:
-
-- `public.products` — ERP/factory catalog (name is PK; cost/profit model, BOM, tiers). Shown in the dashboard products page main table.
-- `distribution.mahsulotlar` — savdo (agent) bot catalog (id, nomi, narx BIGINT UZS, birlik dona/kg, faol 0/1 soft delete). Written by the distribution bot; sales reference it via `savdo_tafsilot.mahsulot_id`.
-
-They are NOT synced automatically. Products added in the savdo bot do not appear in the ERP catalog and vice versa — this was the root cause of a "bot products invisible in dashboard" complaint.
-
-**Bridge (July 2026):** dashboard products page has a "Savdo bot mahsulotlari" section (API: `/api/distribution/products` CRUD + `/api/distribution/products/sync-to-erp` which copies missing active bot products into public.products with narx as UZS default_sale_price).
-
-**Rules to preserve:**
-- Dashboard edits must stay write-compatible with the bot's SQL (plain insert/update on the same columns; faol=0 = soft delete, never hard DELETE — sales history references mahsulot_id).
-- Name matching between catalogs must normalize: lower, trim, collapse spaces, strip apostrophe variants (' ' ʼ ` ´) — Uzbek names like Po'kak/Po'kak differ only by apostrophe glyph.
-- Creating a bot product whose normalized name matches an inactive (faol=0) row should reactivate it, not insert a duplicate.
-- **Why:** user's long-term wish is ONE unified catalog ("we should see the same products in both"); full unification (bot reading public.products) is a known possible follow-up — don't deepen the split.
+- `public.products` (ERP/zavod) and `distribution.mahsulotlar` (savdo bot) are intentionally separate catalogs.
+- **SKU bridge (unified catalog):** `mahsulotlar.sku` links a bot product to exactly one ERP product via `products.sku`.
+  - `products.sku` non-blank values are UNIQUE via partial index `idx_products_sku_unique ... WHERE sku <> ''` — defined in BOTH api-server init-db.ts and Drizzle schema (drift-checked).
+  - Existing ERP SKUs are **mixed case** (`shrk35`, `SHKR28`) — never uppercase an SKU before matching; compare exact strings. Only newly auto-generated SKUs are uppercased.
+  - Product creation is dashboard-only; both Telegram bots' add-product flows are disabled with redirect messages.
+  - ERP PATCH propagates name + price (UZS only, per-unit) to linked mahsulotlar by sku; `mahsulotlar.narx` is bigint UZS.
+  - Name-conflict upsert on products must PRESERVE the existing non-blank sku (`CASE WHEN products.sku <> '' THEN products.sku ELSE EXCLUDED.sku END`) or bot links silently break.
+- When matching by name (auto-link, sync-to-erp), normalize apostrophe variants (`' ’ ʼ \` ´`) and whitespace; link only when the match is unique on both sides.
+- **Why:** one physical product must have one identity across factory + distribution; SKU is that identity, names drift.

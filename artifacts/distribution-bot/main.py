@@ -1780,14 +1780,11 @@ def export_cmd(msg):
 @bot.message_handler(commands=["addproduct"])
 def add_prod(msg):
     if not is_admin(msg.from_user.id): return
-    try:
-        t=msg.text.replace("/addproduct","").strip().split("|")
-        nomi,narx,birlik=t[0].strip(),int(t[1].strip()),t[2].strip()
-        conn=get_db();c=conn.cursor()
-        c.execute("INSERT INTO mahsulotlar (nomi,narx,birlik) VALUES (%s,%s,%s)",(nomi,narx,birlik))
-        conn.commit();conn.close()
-        bot.send_message(msg.from_user.id,f"✅ {nomi} — {fmt(narx)}/{birlik}")
-    except: bot.send_message(msg.from_user.id,"❗ /addproduct Arqon 5mm|35000|dona")
+    # Yagona katalog (SKU) siyosati: yangi mahsulot faqat dashboard orqali yaratiladi
+    bot.send_message(msg.from_user.id,
+        "ℹ️ Yangi mahsulot endi faqat dashboard orqali qo'shiladi:\n"
+        "Dashboard → Mahsulotlar → «Yangi savdo mahsuloti».\n"
+        "Bu yerda narx o'zgartirish va o'chirish ishlayveradi.")
 
 @bot.message_handler(commands=["updateprice"])
 def upd_price(msg):
@@ -3710,8 +3707,12 @@ def mah_royxat(msg):
 def mah_qosh_start(msg):
     uid=msg.from_user.id
     if not is_admin(uid): return
-    set_state(uid,"mah_qosh_nomi",{})
-    bot.send_message(uid,"📝 Mahsulot nomini kiriting:",reply_markup=cancel_kb())
+    # Yagona katalog (SKU) siyosati: yangi mahsulot faqat dashboard orqali yaratiladi
+    bot.send_message(uid,
+        "ℹ️ Yangi mahsulot endi faqat dashboard orqali qo'shiladi:\n"
+        "Dashboard → Mahsulotlar → «Yangi savdo mahsuloti».\n"
+        "U yerda mahsulotga SKU beriladi va zavod katalogi bilan bog'lanadi.",
+        reply_markup=mah_menu_kb())
 
 @bot.message_handler(func=lambda m:get_state(m.from_user.id)["state"]=="mah_qosh_nomi")
 def mah_qosh_nomi(msg):

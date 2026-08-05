@@ -46,6 +46,12 @@ export async function initDb(): Promise<void> {
       ADD COLUMN IF NOT EXISTS pieces_per_box INTEGER NOT NULL DEFAULT 1
   `);
 
+  // products.sku — yagona katalog identifikatori: bo'sh bo'lmagan SKU'lar unikal
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_products_sku_unique
+      ON products (sku) WHERE sku <> ''
+  `);
+
   // raw_materials.currency — xom ashyo valyutasi (UZS yoki USD)
   await pool.query(`
     ALTER TABLE IF EXISTS raw_materials

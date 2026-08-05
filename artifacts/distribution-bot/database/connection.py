@@ -203,8 +203,10 @@ CREATE TABLE IF NOT EXISTS distribution.dokonlar (
     repeat_orders INTEGER DEFAULT 0, total_sales BIGINT DEFAULT 0, avg_repeat_days DOUBLE PRECISION DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS distribution.mahsulotlar (
-    id SERIAL PRIMARY KEY, nomi TEXT, narx BIGINT, birlik TEXT DEFAULT 'dona', faol INTEGER DEFAULT 1
+    id SERIAL PRIMARY KEY, nomi TEXT, narx BIGINT, birlik TEXT DEFAULT 'dona', faol INTEGER DEFAULT 1,
+    sku TEXT DEFAULT ''
 );
+ALTER TABLE distribution.mahsulotlar ADD COLUMN IF NOT EXISTS sku TEXT DEFAULT '';
 CREATE TABLE IF NOT EXISTS distribution.savdolar (
     id SERIAL PRIMARY KEY, dokon_id BIGINT, agent_id BIGINT, jami_summa BIGINT,
     tolov_turi TEXT, foto TEXT, created_at TEXT

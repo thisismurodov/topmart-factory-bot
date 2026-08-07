@@ -1652,4 +1652,543 @@ router.get("/distribution/live-status", async (req, res): Promise<void> => {
   });
 });
 
+// ── Analytics (savdo/conversion/repeat/nasiya foizlari va kunlik dinamika) ────────
+// from/to/agentId/viloyat/hudud/tolovTuri/mahsulotId/search filtrlari qo'llanadi.
+// conversionPct = soldShops / visitedShops * 100 (visit bo'lmasa null).
+// repeatPct = savdo qilgan do'konlar orasida avvalroq ham savdo qilganlar ulushi.
+// nasiyaPct = nasiya+aralash savdolar / jami savdolar * 100.
+// avgVisitsPerDay = jami shop_day_pairs / ish kunlari soni.
+//
+// Arxitektura: savdolar filtri salesWhere (tolovTuri/mahsulotId/search ham);
+// olmagan filtri alohida owParams (tolovTuri/mahsulotId olmagan bilan bog'liq emas).
+// Visited shops uchun owOff = ow $N indekslari swParams.length ga siljitiladi.
+router.get("/distribution/analytics", async (req, res): Promise<void> => {
+  const f = parseFilters(req);
+
+  const dQ = await pool.query(
+    `SELECT to_char(now() AT TIME ZONE 'Asia/Tashkent','YYYY-MM-DD') AS today`
+  );
+  const today = dQ.rows[0].today as string;
+
+  const fromDate = f.from ?? (() => {
+    const d = new Date(`${today}T12:00:00`);
+    d.setDate(d.getDate() - 29);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  })();
+  const toDate = f.to ?? today;
+
+  // ef: from/to kafolatli — salesWhere har doim date filtrni qo'shadi
+  const ef: Filters = { ...f, from: fromDate, to: toDate };
+
+  // sw: salesWhere barcha savdo filtrlarini (tolovTuri, mahsulotId, search ham) qo'shadi.
+  // swParams[0] = fromDate (salesWhere 'from'ni birinchi push qiladi).
+  const swParams: unknown[] = [];
+  const sw = salesWhere(ef, swParams);
+
+  // ow: olmagan_dokonlar filtri — faqat sana+agent+do'kon maydonlari
+  // (tolovTuri/mahsulotId olmagan tashriflar bilan bog'liq emas)
+  const owParams: unknown[] = [];
+  let ow = "";
+  owParams.push(fromDate); ow += ` AND substr(o.created_at,1,10) >= $${owParams.length}`;
+  owParams.push(toDate);   ow += ` AND substr(o.created_at,1,10) <= $${owParams.length}`;
+  if (ef.agentId) { owParams.push(ef.agentId); ow += ` AND o.agent_id = $${owParams.length}`; }
+  if (ef.viloyat) { owParams.push(ef.viloyat); ow += ` AND d.viloyat = $${owParams.length}`; }
+  if (ef.hudud)   { owParams.push(ef.hudud);   ow += ` AND d.hudud = $${owParams.length}`; }
+  if (ef.search)  { owParams.push(`%${ef.search}%`); ow += ` AND d.nomi ILIKE $${owParams.length}`; }
+
+  // owOff: olmagan WHERE $N indekslarini swParams soni qadar siljitamiz
+  // (visited shops birlashtirilgan so'rovida [swParams,...owParams] ishlatiladi)
+  const owOff = ow.replace(/\$(\d+)/g, (_m, n) => `$${Number(n) + swParams.length}`);
+  const combinedP = [...swParams, ...owParams];
+
+  const [kpiR, visitedR, dailySR, dailyVisitR] = await Promise.all([
+    // 1. Savdolar KPI — barcha filtrlar (salesWhere orqali)
+    pool.query(`
+      WITH period_sales AS (
+        SELECT s.dokon_id, s.jami_summa, s.tolov_turi, s.created_at
+          FROM distribution.savdolar s
+          JOIN distribution.dokonlar d ON d.id = s.dokon_id
+         WHERE 1=1${sw}
+      ),
+      repeat_shops AS (
+        SELECT COUNT(DISTINCT ps.dokon_id)::int AS cnt
+          FROM period_sales ps
+         WHERE EXISTS (
+           SELECT 1 FROM distribution.savdolar prev
+            WHERE prev.dokon_id = ps.dokon_id
+              AND substr(prev.created_at,1,10) < $1
+         )
+      )
+      SELECT
+        COUNT(DISTINCT ps.dokon_id)::int               AS sold_shops,
+        COUNT(*)::int                                   AS sales_count,
+        COALESCE(SUM(ps.jami_summa),0)::bigint          AS sales_total,
+        COUNT(*) FILTER (WHERE ps.tolov_turi IN ('nasiya','aralash'))::int AS nasiya_count,
+        COUNT(DISTINCT substr(ps.created_at,1,10))::int AS work_days,
+        (SELECT cnt FROM repeat_shops)                  AS repeat_shops
+      FROM period_sales ps
+    `, swParams),
+
+    // 2. Visited shops: savdolar ∪ olmagan (noyob do'konlar soni)
+    pool.query(`
+      SELECT COUNT(DISTINCT dokon_id)::int AS cnt
+        FROM (
+          SELECT s.dokon_id FROM distribution.savdolar s
+            JOIN distribution.dokonlar d ON d.id = s.dokon_id
+           WHERE 1=1${sw}
+          UNION
+          SELECT o.dokon_id FROM distribution.olmagan_dokonlar o
+            JOIN distribution.dokonlar d ON d.id = o.dokon_id
+           WHERE 1=1${owOff}
+        ) v
+    `, combinedP),
+
+    // 3. Kunlik savdolar statistikasi (savdo soni + summasi)
+    pool.query(`
+      SELECT substr(s.created_at,1,10) AS date,
+             COUNT(*)::int AS sales,
+             COALESCE(SUM(s.jami_summa),0)::bigint AS sales_total
+        FROM distribution.savdolar s
+        JOIN distribution.dokonlar d ON d.id = s.dokon_id
+       WHERE 1=1${sw}
+       GROUP BY substr(s.created_at,1,10)
+    `, swParams),
+
+    // 4. Kunlik NOYOB tashrif qilingan do'konlar (savdolar ∪ olmagan, UNION-dedupe)
+    // UNION (DISTINCT) har kunda bir xil do'kon bir marta hisoblanishini kafolatlaydi
+    pool.query(`
+      SELECT v.date, COUNT(DISTINCT v.dokon_id)::int AS visited_shops
+        FROM (
+          SELECT substr(s.created_at,1,10) AS date, s.dokon_id
+            FROM distribution.savdolar s
+            JOIN distribution.dokonlar d ON d.id = s.dokon_id
+           WHERE 1=1${sw}
+          UNION
+          SELECT substr(o.created_at,1,10) AS date, o.dokon_id
+            FROM distribution.olmagan_dokonlar o
+            JOIN distribution.dokonlar d ON d.id = o.dokon_id
+           WHERE 1=1${owOff}
+        ) v
+       GROUP BY v.date
+    `, combinedP),
+  ]);
+
+  const k = kpiR.rows[0];
+  const soldShops     = Number(k.sold_shops);
+  const visitedShops  = Number(visitedR.rows[0]?.cnt ?? 0);
+  const repeatShops   = Number(k.repeat_shops ?? 0);
+  const nasiCnt       = Number(k.nasiya_count);
+  const totalSalesCnt = Number(k.sales_count);
+  const workDays      = Number(k.work_days);
+
+  // Kunlik qatorlarni sana oralig'i bo'yicha birlashtirish
+  // dailySMap: faqat savdo soni/summasi (visits uchun ishlatilmaydi — UNION dedupe quyida)
+  const dailySMap = new Map<string, { sales: number; salesTotal: number }>();
+  for (const r of dailySR.rows) {
+    dailySMap.set(r.date as string, {
+      sales: Number(r.sales),
+      salesTotal: Number(r.sales_total),
+    });
+  }
+  // dailyVisitMap: UNION DISTINCT so'rovidan — har kunda noyob tashrif qilingan do'konlar soni
+  // (bir do'kon savdo ham, olmagan ham bo'lsa BIR marta hisoblanadi)
+  const dailyVisitMap = new Map<string, number>();
+  for (const r of dailyVisitR.rows) {
+    dailyVisitMap.set(r.date as string, Number(r.visited_shops));
+  }
+
+  const daily: Array<{ date: string; visits: number; sales: number; salesTotal: number }> = [];
+  // shopDayPairs: jami shop-kun juftliklari, visitWorkDays: tashrif bor kunlar soni
+  // avgVisitsPerDay denominator = visitWorkDays (savdo+olmagan), "olmagan-only" davrda to'g'ri ishlaydi
+  let shopDayPairs = 0;
+  let visitWorkDays = 0;
+  const cur = new Date(`${fromDate}T12:00:00`);
+  const end = new Date(`${toDate}T12:00:00`);
+  while (cur <= end) {
+    const dateStr = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}-${String(cur.getDate()).padStart(2, "0")}`;
+    const s = dailySMap.get(dateStr);
+    const visits = dailyVisitMap.get(dateStr) ?? 0;
+    daily.push({ date: dateStr, visits, sales: s?.sales ?? 0, salesTotal: s?.salesTotal ?? 0 });
+    shopDayPairs += visits;
+    if (visits > 0) visitWorkDays += 1;
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  res.json({
+    from: fromDate,
+    to: toDate,
+    kpi: {
+      visitedShops,
+      soldShops,
+      conversionPct: visitedShops > 0 ? Math.round((soldShops / visitedShops) * 100) : null,
+      repeatPct: soldShops > 0 ? Math.round((repeatShops / soldShops) * 100) : null,
+      nasiyaPct: totalSalesCnt > 0 ? Math.round((nasiCnt / totalSalesCnt) * 100) : null,
+      avgVisitsPerDay: visitWorkDays > 0 ? Math.round((shopDayPairs / visitWorkDays) * 10) / 10 : null,
+      salesCount: totalSalesCnt,
+      salesTotal: Number(k.sales_total),
+      nasiyaCount: nasiCnt,
+    },
+    daily,
+  });
+});
+
+// ── Issiqlik xaritasi (heatmap) ──────────────────────────────────────────────────
+// agentId/viloyat/hudud/search filtrlari (sana yo'q — joriy holat ko'rsatiladi).
+// Har bir do'kon uchun oxirgi xariddan o'tgan kunlar soni va rang sinfi:
+//   green  — 1–14 kun (faol)
+//   yellow — 15–30 kun (sovumoqda)
+//   red    — 31+ kun   (yo'qotish xavfi)
+//   new    — hech qachon xarid qilmagan
+// Hudud (tuman) darajasida jamlangan statistika va qo'l centroid ham qaytadi.
+router.get("/distribution/heatmap", async (req, res): Promise<void> => {
+  const f = parseFilters(req);
+  const params: unknown[] = [];
+  const w = shopsWhere(f, params);
+
+  const { rows: shopRows } = await pool.query(
+    `SELECT
+       d.id, d.nomi, d.viloyat, d.hudud,
+       d.latitude, d.longitude,
+       d.agent_id::text AS agent_id,
+       u.name AS agent_name,
+       COALESCE(
+         NULLIF(substr(d.last_order_date,1,10),'')::date,
+         NULL
+       ) AS last_order,
+       (now() AT TIME ZONE 'Asia/Tashkent')::date AS today,
+       -- avg_repeat_days: har do'konning odatiy xarid takrorlash kadansi
+       -- 0 → tarix yo'q yoki yagona xarid (fallback fixed thresholds ishlaydi)
+       COALESCE(
+         (SELECT ROUND(AVG(cur - prev))::int
+            FROM (
+              SELECT LAG(substr(s2.created_at,1,10)::date)
+                       OVER (ORDER BY s2.created_at)      AS prev,
+                     substr(s2.created_at,1,10)::date     AS cur
+                FROM distribution.savdolar s2
+               WHERE s2.dokon_id = d.id
+            ) gaps
+           WHERE prev IS NOT NULL
+             AND (cur - prev) BETWEEN 1 AND 90
+         ), 0
+       )::int AS avg_repeat_days
+     FROM distribution.dokonlar d
+     LEFT JOIN distribution.users u ON u.telegram_id = d.agent_id
+     WHERE d.holat = 'faol' AND d.latitude IS NOT NULL AND d.longitude IS NOT NULL${w}
+     ORDER BY d.id`,
+    params
+  );
+
+  // Har bir do'kon uchun sinf va kunlar hisobi
+  // Tasniflash — kadans asosida (avg_repeat_days > 0 bo'lsa):
+  //   green  — days <= avg_repeat_days          (odatiy davr ichida)
+  //   yellow — days <= avg_repeat_days * 2      (birozgina kechikkan)
+  //   red    — days >  avg_repeat_days * 2      (sezilarli kechikkan)
+  // Kadans tarixsiz do'konlar uchun fallback: green ≤14, yellow ≤30, red >30.
+  type ShopRow = {
+    id: number; nomi: string | null; viloyat: string | null; hudud: string | null;
+    lat: number; lng: number; agentId: string | null; agentName: string | null;
+    days: number | null; avgRepeatDays: number; cls: "green" | "yellow" | "red" | "new";
+  };
+  const shops: ShopRow[] = shopRows.map((r) => {
+    let days: number | null = null;
+    let cls: "green" | "yellow" | "red" | "new" = "new";
+    const avgRepeatDays = Number(r.avg_repeat_days) || 0;
+    if (r.last_order) {
+      const lo = new Date(r.last_order as string);
+      const tod = new Date(r.today as string);
+      days = Math.round((tod.getTime() - lo.getTime()) / 86400000);
+      if (avgRepeatDays > 0) {
+        // Kadans asosida: birinchi kadans — yashil, ikkinchi kadans — sariq, undan oshsa — qizil
+        cls = days <= avgRepeatDays ? "green" : days <= avgRepeatDays * 2 ? "yellow" : "red";
+      } else {
+        // Fallback fixed: ≤14 kun → yashil, ≤30 kun → sariq, 31+ kun → qizil
+        cls = days <= 14 ? "green" : days <= 30 ? "yellow" : "red";
+      }
+    }
+    return {
+      id: r.id as number,
+      nomi: r.nomi as string | null,
+      viloyat: r.viloyat as string | null,
+      hudud: r.hudud as string | null,
+      lat: Number(r.latitude),
+      lng: Number(r.longitude),
+      agentId: r.agent_id as string | null,
+      agentName: r.agent_name as string | null,
+      days,
+      avgRepeatDays,
+      cls,
+    };
+  });
+
+  // Hudud darajasida jamlash — centroid o'rtacha koordinata
+  type HududKey = string;
+  const hudMap = new Map<HududKey, {
+    viloyat: string | null; hudud: string | null;
+    shopCount: number; green: number; yellow: number; red: number; new: number;
+    latSum: number; lngSum: number;
+  }>();
+  for (const s of shops) {
+    const key: HududKey = `${s.viloyat ?? ""}|${s.hudud ?? ""}`;
+    let h = hudMap.get(key);
+    if (!h) {
+      h = { viloyat: s.viloyat, hudud: s.hudud, shopCount: 0, green: 0, yellow: 0, red: 0, new: 0, latSum: 0, lngSum: 0 };
+      hudMap.set(key, h);
+    }
+    h.shopCount++;
+    h[s.cls]++;
+    h.latSum += s.lat;
+    h.lngSum += s.lng;
+  }
+
+  // Hudud sinfi — ko'pchilik do'konlar qaysi rangda bo'lsa, o'sha
+  const hududlar = Array.from(hudMap.values()).map((h) => {
+    const clsScores: ["green", "yellow", "red", "new"] = ["green", "yellow", "red", "new"];
+    const dominant = clsScores.reduce((best, c) => (h[c] > h[best] ? c : best), "green" as "green" | "yellow" | "red" | "new");
+    return {
+      viloyat: h.viloyat,
+      hudud: h.hudud,
+      shopCount: h.shopCount,
+      green: h.green,
+      yellow: h.yellow,
+      red: h.red,
+      new: h.new,
+      cls: dominant,
+      centroid: h.shopCount > 0
+        ? { lat: Math.round((h.latSum / h.shopCount) * 100000) / 100000, lng: Math.round((h.lngSum / h.shopCount) * 100000) / 100000 }
+        : null,
+    };
+  });
+
+  res.json({ shops, hududlar });
+});
+
+// ── Smart Suggestions (rule-based tavsiyalar) ────────────────────────────────────
+// 3 turdagi tavsiya:
+//   agents  — GPS jo'natgan agentlarga eng yaqin, bugun hali kirilmagan do'konlar
+//   overdue — oxirgi xariddan beri odatdagidan ko'p vaqt o'tgan do'konlar (30+ kun)
+//   qaytish — olmagan_dokonlar.qaytish_sanasi <= bugun va bajarildi NULL (yoki 0)
+// agentId/viloyat/hudud filtrlari qo'llanadi.
+router.get("/distribution/suggestions", async (req, res): Promise<void> => {
+  const f = parseFilters(req);
+
+  const dQ = await pool.query(
+    `SELECT to_char(now() AT TIME ZONE 'Asia/Tashkent','YYYY-MM-DD') AS today,
+            EXTRACT(ISODOW FROM (now() AT TIME ZONE 'Asia/Tashkent'))::int AS dow`
+  );
+  const today = dQ.rows[0].today as string;
+  const dow = dQ.rows[0].dow as number;
+
+  // Filtr parametrlari
+  const geoParams: unknown[] = [];
+  const geoW = shopsWhere(f, geoParams);
+
+  // 1. Kechikkan do'konlar — 30+ kun xarid yo'q, har do'kon uchun o'rtacha takror interval.
+  // avg_repeat_days: LAG oynasi orqali ketma-ket savdolar orasidagi kunlar soni o'rtachasi;
+  // (cur - prev) ifodasi to'g'ridan-to'g'ri ishlatiladi — alohida alias talab etilmaydi.
+  const overdueParams: unknown[] = [...geoParams];
+  const { rows: overdueRows2 } = await pool.query(
+    `SELECT t.dokon_id, t.nomi, t.viloyat, t.hudud, t.agent_name, t.days,
+            t.avg_repeat_days
+     FROM (
+       SELECT d.id AS dokon_id, d.nomi, d.viloyat, d.hudud,
+              u.name AS agent_name,
+              ((now() AT TIME ZONE 'Asia/Tashkent')::date -
+               COALESCE(
+                 NULLIF(substr(d.last_order_date,1,10),'')::date,
+                 NULLIF(substr(d.created_at,1,10),'')::date
+               ))::int AS days,
+              COALESCE(
+                (SELECT ROUND(AVG(cur - prev))::int
+                   FROM (
+                     SELECT LAG(substr(s2.created_at,1,10)::date) OVER (ORDER BY s2.created_at) AS prev,
+                            substr(s2.created_at,1,10)::date                                    AS cur
+                       FROM distribution.savdolar s2
+                      WHERE s2.dokon_id = d.id
+                   ) gaps
+                  WHERE prev IS NOT NULL
+                    AND (cur - prev) BETWEEN 1 AND 90
+                ), 0
+              )::int AS avg_repeat_days
+         FROM distribution.dokonlar d
+         LEFT JOIN distribution.users u ON u.telegram_id = d.agent_id
+        WHERE d.holat = 'faol'${geoW}
+          AND COALESCE(
+                NULLIF(substr(d.last_order_date,1,10),'')::date,
+                NULLIF(substr(d.created_at,1,10),'')::date
+              ) IS NOT NULL
+     ) t
+     WHERE t.days > CASE
+                      WHEN t.avg_repeat_days > 0 THEN t.avg_repeat_days
+                      ELSE 30           -- tarix yo'q: fallback 30 kun
+                    END
+     ORDER BY t.days DESC
+     LIMIT 20`,
+    overdueParams
+  );
+
+  // 2. Qaytish sanasi kelgan "olmagan" do'konlar (bajarildi NULL yoki 0)
+  // MUHIM ARXITEKTURA: avval har do'kon uchun ENG SO'NGGI olmagan tashrif tanlanadi (CTE),
+  // shundan keyingina sana/bajarildi/keyingi savdo filtrlari qo'llanadi.
+  // Bu yondashuv eski past-due qatorni kelajakdagi/bajarilgan eng yangi qator ortida
+  // yashirib qolish muammosini bartaraf etadi.
+  const qaytishP: unknown[] = [today, ...geoParams];
+  let qaytishW = geoW.replace(/\$(\d+)/g, (m, n) => `$${Number(n) + 1}`);
+  const { rows: qaytishRows } = await pool.query(
+    `WITH latest_per_shop AS (
+       SELECT DISTINCT ON (o.dokon_id)
+              o.id, o.dokon_id, o.sabab, o.sabab_text, o.qaytish_sanasi,
+              o.bajarildi, o.agent_id, o.created_at
+         FROM distribution.olmagan_dokonlar o
+        ORDER BY o.dokon_id, o.created_at DESC
+     )
+     SELECT lps.dokon_id, d.nomi, d.viloyat, d.hudud,
+            u.name AS agent_name,
+            lps.sabab, lps.sabab_text, lps.qaytish_sanasi,
+            lps.qaytish_sanasi AS due_iso
+       FROM latest_per_shop lps
+       JOIN distribution.dokonlar d ON d.id = lps.dokon_id
+       LEFT JOIN distribution.users u ON u.telegram_id = lps.agent_id
+      WHERE lps.qaytish_sanasi IS NOT NULL
+        AND (lps.bajarildi IS NULL OR lps.bajarildi = 0)
+        AND (
+          CASE
+            -- DD.MM.YYYY: regex + calendar check (day <= last day of that month)
+            WHEN lps.qaytish_sanasi ~ '^(0[1-9]|[12][0-9]|3[01])[.](0[1-9]|1[0-2])[.][12][0-9]{3}$'
+              AND substr(lps.qaytish_sanasi,1,2)::int <=
+                  EXTRACT(DAY FROM (
+                    make_date(substr(lps.qaytish_sanasi,7,4)::int,
+                              substr(lps.qaytish_sanasi,4,2)::int, 1)
+                    + make_interval(months=>1) - interval '1 day'))::int
+            THEN make_date(substr(lps.qaytish_sanasi,7,4)::int,
+                           substr(lps.qaytish_sanasi,4,2)::int,
+                           substr(lps.qaytish_sanasi,1,2)::int)
+            -- ISO YYYY-MM-DD: regex + calendar check
+            WHEN lps.qaytish_sanasi ~ '^[12][0-9]{3}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$'
+              AND substr(lps.qaytish_sanasi,9,2)::int <=
+                  EXTRACT(DAY FROM (
+                    make_date(substr(lps.qaytish_sanasi,1,4)::int,
+                              substr(lps.qaytish_sanasi,6,2)::int, 1)
+                    + make_interval(months=>1) - interval '1 day'))::int
+            THEN make_date(substr(lps.qaytish_sanasi,1,4)::int,
+                           substr(lps.qaytish_sanasi,6,2)::int,
+                           substr(lps.qaytish_sanasi,9,2)::int)
+            ELSE NULL
+          END
+        ) <= $1::date
+        -- Keyinchalik savdo bo'lgan do'konlarni chiqarish (konvertatsiya amalga oshgan)
+        AND NOT EXISTS (
+          SELECT 1 FROM distribution.savdolar s
+           WHERE s.dokon_id = lps.dokon_id
+             AND s.created_at >= lps.created_at
+        )${qaytishW}
+      ORDER BY lps.dokon_id
+      LIMIT 30`,
+    qaytishP
+  );
+
+  // 3. Agentlarning bugungi GPS joyi → yaqin do'konlar (Haversine)
+  // Bugun GPS jo'natgan agentlar (oxirgi koordinata)
+  const agentLocP: unknown[] = [today];
+  let agentLocW = "";
+  if (f.agentId) { agentLocP.push(f.agentId); agentLocW += ` AND al.agent_id = $${agentLocP.length}`; }
+  const { rows: locRows } = await pool.query(
+    `SELECT DISTINCT ON (al.agent_id) al.agent_id, al.latitude, al.longitude, al.created_at,
+            da.name AS agent_name, da.mashina_nomeri,
+            da.telegram_id
+       FROM distribution.agent_locations al
+       JOIN distribution.delivery_agents da ON da.telegram_id = al.agent_id
+      WHERE substr(al.created_at,1,10) = $1 AND da.faol = 1${agentLocW}
+      ORDER BY al.agent_id, al.created_at DESC`,
+    agentLocP
+  );
+
+  // Bugungi marshrut do'konlari (koordinatali, hali kirilmagan)
+  const routeP: unknown[] = [dow, today];
+  let routeW = "";
+  if (f.agentId) { routeP.push(f.agentId); routeW += ` AND da.telegram_id = $${routeP.length}`; }
+  const { rows: routeShops } = await pool.query(
+    `SELECT r.tartib, d.id AS dokon_id, d.nomi, d.hudud,
+            d.latitude, d.longitude, da.telegram_id AS agent_telegram_id
+       FROM distribution.delivery_routes r
+       JOIN distribution.delivery_agents da ON da.id = r.delivery_agent_id
+       JOIN distribution.dokonlar d ON d.id = r.dokon_id
+      WHERE r.kun = $1 AND da.faol = 1
+        AND d.latitude IS NOT NULL AND d.longitude IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM distribution.savdolar s
+                         WHERE s.dokon_id = d.id AND substr(s.created_at,1,10) = $2)
+        AND NOT EXISTS (SELECT 1 FROM distribution.olmagan_dokonlar o
+                         WHERE o.dokon_id = d.id AND substr(o.created_at,1,10) = $2)${routeW}
+      ORDER BY r.tartib`,
+    routeP
+  );
+
+  // Haversine masofasi (km) — JS da hisoblaymiz
+  function haversine(lat1: number, lng1: number, lat2: number, lng2: number): number {
+    const R = 6371;
+    const dLat = ((lat2 - lat1) * Math.PI) / 180;
+    const dLng = ((lng2 - lng1) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+    return Math.round(R * 2 * Math.asin(Math.sqrt(a)) * 10) / 10;
+  }
+
+  // Har agent uchun eng yaqin 3 ta marshrutdagi do'kon
+  const agentSuggestions = locRows
+    .map((loc) => {
+      const agentShops = routeShops.filter(
+        (rs) => rs.agent_telegram_id === loc.agent_id
+      );
+      const nearest = agentShops
+        .map((rs) => ({
+          dokonId: rs.dokon_id as number,
+          nomi: rs.nomi as string | null,
+          hudud: rs.hudud as string | null,
+          tartib: rs.tartib as number | null,
+          distKm: haversine(
+            Number(loc.latitude), Number(loc.longitude),
+            Number(rs.latitude), Number(rs.longitude)
+          ),
+        }))
+        .sort((a, b) => a.distKm - b.distKm)
+        .slice(0, 3);
+
+      if (nearest.length === 0) return null;
+      return {
+        agentId: String(loc.agent_id),
+        agentName: loc.agent_name as string | null,
+        mashinaNomeri: loc.mashina_nomeri as string | null,
+        gps: { lat: Number(loc.latitude), lng: Number(loc.longitude), at: loc.created_at as string },
+        nearest,
+      };
+    })
+    .filter(Boolean);
+
+  res.json({
+    date: today,
+    kun: dow,
+    agents: agentSuggestions,
+    overdue: overdueRows2.map((r) => ({
+      dokonId: r.dokon_id,
+      nomi: r.nomi,
+      viloyat: r.viloyat,
+      hudud: r.hudud,
+      agentName: r.agent_name,
+      days: r.days,
+      avgRepeatDays: r.avg_repeat_days,
+    })),
+    qaytish: qaytishRows.map((r) => ({
+      dokonId: r.dokon_id,
+      nomi: r.nomi,
+      viloyat: r.viloyat,
+      hudud: r.hudud,
+      agentName: r.agent_name,
+      sabab: r.sabab,
+      sababText: r.sabab_text,
+      qaytishSanasi: r.qaytish_sanasi,
+      dueIso: r.due_iso,
+    })),
+  });
+});
+
 export default router;

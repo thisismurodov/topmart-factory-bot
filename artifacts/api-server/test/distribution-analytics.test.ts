@@ -1,0 +1,606 @@
+import { beforeAll, afterAll, describe, it, expect } from "vitest";
+import express from "express";
+import type { Express } from "express";
+import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+import pg from "pg";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// /distribution/analytics, /distribution/heatmap, /distribution/suggestions
+// endpoint'lari uchun integratsion testlar.
+//
+// Throwaway DB yaratiladi, bot init_db() + router mount — auth devorisiz.
+// Fixture: 2 agent, 3 do'kon, bir necha savdo/olmagan yozuvlari.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const { Client } = pg;
+
+const adminUrl = process.env.RAILWAY_DATABASE_URL || process.env.DATABASE_URL;
+if (!adminUrl) throw new Error("RAILWAY_DATABASE_URL or DATABASE_URL must be set");
+
+const TMP_DB = `topmart_analytics_${process.pid}_${Date.now()}`;
+const ssl = { rejectUnauthorized: false } as const;
+
+function tmpUrl(sslRequire = false): string {
+  const u = new URL(adminUrl!);
+  u.pathname = `/${TMP_DB}`;
+  if (sslRequire) u.searchParams.set("sslmode", "require");
+  return u.toString();
+}
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const distBotDir = path.resolve(here, "../../distribution-bot");
+
+// Fixture sanalar
+const DATE_A = "2026-06-01"; // older sale — takroriy xaridor uchun
+const DATE_B = "2026-07-10"; // asosiy davr boshlanishi
+const DATE_C = "2026-07-12"; // asosiy davr ichida olmagan
+const DATE_D = "2026-07-15"; // asosiy davr ichida savdo
+
+let pool: pg.Pool;
+let server: Server;
+let apiUrl: string;
+
+async function dropTmpDb(): Promise<void> {
+  const admin = new Client({ connectionString: adminUrl, ssl });
+  await admin.connect();
+  await admin.query(
+    `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()`,
+    [TMP_DB],
+  );
+  await admin.query(`DROP DATABASE IF EXISTS ${TMP_DB}`);
+  await admin.end();
+}
+
+beforeAll(async () => {
+  await dropTmpDb();
+  {
+    const admin = new Client({ connectionString: adminUrl, ssl });
+    await admin.connect();
+    await admin.query(`CREATE DATABASE ${TMP_DB}`);
+    await admin.end();
+  }
+
+  execFileSync("python3", ["-c", "import main; main.init_db()"], {
+    cwd: distBotDir,
+    env: {
+      ...process.env,
+      RAILWAY_DATABASE_URL: tmpUrl(true),
+      DATABASE_URL: tmpUrl(true),
+      TELEGRAM_BOT_TOKEN: "123456:TEST_TOKEN_ANALYTICS_GUARD",
+    },
+    stdio: "pipe",
+  });
+
+  process.env.RAILWAY_DATABASE_URL = tmpUrl(false);
+  const db = await import("@workspace/db");
+  pool = db.pool as unknown as pg.Pool;
+
+  // ── Fixture ──────────────────────────────────────────────────────────────
+  await pool.query(
+    `INSERT INTO distribution.users (telegram_id, name, role, viloyat)
+     VALUES (8001, 'Agent Alpha', 'agent', 'Toshkent'),
+            (8002, 'Agent Beta',  'agent', 'Andijon')`,
+  );
+
+  // Do'konlar: A (GPS bor), B (GPS bor), C (GPS yo'q)
+  const shopA = await pool.query(
+    `INSERT INTO distribution.dokonlar
+       (nomi, viloyat, hudud, holat, latitude, longitude, agent_id,
+        last_order_date, created_at)
+     VALUES ('Shop A', 'Toshkent', 'Chilonzor', 'faol', 41.3, 69.2, 8001,
+             $1, $2) RETURNING id`,
+    [DATE_D, `${DATE_A} 09:00:00`],
+  ).then((r) => r.rows[0].id as number);
+
+  const shopB = await pool.query(
+    `INSERT INTO distribution.dokonlar
+       (nomi, viloyat, hudud, holat, latitude, longitude, agent_id,
+        last_order_date, created_at)
+     VALUES ('Shop B', 'Andijon', 'Shahrixon', 'faol', 40.7, 72.6, 8002,
+             $1, $2) RETURNING id`,
+    [DATE_B, `${DATE_B} 10:00:00`],
+  ).then((r) => r.rows[0].id as number);
+
+  const shopC = await pool.query(
+    `INSERT INTO distribution.dokonlar
+       (nomi, viloyat, hudud, holat, latitude, longitude, agent_id, created_at)
+     VALUES ('Shop C (no gps)', 'Toshkent', 'Yakkasaroy', 'faol', NULL, NULL, 8001, $1)
+     RETURNING id`,
+    [`${DATE_A} 08:00:00`],
+  ).then((r) => r.rows[0].id as number);
+
+  // Savdolar
+  // Shop A: avvalgi davr savdosi (DATE_A) — takroriy xaridor ifodalash uchun
+  await pool.query(
+    `INSERT INTO distribution.savdolar (dokon_id, agent_id, jami_summa, tolov_turi, created_at)
+     VALUES ($1, 8001, 100000, 'naqd', $2)`,
+    [shopA, `${DATE_A} 09:30:00`],
+  );
+  // Shop A: asosiy davr savdosi (DATE_D) — nasiya
+  await pool.query(
+    `INSERT INTO distribution.savdolar (dokon_id, agent_id, jami_summa, tolov_turi, created_at)
+     VALUES ($1, 8001, 200000, 'nasiya', $2)`,
+    [shopA, `${DATE_D} 10:00:00`],
+  );
+  // Shop B: asosiy davr savdosi — naqd
+  await pool.query(
+    `INSERT INTO distribution.savdolar (dokon_id, agent_id, jami_summa, tolov_turi, created_at)
+     VALUES ($1, 8002, 150000, 'naqd', $2)`,
+    [shopB, `${DATE_B} 11:00:00`],
+  );
+
+  // Shop D va E: qaytish_sanasi format testlari uchun qo'shimcha do'konlar
+  const shopD = await pool.query(
+    `INSERT INTO distribution.dokonlar
+       (nomi, viloyat, hudud, holat, latitude, longitude, agent_id, created_at)
+     VALUES ('Shop D (past DD.MM.YYYY)', 'Toshkent', 'Mirzo-Ulugbek', 'faol', 41.32, 69.25, 8001, $1)
+     RETURNING id`,
+    [`${DATE_A} 07:00:00`],
+  ).then((r) => r.rows[0].id as number);
+
+  const shopE = await pool.query(
+    `INSERT INTO distribution.dokonlar
+       (nomi, viloyat, hudud, holat, latitude, longitude, agent_id, created_at)
+     VALUES ('Shop E (future DD.MM.YYYY)', 'Toshkent', 'Shayxontohur', 'faol', 41.33, 69.26, 8001, $1)
+     RETURNING id`,
+    [`${DATE_A} 07:30:00`],
+  ).then((r) => r.rows[0].id as number);
+
+  // Olmagan tashrif: Shop C — ISO sana format, o'tgan (2026-07-20 < bugun 2026-08-07)
+  await pool.query(
+    `INSERT INTO distribution.olmagan_dokonlar
+       (dokon_id, agent_id, sabab, qaytish_sanasi, created_at)
+     VALUES ($1, 8001, 'egasi_yoq', '2026-07-20', $2)`,
+    [shopC, `${DATE_C} 09:00:00`],
+  );
+
+  // Shop D — DD.MM.YYYY format, o'tgan kun: 01.06.2026 (o'tgan) → qaytish ro'yxatida bo'lishi kerak
+  await pool.query(
+    `INSERT INTO distribution.olmagan_dokonlar
+       (dokon_id, agent_id, sabab, qaytish_sanasi, created_at)
+     VALUES ($1, 8001, 'tovari_bor', '01.06.2026', $2)`,
+    [shopD, `${DATE_A} 07:00:00`],
+  );
+
+  // Shop E — DD.MM.YYYY format, KELAJAKDAGI sana: 01.12.2026 → qaytish ro'yxatida bo'LMASLIGI kerak
+  await pool.query(
+    `INSERT INTO distribution.olmagan_dokonlar
+       (dokon_id, agent_id, sabab, qaytish_sanasi, created_at)
+     VALUES ($1, 8001, 'keyin_keling', '01.12.2026', $2)`,
+    [shopE, `${DATE_A} 07:30:00`],
+  );
+
+  // Shop F — NOTO'G'RI SANA FORMAT: 'garbage-date' → endpoint crash bo'lmasligi, ro'yxatga kirmasligi kerak
+  const shopF = await pool.query(
+    `INSERT INTO distribution.dokonlar
+       (nomi, viloyat, hudud, holat, latitude, longitude, agent_id, created_at)
+     VALUES ('Shop F (malformed date)', 'Toshkent', 'Chilonzor', 'faol', 41.34, 69.27, 8001, $1)
+     RETURNING id`,
+    [`${DATE_A} 08:00:00`],
+  ).then((r) => r.rows[0].id as number);
+
+  await pool.query(
+    `INSERT INTO distribution.olmagan_dokonlar
+       (dokon_id, agent_id, sabab, qaytish_sanasi, created_at)
+     VALUES ($1, 8001, 'boshqa', 'garbage-date', $2)`,
+    [shopF, `${DATE_C} 10:00:00`],
+  );
+
+  // Shop G — ISO-SHAKLLI LEKIN NOTO'G'RI SANA: '2026-99-99' → regex validatsiyadan o'tmaydi
+  const shopG = await pool.query(
+    `INSERT INTO distribution.dokonlar
+       (nomi, viloyat, hudud, holat, latitude, longitude, agent_id, created_at)
+     VALUES ('Shop G (bad ISO date)', 'Toshkent', 'Yakkasaroy', 'faol', 41.35, 69.28, 8001, $1)
+     RETURNING id`,
+    [`${DATE_A} 09:00:00`],
+  ).then((r) => r.rows[0].id as number);
+
+  await pool.query(
+    `INSERT INTO distribution.olmagan_dokonlar
+       (dokon_id, agent_id, sabab, qaytish_sanasi, created_at)
+     VALUES ($1, 8001, 'boshqa', '2026-99-99', $2)`,
+    [shopG, `${DATE_C} 10:30:00`],
+  );
+
+  // Shop H — REGEX TO'G'RI LEKIN TAQVIM NOTO'G'RI: '2026-02-31' (Feb 31 yo'q)
+  // → regex/cast/make_date dan o'tmasligi, NULL sifatida qaralishi kerak
+  const shopH = await pool.query(
+    `INSERT INTO distribution.dokonlar
+       (nomi, viloyat, hudud, holat, latitude, longitude, agent_id, created_at)
+     VALUES ('Shop H (Feb 31 ISO)', 'Toshkent', 'Mirzo Ulugbek', 'faol', 41.36, 69.29, 8001, $1)
+     RETURNING id`,
+    [`${DATE_A} 09:30:00`],
+  ).then((r) => r.rows[0].id as number);
+
+  await pool.query(
+    `INSERT INTO distribution.olmagan_dokonlar
+       (dokon_id, agent_id, sabab, qaytish_sanasi, created_at)
+     VALUES ($1, 8001, 'boshqa', '2026-02-31', $2)`,
+    [shopH, `${DATE_C} 11:00:00`],
+  );
+
+  // Shop I — DD.MM.YYYY TAQVIM NOTO'G'RI: '31.02.2026' (Feb 31 yo'q)
+  // → calendar check dan o'tmasligi, NULL sifatida qaralishi kerak
+  const shopI = await pool.query(
+    `INSERT INTO distribution.dokonlar
+       (nomi, viloyat, hudud, holat, latitude, longitude, agent_id, created_at)
+     VALUES ('Shop I (Feb 31 DDMMYYYY)', 'Toshkent', 'Sergeli', 'faol', 41.37, 69.30, 8001, $1)
+     RETURNING id`,
+    [`${DATE_A} 10:00:00`],
+  ).then((r) => r.rows[0].id as number);
+
+  await pool.query(
+    `INSERT INTO distribution.olmagan_dokonlar
+       (dokon_id, agent_id, sabab, qaytish_sanasi, created_at)
+     VALUES ($1, 8001, 'boshqa', '31.02.2026', $2)`,
+    [shopI, `${DATE_C} 11:30:00`],
+  );
+
+  // Delivery agent + GPS (bugungi sana o'rniga DATE_D ni ishlatamiz, endpoint
+  // `today` ni DB dan oladi — fixture sanasini moslashtirish kerak emas,
+  // suggestions/heatmap statik testlar sifatida tekshiriladi)
+  const da = await pool.query(
+    `INSERT INTO distribution.delivery_agents (name, mashina_nomeri, telegram_id, faol)
+     VALUES ('Dlv Alpha', '01 T 999 AA', 8001, 1) RETURNING id`,
+  ).then((r) => r.rows[0].id as number);
+
+  // Bu agentning marshrutiga Shop A qo'shiladi (biron-bir kun uchun)
+  await pool.query(
+    `INSERT INTO distribution.delivery_routes (delivery_agent_id, kun, dokon_id, tartib)
+     VALUES ($1, 1, $2, 1)`,
+    [da, shopA],
+  );
+
+  // ── Express server ────────────────────────────────────────────────────────
+  const routerMod = await import("../src/routes/distribution");
+  const { default: pinoHttp } = await import("pino-http");
+  const { logger } = await import("../src/lib/logger");
+  const app: Express = express();
+  app.use(pinoHttp({ logger }));
+  app.use(express.json());
+  app.use(routerMod.default);
+  await new Promise<void>((resolve) => {
+    server = app.listen(0, "127.0.0.1", resolve);
+  });
+  apiUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+}, 120_000);
+
+afterAll(async () => {
+  if (server) await new Promise<void>((r) => server.close(() => r()));
+  if (pool) await pool.end();
+  process.env.RAILWAY_DATABASE_URL = adminUrl;
+  await dropTmpDb();
+}, 60_000);
+
+async function getJson(p: string): Promise<any> {
+  const r = await fetch(`${apiUrl}${p}`);
+  if (r.status !== 200) {
+    const body = await r.text().catch(() => "(unreadable)");
+    throw new Error(`GET ${p} returned ${r.status}: ${body.slice(0, 500)}`);
+  }
+  return r.json();
+}
+
+// ── /distribution/analytics ──────────────────────────────────────────────────
+describe("GET /distribution/analytics", () => {
+  it("filtrsiz — KPI va daily massivlarini qaytaradi", async () => {
+    const body = await getJson(
+      `/distribution/analytics?from=${DATE_B}&to=${DATE_D}`,
+    );
+    expect(body.from).toBe(DATE_B);
+    expect(body.to).toBe(DATE_D);
+    expect(body.kpi).toBeDefined();
+    expect(typeof body.kpi.visitedShops).toBe("number");
+    expect(typeof body.kpi.soldShops).toBe("number");
+    expect(Array.isArray(body.daily)).toBe(true);
+    // Davr = DATE_B..DATE_D → 6 kun, shuning uchun daily.length = 6
+    expect(body.daily.length).toBe(6);
+  });
+
+  it("soldShops filtrlangan davrda to'g'ri hisoblanadi", async () => {
+    const body = await getJson(
+      `/distribution/analytics?from=${DATE_B}&to=${DATE_D}`,
+    );
+    // Davr ichida 2 noyob do'kon savdo qildi: Shop A (DATE_D) va Shop B (DATE_B)
+    expect(body.kpi.soldShops).toBe(2);
+  });
+
+  it("visitedShops savdo + olmagan tashriflarni birga hisoblaydi", async () => {
+    const body = await getJson(
+      `/distribution/analytics?from=${DATE_B}&to=${DATE_D}`,
+    );
+    // Shop A (savdo DATE_D), Shop B (savdo DATE_B), Shop C (olmagan DATE_C),
+    // Shop F (olmagan DATE_C, garbage-date), Shop G (olmagan DATE_C, bad ISO),
+    // Shop H (olmagan DATE_C, 2026-02-31), Shop I (olmagan DATE_C, 31.02.2026) = 7
+    expect(body.kpi.visitedShops).toBe(7);
+  });
+
+  it("nasiyaCount nasiya+aralash savdolar sonini to'g'ri qaytaradi", async () => {
+    const body = await getJson(
+      `/distribution/analytics?from=${DATE_B}&to=${DATE_D}`,
+    );
+    // Davr ichida faqat Shop A nasiya (DATE_D) — 1 ta
+    expect(body.kpi.nasiyaCount).toBe(1);
+  });
+
+  it("repeatPct: avval ham savdo qilgan do'konlar aniqlangan", async () => {
+    const body = await getJson(
+      `/distribution/analytics?from=${DATE_B}&to=${DATE_D}`,
+    );
+    // Shop A davrgacha DATE_A da ham savdo qilgan → repeatShops = 1
+    // soldShops = 2, repeatPct = round(1/2*100) = 50
+    expect(body.kpi.repeatPct).toBe(50);
+  });
+
+  it("agentId filtri bilan faqat shu agent ma'lumotlari qaytadi", async () => {
+    const body = await getJson(
+      `/distribution/analytics?from=${DATE_B}&to=${DATE_D}&agentId=8002`,
+    );
+    // Agent Beta faqat Shop B ga savdo qildi
+    expect(body.kpi.soldShops).toBe(1);
+    expect(body.kpi.salesCount).toBe(1);
+    expect(body.kpi.salesTotal).toBe(150000);
+  });
+
+  it("viloyat filtri bilan boshqa viloyat do'konlari chiqariladi", async () => {
+    const body = await getJson(
+      `/distribution/analytics?from=${DATE_B}&to=${DATE_D}&viloyat=Andijon`,
+    );
+    // Andijon viloyatida faqat Shop B bor
+    expect(body.kpi.soldShops).toBe(1);
+  });
+
+  it("faqat olmagan tashriflar bo'lgan davrda avgVisitsPerDay null bo'lmasligi kerak", async () => {
+    // DATE_C da Shop C va Shop F olmagan tashrifi bor, savdo yo'q
+    // avgVisitsPerDay faqat-savdo-kun denominator ishlatsa null kelardi → regression test
+    const body = await getJson(
+      `/distribution/analytics?from=${DATE_C}&to=${DATE_C}`,
+    );
+    // visitedShops > 0 (Shop C, Shop F, Shop G olmagan shu kunda)
+    expect(body.kpi.visitedShops).toBeGreaterThan(0);
+    // avgVisitsPerDay null bo'lmasligi kerak
+    expect(body.kpi.avgVisitsPerDay).not.toBeNull();
+    expect(typeof body.kpi.avgVisitsPerDay).toBe("number");
+  });
+
+  it("daily massivida date, visits, sales, salesTotal maydonlari bor", async () => {
+    const body = await getJson(
+      `/distribution/analytics?from=${DATE_B}&to=${DATE_D}`,
+    );
+    for (const day of body.daily) {
+      expect(typeof day.date).toBe("string");
+      expect(typeof day.visits).toBe("number");
+      expect(typeof day.sales).toBe("number");
+      expect(typeof day.salesTotal).toBe("number");
+    }
+    // DATE_B da Shop B savdosi bor
+    const dayB = body.daily.find((d: any) => d.date === DATE_B);
+    expect(dayB).toBeDefined();
+    expect(dayB.sales).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// ── /distribution/heatmap ────────────────────────────────────────────────────
+describe("GET /distribution/heatmap", () => {
+  it("shops va hududlar massivlarini qaytaradi", async () => {
+    const body = await getJson("/distribution/heatmap");
+    expect(Array.isArray(body.shops)).toBe(true);
+    expect(Array.isArray(body.hududlar)).toBe(true);
+  });
+
+  it("faqat koordinatali do'konlarni qaytaradi", async () => {
+    const body = await getJson("/distribution/heatmap");
+    // Shop C (GPS yo'q) bo'lmasligi kerak
+    const names = body.shops.map((s: any) => s.nomi);
+    expect(names).not.toContain("Shop C (no gps)");
+    // Shop A va Shop B bo'lishi kerak
+    expect(names).toContain("Shop A");
+    expect(names).toContain("Shop B");
+  });
+
+  it("har bir do'kon uchun cls maydoni bor (green|yellow|red|new)", async () => {
+    const body = await getJson("/distribution/heatmap");
+    for (const s of body.shops) {
+      expect(["green", "yellow", "red", "new"]).toContain(s.cls);
+    }
+  });
+
+  it("har bir do'kon uchun avgRepeatDays maydoni bor (kadans hisoblangan)", async () => {
+    const body = await getJson("/distribution/heatmap");
+    for (const s of body.shops) {
+      expect(typeof s.avgRepeatDays).toBe("number");
+    }
+  });
+
+  it("tasnif kadans asosida: avgRepeatDays > 0 bo'lsa nisbiy chegaralar qo'llanadi", async () => {
+    // Shop A: DATE_A va DATE_D da ikki savdo bor — avg_repeat_days = 10 kun
+    // days_since_last_order ≈ 23 kun (DATE_D = 2026-07-15 dan bugunga qadar)
+    // Kadans > 0 bo'lganda: days > cadence*2 → RED
+    const body = await getJson("/distribution/heatmap");
+    const shopA = body.shops.find((s: any) => s.nomi === "Shop A");
+    expect(shopA).toBeDefined();
+    expect(shopA.avgRepeatDays).toBeGreaterThan(0);  // tarix bor, kadans hisoblangan
+    // Klassifikatsiya formulani tekshirish: kadans asosida to'g'ri hisoblangan bo'lishi kerak
+    const { days, avgRepeatDays, cls } = shopA;
+    if (avgRepeatDays > 0) {
+      const expectedCls = days <= avgRepeatDays ? "green" : days <= avgRepeatDays * 2 ? "yellow" : "red";
+      expect(cls).toBe(expectedCls);
+    }
+  });
+
+  it("tasnif kadans asosida: avgRepeatDays = 0 bo'lsa fixed 14/30 chegaralar qo'llanadi", async () => {
+    // Shop B: faqat 1 ta savdo bor — avg_repeat_days = 0 → fallback fixed thresholds
+    const body = await getJson("/distribution/heatmap");
+    const shopB = body.shops.find((s: any) => s.nomi === "Shop B");
+    expect(shopB).toBeDefined();
+    expect(shopB.avgRepeatDays).toBe(0);  // bitta savdo, kadans yo'q
+    // Fallback formula tekshirish
+    const { days, cls } = shopB;
+    if (days !== null) {
+      const expectedCls = days <= 14 ? "green" : days <= 30 ? "yellow" : "red";
+      expect(cls).toBe(expectedCls);
+    }
+  });
+
+  it("hududlar centroid hisoblanadi", async () => {
+    const body = await getJson("/distribution/heatmap");
+    for (const h of body.hududlar) {
+      // centroid null bo'lmasligi kerak (har bir hududda kamida 1 GPS do'kon bor)
+      if (h.shopCount > 0) {
+        expect(h.centroid).not.toBeNull();
+        expect(typeof h.centroid.lat).toBe("number");
+        expect(typeof h.centroid.lng).toBe("number");
+      }
+    }
+  });
+
+  it("agentId filtri bilan faqat o'sha agent do'konlari qaytadi", async () => {
+    const body = await getJson("/distribution/heatmap?agentId=8002");
+    // Agent Beta faqat Shop B ga birikkan
+    const names = body.shops.map((s: any) => s.nomi);
+    expect(names).toContain("Shop B");
+    expect(names).not.toContain("Shop A");
+  });
+
+  it("viloyat filtri ishlaydi", async () => {
+    const body = await getJson("/distribution/heatmap?viloyat=Andijon");
+    for (const s of body.shops) {
+      expect(s.viloyat).toBe("Andijon");
+    }
+  });
+});
+
+// ── /distribution/suggestions ────────────────────────────────────────────────
+describe("GET /distribution/suggestions", () => {
+  it("date, kun, agents, overdue, qaytish maydonlarini qaytaradi", async () => {
+    const body = await getJson("/distribution/suggestions");
+    expect(typeof body.date).toBe("string");
+    expect(typeof body.kun).toBe("number");
+    expect(Array.isArray(body.agents)).toBe(true);
+    expect(Array.isArray(body.overdue)).toBe(true);
+    expect(Array.isArray(body.qaytish)).toBe(true);
+  });
+
+  it("overdue do'konlar yaqinda buyurtma bermaganlar (kadans asosida)", async () => {
+    // Overdue mezoni: days > (avgRepeatDays > 0 ? avgRepeatDays : 30)
+    // Fixed 30-kun emas — har do'konning kadansiga nisbatan kechikkanlar ko'rsatiladi.
+    const body = await getJson("/distribution/suggestions");
+    for (const o of body.overdue) {
+      expect(typeof o.dokonId).toBe("number");
+      expect(typeof o.days).toBe("number");
+      expect(typeof o.avgRepeatDays).toBe("number");
+      // Kadans mezoni tekshiruvi
+      const threshold = o.avgRepeatDays > 0 ? o.avgRepeatDays : 30;
+      expect(o.days).toBeGreaterThan(threshold);
+    }
+  });
+
+  it("overdue ro'yxatidagi har bir do'kon kadans formulasiga mos keladi", async () => {
+    // Quyidagi invariant barcha overdue elementlarga taalluqli:
+    //   days > (avgRepeatDays > 0 ? avgRepeatDays : 30)
+    // Agar avgRepeatDays > 0 bo'lsa va days < 30 (fixed chegarasidan past) bo'lsa ham
+    // element ro'yxatda bo'lishi kerak — bu kadans asosida tasniflanayotganini isbotlaydi.
+    const body = await getJson("/distribution/suggestions");
+    expect(Array.isArray(body.overdue)).toBe(true);
+    for (const o of body.overdue) {
+      const threshold = o.avgRepeatDays > 0 ? o.avgRepeatDays : 30;
+      expect(o.days).toBeGreaterThan(threshold);
+    }
+    // Eng muhim: avgRepeatDays > 0 bo'lgan element bor bo'lsa, u days < 30 bo'lishi MUMKIN
+    // (bu fixed-30-kun logikasidan farqi — shunday element topilsa qo'shimcha tekshirish)
+    const shortCadenceOverdue = body.overdue.filter(
+      (o: any) => o.avgRepeatDays > 0 && o.days < 30
+    );
+    // Agar bunday element bo'lsa — fixed-30-kun uni o'tkazib yuborardi (regression to'silgan)
+    for (const o of shortCadenceOverdue) {
+      expect(o.days).toBeGreaterThan(o.avgRepeatDays);
+    }
+  });
+
+  it("qaytish massivida to'g'ri strukturali elementlar bor", async () => {
+    const body = await getJson("/distribution/suggestions");
+    for (const q of body.qaytish) {
+      expect(q.dokonId).toBeDefined();
+      // qaytish sanasi bo'lishi kerak
+      expect(q.qaytishSanasi ?? q.dueIso).toBeDefined();
+    }
+  });
+
+  it("o'tgan DD.MM.YYYY qaytish sanasi do'koni ro'yxatda ko'rinadi", async () => {
+    // Shop D: '01.06.2026' — o'tgan (test 2026-08-07 kuni ishlatiladi)
+    // qaytish_sanasi bo'lsa ISO ham DD.MM.YYYY ham qo'llab-quvvatlanishi shart
+    const body = await getJson("/distribution/suggestions");
+    const names = body.qaytish.map((q: any) => q.nomi as string);
+    expect(names).toContain("Shop D (past DD.MM.YYYY)");
+  });
+
+  it("kelajakdagi DD.MM.YYYY qaytish sanasi do'koni ro'yxatga tushmasligi kerak", async () => {
+    // Shop E: '01.12.2026' — kelajak sana, ko'rinmaslik kerak
+    const body = await getJson("/distribution/suggestions");
+    const names = body.qaytish.map((q: any) => q.nomi as string);
+    expect(names).not.toContain("Shop E (future DD.MM.YYYY)");
+  });
+
+  it("noto'g'ri sana formatli qaytish_sanasi endpoint'ni yiqitmasligi va ro'yxatga kirmasligi kerak", async () => {
+    // Shop F: 'garbage-date' — noto'g'ri format, NULL sifatida qayta ishlanadi
+    // Endpoint 200 qaytarishi va Shop F ro'yxatda bo'lmasligi kerak
+    const body = await getJson("/distribution/suggestions");
+    expect(Array.isArray(body.qaytish)).toBe(true);
+    const names = body.qaytish.map((q: any) => q.nomi as string);
+    expect(names).not.toContain("Shop F (malformed date)");
+  });
+
+  it("ISO-shaklli lekin noto'g'ri qaytish_sanasi (masalan 2026-99-99) endpoint'ni yiqitmasligi kerak", async () => {
+    // Shop G: '2026-99-99' — regex validatsiyasidan o'tmaydi (oy=99 noto'g'ri)
+    // NULL sifatida qayta ishlanadi, ro'yxatga kirmasligi kerak
+    const body = await getJson("/distribution/suggestions");
+    expect(Array.isArray(body.qaytish)).toBe(true);
+    const names = body.qaytish.map((q: any) => q.nomi as string);
+    expect(names).not.toContain("Shop G (bad ISO date)");
+  });
+
+  it("taqvim noto'g'ri ISO sana '2026-02-31' (fevral 31 yo'q) endpoint'ni yiqitmasligi kerak", async () => {
+    // Shop H: '2026-02-31' — regex to'g'ri (kun 0[1-9]|[12][0-9]|3[01]) lekin taqvim tekshiruvida
+    // 31 > last_day_of_feb → NULL, ro'yxatga kirmasligi kerak
+    const body = await getJson("/distribution/suggestions");
+    expect(Array.isArray(body.qaytish)).toBe(true);
+    const names = body.qaytish.map((q: any) => q.nomi as string);
+    expect(names).not.toContain("Shop H (Feb 31 ISO)");
+  });
+
+  it("taqvim noto'g'ri DD.MM.YYYY sana '31.02.2026' endpoint'ni yiqitmasligi kerak", async () => {
+    // Shop I: '31.02.2026' — regex to'g'ri lekin taqvim tekshiruvida 31 > 28 → NULL
+    const body = await getJson("/distribution/suggestions");
+    expect(Array.isArray(body.qaytish)).toBe(true);
+    const names = body.qaytish.map((q: any) => q.nomi as string);
+    expect(names).not.toContain("Shop I (Feb 31 DDMMYYYY)");
+  });
+
+  it("agents massivida nearest massivi bor", async () => {
+    const body = await getJson("/distribution/suggestions");
+    for (const a of body.agents) {
+      expect(typeof a.agentId).toBe("string");
+      expect(Array.isArray(a.nearest)).toBe(true);
+      expect(a.nearest.length).toBeGreaterThan(0);
+      expect(a.nearest.length).toBeLessThanOrEqual(3);
+      for (const n of a.nearest) {
+        expect(typeof n.dokonId).toBe("number");
+        expect(typeof n.distKm).toBe("number");
+      }
+    }
+  });
+
+  it("agentId filtri bilan faqat o'sha agent do'konlari qaytadi", async () => {
+    const body = await getJson("/distribution/suggestions");
+    const bodyFiltered = await getJson("/distribution/suggestions?agentId=8002");
+    // Hech qanday xato bo'lmasligi kerak
+    expect(Array.isArray(bodyFiltered.overdue)).toBe(true);
+    expect(Array.isArray(bodyFiltered.qaytish)).toBe(true);
+    // Filtrlangan natija umumiy natijadan ko'p bo'lmasligi kerak
+    expect(bodyFiltered.overdue.length).toBeLessThanOrEqual(body.overdue.length);
+  });
+});

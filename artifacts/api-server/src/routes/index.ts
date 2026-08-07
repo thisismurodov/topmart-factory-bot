@@ -25,7 +25,6 @@ import packerProductAssignmentsRouter from "./packer-product-assignments";
 import omborRouter from "./ombor";
 import auditRouter from "./audit";
 import distributionRouter from "./distribution";
-import distributionAnalyticsRouter from "./distribution-analytics";
 import fieldRouter from "./field";
 
 const router: IRouter = Router();
@@ -71,6 +70,5 @@ router.use(productMaterialsRouter);
 router.use(packerProductAssignmentsRouter);
 router.use(auditRouter);
 router.use(distributionRouter);
-router.use(distributionAnalyticsRouter);
 
 export default router;

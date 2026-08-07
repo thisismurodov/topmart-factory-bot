@@ -657,6 +657,20 @@ function ProduceModal({ flow, onClose }: { flow: FlowData | undefined; onClose: 
   const isZeroWeight = selectedProduct != null && selectedProduct.weight === 0;
   const kgMissing = isZeroWeight && (kgVal === "" || Number(kgVal) <= 0);
 
+  // Effective kg that the server will deduct from department WIP
+  const effectiveKg = useMemo(() => {
+    const qty = Number(qtyVal) || 0;
+    const kgOverride = kgVal !== "" ? Number(kgVal) : null;
+    if (kgOverride !== null && kgOverride > 0) return kgOverride;
+    if (isKg) return qty;
+    return qty * (selectedProduct?.weight ?? 0);
+  }, [qtyVal, kgVal, isKg, selectedProduct]);
+
+  const selectedDept = useMemo(() => departments.find((d) => d.id === lineId), [departments, lineId]);
+  // Warn whenever the output would exceed (or worsen) the department's WIP balance,
+  // including when wipKg is already negative.
+  const wipExceeded = selectedDept != null && effectiveKg > 0 && effectiveKg > selectedDept.wipKg;
+
   const mut = useMutation({
     mutationFn: () =>
       authFetch("/api/ombor/flow/produce", {
@@ -675,7 +689,7 @@ function ProduceModal({ flow, onClose }: { flow: FlowData | undefined; onClose: 
     onError: (e: Error) => toast({ title: "Xatolik", description: e.message, variant: "destructive" }),
   });
 
-  const valid = lineId !== "" && warehouseId !== "" && productName && Number(qtyVal) > 0 && !kgMissing;
+  const valid = lineId !== "" && warehouseId !== "" && productName && Number(qtyVal) > 0 && !kgMissing && !wipExceeded;
 
   return (
     <ModalShell title="Tayyor mahsulot chiqarish" onClose={onClose}>
@@ -690,6 +704,11 @@ function ProduceModal({ flow, onClose }: { flow: FlowData | undefined; onClose: 
           <option value="">Tanlang...</option>
           {departments.map((d) => <option key={d.id} value={d.id}>{d.name} ({kg(d.wipKg)} WIP)</option>)}
         </select>
+        {selectedDept && (
+          <p className="text-[11px] mt-1" style={{ color: selectedDept.wipKg <= 0 ? "#f87171" : C.textDim }}>
+            Mavjud material: <span className="font-mono font-semibold">{kg(selectedDept.wipKg)}</span>
+          </p>
+        )}
       </div>
       <div>
         <label className={labelCls}>Tayyor mahsulot konteyneri</label>
@@ -733,6 +752,20 @@ function ProduceModal({ flow, onClose }: { flow: FlowData | undefined; onClose: 
         <label className={labelCls}>Izoh (ixtiyoriy)</label>
         <input className={fieldCls} value={note} onChange={(e) => setNote(e.target.value)} />
       </div>
+      {wipExceeded && (
+        <div
+          className="flex items-start gap-2 rounded-lg px-3 py-2.5 text-sm border"
+          style={{ background: "#fef2f2", borderColor: "#fecaca", color: "#991b1b" }}
+        >
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>
+            Bo'limda yetarli material yo'q.{" "}
+            Kiritilgan: <strong>{kg(effectiveKg)}</strong>, mavjud:{" "}
+            <strong>{kg(selectedDept!.wipKg)}</strong>.
+            Miqdorni kamaytiring.
+          </span>
+        </div>
+      )}
       <Button className="w-full" disabled={!valid || mut.isPending} onClick={() => mut.mutate()} style={{ background: C.finished }}>
         {mut.isPending ? "Saqlanmoqda..." : "Tayyor chiqarish"}
       </Button>

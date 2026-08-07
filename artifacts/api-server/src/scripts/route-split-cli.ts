@@ -11,6 +11,7 @@
 //   4. --save bo'lsa: har ikki agent marshruti tranzaksiyada DELETE+INSERT qilinadi
 import { pool } from "@workspace/db";
 import {
+  DEFAULT_START_POINT,
   planRoutes,
   splitOutliers,
   splitTerritories,
@@ -116,8 +117,8 @@ async function main(): Promise<void> {
     ? splitTerritories(inliers, [primaryCount, secondaryCount])
     : [inliers, []];
 
-  const primaryPlan = planRoutes(zones[0], { targetSize });
-  const secondaryPlan = planRoutes(zones[1], { targetSize });
+  const primaryPlan = planRoutes(zones[0], { targetSize, startPoint: DEFAULT_START_POINT });
+  const secondaryPlan = planRoutes(zones[1], { targetSize, startPoint: DEFAULT_START_POINT });
 
   const pv = validatePlan(primaryPlan, zones[0]);
   const sv = validatePlan(secondaryPlan, zones[1]);

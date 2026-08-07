@@ -249,8 +249,11 @@ function optimizeOrder(stops: PlanShop[]): PlanShop[] {
 
 // Multi-start: bir nechta deterministik boshlanish nuqtasidan eng yaxshisi
 // (avval kesishishlar soni, keyin masofa bo'yicha)
-function orderCluster(shops: PlanShop[]): PlanShop[] {
-  if (shops.length <= 2) return [...shops];
+function orderCluster(shops: PlanShop[], startPoint?: GeoPt): PlanShop[] {
+  if (shops.length <= 2) {
+    const arr = [...shops];
+    return startPoint ? orientTowardStart(arr, startPoint) : arr;
+  }
   const cLat = shops.reduce((s, p) => s + p.lat, 0) / shops.length;
   const cLng = shops.reduce((s, p) => s + p.lng, 0) / shops.length;
   const idxBy = (fn: (s: PlanShop) => number, min: boolean) => {
@@ -271,6 +274,10 @@ function orderCluster(shops: PlanShop[]): PlanShop[] {
     idxBy((s) => s.lng, true), // eng g'arbiy
     idxBy((s) => s.lat, false), // eng shimoliy
   ]);
+  if (startPoint) {
+    // Bazaga eng yaqin do'kondan boshlash ham nomzod bo'lsin
+    starts.add(idxBy((s) => haversineKm(startPoint.lat, startPoint.lng, s.lat, s.lng), true));
+  }
   let best: PlanShop[] | null = null;
   let bestCross = Infinity;
   let bestKm = Infinity;
@@ -284,7 +291,18 @@ function orderCluster(shops: PlanShop[]): PlanShop[] {
       bestKm = km;
     }
   }
-  return best ?? [...shops];
+  const result = best ?? [...shops];
+  return startPoint ? orientTowardStart(result, startPoint) : result;
+}
+
+// Marshrut yo'nalishini bazaga qarab to'g'rilash: birinchi to'xtash bazaga
+// oxirgisidan uzoq bo'lsa — marshrut teskari aylantiriladi. Shunda agent
+// kunni bazaga yaqin do'kondan boshlab, uzoqqa qarab yuradi (orqaga qaytmaydi).
+function orientTowardStart(arr: PlanShop[], startPoint: GeoPt): PlanShop[] {
+  if (arr.length < 2) return arr;
+  const dFirst = haversineKm(startPoint.lat, startPoint.lng, arr[0].lat, arr[0].lng);
+  const dLast = haversineKm(startPoint.lat, startPoint.lng, arr[arr.length - 1].lat, arr[arr.length - 1].lng);
+  return dLast < dFirst ? [...arr].reverse() : arr;
 }
 
 // ── KPI hisoblash ───────────────────────────────────────────────────────────────
@@ -424,10 +442,16 @@ export function validatePlan(plan: PlanResult, inputShops: PlanShop[]): PlanVali
 
 export type PlanOptions = {
   days?: number[]; // standart: [1,2,3,4,6,7] — juma (5) dam kuni
-  targetSize?: number; // standart: 25
+  targetSize?: number; // standart: 30
   minSize?: number; // ma'lumot uchun (balans base/base+1 bilan ta'minlanadi)
   maxSize?: number;
+  // Agent kunni boshlaydigan nuqta (baza/ombor). Berilsa, har kun marshruti
+  // bazaga YAQIN do'kondan boshlanib, uzoqqa qarab ketadi (teskari emas).
+  startPoint?: { lat: number; lng: number };
 };
+
+// Agentlar kunni boshlaydigan baza: Dang'ara, Farg'ona viloyati
+export const DEFAULT_START_POINT = { lat: 40.5786, lng: 70.9203 };
 
 // Shubhali (anomal) koordinatali do'konlarni ajratish: mintaqa medianidan
 // maxKm dan uzoq nuqtalar — GPS xatosi ehtimoli katta (masalan, Namangan
@@ -647,7 +671,7 @@ export function planRoutes(shops: PlanShop[], opts: PlanOptions = {}): PlanResul
 
   // 4. Har klaster ichida multi-start NN + 2-opt/Or-opt + uncross, kunlarga biriktirish
   const routes: PlannedRoute[] = clusterOrder.map((co, i) => {
-    const ordered = orderCluster(clusters[co.i]);
+    const ordered = orderCluster(clusters[co.i], opts.startPoint);
     const stops: PlannedStop[] = ordered.map((s, idx) => ({ ...s, tartib: idx + 1 }));
     return { kun: days[i], stops, stats: computeRouteStats(ordered, targetSize) };
   });

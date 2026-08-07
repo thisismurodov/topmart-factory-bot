@@ -13,6 +13,7 @@
 // haqiqatda GPS koordinatadan aniqlanadi, yaratgan agent yozuvidan emas).
 import { pool } from "@workspace/db";
 import {
+  DEFAULT_START_POINT,
   planRoutes,
   splitOutliers,
   validatePlan,
@@ -123,7 +124,7 @@ export async function runRoutePlan(opts: {
 
   // GPS xatosi bo'lgan do'konlar (mintaqa medianidan 60+ km) rejaga kirmaydi
   const { inliers, outliers } = splitOutliers(shops);
-  const plan = planRoutes(inliers);
+  const plan = planRoutes(inliers, { startPoint: DEFAULT_START_POINT });
   const validation = validatePlan(plan, inliers);
 
   // Eksklyuzivlik himoyasi (belt-and-braces): reja ichida qulflangan do'kon

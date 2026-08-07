@@ -141,7 +141,7 @@ export default function RoutePlanDialog({ agents }: { agents: PlanAgent[] }) {
             <Sparkles className="w-4 h-4 text-indigo-600" /> AI marshrut rejalashtirish
           </DialogTitle>
           <DialogDescription>
-            Viloyatdagi barcha faol do'konlar geografik jihatdan optimal kunlik marshrutlarga bo'linadi (har kunga ~25 do'kon).
+            Viloyatdagi barcha faol do'konlar geografik jihatdan optimal kunlik marshrutlarga bo'linadi (har kunga ~30 do'kon).
           </DialogDescription>
         </DialogHeader>
 

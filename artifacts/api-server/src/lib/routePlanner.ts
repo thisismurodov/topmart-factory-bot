@@ -326,7 +326,7 @@ function longJumpCount(stops: GeoPt[]): number {
 // Tartiblangan to'xtashlar uchun statistika — route-map/routes endpointlari ham ishlatadi
 export function computeRouteStats(
   stops: { lat: number; lng: number; nomi: string | null }[],
-  targetSize = 25
+  targetSize = 30
 ): RouteStats {
   const n = stops.length;
   const totalKm = pathKm(stops);
@@ -447,6 +447,46 @@ export function splitOutliers(shops: PlanShop[], maxKm = 60): { inliers: PlanSho
   return { inliers, outliers };
 }
 
+// ── Hududiy bo'lish (territory split) ──────────────────────────────────────────
+// Do'konlarni N ta agent o'rtasida GEOGRAFIK ZICH zonalarga bo'ladi.
+// caps[i] — i-zona sig'imi (masalan [180, 81]). Sig'imlar yig'indisi
+// do'konlar soniga teng bo'lishi shart. Xuddi planRoutes'dagi kabi
+// muvozanatli k-means + swap-refine ishlatiladi — zonalar bir-biriga
+// kirib ketmaydi, umumiy yurish masofasi kamayadi.
+export function splitTerritories(shops: PlanShop[], caps: number[]): PlanShop[][] {
+  const k = caps.length;
+  const total = caps.reduce((s, c) => s + c, 0);
+  if (total !== shops.length) {
+    throw new Error(`splitTerritories: caps yig'indisi (${total}) do'konlar soniga (${shops.length}) teng emas`);
+  }
+  if (k === 1) return [[...shops]];
+  const stable = [...shops].sort((a, b) => a.id - b.id);
+  let centers = farthestPointInit(stable, k);
+  let assign: number[] = [];
+  for (let iter = 0; iter < 40; iter++) {
+    const next = balancedAssign(stable, centers, caps);
+    if (assign.length > 0 && next.every((v, i) => v === assign[i])) break;
+    assign = next;
+    centers = centers.map((c, ci) => {
+      const members = stable.filter((_, i) => assign[i] === ci);
+      if (members.length === 0) return c;
+      return {
+        lat: members.reduce((s, m) => s + m.lat, 0) / members.length,
+        lng: members.reduce((s, m) => s + m.lng, 0) / members.length,
+      };
+    });
+  }
+  const zones: PlanShop[][] = Array.from({ length: k }, () => []);
+  stable.forEach((s, i) => zones[assign[i]].push(s));
+  refineClustersBySwapCapped(zones);
+  return zones;
+}
+
+// Swap-refine, hajmlar o'zgarmaydi — splitTerritories uchun ham ishlatiladi
+function refineClustersBySwapCapped(clusters: PlanShop[][]): void {
+  refineClustersBySwap(clusters);
+}
+
 // Uzoqdagi nuqtadan boshlab markazlarni tanlash (farthest-point init) — deterministik
 function farthestPointInit(shops: PlanShop[], k: number): GeoPt[] {
   const cLat = shops.reduce((s, p) => s + p.lat, 0) / shops.length;
@@ -553,7 +593,7 @@ function refineClustersBySwap(clusters: PlanShop[][], maxPasses = 8): void {
 // Asosiy rejalashtirish funksiyasi — to'liq deterministik
 export function planRoutes(shops: PlanShop[], opts: PlanOptions = {}): PlanResult {
   const days = opts.days ?? [1, 2, 3, 4, 6, 7];
-  const targetSize = opts.targetSize ?? 25;
+  const targetSize = opts.targetSize ?? 30;
 
   if (shops.length === 0) {
     return { routes: [], totalShops: 0, totalKm: 0, avgScore: 0 };

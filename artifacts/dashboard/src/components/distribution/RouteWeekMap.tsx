@@ -382,7 +382,9 @@ export default function RouteWeekMap({ active, onShop }: { active: boolean; onSh
       )}
 
       {/* Xarita */}
-      <div className="relative rounded-lg overflow-hidden border">
+      {/* z-0 + isolate: Leaflet pane'lari (z-index 200-700) Sheet/dialog (z-50)
+          ustiga chiqib ketmasligi uchun alohida stacking context yaratamiz */}
+      <div className="relative z-0 isolate rounded-lg overflow-hidden border">
         {isLoading && !data && <Skeleton className="absolute inset-0 z-10" />}
         <div ref={containerRef} className="h-[420px] md:h-[520px] w-full" />
       </div>

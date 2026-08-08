@@ -1,0 +1,172 @@
+Ha, menimcha sen aytayotgan variant **ancha to'g'ri arxitektura**. Hozirgi ekrandagi **“Bog'lash”** yechimi vaqtinchalik ishlaydi, lekin tizim kattalashganda chalkashlik keltirib chiqaradi.
+
+### Men buni shunday qilgan bo'lardim:
+
+## 1. Bitta asosiy `Mahsulot bazasi`
+
+Har bir mahsulot **ERP'da faqat bir marta yaratiladi**.
+
+Masalan:
+
+**Tulpor**
+
+* Kod: `TULPOR`
+* Birlik: kg
+* Material: PP
+* Sotuv: ✅
+* Ishlab chiqarish: ✅
+* Ombor: avtomatik
+* Narx: ...
+* Ishlab chiqarish normasi/retsepti: ...
+
+Shunda **Tulpor** alohida "Savdo mahsuloti" va alohida "Ishlab chiqarish mahsuloti" bo'lib ketmaydi.
+
+---
+
+## 2. Mahsulot profilida modullar bo'ladi
+
+Mahsulotga kirganda:
+
+**TULPOR**
+
+`[ Umumiy ] [ Savdo ] [ Ishlab chiqarish ] [ Ombor ]`
+
+### Savdo
+
+* Sotuvda mavjud: ✅
+* Sotuv narxi
+* Valyuta
+* Agentga ko'rsatish
+* Katalogda ko'rsatish
+
+### Ishlab chiqarish
+
+* Ishlab chiqariladi: ✅
+* Xomashyo
+* Retsept/BOM
+* Norma
+* Ishlab chiqarish liniyasi
+
+### Ombor
+
+* Qoldiq
+* Kirim
+* Chiqim
+* Partiyalar
+
+---
+
+# 3. Yangi mahsulot qo'shilganda
+
+Eng muhimi shu.
+
+**+ Yangi mahsulot**
+
+```text
+Mahsulot nomi: Tulpor
+Kodi: TULPOR
+Birligi: kg
+
+☑ Savdoda ishlatiladi
+☑ Ishlab chiqarishda ishlatiladi
+```
+
+Yaratildi → **bitta mahsulot**.
+
+U avtomatik ravishda:
+**Mahsulotlar → Savdo**
+va
+**Mahsulotlar → Ishlab chiqarish**
+
+bo'limlarida ko'rinadi.
+
+Agar faqat sotiladigan mahsulot bo'lsa:
+
+`☑ Savdo`
+`☐ Ishlab chiqarish`
+
+Agar faqat ishlab chiqariladigan bo'lsa:
+
+`☐ Savdo`
+`☑ Ishlab chiqarish`
+
+Bu ancha toza.
+
+---
+
+# 4. Hozirgi "Bog'lash" funksiyasi nima bo'ladi?
+
+Uni butunlay yo'qotish shart emas.
+
+**"Bog'lash" — faqat eski ma'lumotlarni birlashtirish/migratsiya qilish uchun ishlatiladi.**
+
+Masalan hozir:
+
+> Tulpor — ERP katalog
+> Tulpor — Savdo katalog
+
+ikkita alohida yozuv bo'lib qolgan.
+
+Admin:
+
+**Bog'lash → ERP mahsulotini qidirish**
+
+🔍 `Tulpor`
+
+Topilsa:
+
+> **Tulpor — TULPOR**
+
+`[Tanlash]`
+
+va mavjud savdo mahsuloti shu master mahsulotga ulanadi.
+
+---
+
+# 5. Topilmasa
+
+Bu ham sen aytganingdek juda muhim:
+
+🔍 `Yangi mahsulot nomi`
+
+**Hech narsa topilmadi.**
+
+> Ushbu mahsulot ERP bazasida mavjud emas.
+
+### `[ + Yangi mahsulot yaratish ]`
+
+Bosadi → mahsulot yaratish oynasi ochiladi.
+
+Shunda **"Bog'lash" oynasida mahsulot yo'qolib qolishi yoki admin nima qilishni bilmay qolishi muammosi bo'lmaydi.**
+
+---
+
+# Eng muhim prinsip
+
+Men TopMart ERP uchun buni quyidagicha belgilagan bo'lardim:
+
+> **ONE PRODUCT = ONE MASTER RECORD**
+
+Ya'ni:
+
+**1 mahsulot → 1 ID → 1 profil → bir nechta modul.**
+
+```text
+                 MAHSULOT
+                    │
+        ┌───────────┼───────────┐
+        ↓           ↓           ↓
+      SAVDO     ISHLAB CHIQARISH  OMBOR
+        │           │           │
+      Agent       Batch        Qoldiq
+      Narx        BOM          Kirim
+      Katalog     Xomashyo     Chiqim
+```
+
+Shunda keyinchalik **AI tahlil, Dashboard, Ombor, Savdo, Ishlab chiqarish, Partiyalar** hammasi bir xil mahsulot ID bilan ishlaydi.
+
+Bu TopMart OS'ning kelajakdagi katta arxitekturasi uchun ham juda muhim. Roadmapda ham tizim xomashyodan ishlab chiqarish → batch → tayyor ombor → distribyutsiya → agent → do'kon → savdogacha yagona zanjir sifatida qurilayotgani belgilangan. 
+
+**Xulosa: men "Bog'lash"ni asosiy mexanizm qilmagan bo'lardim. Asosiy mexanizm — Bitta Mahsulot Bazasi. "Bog'lash" esa faqat eski ma'lumotlarni tozalash/migratsiya qilish uchun qoladi.**
+
+Bu variant TopMart ERP'ni boshqa kompaniyalarga sotishda ham ancha professional ko'rinadi.

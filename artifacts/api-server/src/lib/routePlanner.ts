@@ -7,15 +7,27 @@
 //   5. KPI: masofa, vaqt, kesishishlar soni, orqaga qaytish %, samaradorlik, score
 // Hammasi haversine (havo chizig'i) asosida — yo'l tarmog'i ishlatilmaydi.
 
+// Ixtiyoriy biznes signallari — marshrut ustuvorligini boyitadi
+export type ShopBusinessSignals = {
+  salesSum?: number;       // so'm bilan, oxirgi 90 kun jami savdo
+  creditBalance?: number;  // ochiq nasiya (qarz) qoldig'i (so'm)
+  daysSinceVisit?: number; // oxirgi tashrifdan o'tgan kunlar (ko'rsatilmasa = hech bormagan)
+};
+
 export type PlanShop = {
   id: number;
   nomi: string | null;
   hudud: string | null;
   lat: number;
   lng: number;
+  biz?: ShopBusinessSignals; // ixtiyoriy biznes signallari
 };
 
-export type PlannedStop = PlanShop & { tartib: number };
+export type PlannedStop = PlanShop & {
+  tartib: number;
+  bizScore?: number;      // 0-100 biznes ball (businessPriority=true bo'lganda to'ldiriladi)
+  bizReasons?: string[];  // e.g. ["VIP", "Nasiya: 500K so'm", "35 kun bormagan"]
+};
 
 export type RouteStats = {
   shopCount: number;
@@ -34,10 +46,17 @@ export type RouteStats = {
   score: number; // AI Route Score (0-100)
 };
 
+export type RouteBizSummary = {
+  avgBizScore: number;          // klasterning o'rtacha biznes bali (0-100)
+  highPriorityCount: number;    // bizScore >= 60 bo'lgan do'konlar soni
+  totalCreditBalance: number;   // klaster ichidagi jami ochiq nasiya (so'm)
+};
+
 export type PlannedRoute = {
   kun: number;
   stops: PlannedStop[];
   stats: RouteStats;
+  bizSummary?: RouteBizSummary; // businessPriority=true bo'lganda to'ldiriladi
 };
 
 export type PlanResult = {
@@ -45,6 +64,7 @@ export type PlanResult = {
   totalShops: number;
   totalKm: number;
   avgScore: number;
+  businessPriorityActive?: boolean; // biznes signallari ishlatildimi
 };
 
 const EARTH_R = 6371; // km
@@ -448,10 +468,120 @@ export type PlanOptions = {
   // Agent kunni boshlaydigan nuqta (baza/ombor). Berilsa, har kun marshruti
   // bazaga YAQIN do'kondan boshlanib, uzoqqa qarab ketadi (teskari emas).
   startPoint?: { lat: number; lng: number };
+  // Biznes ustuvorligi: do'konda biz? ma'lumotlari bo'lsa, nasiya/savdo/tashrif
+  // asosida klasterlarni kunlarga va kun ichidagi tartibni ustuvorlik bilan belgilaydi.
+  businessPriority?: boolean;
 };
 
 // Agentlar kunni boshlaydigan baza: Dang'ara, Farg'ona viloyati
 export const DEFAULT_START_POINT = { lat: 40.5786, lng: 70.9203 };
+
+// ── Biznes ustuvorlik ballari ────────────────────────────────────────────────────
+
+type BizEntry = { score: number; reasons: string[] };
+type BizScoreMap = Map<number, BizEntry>;
+
+function fmtUzs(amount: number): string {
+  if (amount >= 1_000_000) return `${(amount / 1_000_000).toFixed(1)}M so'm`;
+  if (amount >= 1_000) return `${Math.round(amount / 1_000)}K so'm`;
+  return `${Math.round(amount)} so'm`;
+}
+
+// Har do'kon uchun biznes bali (0-100) va sabablar ro'yxatini hisoblaydi.
+// Signallar: nasiya balansi (40%), oxirgi tashrifdan kunlar (35%), savdo hajmi (25%).
+export function computeBusinessScores(shops: PlanShop[]): BizScoreMap {
+  const result: BizScoreMap = new Map();
+  let maxSales = 0, maxCredit = 0, maxDays = 0;
+  for (const s of shops) {
+    if (!s.biz) continue;
+    maxSales = Math.max(maxSales, s.biz.salesSum ?? 0);
+    maxCredit = Math.max(maxCredit, s.biz.creditBalance ?? 0);
+    maxDays = Math.max(maxDays, s.biz.daysSinceVisit ?? 0);
+  }
+  if (maxSales === 0 && maxCredit === 0 && maxDays === 0) return result;
+
+  for (const s of shops) {
+    const biz = s.biz;
+    if (!biz) {
+      result.set(s.id, { score: 0, reasons: [] });
+      continue;
+    }
+    const salesNorm  = maxSales  > 0 ? (biz.salesSum       ?? 0) / maxSales  : 0;
+    const creditNorm = maxCredit > 0 ? (biz.creditBalance   ?? 0) / maxCredit : 0;
+    const daysNorm   = maxDays   > 0 ? (biz.daysSinceVisit  ?? 0) / maxDays   : 0;
+
+    const score = Math.min(100, Math.round(creditNorm * 40 + daysNorm * 35 + salesNorm * 25));
+    const reasons: string[] = [];
+    if (salesNorm >= 0.7) reasons.push("VIP");
+    if ((biz.creditBalance ?? 0) > 0) reasons.push(`Nasiya: ${fmtUzs(biz.creditBalance!)}`);
+    if ((biz.daysSinceVisit ?? 0) > 14) reasons.push(`${biz.daysSinceVisit} kun bormagan`);
+
+    result.set(s.id, { score, reasons });
+  }
+  return result;
+}
+
+// Geo-optimal (kesishishsiz) tartibdan so'ng yuqori prioritetli do'konlarni
+// oldinga "tortish". Faqat kesishish paydo qilmaydigan siljishlar qabul qilinadi,
+// shuning uchun yakuniy reja albatta kesishishsiz bo'ladi.
+//
+// Algoritm: balllar bo'yicha kamayish tartibida (eng muhim avval) har bir
+// yuqori prioritetli do'kon uchun mumkin bo'lgan eng oldingi pozitsiyani izlaymiz.
+// Agar siljish kesishish keltirmasa — qabul qilinadi; aks holda do'kon joyida qoladi.
+export function priorityPullForward(geoOrdered: PlanShop[], bizScores: BizScoreMap): PlanShop[] {
+  if (geoOrdered.length <= 2 || bizScores.size === 0) return geoOrdered;
+  const hasAny = geoOrdered.some((s) => (bizScores.get(s.id)?.score ?? 0) > 0);
+  if (!hasAny) return geoOrdered;
+
+  const result = [...geoOrdered];
+
+  // Yuqori prioritetli do'konlar (ball >= 50) — eng muhimidan boshlash
+  const highPriority = geoOrdered
+    .map((s) => ({ id: s.id, score: bizScores.get(s.id)?.score ?? 0 }))
+    .filter((x) => x.score >= 50)
+    .sort((a, b) => b.score - a.score);
+
+  for (const { id } of highPriority) {
+    const curIdx = result.findIndex((s) => s.id === id);
+    if (curIdx <= 0) continue; // Allaqachon boshida
+
+    // Eng oldingi kesishishsiz pozitsiyani izlaymiz
+    for (let j = 0; j < curIdx; j++) {
+      // j-pozitsiyaga siljishni sinab ko'ramiz
+      const trial = [...result];
+      trial.splice(curIdx, 1);
+      trial.splice(j, 0, result[curIdx]);
+      if (countCrossings(trial) === 0) {
+        // Kesishishsiz — qabul qilamiz
+        const shop = result.splice(curIdx, 1)[0];
+        result.splice(j, 0, shop);
+        break;
+      }
+    }
+    // Agar hech bir pozitsiya kesishishsiz bo'lmasa — do'kon joyida qoladi
+  }
+
+  return result;
+}
+
+// Klaster uchun biznes statistikasi
+function clusterBizSummary(cl: PlanShop[], bizScores: BizScoreMap): RouteBizSummary {
+  let totalCredit = 0;
+  let highPriority = 0;
+  let scoreSum = 0;
+  for (const s of cl) {
+    const entry = bizScores.get(s.id);
+    const score = entry?.score ?? 0;
+    scoreSum += score;
+    if (score >= 60) highPriority++;
+    totalCredit += s.biz?.creditBalance ?? 0;
+  }
+  return {
+    avgBizScore: cl.length > 0 ? Math.round(scoreSum / cl.length) : 0,
+    highPriorityCount: highPriority,
+    totalCreditBalance: totalCredit,
+  };
+}
 
 // Shubhali (anomal) koordinatali do'konlarni ajratish: mintaqa medianidan
 // maxKm dan uzoq nuqtalar — GPS xatosi ehtimoli katta (masalan, Namangan
@@ -657,27 +787,63 @@ export function planRoutes(shops: PlanShop[], opts: PlanOptions = {}): PlanResul
   // 2. Chegaralarni swap bilan yaxshilash — hududiy yaxlitlik
   refineClustersBySwap(clusters);
 
-  // 3. Klasterlarni markaz burchagi bo'yicha tartiblab kunlarga biriktiramiz
-  //    (qo'shni hududlar ketma-ket kunlarga tushadi)
+  // Biznes signallari mavjud bo'lsa — ballar hisoblanadi
+  const bizActive = opts.businessPriority === true;
+  const bizScores: BizScoreMap = bizActive ? computeBusinessScores(shops) : new Map();
+
+  // 3. Klasterlarni kunlarga biriktirish
+  //    • Biznes ustuvorligi yoqilgan: eng yuqori o'rtacha bal → birinchi kun (dushanba)
+  //    • Aks holda: markaz burchagi bo'yicha (qo'shni hududlar ketma-ket kunlarga tushadi)
   const gLat = stable.reduce((s, p) => s + p.lat, 0) / stable.length;
   const gLng = stable.reduce((s, p) => s + p.lng, 0) / stable.length;
   const clusterOrder = clusters
     .map((cl, i) => {
       const mLat = cl.reduce((s, m) => s + m.lat, 0) / (cl.length || 1);
       const mLng = cl.reduce((s, m) => s + m.lng, 0) / (cl.length || 1);
-      return { i, angle: Math.atan2(mLat - gLat, mLng - gLng) };
-    })
-    .sort((a, b) => a.angle - b.angle || a.i - b.i);
+      const angle = Math.atan2(mLat - gLat, mLng - gLng);
+      const avgBiz = bizActive && bizScores.size > 0
+        ? cl.reduce((s, sh) => s + (bizScores.get(sh.id)?.score ?? 0), 0) / (cl.length || 1)
+        : 0;
+      return { i, angle, avgBiz };
+    });
 
-  // 4. Har klaster ichida multi-start NN + 2-opt/Or-opt + uncross, kunlarga biriktirish
+  if (bizActive && bizScores.size > 0) {
+    // Yuqori prioritetli klaster birinchi kun (ustuvorlik bo'yicha kamayish tartibida)
+    clusterOrder.sort((a, b) => b.avgBiz - a.avgBiz || a.i - b.i);
+  } else {
+    // Geografik ketma-ketlik (qo'shni hududlar bir-birining yonida bo'lsin)
+    clusterOrder.sort((a, b) => a.angle - b.angle || a.i - b.i);
+  }
+
+  // 4. Har klaster ichida multi-start NN + 2-opt/Or-opt + uncross, keyin biznes blend
   const routes: PlannedRoute[] = clusterOrder.map((co, i) => {
-    const ordered = orderCluster(clusters[co.i], opts.startPoint);
-    const stops: PlannedStop[] = ordered.map((s, idx) => ({ ...s, tartib: idx + 1 }));
-    return { kun: days[i], stops, stats: computeRouteStats(ordered, targetSize) };
+    const geoOrdered = orderCluster(clusters[co.i], opts.startPoint);
+    // Biznes ustuvorligi: yuqori prioritetli do'konlarni kesishishsiz siljitish
+    const ordered = bizActive && bizScores.size > 0
+      ? priorityPullForward(geoOrdered, bizScores)
+      : geoOrdered;
+    const stops: PlannedStop[] = ordered.map((s, idx) => {
+      const entry = bizScores.get(s.id);
+      return {
+        ...s,
+        tartib: idx + 1,
+        ...(bizActive && entry ? { bizScore: entry.score, bizReasons: entry.reasons } : {}),
+      };
+    });
+    const bizSummary = bizActive && bizScores.size > 0
+      ? clusterBizSummary(clusters[co.i], bizScores)
+      : undefined;
+    return { kun: days[i], stops, stats: computeRouteStats(ordered, targetSize), bizSummary };
   });
 
   const totalKm = Math.round(routes.reduce((s, r) => s + r.stats.totalKm, 0) * 10) / 10;
   const avgScore = routes.length > 0 ? Math.round(routes.reduce((s, r) => s + r.stats.score, 0) / routes.length) : 0;
 
-  return { routes, totalShops: shops.length, totalKm, avgScore };
+  return {
+    routes,
+    totalShops: shops.length,
+    totalKm,
+    avgScore,
+    businessPriorityActive: bizActive && bizScores.size > 0,
+  };
 }

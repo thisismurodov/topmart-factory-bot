@@ -7,12 +7,20 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Sparkles, Loader2, AlertTriangle, MapPin } from "lucide-react";
+import { Sparkles, Loader2, AlertTriangle, MapPin, TrendingUp } from "lucide-react";
 
 // AI marshrut rejalashtirish dialogi: viloyat + agent tanlanadi, avval reja
 // ko'rib chiqiladi (dry-run), keyin "Saqlash" bosilganda delivery_routes ga yoziladi.
+// Biznes ustuvorligi: nasiya (qarz), savdo hajmi va oxirgi tashrifdan o'tgan kunlar
+// asosida eng muhim do'konlar haftaning boshiga va kun boshiga joylashtiriladi.
 
 type PlanAgent = { id: number; name: string | null; mashinaNomeri: string | null };
+
+type RouteBizSummary = {
+  avgBizScore: number;
+  highPriorityCount: number;
+  totalCreditBalance: number;
+};
 
 type PlanRoute = {
   kun: number;
@@ -32,7 +40,15 @@ type PlanRoute = {
     startShop: string | null;
     endShop: string | null;
   };
-  stops: { tartib: number; dokonId: number; nomi: string | null; hudud: string | null }[];
+  bizSummary?: RouteBizSummary;
+  stops: {
+    tartib: number;
+    dokonId: number;
+    nomi: string | null;
+    hudud: string | null;
+    bizScore?: number;
+    bizReasons?: string[];
+  }[];
 };
 
 type PlanResult = {
@@ -44,6 +60,7 @@ type PlanResult = {
   totalShops: number;
   totalKm: number;
   avgScore: number;
+  businessPriorityActive?: boolean;
   validation?: { ok: boolean; issues: string[]; warnings: string[] };
   skippedNoCoord: { id: number; nomi: string | null }[];
   badCoord: { id: number; nomi: string | null; hudud: string | null; lat: number; lng: number }[];
@@ -58,10 +75,22 @@ function fmtMin(min: number): string {
   return h > 0 ? `${h}s ${m}d` : `${m}d`;
 }
 
+function fmtMln(amount: number): string {
+  if (amount >= 1_000_000) return `${(amount / 1_000_000).toFixed(1)}M`;
+  if (amount >= 1_000) return `${Math.round(amount / 1_000)}K`;
+  return `${Math.round(amount)}`;
+}
+
 function scoreColor(score: number): string {
   if (score >= 80) return "text-green-600";
   if (score >= 50) return "text-amber-600";
   return "text-red-600";
+}
+
+function bizScoreColor(score: number): string {
+  if (score >= 70) return "text-red-600";
+  if (score >= 40) return "text-amber-600";
+  return "text-slate-400";
 }
 
 export default function RoutePlanDialog({ agents }: { agents: PlanAgent[] }) {
@@ -142,6 +171,7 @@ export default function RoutePlanDialog({ agents }: { agents: PlanAgent[] }) {
           </DialogTitle>
           <DialogDescription>
             Viloyatdagi barcha faol do'konlar geografik jihatdan optimal kunlik marshrutlarga bo'linadi (har kunga ~30 do'kon).
+            Nasiya qoldig'i, savdo hajmi va oxirgi tashrifdan o'tgan kunlar asosida eng muhim do'konlar haftaning boshiga va kun boshiga joylashtiriladi.
           </DialogDescription>
         </DialogHeader>
 
@@ -172,6 +202,18 @@ export default function RoutePlanDialog({ agents }: { agents: PlanAgent[] }) {
 
         {plan && (
           <div className="space-y-3">
+            {/* Biznes ustuvorligi banner */}
+            {plan.businessPriorityActive && (
+              <div className="flex items-start gap-2 text-xs bg-indigo-50 dark:bg-indigo-950/30 rounded-md p-2.5">
+                <TrendingUp className="w-3.5 h-3.5 shrink-0 mt-0.5 text-indigo-600" />
+                <div className="text-indigo-700 dark:text-indigo-300">
+                  <span className="font-semibold">Biznes ustuvorligi faol</span> —
+                  {" "}nasiya qoldig'i katta, savdo hajmi yuqori yoki uzoq bormagan do'konlar
+                  haftaning boshiga va kun boshiga joylashtirildi.
+                </div>
+              </div>
+            )}
+
             {/* Umumiy natija */}
             <div className="grid grid-cols-3 gap-2 text-center">
               <div className="rounded-md border p-2">
@@ -190,40 +232,63 @@ export default function RoutePlanDialog({ agents }: { agents: PlanAgent[] }) {
 
             {/* Kunlik marshrutlar */}
             <div className="space-y-1">
-              {plan.routes.map((r) => (
-                <div
-                  key={r.kun}
-                  className="rounded-md border px-2.5 py-1.5 space-y-0.5"
-                  title={`Masofa: ${r.stats.totalKm} km\nHarakat vaqti: ~${fmtMin(r.stats.driveMinutes)}\nTashrif vaqti: ~${fmtMin(r.stats.visitMinutes)}\nO'rtacha hop: ${r.stats.avgHopKm} km\nEng uzun hop: ${r.stats.maxHopKm} km\nAI Score: ${r.stats.score}/100`}
-                >
-                  <div className="flex items-center gap-2 text-sm">
-                    <span className="capitalize font-medium w-24 shrink-0">{KUNLAR[r.kun - 1]}</span>
-                    <span className="text-xs text-muted-foreground">{r.stats.shopCount} do'kon</span>
-                    <span className="text-xs text-muted-foreground">· {r.stats.totalKm} km</span>
-                    <span className="text-xs text-muted-foreground">· ~{fmtMin(r.stats.totalMinutes)}</span>
-                    <span className={`text-xs font-semibold ml-auto ${scoreColor(r.stats.score)}`}>⭐ {r.stats.score}</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-[11px]">
-                    <span className={r.stats.efficiency >= 90 ? "text-green-600" : r.stats.efficiency >= 70 ? "text-amber-600" : "text-red-600"}>
-                      ⚡ Samaradorlik {r.stats.efficiency}%
-                    </span>
-                    <span className={r.stats.crossCount === 0 ? "text-green-600" : "text-red-600"}>
-                      ✂️ Kesishish {r.stats.crossCount}
-                    </span>
-                    <span className={r.stats.backtrackPct <= 10 ? "text-green-600" : "text-amber-600"}>
-                      ↩️ Orqaga {r.stats.backtrackPct}%
-                    </span>
-                    {r.stats.longJumps > 0 && (
-                      <span className="text-amber-600">⤴️ {r.stats.longJumps} sakrash</span>
+              {plan.routes.map((r) => {
+                const biz = r.bizSummary;
+                return (
+                  <div
+                    key={r.kun}
+                    className="rounded-md border px-2.5 py-1.5 space-y-0.5"
+                    title={`Masofa: ${r.stats.totalKm} km\nHarakat vaqti: ~${fmtMin(r.stats.driveMinutes)}\nTashrif vaqti: ~${fmtMin(r.stats.visitMinutes)}\nO'rtacha hop: ${r.stats.avgHopKm} km\nEng uzun hop: ${r.stats.maxHopKm} km\nAI Score: ${r.stats.score}/100`}
+                  >
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="capitalize font-medium w-24 shrink-0">{KUNLAR[r.kun - 1]}</span>
+                      <span className="text-xs text-muted-foreground">{r.stats.shopCount} do'kon</span>
+                      <span className="text-xs text-muted-foreground">· {r.stats.totalKm} km</span>
+                      <span className="text-xs text-muted-foreground">· ~{fmtMin(r.stats.totalMinutes)}</span>
+                      <span className={`text-xs font-semibold ml-auto ${scoreColor(r.stats.score)}`}>⭐ {r.stats.score}</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-[11px]">
+                      <span className={r.stats.efficiency >= 90 ? "text-green-600" : r.stats.efficiency >= 70 ? "text-amber-600" : "text-red-600"}>
+                        ⚡ Samaradorlik {r.stats.efficiency}%
+                      </span>
+                      <span className={r.stats.crossCount === 0 ? "text-green-600" : "text-red-600"}>
+                        ✂️ Kesishish {r.stats.crossCount}
+                      </span>
+                      <span className={r.stats.backtrackPct <= 10 ? "text-green-600" : "text-amber-600"}>
+                        ↩️ Orqaga {r.stats.backtrackPct}%
+                      </span>
+                      {r.stats.longJumps > 0 && (
+                        <span className="text-amber-600">⤴️ {r.stats.longJumps} sakrash</span>
+                      )}
+                    </div>
+                    {/* Biznes ustuvorlik ko'rsatkichlari */}
+                    {biz && (biz.highPriorityCount > 0 || biz.totalCreditBalance > 0) && (
+                      <div className="flex items-center gap-2 text-[11px]">
+                        {biz.highPriorityCount > 0 && (
+                          <span className={bizScoreColor(biz.avgBizScore)}>
+                            🎯 {biz.highPriorityCount} ustuvor do'kon
+                          </span>
+                        )}
+                        {biz.totalCreditBalance > 0 && (
+                          <span className="text-red-600">
+                            💳 Nasiya: {fmtMln(biz.totalCreditBalance)} so'm
+                          </span>
+                        )}
+                        {biz.avgBizScore > 0 && (
+                          <span className={`ml-auto ${bizScoreColor(biz.avgBizScore)}`}>
+                            Biz. ball: {biz.avgBizScore}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {(r.stats.startShop || r.stats.endShop) && (
+                      <div className="text-[11px] text-muted-foreground truncate">
+                        🏁 {r.stats.startShop || "—"} → 🎯 {r.stats.endShop || "—"}
+                      </div>
                     )}
                   </div>
-                  {(r.stats.startShop || r.stats.endShop) && (
-                    <div className="text-[11px] text-muted-foreground truncate">
-                      🏁 {r.stats.startShop || "—"} → 🎯 {r.stats.endShop || "—"}
-                    </div>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
 
             {/* Validatsiya natijasi */}

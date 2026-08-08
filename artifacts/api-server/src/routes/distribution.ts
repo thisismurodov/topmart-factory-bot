@@ -1325,12 +1325,14 @@ router.post("/distribution/route-plan", async (req, res): Promise<void> => {
     totalShops: run.plan.totalShops,
     totalKm: run.plan.totalKm,
     avgScore: run.plan.avgScore,
+    businessPriorityActive: run.businessPriorityActive,
     validation: run.validation,
     skippedNoCoord: run.skippedNoCoord,
     badCoord: run.badCoord.map((o) => ({ id: o.id, nomi: o.nomi, hudud: o.hudud, lat: o.lat, lng: o.lng })),
     routes: run.plan.routes.map((r) => ({
       kun: r.kun,
       stats: r.stats,
+      bizSummary: r.bizSummary,
       stops: r.stops.map((st) => ({
         dokonId: st.id,
         nomi: st.nomi,
@@ -1338,6 +1340,8 @@ router.post("/distribution/route-plan", async (req, res): Promise<void> => {
         tartib: st.tartib,
         lat: st.lat,
         lng: st.lng,
+        bizScore: st.bizScore,
+        bizReasons: st.bizReasons,
       })),
     })),
   });

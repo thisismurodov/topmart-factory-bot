@@ -20,6 +20,7 @@ import {
   type PlanShop,
   type PlanResult,
   type PlanValidation,
+  type ShopBusinessSignals,
 } from "./routePlanner";
 
 export type RoutePlanFailure = {
@@ -41,6 +42,7 @@ export type RoutePlanSuccess = {
   validation: PlanValidation;
   skippedNoCoord: { id: number; nomi: string | null }[];
   badCoord: PlanShop[];
+  businessPriorityActive: boolean; // biznes signallari marshrut tartibiga ta'sir qildimi
 };
 
 export type RoutePlanRun = RoutePlanFailure | RoutePlanSuccess;
@@ -99,20 +101,12 @@ export async function runRoutePlan(opts: {
   const freeRows = shopsQ.rows.filter((r) => !locked.has(Number(r.id)));
   const lockedElsewhere = shopsQ.rows.length - freeRows.length;
 
-  const shops: PlanShop[] = freeRows
-    .filter((r) => r.latitude != null && r.longitude != null)
-    .map((r) => ({
-      id: Number(r.id),
-      nomi: r.nomi as string | null,
-      hudud: r.hudud as string | null,
-      lat: Number(r.latitude),
-      lng: Number(r.longitude),
-    }));
+  const coordRows = freeRows.filter((r) => r.latitude != null && r.longitude != null);
   const skippedNoCoord = freeRows
     .filter((r) => r.latitude == null || r.longitude == null)
     .map((r) => ({ id: Number(r.id), nomi: r.nomi as string | null }));
 
-  if (shops.length === 0) {
+  if (coordRows.length === 0) {
     return {
       ok: false,
       status: 400,
@@ -122,9 +116,73 @@ export async function runRoutePlan(opts: {
     };
   }
 
+  // Biznes signallarini yuklash: savdo hajmi, nasiya balansi, oxirgi tashrif
+  const shopIds = coordRows.map((r) => Number(r.id));
+  const nintyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+
+  const [salesQ, creditQ, visitQ] = await Promise.all([
+    pool.query(
+      `SELECT s.dokon_id, SUM(t.summa)::bigint AS sales_sum
+         FROM distribution.savdolar s
+         JOIN distribution.savdo_tafsilot t ON t.savdo_id = s.id
+        WHERE s.dokon_id = ANY($1::int[])
+          AND substr(s.created_at, 1, 10) >= $2
+        GROUP BY s.dokon_id`,
+      [shopIds, nintyDaysAgo]
+    ),
+    pool.query(
+      `SELECT dokon_id, SUM(qoldiq)::bigint AS credit_balance
+         FROM distribution.nasiya
+        WHERE dokon_id = ANY($1::int[])
+        GROUP BY dokon_id`,
+      [shopIds]
+    ),
+    pool.query(
+      `SELECT dokon_id,
+              (CURRENT_DATE - MAX(substr(created_at,1,10))::date) AS days_since
+         FROM (
+           SELECT dokon_id, created_at FROM distribution.savdolar
+            WHERE dokon_id = ANY($1::int[])
+           UNION ALL
+           SELECT dokon_id, created_at FROM distribution.olmagan_dokonlar
+            WHERE dokon_id = ANY($1::int[])
+         ) v
+        GROUP BY dokon_id`,
+      [shopIds]
+    ),
+  ]);
+
+  const salesMap  = new Map<number, number>(salesQ.rows.map((r)  => [Number(r.dokon_id), Number(r.sales_sum)]));
+  const creditMap = new Map<number, number>(creditQ.rows.map((r) => [Number(r.dokon_id), Number(r.credit_balance)]));
+  const daysMap   = new Map<number, number>(visitQ.rows.map((r)  => [Number(r.dokon_id), Number(r.days_since)]));
+
+  const hasBizSignals = salesMap.size > 0 || creditMap.size > 0 || daysMap.size > 0;
+
+  const shops: PlanShop[] = coordRows.map((r) => {
+    const id = Number(r.id);
+    const biz: ShopBusinessSignals = {
+      salesSum:      salesMap.get(id),
+      creditBalance: creditMap.get(id),
+      daysSinceVisit: daysMap.get(id),
+    };
+    return {
+      id,
+      nomi: r.nomi as string | null,
+      hudud: r.hudud as string | null,
+      lat: Number(r.latitude),
+      lng: Number(r.longitude),
+      biz,
+    };
+  });
+
   // GPS xatosi bo'lgan do'konlar (mintaqa medianidan 60+ km) rejaga kirmaydi
   const { inliers, outliers } = splitOutliers(shops);
-  const plan = planRoutes(inliers, { startPoint: DEFAULT_START_POINT });
+  const plan = planRoutes(inliers, {
+    startPoint: DEFAULT_START_POINT,
+    businessPriority: hasBizSignals,
+  });
   const validation = validatePlan(plan, inliers);
 
   // Eksklyuzivlik himoyasi (belt-and-braces): reja ichida qulflangan do'kon
@@ -197,5 +255,6 @@ export async function runRoutePlan(opts: {
     validation,
     skippedNoCoord,
     badCoord: outliers,
+    businessPriorityActive: plan.businessPriorityActive ?? false,
   };
 }

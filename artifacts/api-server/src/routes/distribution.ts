@@ -2191,4 +2191,252 @@ router.get("/distribution/suggestions", async (req, res): Promise<void> => {
   });
 });
 
+// ── Kunlik tashriflar — har bir agent uchun bugungi/tanlangan kun progressi ──────
+// field_ops jadvalini asosiy manba sifatida ishlatadi; savdolar/olmagan_dokonlar
+// bilan boyitadi. Har bir agent uchun: planned (marshrut), visited, sold, noSale;
+// har bir stop uchun: dokon, natija (sold/nosale/payment), sabab, GPS nuqtasi.
+router.get("/distribution/daily-visits", async (req, res): Promise<void> => {
+  const f = parseFilters(req);
+  const q = req.query as Record<string, unknown>;
+  const dateRaw = typeof q.date === "string" && DATE_RE.test(q.date) ? q.date : null;
+
+  const dQ = await pool.query(
+    `SELECT COALESCE($1::text, to_char(now() AT TIME ZONE 'Asia/Tashkent','YYYY-MM-DD')) AS d,
+            EXTRACT(ISODOW FROM COALESCE($1::text::date, (now() AT TIME ZONE 'Asia/Tashkent')::date))::int AS dow`,
+    [dateRaw]
+  );
+  const date = dQ.rows[0].d as string;
+  const dow = dQ.rows[0].dow as number;
+
+  const params: unknown[] = [date, dow];
+  let agentW = "";
+  let shopW = "";
+  if (f.agentId) {
+    params.push(f.agentId);
+    agentW += ` AND da.telegram_id = $${params.length}`;
+  }
+  if (f.viloyat) {
+    params.push(f.viloyat);
+    shopW += ` AND dk.viloyat = $${params.length}`;
+  }
+  if (f.hudud) {
+    params.push(f.hudud);
+    shopW += ` AND dk.hudud = $${params.length}`;
+  }
+
+  // 1. Per-agent summary: planned from routes + visited from field_ops activity
+  const summaryQ = pool.query(
+    `WITH route_counts AS (
+       SELECT da.id AS agent_id,
+              COUNT(*)::int AS planned
+         FROM distribution.delivery_routes r
+         JOIN distribution.delivery_agents da ON da.id = r.delivery_agent_id
+         JOIN distribution.dokonlar dk ON dk.id = r.dokon_id
+        WHERE r.kun = $2 AND da.faol = 1${agentW}${shopW}
+        GROUP BY da.id
+     ),
+     sales_agg AS (
+       SELECT s.agent_id,
+              COUNT(DISTINCT s.dokon_id)::int AS sold_shops,
+              SUM(s.jami_summa)               AS sales_total,
+              COUNT(*)::int                   AS sales_count
+         FROM distribution.savdolar s
+         JOIN distribution.dokonlar dk ON dk.id = s.dokon_id
+        WHERE substr(s.created_at,1,10) = $1${agentW}${shopW}
+        GROUP BY s.agent_id
+     ),
+     nosale_agg AS (
+       SELECT o.agent_id,
+              COUNT(DISTINCT o.dokon_id)::int AS nosale_shops
+         FROM distribution.olmagan_dokonlar o
+         JOIN distribution.dokonlar dk ON dk.id = o.dokon_id
+        WHERE substr(o.created_at,1,10) = $1${agentW}${shopW}
+        GROUP BY o.agent_id
+     ),
+     payment_agg AS (
+       SELECT p.agent_id,
+              COUNT(DISTINCT p.dokon_id)::int AS payment_only_shops
+         FROM distribution.pul_olish p
+         JOIN distribution.dokonlar dk ON dk.id = p.dokon_id
+        WHERE substr(p.created_at,1,10) = $1${agentW}${shopW}
+          AND NOT EXISTS (
+            SELECT 1 FROM distribution.savdolar s2
+             WHERE s2.dokon_id = p.dokon_id
+               AND s2.agent_id = p.agent_id
+               AND substr(s2.created_at,1,10) = $1
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM distribution.olmagan_dokonlar o2
+             WHERE o2.dokon_id = p.dokon_id
+               AND o2.agent_id = p.agent_id
+               AND substr(o2.created_at,1,10) = $1
+          )
+        GROUP BY p.agent_id
+     )
+     SELECT da.id, da.name, da.mashina_nomeri, da.hudud,
+            COALESCE(rc.planned,0)::int                                             AS planned,
+            (COALESCE(sa.sold_shops,0) + COALESCE(na.nosale_shops,0)
+             + COALESCE(pa.payment_only_shops,0))::int                              AS visited,
+            COALESCE(sa.sold_shops,0)::int                                          AS sold,
+            COALESCE(na.nosale_shops,0)::int                                        AS no_sale,
+            COALESCE(sa.sales_total,0)                                              AS sales_total,
+            COALESCE(sa.sales_count,0)::int                                         AS sales_count
+       FROM distribution.delivery_agents da
+       LEFT JOIN route_counts rc   ON rc.agent_id  = da.id
+       LEFT JOIN sales_agg    sa   ON sa.agent_id  = da.telegram_id
+       LEFT JOIN nosale_agg   na   ON na.agent_id  = da.telegram_id
+       LEFT JOIN payment_agg  pa   ON pa.agent_id  = da.telegram_id
+      WHERE da.faol = 1${agentW}
+        AND (rc.agent_id IS NOT NULL OR sa.agent_id IS NOT NULL
+             OR na.agent_id IS NOT NULL OR pa.agent_id IS NOT NULL)
+      ORDER BY da.name`,
+    params
+  );
+
+  // 2. Per-stop detail: all visits (sale + nosale + payment-only) for the day
+  const stopsQ = pool.query(
+    `WITH sold_stops AS (
+       SELECT DISTINCT ON (s.agent_id, s.dokon_id)
+              s.agent_id, s.dokon_id, 'sold' AS outcome,
+              NULL::text AS sabab, NULL::text AS sabab_text,
+              NULL::text AS qaytish_sanasi,
+              s.jami_summa AS sale_total,
+              s.tolov_turi,
+              s.created_at
+         FROM distribution.savdolar s
+         JOIN distribution.dokonlar dk ON dk.id = s.dokon_id
+        WHERE substr(s.created_at,1,10) = $1${agentW}${shopW}
+        ORDER BY s.agent_id, s.dokon_id, s.created_at DESC
+     ),
+     nosale_stops AS (
+       SELECT DISTINCT ON (o.agent_id, o.dokon_id)
+              o.agent_id, o.dokon_id, 'nosale' AS outcome,
+              o.sabab, o.sabab_text, o.qaytish_sanasi,
+              NULL::numeric AS sale_total,
+              NULL::text AS tolov_turi,
+              o.created_at
+         FROM distribution.olmagan_dokonlar o
+         JOIN distribution.dokonlar dk ON dk.id = o.dokon_id
+        WHERE substr(o.created_at,1,10) = $1
+          AND NOT EXISTS (
+            SELECT 1 FROM distribution.savdolar s2
+             WHERE s2.dokon_id = o.dokon_id AND s2.agent_id = o.agent_id
+               AND substr(s2.created_at,1,10) = $1
+          )${agentW}${shopW}
+        ORDER BY o.agent_id, o.dokon_id, o.created_at DESC
+     ),
+     payment_stops AS (
+       SELECT DISTINCT ON (p.agent_id, p.dokon_id)
+              p.agent_id, p.dokon_id, 'payment' AS outcome,
+              NULL::text AS sabab, NULL::text AS sabab_text,
+              NULL::text AS qaytish_sanasi,
+              p.summa AS sale_total,
+              NULL::text AS tolov_turi,
+              p.created_at
+         FROM distribution.pul_olish p
+         JOIN distribution.dokonlar dk ON dk.id = p.dokon_id
+        WHERE substr(p.created_at,1,10) = $1
+          AND NOT EXISTS (
+            SELECT 1 FROM distribution.savdolar s2
+             WHERE s2.dokon_id = p.dokon_id AND s2.agent_id = p.agent_id
+               AND substr(s2.created_at,1,10) = $1
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM distribution.olmagan_dokonlar o2
+             WHERE o2.dokon_id = p.dokon_id AND o2.agent_id = p.agent_id
+               AND substr(o2.created_at,1,10) = $1
+          )${agentW}${shopW}
+        ORDER BY p.agent_id, p.dokon_id, p.created_at DESC
+     ),
+     all_stops AS (
+       SELECT * FROM sold_stops
+       UNION ALL SELECT * FROM nosale_stops
+       UNION ALL SELECT * FROM payment_stops
+     )
+     SELECT st.agent_id, da.id AS delivery_agent_id, da.name AS agent_name,
+            st.dokon_id,
+            dk.nomi AS dokon_name, dk.viloyat, dk.hudud, dk.telefon,
+            dk.latitude, dk.longitude,
+            st.outcome, st.sabab, st.sabab_text, st.qaytish_sanasi,
+            st.sale_total, st.tolov_turi,
+            st.created_at,
+            EXISTS (SELECT 1 FROM distribution.delivery_routes r
+                     JOIN distribution.delivery_agents da2 ON da2.id = r.delivery_agent_id
+                    WHERE r.dokon_id = st.dokon_id AND r.kun = $2
+                      AND da2.telegram_id = st.agent_id) AS on_route
+       FROM all_stops st
+       JOIN distribution.dokonlar dk ON dk.id = st.dokon_id
+       LEFT JOIN distribution.delivery_agents da ON da.telegram_id = st.agent_id AND da.faol = 1
+      ORDER BY da.name, st.created_at DESC`,
+    params
+  );
+
+  // 3. No-sale reasons breakdown per agent
+  const reasonsQ = pool.query(
+    `SELECT o.agent_id,
+            COALESCE(o.sabab,'boshqa') AS sabab,
+            COUNT(*)::int AS cnt
+       FROM distribution.olmagan_dokonlar o
+       JOIN distribution.dokonlar dk ON dk.id = o.dokon_id
+      WHERE substr(o.created_at,1,10) = $1${agentW}${shopW}
+      GROUP BY o.agent_id, COALESCE(o.sabab,'boshqa')
+      ORDER BY o.agent_id, cnt DESC`,
+    params
+  );
+
+  const [summary, stops, reasons] = await Promise.all([summaryQ, stopsQ, reasonsQ]);
+
+  // Index reasons by agent_id
+  const reasonMap = new Map<number | string, { sabab: string; cnt: number }[]>();
+  for (const r of reasons.rows) {
+    const k = r.agent_id;
+    if (!reasonMap.has(k)) reasonMap.set(k, []);
+    reasonMap.get(k)!.push({ sabab: r.sabab as string, cnt: r.cnt as number });
+  }
+
+  // Index stops by delivery_agent_id
+  const stopsMap = new Map<number | null, typeof stops.rows>();
+  for (const s of stops.rows) {
+    const k = s.delivery_agent_id as number | null;
+    if (!stopsMap.has(k)) stopsMap.set(k, []);
+    stopsMap.get(k)!.push(s);
+  }
+
+  res.json({
+    date,
+    kun: dow,
+    agents: summary.rows.map((a) => ({
+      agentId: a.id,
+      agentName: a.name,
+      mashinaNomeri: a.mashina_nomeri,
+      hudud: a.hudud,
+      planned: a.planned,
+      visited: a.visited,
+      sold: a.sold,
+      noSale: a.no_sale,
+      salesTotal: Number(a.sales_total),
+      salesCount: a.sales_count,
+      remaining: Math.max(0, a.planned - a.visited),
+      reasons: reasonMap.get(a.id) ?? [],
+      stops: (stopsMap.get(a.id) ?? []).map((s) => ({
+        dokonId: s.dokon_id,
+        dokonName: s.dokon_name,
+        viloyat: s.viloyat,
+        hudud: s.hudud,
+        telefon: s.telefon,
+        lat: s.latitude != null ? Number(s.latitude) : null,
+        lng: s.longitude != null ? Number(s.longitude) : null,
+        outcome: s.outcome as "sold" | "nosale" | "payment",
+        sabab: s.sabab as string | null,
+        sababText: s.sabab_text as string | null,
+        qaytishSanasi: s.qaytish_sanasi as string | null,
+        saleTotal: s.sale_total != null ? Number(s.sale_total) : null,
+        tolovTuri: s.tolov_turi as string | null,
+        createdAt: s.created_at as string | null,
+        onRoute: s.on_route as boolean,
+      })),
+    })),
+  });
+});
+
 export default router;

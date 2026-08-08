@@ -14,6 +14,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import {
   Users, Store, ShoppingBag, CreditCard, Banknote, Wallet,
   MapPin, Phone, Search, X, Route as RouteIcon, CheckCircle2, XCircle, Truck, User,
+  RefreshCw, ChevronDown, ChevronRight, TrendingUp, AlertCircle, Clock,
 } from "lucide-react";
 import MapTab, { GeoNavLinks, sababLabel } from "@/components/distribution/MapTab";
 import RouteWeekMap from "@/components/distribution/RouteWeekMap";
@@ -81,7 +82,7 @@ function useFilters(): [Filters, (patch: Partial<Filters>) => void] {
   const filters = useMemo<Filters>(() => {
     const p = new URLSearchParams(search);
     return {
-      tab: p.get("tab") || "sales",
+      tab: p.get("tab") || "visits",
       preset: p.get("d") || "today",
       from: p.get("from") || undefined,
       to: p.get("to") || undefined,
@@ -98,7 +99,7 @@ function useFilters(): [Filters, (patch: Partial<Filters>) => void] {
   const update = (patch: Partial<Filters>) => {
     const next = { ...filters, ...patch };
     const p = new URLSearchParams();
-    if (next.tab !== "sales") p.set("tab", next.tab);
+    if (next.tab !== "visits") p.set("tab", next.tab);
     if (next.preset !== "today") p.set("d", next.preset);
     if (next.preset === "custom") {
       if (next.from) p.set("from", next.from);
@@ -898,6 +899,287 @@ function DebtsTab({ f, active, onShop }: { f: Filters; active: boolean; onShop: 
   );
 }
 
+// ── Kunlik tashriflar tab ────────────────────────────────────────────────────────
+type DailyStop = {
+  dokonId: number; dokonName: string | null; viloyat: string | null; hudud: string | null;
+  telefon: string | null; lat: number | null; lng: number | null;
+  outcome: "sold" | "nosale" | "payment";
+  sabab: string | null; sababText: string | null; qaytishSanasi: string | null;
+  saleTotal: number | null; tolovTuri: string | null;
+  createdAt: string | null; onRoute: boolean;
+};
+type DailyAgent = {
+  agentId: number; agentName: string | null; mashinaNomeri: string | null; hudud: string | null;
+  planned: number; visited: number; sold: number; noSale: number;
+  salesTotal: number; salesCount: number; remaining: number;
+  reasons: { sabab: string; cnt: number }[];
+  stops: DailyStop[];
+};
+type DailyVisits = { date: string; kun: number; agents: DailyAgent[] };
+
+const SABAB_LABELS: Record<string, string> = {
+  yopiq: "🔒 Do'kon yopiq",
+  budjet_yoq: "💸 Budjet yo'q",
+  tovar_yetarli: "📦 Tovar yetarli",
+  boshqa: "❓ Boshqa sabab",
+  qaytib_kelaman: "🔁 Qaytib kelaman",
+  rad_etdi: "🚫 Rad etdi",
+};
+function dailySababLabel(sabab: string | null, text: string | null): string {
+  if (!sabab) return text || "Sabab ko'rsatilmadi";
+  return SABAB_LABELS[sabab] ?? (text || sabab);
+}
+
+function ProgressBar({ value, max, color }: { value: number; max: number; color: string }) {
+  const pct = max > 0 ? Math.min(100, Math.round((value / max) * 100)) : 0;
+  return (
+    <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+      <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${pct}%` }} />
+    </div>
+  );
+}
+
+function DailyAgentCard({ agent, onShop }: { agent: DailyAgent; onShop: (id: number) => void }) {
+  const [open, setOpen] = useState(false);
+  const visitPct = agent.planned > 0 ? Math.round((agent.visited / agent.planned) * 100) : 0;
+  const soldPct = agent.visited > 0 ? Math.round((agent.sold / agent.visited) * 100) : 0;
+
+  const outcomeColor: Record<DailyStop["outcome"], string> = {
+    sold: "bg-green-100 border-green-200 text-green-700",
+    nosale: "bg-red-50 border-red-200 text-red-700",
+    payment: "bg-blue-50 border-blue-200 text-blue-700",
+  };
+  const outcomeLabel: Record<DailyStop["outcome"], string> = {
+    sold: "✅ Savdo",
+    nosale: "❌ Olmadi",
+    payment: "💳 To'lov",
+  };
+
+  return (
+    <Card>
+      <CardContent className="p-4 space-y-3">
+        {/* Header */}
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <div className="w-9 h-9 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-sm shrink-0">
+              {(agent.agentName || "?").slice(0, 1).toUpperCase()}
+            </div>
+            <div>
+              <div className="font-semibold text-sm">{agent.agentName || "—"}</div>
+              <div className="text-[11px] text-muted-foreground">
+                {[agent.hudud, agent.mashinaNomeri].filter(Boolean).join(" • ") || "—"}
+              </div>
+            </div>
+          </div>
+          <div className="text-right shrink-0">
+            <div className="text-base font-bold text-green-700">{fmtSom(agent.salesTotal)}</div>
+            <div className="text-[11px] text-muted-foreground">{agent.salesCount} savdo</div>
+          </div>
+        </div>
+
+        {/* Progress bars */}
+        <div className="space-y-2">
+          <div>
+            <div className="flex items-center justify-between text-xs mb-1">
+              <span className="text-muted-foreground">Tashrif</span>
+              <span className="font-medium">{agent.visited} / {agent.planned} ta ({visitPct}%)</span>
+            </div>
+            <ProgressBar value={agent.visited} max={agent.planned} color="bg-indigo-500" />
+          </div>
+          {agent.visited > 0 && (
+            <div>
+              <div className="flex items-center justify-between text-xs mb-1">
+                <span className="text-muted-foreground">Konversiya</span>
+                <span className="font-medium">{agent.sold} savdo / {agent.visited} tashrif ({soldPct}%)</span>
+              </div>
+              <ProgressBar value={agent.sold} max={agent.visited} color="bg-green-500" />
+            </div>
+          )}
+        </div>
+
+        {/* Stats chips */}
+        <div className="flex flex-wrap gap-1.5">
+          <span className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs bg-green-50 border-green-200 text-green-700">
+            <CheckCircle2 className="w-3 h-3" /> {agent.sold} savdo
+          </span>
+          <span className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs bg-red-50 border-red-200 text-red-700">
+            <XCircle className="w-3 h-3" /> {agent.noSale} olmadi
+          </span>
+          {agent.remaining > 0 && (
+            <span className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs bg-amber-50 border-amber-200 text-amber-700">
+              <Clock className="w-3 h-3" /> {agent.remaining} qoldi
+            </span>
+          )}
+        </div>
+
+        {/* Reasons breakdown */}
+        {agent.reasons.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {agent.reasons.map((r) => (
+              <span key={r.sabab} className="text-[11px] rounded-full border px-2 py-0.5 bg-muted/50 text-muted-foreground">
+                {dailySababLabel(r.sabab, null)}: <b>{r.cnt}</b>
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Expand/collapse stops */}
+        {agent.stops.length > 0 && (
+          <div>
+            <button
+              type="button"
+              onClick={() => setOpen((o) => !o)}
+              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              {open ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+              {agent.stops.length} ta tashrif tafsiloti
+            </button>
+            {open && (
+              <div className="mt-2 space-y-1.5 max-h-80 overflow-y-auto pr-1">
+                {agent.stops.map((s) => (
+                  <div
+                    key={`${s.dokonId}-${s.outcome}`}
+                    className={`flex items-start justify-between gap-2 rounded-md border px-2.5 py-2 text-xs cursor-pointer hover:opacity-90 transition-opacity ${outcomeColor[s.outcome]}`}
+                    onClick={() => onShop(s.dokonId)}
+                  >
+                    <div className="min-w-0">
+                      <div className="font-medium truncate">{s.dokonName || "—"}</div>
+                      {s.hudud && <div className="text-[11px] opacity-70">{[s.viloyat, s.hudud].filter(Boolean).join(", ")}</div>}
+                      {s.outcome === "nosale" && s.sabab && (
+                        <div className="text-[11px] mt-0.5 opacity-80">{dailySababLabel(s.sabab, s.sababText)}</div>
+                      )}
+                      {s.outcome === "nosale" && s.qaytishSanasi && (
+                        <div className="text-[11px] mt-0.5 opacity-70">🔁 Qaytish: {s.qaytishSanasi}</div>
+                      )}
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className="font-semibold">{outcomeLabel[s.outcome]}</div>
+                      {s.saleTotal != null && s.saleTotal > 0 && (
+                        <div className="text-[11px]">{fmtSom(s.saleTotal)}</div>
+                      )}
+                      <div className="text-[10px] opacity-60">{s.createdAt ? s.createdAt.slice(11, 16) : ""}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function DailyVisitsTab({ f, active, onShop }: { f: Filters; active: boolean; onShop: (id: number) => void }) {
+  const p = new URLSearchParams();
+  if (f.agentId) p.set("agentId", f.agentId);
+  if (f.viloyat) p.set("viloyat", f.viloyat);
+  if (f.hudud) p.set("hudud", f.hudud);
+  // date: if preset is "today" or "yesterday" pass the specific date; else omit (defaults to today)
+  const { from } = presetRange(f.preset, f.from, f.to);
+  const isSingleDay = f.preset === "today" || f.preset === "yesterday" || (f.preset === "custom" && f.from === f.to);
+  if (isSingleDay && from) p.set("date", from);
+  const qs = p.toString() ? `?${p.toString()}` : "";
+
+  const { data, isLoading, dataUpdatedAt, refetch, isFetching } = useQuery<DailyVisits>({
+    queryKey: ["distribution", "daily-visits", qs],
+    queryFn: async () => {
+      const r = await authFetch(`/api/distribution/daily-visits${qs}`);
+      if (!r.ok) throw new Error("Ma'lumot yuklanmadi");
+      return r.json();
+    },
+    enabled: active,
+    refetchInterval: active ? 30_000 : false, // 30 soniyada yangilanadi
+  });
+
+  const lastUpdated = dataUpdatedAt
+    ? new Intl.DateTimeFormat("uz-UZ", { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "Asia/Tashkent" }).format(new Date(dataUpdatedAt))
+    : null;
+
+  if (!active) return null;
+
+  // Summary totals
+  const totals = data?.agents.reduce(
+    (acc, a) => ({
+      planned: acc.planned + a.planned,
+      visited: acc.visited + a.visited,
+      sold: acc.sold + a.sold,
+      noSale: acc.noSale + a.noSale,
+      salesTotal: acc.salesTotal + a.salesTotal,
+    }),
+    { planned: 0, visited: 0, sold: 0, noSale: 0, salesTotal: 0 }
+  );
+
+  return (
+    <div className="p-4 space-y-4">
+      {/* Header row */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <TrendingUp className="w-4 h-4 text-indigo-600" />
+          <span className="font-semibold text-sm">
+            Kunlik tashriflar — {data?.date ?? "…"}
+          </span>
+          {!isSingleDay && (
+            <span className="text-xs text-muted-foreground">(bugungi kun ko'rsatilmoqda)</span>
+          )}
+        </div>
+        <div className="flex items-center gap-3">
+          {lastUpdated && (
+            <span className="text-xs text-muted-foreground flex items-center gap-1">
+              <Clock className="w-3 h-3" /> {lastUpdated}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => void refetch()}
+            disabled={isFetching}
+            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isFetching ? "animate-spin" : ""}`} />
+            Yangilash
+          </button>
+        </div>
+      </div>
+
+      {/* Summary strip */}
+      {totals && !isLoading && (
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+          {[
+            { label: "Rejalashtirilgan", value: `${totals.planned} ta`, tone: "text-indigo-700" },
+            { label: "Kirildi", value: `${totals.visited} ta`, tone: "text-blue-700" },
+            { label: "Savdo", value: `${totals.sold} ta`, tone: "text-green-700" },
+            { label: "Olmadi", value: `${totals.noSale} ta`, tone: "text-red-600" },
+            { label: "Savdo jami", value: fmtSom(totals.salesTotal), tone: "text-green-700 font-bold" },
+          ].map((item) => (
+            <div key={item.label} className="rounded-md border p-2.5 text-center">
+              <div className="text-[11px] text-muted-foreground mb-0.5">{item.label}</div>
+              <div className={`text-sm font-semibold ${item.tone}`}>{item.value}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Agent cards */}
+      {isLoading ? (
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-56" />)}
+        </div>
+      ) : !data || data.agents.length === 0 ? (
+        <div className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
+          <AlertCircle className="w-8 h-8 opacity-40" />
+          <div className="text-sm">Bugun hech bir agent tashrif amalga oshirmagan</div>
+        </div>
+      ) : (
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {data.agents.map((a) => (
+            <DailyAgentCard key={a.agentId} agent={a} onShop={onShop} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Marshrut tab ─────────────────────────────────────────────────────────────────
 function RoutesTab({ f, update, active, onShop }: { f: Filters; update: (p: Partial<Filters>) => void; active: boolean; onShop: (id: number) => void }) {
   const kun = f.kun ?? "";
@@ -1002,6 +1284,7 @@ export default function Distribution() {
         <CardContent className="pt-4">
           <Tabs value={f.tab} onValueChange={(t) => update({ tab: t })}>
             <TabsList className="flex-wrap h-auto">
+              <TabsTrigger value="visits">🟢 Tashriflar</TabsTrigger>
               <TabsTrigger value="sales">Savdolar</TabsTrigger>
               <TabsTrigger value="agents">Agentlar</TabsTrigger>
               <TabsTrigger value="shops">Do'konlar</TabsTrigger>
@@ -1010,6 +1293,9 @@ export default function Distribution() {
               <TabsTrigger value="map">Xarita</TabsTrigger>
               <TabsTrigger value="analytics">Tahlil</TabsTrigger>
             </TabsList>
+            <TabsContent value="visits" className="border rounded-md mt-4">
+              <DailyVisitsTab f={f} active={f.tab === "visits"} onShop={setShopId} />
+            </TabsContent>
             <TabsContent value="sales" className="border rounded-md mt-4 overflow-x-auto">
               <SalesTab f={f} active={f.tab === "sales"} onShop={setShopId} />
             </TabsContent>

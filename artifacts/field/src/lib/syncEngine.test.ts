@@ -165,4 +165,77 @@ describe("syncEngine.triggerSync", () => {
     expect(await eq.getAllEvents()).toHaveLength(0);
     expect(localStorage.getItem("field_sync_queue")).toBeNull();
   });
+
+  it("403 -> pending qoladi (failed EMAS), 401 bilan bir xil siyosat", async () => {
+    const { eq, se } = await freshModules();
+    submitSale.mockRejectedValue(new FieldApiError(403, "forbidden"));
+    await eq.enqueueEvent("SALE", { clientOpId: "auth-403", dokonId: 1, tolovTuri: "naqd", items: [] } as never);
+
+    await se.triggerSync({ manual: true });
+
+    const [ev] = await eq.getAllEvents();
+    expect(ev.syncStatus).toBe("pending");
+    expect(ev.lastErrorStatus).toBe(403);
+    expect(ev.retryCount).toBe(0);
+    expect(ev.nextAttemptAt).toBeGreaterThan(Date.now() + 30_000);
+    expect(se.getSyncStatusSnapshot().lastError).toBe("auth");
+    expect(se.getSyncStatusSnapshot().failedCount).toBe(0);
+  });
+
+  it("429 (rate-limit) -> pending + backoff (failed EMAS, cheksiz qayta urinish)", async () => {
+    const { eq, se } = await freshModules();
+    submitSale.mockRejectedValue(new FieldApiError(429, "Too Many Requests"));
+    await eq.enqueueEvent("SALE", { clientOpId: "rl-1", dokonId: 1, tolovTuri: "naqd", items: [] } as never);
+
+    await se.triggerSync({ manual: true });
+
+    const [ev] = await eq.getAllEvents();
+    expect(ev.syncStatus).toBe("pending");
+    expect(ev.lastErrorStatus).toBe(429);
+    expect(ev.retryCount).toBe(1);
+    expect(ev.nextAttemptAt).toBeGreaterThan(Date.now());
+    expect(se.getSyncStatusSnapshot().lastError).toBe("network");
+    expect(se.getSyncStatusSnapshot().failedCount).toBe(0);
+  });
+
+  it("flush paytida qo'shilgan element yo'qolmaydi — IDB'da qoladi, keyingi siklda yuboriladi", async () => {
+    // Asosiy invariant: enqueueEvent() IDB'ga yozadi → hech narsa yo'qolmaydi.
+    // Flush davomida qo'shilgan element joriy siklda yuborilmaydi lekin
+    // IDB'da "pending" holatda saqlanadi — keyingi triggerSync uni oladi.
+    const { eq, se } = await freshModules();
+
+    // Birinchi submit paytida yangi to'lov navbatga qo'shiladi
+    // (sync.ts wrapper haqiqiy ilovada xuddi shunday qiladi).
+    submitSale.mockImplementationOnce(async () => {
+      await eq.enqueueEvent("PAYMENT", {
+        clientOpId: "during-flush-1",
+        dokonId: 1,
+        summa: 750,
+        nasiyagaHisoblash: false,
+      } as never);
+      return { ok: true };
+    });
+    submitPayment.mockResolvedValue({ ok: true });
+
+    await eq.enqueueEvent("SALE", {
+      clientOpId: "before-flush-1",
+      dokonId: 1,
+      tolovTuri: "naqd",
+      items: [],
+    } as never);
+
+    // 1-sikl: savdo yuboriladi; flush paytida qo'shilgan to'lov navbatda qoladi
+    await se.triggerSync({ manual: true });
+
+    expect(submitSale).toHaveBeenCalledOnce();
+    const remaining = await eq.getAllEvents();
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].eventId).toBe("during-flush-1");
+    expect(remaining[0].syncStatus).toBe("pending");
+
+    // 2-sikl: qo'shilgan element yuboriladi va o'chadi — hech narsa yo'qolmagan
+    await se.triggerSync({ manual: true });
+    expect(submitPayment).toHaveBeenCalledOnce();
+    expect(await eq.getAllEvents()).toHaveLength(0);
+  });
 });

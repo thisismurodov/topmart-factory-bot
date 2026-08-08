@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useLocation } from "wouter";
 import { MapContainer, Marker, Polyline, useMap } from "react-leaflet";
 import L from "leaflet";
-import { useFieldRouteToday } from "@/lib/fieldApi";
+import { useFieldRouteToday, RouteShop } from "@/lib/fieldApi";
 import { useGps } from "@/hooks/useGps";
 import {
   calculateDistance,
@@ -17,7 +17,40 @@ import RatingStars from "@/components/RatingStars";
 import ShopSheet from "@/components/ShopSheet";
 import { OfflineTileLayer } from "@/components/OfflineTileLayer";
 import { prefetchRouteTiles } from "@/lib/tileCache";
-import { Navigation2, Car, Store, Check, Clock, Info } from "lucide-react";
+import { Navigation2, Car, Store, Check, Clock, Info, Shuffle, ListOrdered } from "lucide-react";
+
+/** Nearest-neighbour sort for pending shops, starting from `startLat/Lon`. */
+function nearestNeighborSort(
+  pending: RouteShop[],
+  startLat: number,
+  startLon: number
+): RouteShop[] {
+  const withCoords = pending.filter(s => s.latitude != null && s.longitude != null);
+  const noCoords = pending.filter(s => s.latitude == null || s.longitude == null);
+
+  const remaining = [...withCoords];
+  const sorted: RouteShop[] = [];
+  let curLat = startLat;
+  let curLon = startLon;
+
+  while (remaining.length > 0) {
+    let bestIdx = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < remaining.length; i++) {
+      const d = calculateDistance(curLat, curLon, remaining[i].latitude!, remaining[i].longitude!);
+      if (d < bestDist) {
+        bestDist = d;
+        bestIdx = i;
+      }
+    }
+    const chosen = remaining.splice(bestIdx, 1)[0];
+    sorted.push(chosen);
+    curLat = chosen.latitude!;
+    curLon = chosen.longitude!;
+  }
+
+  return [...sorted, ...noCoords];
+}
 
 // Fix for leaflet markers in react — ikonkalar LOKAL bundle'dan (unpkg CDN
 // ba'zi provayderlarda bloklangan, xuddi telegram.org kabi)
@@ -65,6 +98,8 @@ export default function RouteMap() {
   const [sheetShop, setSheetShop] = useState<number | null>(null);
   // T007 — forma saqlagach bir martalik "✓ Saqlandi" animatsiyasi
   const [showSaved, setShowSaved] = useState(() => consumeVisitSaved());
+  // Optimal tartib rejimi
+  const [optimalMode, setOptimalMode] = useState(false);
 
   useEffect(() => {
     if (!showSaved) return;
@@ -74,8 +109,19 @@ export default function RouteMap() {
 
   const pendingShops = useMemo(() => {
     if (!route) return [];
-    return route.shops.filter(s => s.status === "pending").sort((a, b) => a.tartib - b.tartib);
-  }, [route]);
+    const pending = route.shops.filter(s => s.status === "pending");
+    if (!optimalMode) {
+      return pending.sort((a, b) => a.tartib - b.tartib);
+    }
+    // Start from agent's current GPS position; fall back to last completed shop or Tashkent
+    const completedSorted = route.shops
+      .filter(s => s.status !== "pending")
+      .sort((a, b) => b.tartib - a.tartib); // last completed first
+    const lastCompleted = completedSorted.find(s => s.latitude != null && s.longitude != null);
+    const startLat = location?.lat ?? lastCompleted?.latitude ?? 41.2995;
+    const startLon = location?.lon ?? lastCompleted?.longitude ?? 69.2401;
+    return nearestNeighborSort(pending, startLat, startLon);
+  }, [route, optimalMode, location]);
 
   // T006 — marshrut hududi plitkalarini fonda oldindan yuklab qo'yamiz
   // (kuniga bir marta): internet yo'q joyda ham xarita ochiladi.
@@ -142,10 +188,25 @@ export default function RouteMap() {
     ? [nextShop.latitude, nextShop.longitude]
     : [41.2995, 69.2401]; // Tashkent fallback
 
-  // Tartib bo'yicha saralangan, koordinatali do'konlar — segmentli marshrut uchun
-  const orderedShops = route.shops
-    .filter(s => s.latitude && s.longitude)
-    .sort((a, b) => a.tartib - b.tartib);
+  // Segmentli marshrut uchun tartib.
+  // Normal rejim: barcha koordinatali do'konlar tartib bo'yicha (avvalgi xulq saqlanadi).
+  // Optimal rejim: bajarilganlar tartib bo'yicha, so'ng pending NN tartibda.
+  const orderedShops = optimalMode
+    ? [
+        ...route.shops
+          .filter(s => s.status !== "pending" && s.latitude && s.longitude)
+          .sort((a, b) => a.tartib - b.tartib),
+        ...pendingShops.filter(s => s.latitude && s.longitude),
+      ]
+    : route.shops
+        .filter(s => s.latitude && s.longitude)
+        .sort((a, b) => a.tartib - b.tartib);
+
+  // Display number for each shop marker (position in the visit sequence)
+  const displayTartib = new Map<number, number>(
+    orderedShops.map((s, i) => [s.dokonId, i + 1])
+  );
+
   const firstPendingIdx = orderedShops.findIndex(s => s.status === "pending");
   // Segmentlar: bajarilgan=yashil, keyingisiga yo'l=ko'k, qolgani=kulrang shtrix
   const segments = orderedShops.slice(0, -1).map((a, i) => {
@@ -163,7 +224,7 @@ export default function RouteMap() {
       <div className="absolute top-4 left-4 right-4 z-[400] bg-background/95 backdrop-blur shadow-md rounded-lg p-3 border">
         <div className="flex justify-between items-end mb-2">
           <span className="text-sm font-semibold text-muted-foreground">
-            {nextShop ? `Keyingi: #${nextShop.tartib}` : "Jarayon"}
+            {nextShop ? `Keyingi: #${displayTartib.get(nextShop.dokonId) ?? nextShop.tartib}` : "Jarayon"}
           </span>
           <span className="font-bold">{route.stats.done} / {route.stats.total}</span>
         </div>
@@ -181,6 +242,25 @@ export default function RouteMap() {
           </span>
         </div>
       </div>
+
+      {/* Optimal tartib toggle — header paneldan pastda, xarita ustida suzuvchi tugma */}
+      <button
+        type="button"
+        onClick={() => setOptimalMode(v => !v)}
+        className={[
+          "absolute top-[8.5rem] right-4 z-[410]",
+          "flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-semibold",
+          "shadow-md border transition-colors backdrop-blur",
+          optimalMode
+            ? "bg-violet-600 text-white border-violet-700"
+            : "bg-background/90 text-foreground border-border",
+        ].join(" ")}
+      >
+        {optimalMode
+          ? <><ListOrdered className="w-3.5 h-3.5" /> Asl tartib</>
+          : <><Shuffle className="w-3.5 h-3.5" /> Optimal tartib</>
+        }
+      </button>
 
       <div className="flex-1 z-0 relative">
         <MapContainer center={mapCenter} zoom={13} className="w-full h-full" zoomControl={false}>
@@ -206,7 +286,11 @@ export default function RouteMap() {
             <Marker 
               key={shop.dokonId}
               position={[shop.latitude!, shop.longitude!]}
-              icon={createNumberedIcon(shop.tartib, shop.status, shop.dokonId === nextShop?.dokonId)}
+              icon={createNumberedIcon(
+                displayTartib.get(shop.dokonId) ?? shop.tartib,
+                shop.status,
+                shop.dokonId === nextShop?.dokonId
+              )}
               zIndexOffset={shop.dokonId === nextShop?.dokonId ? 1000 : 0}
               eventHandlers={{ click: () => setSheetShop(shop.dokonId) }}
             />

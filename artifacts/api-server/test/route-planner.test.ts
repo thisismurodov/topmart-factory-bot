@@ -266,4 +266,57 @@ describe("routePlanner", () => {
     expect(v.ok).toBe(false);
     expect(v.issues.some((s) => s.includes("tartib"))).toBe(true);
   });
+
+  it("validatePlan: crossing xatosi bloklaydi va forceable=true qaytaradi", () => {
+    const shops = makeShops(30);
+    const plan = planRoutes(shops);
+
+    // Normal reja — crossings yo'q, tekshiruv o'tadi, forceable=false
+    const vOk = validatePlan(plan, shops);
+    expect(vOk.ok).toBe(true);
+    expect(vOk.forceable).toBe(false);
+
+    // Sun'iy ravishda birinchi marshrutga kesishish qo'shamiz (validatePlan r.stats.crossCount dan foydalanadi)
+    plan.routes[0].stats.crossCount = 2;
+    const vCross = validatePlan(plan, shops);
+    expect(vCross.ok).toBe(false);
+    expect(vCross.issues.some((s) => s.includes("kesishish qoldi"))).toBe(true);
+    // Barcha xatolar faqat crossing — force bilan saqlash mumkin
+    expect(vCross.forceable).toBe(true);
+  });
+
+  it("validatePlan: dublikat + crossing aralashsa forceable=false", () => {
+    const shops = makeShops(30);
+    const plan = planRoutes(shops);
+
+    // Birinchi stop dublikat qilinadi (crossing ham qo'shiladi)
+    plan.routes[0].stats.crossCount = 1;
+    const first = plan.routes[0].stops[0];
+    plan.routes[0].stops.push({ ...first, tartib: plan.routes[0].stops.length + 1 });
+
+    const v = validatePlan(plan, shops);
+    expect(v.ok).toBe(false);
+    // Dublikat bor — crossing bilan aralash, force yordam bermaydi
+    expect(v.forceable).toBe(false);
+    expect(v.issues.some((s) => s.includes("kesishish qoldi"))).toBe(true);
+    expect(v.issues.some((s) => s.includes("dublikat"))).toBe(true);
+  });
+
+  it("validatePlan: sof crossing (force=true bilan o'tilishi mumkin bo'lgan) — blockingIssues bo'sh", () => {
+    const shops = makeShops(30);
+    const plan = planRoutes(shops);
+    plan.routes[0].stats.crossCount = 1;
+    const v = validatePlan(plan, shops);
+
+    // forceable=true: force=true bo'lsa crossings o'tkazib yuboriladi
+    expect(v.forceable).toBe(true);
+
+    // Servis mantiqini simulatsiya: force=true bo'lsa blockingIssues bo'sh
+    const blockingIssues = v.forceable ? [] : v.issues;
+    expect(blockingIssues).toHaveLength(0);
+
+    // force=false bo'lsa blockingIssues = v.issues (crossing blok)
+    const blockingNoForce = v.issues;
+    expect(blockingNoForce.length).toBeGreaterThan(0);
+  });
 });

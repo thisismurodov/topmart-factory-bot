@@ -99,8 +99,11 @@ export default function RoutePlanDialog({ agents }: { agents: PlanAgent[] }) {
   const [viloyat, setViloyat] = useState("");
   const [agentId, setAgentId] = useState("");
   const [plan, setPlan] = useState<PlanResult | null>(null);
-  const [phase, setPhase] = useState<"idle" | "planning" | "saving">("idle");
+  const [phase, setPhase] = useState<"idle" | "planning" | "saving" | "force-saving">("idle");
   const [error, setError] = useState<string | null>(null);
+  // 422 kelganda va barcha xatolar faqat crossing bilan bog'liq bo'lsa true —
+  // "Baribir saqlash" tugmasi ko'rsatiladi
+  const [forceable, setForceable] = useState(false);
 
   const { data: dict } = useQuery<{ viloyatlar: string[] }>({
     queryKey: ["distribution", "filters"],
@@ -112,10 +115,11 @@ export default function RoutePlanDialog({ agents }: { agents: PlanAgent[] }) {
     enabled: open,
   });
 
-  const run = async (save: boolean) => {
+  const run = async (save: boolean, force = false) => {
     if (!viloyat || !agentId) return;
-    setPhase(save ? "saving" : "planning");
+    setPhase(save ? (force ? "force-saving" : "saving") : "planning");
     setError(null);
+    setForceable(false);
     try {
       const r = await authFetch("/api/distribution/route-plan", {
         method: "POST",
@@ -126,11 +130,19 @@ export default function RoutePlanDialog({ agents }: { agents: PlanAgent[] }) {
           save,
           // Foydalanuvchi rejani ko'rib bo'lgach saqlaydi — eski marshrut almashtiriladi
           replace: save,
+          force,
         }),
       });
-      const j = (await r.json()) as PlanResult & { error?: string };
+      const j = (await r.json()) as PlanResult & { error?: string; forceable?: boolean };
       if (!r.ok) {
         setError(j.error || "Xatolik yuz berdi");
+        // 422 va barcha xatolar crossing bilan bog'liq bo'lsa — force bilan saqlash taklif qilinadi.
+        // Mavjud plan (dry-run dan) o'zgarmaydi — faqat forceable bayroqi o'rnatiladi,
+        // shunda routes/badCoord/skippedNoCoord render xatosiz ishlaydi.
+        if (r.status === 422 && j.forceable) {
+          setForceable(true);
+          // plan state saqlanadi (setPlan chaqirilmaydi) — u allaqachon dry-run natijasini o'z ichiga oladi
+        }
         return;
       }
       setPlan(j);
@@ -151,6 +163,7 @@ export default function RoutePlanDialog({ agents }: { agents: PlanAgent[] }) {
     if (!o) {
       setPlan(null);
       setError(null);
+      setForceable(false);
     }
   };
 
@@ -292,7 +305,7 @@ export default function RoutePlanDialog({ agents }: { agents: PlanAgent[] }) {
             </div>
 
             {/* Validatsiya natijasi */}
-            {plan.validation && !plan.validation.ok && (
+            {plan.validation && !plan.validation.ok && !forceable && (
               <div className="text-xs bg-red-50 dark:bg-red-950/30 rounded-md p-2.5 space-y-1">
                 <div className="flex items-center gap-1.5 font-medium text-red-700 dark:text-red-400">
                   <AlertTriangle className="w-3.5 h-3.5" /> Reja sifat tekshiruvidan o'tmadi — saqlab bo'lmaydi:
@@ -300,6 +313,20 @@ export default function RoutePlanDialog({ agents }: { agents: PlanAgent[] }) {
                 {plan.validation.issues.map((s, i) => (
                   <div key={i} className="text-muted-foreground pl-5">{s}</div>
                 ))}
+              </div>
+            )}
+            {/* Crossing-only blok: force bilan saqlash mumkin */}
+            {forceable && plan.validation && (
+              <div className="text-xs bg-amber-50 dark:bg-amber-950/30 rounded-md p-2.5 space-y-1">
+                <div className="flex items-center gap-1.5 font-medium text-amber-700 dark:text-amber-400">
+                  <AlertTriangle className="w-3.5 h-3.5" /> Marshrutda kesishish qoldi — odatda saqlab bo'lmaydi:
+                </div>
+                {plan.validation.issues.map((s, i) => (
+                  <div key={i} className="text-muted-foreground pl-5">{s}</div>
+                ))}
+                <div className="text-amber-700 dark:text-amber-400 pt-0.5">
+                  Agar kesishish geometriya sabab bo'lsa (masalan, tarqoq hudud), "Baribir saqlash" tugmasi bilan majburiy saqlash mumkin.
+                </div>
               </div>
             )}
             {plan.validation && plan.validation.ok && plan.validation.warnings.length > 0 && (
@@ -341,7 +368,7 @@ export default function RoutePlanDialog({ agents }: { agents: PlanAgent[] }) {
           </div>
         )}
 
-        <DialogFooter className="gap-2">
+        <DialogFooter className="gap-2 flex-wrap">
           <Button variant="outline" size="sm" onClick={() => reset(false)}>Yopish</Button>
           {!plan?.saved && (
             <>
@@ -349,10 +376,24 @@ export default function RoutePlanDialog({ agents }: { agents: PlanAgent[] }) {
                 {phase === "planning" && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />}
                 {plan ? "Qayta hisoblash" : "Rejani ko'rish"}
               </Button>
-              {plan && (
+              {plan && !forceable && (
                 <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700 text-white" disabled={busy} onClick={() => run(true)}>
                   {phase === "saving" && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />}
                   Saqlash
+                </Button>
+              )}
+              {/* Crossing bloki bor, lekin force bilan saqlash mumkin */}
+              {forceable && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="border-amber-500 text-amber-700 hover:bg-amber-50 dark:border-amber-500 dark:text-amber-400 dark:hover:bg-amber-950/40"
+                  disabled={busy}
+                  onClick={() => run(true, true)}
+                >
+                  {phase === "force-saving" && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />}
+                  {phase !== "force-saving" && <AlertTriangle className="w-3.5 h-3.5 mr-1.5" />}
+                  Baribir saqlash
                 </Button>
               )}
             </>

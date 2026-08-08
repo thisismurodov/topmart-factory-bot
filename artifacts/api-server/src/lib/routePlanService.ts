@@ -52,6 +52,8 @@ export async function runRoutePlan(opts: {
   viloyat?: string | null;
   save?: boolean;
   replace?: boolean;
+  // force=true: crossing blokini chetlab o'tadi (dublikat/yo'qolgan do'kon baribir bloklaydi)
+  force?: boolean;
 }): Promise<RoutePlanRun> {
   const { agentId } = opts;
   const viloyat = opts.viloyat?.trim() ? opts.viloyat.trim() : null;
@@ -198,12 +200,21 @@ export async function runRoutePlan(opts: {
 
   let saved = false;
   if (opts.save) {
-    if (!validation.ok) {
+    // force=true bo'lsa crossing bloki chetlab o'tiladi; boshqa xatolar (dublikat,
+    // yo'qolgan, tartib, eksklyuzivlik) baribir saqlashni bloklaydi.
+    // validation.forceable: validatePlan tomonidan hisoblangan — barcha xatolar
+    // faqat crossing bilan bog'liq bo'lsa true.
+    const { forceable } = validation;
+    const blockingIssues =
+      opts.force && forceable
+        ? [] // force bilan crossing bloki chetlab o'tiladi
+        : validation.issues;
+    if (blockingIssues.length > 0) {
       return {
         ok: false,
         status: 422,
-        error: `Reja sifat tekshiruvidan o'tmadi: ${validation.issues.join("; ")}`,
-        extra: { validation },
+        error: `Reja sifat tekshiruvidan o'tmadi: ${blockingIssues.join("; ")}`,
+        extra: { validation, forceable },
       };
     }
     if (existing > 0 && !opts.replace) {

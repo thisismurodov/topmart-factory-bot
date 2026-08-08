@@ -1303,13 +1303,15 @@ router.post("/distribution/route-plan", async (req, res): Promise<void> => {
   const agentId = Number(body.agentId);
   const save = body.save === true;
   const replace = body.replace === true;
+  // force: faqat crossing blokini chetlab o'tadi; dublikat/yo'qolgan do'kon baribir bloklaydi
+  const force = body.force === true;
 
   if (!Number.isInteger(agentId) || agentId <= 0) {
     res.status(400).json({ error: "agentId noto'g'ri" });
     return;
   }
 
-  const run = await runRoutePlan({ agentId, viloyat: viloyat || null, save, replace });
+  const run = await runRoutePlan({ agentId, viloyat: viloyat || null, save, replace, force });
   if (!run.ok) {
     res.status(run.status).json({ error: run.error, ...(run.extra ?? {}) });
     return;

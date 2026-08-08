@@ -416,6 +416,9 @@ export type PlanValidation = {
   ok: boolean; // saqlash mumkinmi
   issues: string[]; // strukturaviy xatolar (saqlashni bloklaydi)
   warnings: string[]; // sifat ogohlantirishlari (saqlash mumkin, lekin ko'rsatiladi)
+  // forceable: barcha blocking issues faqat crossing bilan bog'liq bo'lsa true —
+  // bu holda force=true bilan saqlash mumkin (boshqa xatolar yo'q)
+  forceable: boolean;
 };
 
 export function validatePlan(plan: PlanResult, inputShops: PlanShop[]): PlanValidation {
@@ -445,9 +448,12 @@ export function validatePlan(plan: PlanResult, inputShops: PlanShop[]): PlanVali
   }
 
   // 3. Sifat tekshiruvlari
+  const crossingIssues: string[] = [];
   for (const r of plan.routes) {
     if (r.stats.crossCount > 0) {
-      issues.push(`kun=${r.kun}: ${r.stats.crossCount} ta kesishish qoldi (qayta-optimallash yordam bermadi)`);
+      const msg = `kun=${r.kun}: ${r.stats.crossCount} ta kesishish qoldi (qayta-optimallash yordam bermadi)`;
+      issues.push(msg);
+      crossingIssues.push(msg);
     }
     if (r.stats.longJumps > 0) {
       warnings.push(`kun=${r.kun}: ${r.stats.longJumps} ta uzun sakrash (tarqoq hudud bo'lishi mumkin)`);
@@ -457,7 +463,11 @@ export function validatePlan(plan: PlanResult, inputShops: PlanShop[]): PlanVali
     }
   }
 
-  return { ok: issues.length === 0, issues, warnings };
+  // forceable: saqlashni bloklayan BARCHA xatolar faqat crossing bilan bog'liq bo'lsa —
+  // boshqa agent force=true bilan saqlay oladi
+  const forceable = issues.length > 0 && issues.length === crossingIssues.length;
+
+  return { ok: issues.length === 0, issues, warnings, forceable };
 }
 
 export type PlanOptions = {

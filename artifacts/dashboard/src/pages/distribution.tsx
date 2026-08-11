@@ -14,12 +14,13 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import {
   Users, Store, ShoppingBag, CreditCard, Banknote, Wallet,
   MapPin, Phone, Search, X, Route as RouteIcon, CheckCircle2, XCircle, Truck, User,
-  RefreshCw, ChevronDown, ChevronRight, TrendingUp, AlertCircle, Clock,
+  RefreshCw, ChevronDown, ChevronRight, TrendingUp, AlertCircle, Clock, Download,
 } from "lucide-react";
 import MapTab, { GeoNavLinks, sababLabel } from "@/components/distribution/MapTab";
 import RouteWeekMap from "@/components/distribution/RouteWeekMap";
 import AnalyticsTab from "@/components/distribution/AnalyticsTab";
 import BadCoordPanel from "@/components/distribution/BadCoordPanel";
+import { downloadCsv, toCsv } from "@/lib/csv";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────────
 const fmtSom = (n: number) => `${Math.round(n).toLocaleString("uz-UZ")} so'm`;
@@ -1070,6 +1071,30 @@ function DailyAgentCard({ agent, onShop, open, onToggle }: { agent: DailyAgent; 
   );
 }
 
+// CSV export — expanded stop ro'yxatidagi ma'lumotlarning aynan o'zi
+const OUTCOME_CSV: Record<DailyStop["outcome"], string> = {
+  sold: "Savdo",
+  nosale: "Olmadi",
+  payment: "To'lov",
+};
+function exportDailyVisitsCsv(data: DailyVisits) {
+  const header = ["Agent", "Do'kon", "Natija", "Sabab", "Vaqt", "Summa"];
+  const rows: string[][] = [];
+  for (const a of data.agents) {
+    for (const s of a.stops) {
+      rows.push([
+        a.agentName || "—",
+        s.dokonName || "—",
+        OUTCOME_CSV[s.outcome] ?? s.outcome,
+        s.outcome === "nosale" ? dailySababLabel(s.sabab, s.sababText) : "",
+        s.createdAt ? `${s.createdAt.slice(0, 10)} ${s.createdAt.slice(11, 16)}` : "",
+        s.saleTotal != null && s.saleTotal > 0 ? String(Math.round(s.saleTotal)) : "",
+      ]);
+    }
+  }
+  downloadCsv(toCsv([header, ...rows]), `kunlik-tashriflar-${data.date}.csv`);
+}
+
 function DailyVisitsTab({ f, active, onShop }: { f: Filters; active: boolean; onShop: (id: number) => void }) {
   // Ochilgan kartalar holati parent darajasida saqlanadi — refetch paytida yo'qolmaydi
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
@@ -1141,6 +1166,16 @@ function DailyVisitsTab({ f, active, onShop }: { f: Filters; active: boolean; on
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isFetching ? "animate-spin" : ""}`} />
             Yangilash
+          </button>
+          <button
+            type="button"
+            onClick={() => data && exportDailyVisitsCsv(data)}
+            disabled={!data || data.agents.every((a) => a.stops.length === 0)}
+            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors"
+            title="Kunlik tashriflarni CSV sifatida yuklab olish"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Export
           </button>
         </div>
       </div>

@@ -2452,8 +2452,15 @@ def _tolov_info_str(data):
 
 def _save_savdo(uid,data):
     user=get_user(uid)
-    # Yakuniy yozish nuqtasi — dokon egaligini shu yerda ham tekshiramiz
-    if not _dokon_ruxsat_guard(uid,data["dokon_id"],user): return
+    # Yakuniy yozish nuqtasi — dokon egaligini shu yerda ham tekshiramiz.
+    # MUHIM: bu nuqtaga kelguncha balans allaqachon yechilgan bo'lishi mumkin
+    # (_check_balans_before_save / savdo_balans_confirm). Ruxsat rad etilsa,
+    # yechilgan balans qaytariladi — aks holda mijoz savdo yozuvisiz pul yo'qotadi.
+    if not _dokon_ruxsat_guard(uid,data["dokon_id"],user):
+        deducted=data.get("balans_ishlatildi",0)
+        if deducted>0:
+            apply_balans_delta(data["dokon_id"],deducted)
+        return
     jami=sum(m[2]*data["tanlangan"].get(m[0],0) for m in data["mahsulotlar"])
     tolov=data["tolov"]
     items=[]; lines=[]

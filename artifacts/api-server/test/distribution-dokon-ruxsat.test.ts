@@ -161,3 +161,28 @@ describe("_savdo_dokon_ruxsat — persist-oldi egalik tekshiruvi", () => {
     expect(runRuxsat(AGENT_A, 99999999)).toBe(false);
   });
 });
+
+describe("_save_savdo — ruxsat rad etilganda yechilgan balans qaytariladi", () => {
+  it("guard rad etsa, oldin ayirilgan balans kompensatsiya qilinadi (savdo yozuvisiz pul yo'qolmaydi)", async () => {
+    // Ssenariy: balans yechildi (apply_balans_delta -5000), so'ng persist
+    // nuqtasida ruxsat rad etildi (begona dokon) — refund shart.
+    const py = [
+      "import main",
+      "main.bot.send_message = lambda *a, **k: None",
+      `main.apply_balans_delta(${dokonB}, 5000)`, // mijozda 5000 ortiqcha pul
+      `before = main.get_balans(${dokonB})`,
+      `main.apply_balans_delta(${dokonB}, -5000)`, // savdo oqimida yechildi
+      `data = {"dokon_id": ${dokonB}, "balans_ishlatildi": 5000}`,
+      `main._save_savdo(${AGENT_A}, data)`, // AGENT_A uchun dokonB begona -> guard rad etadi
+      `after = main.get_balans(${dokonB})`,
+      `print("REFUND_OK" if after == before else f"REFUND_FAIL before={before} after={after}")`,
+    ].join("\n");
+    const out = execFileSync("python3", ["-c", py], { cwd: botDir, env: botEnv, stdio: "pipe" })
+      .toString()
+      .trim();
+    expect(out.endsWith("REFUND_OK")).toBe(true);
+    // Savdo yozuvi yaratilmaganini ham tasdiqlaymiz
+    const r = await client.query(`SELECT COUNT(*)::int AS c FROM savdolar WHERE dokon_id = $1`, [dokonB]);
+    expect(r.rows[0].c).toBe(0);
+  });
+});

@@ -1132,13 +1132,24 @@ router.post("/ombor/flow/produce", async (req, res): Promise<void> => {
     }
     // Mahsulot mavjud bo'lishi shart — og'irligi kg fallback uchun olinadi.
     const prodRes = await client.query(
-      "SELECT name, weight FROM products WHERE LOWER(name)=LOWER($1) ORDER BY id LIMIT 1", [product],
+      "SELECT name, weight, line_id FROM products WHERE LOWER(name)=LOWER($1) ORDER BY id LIMIT 1", [product],
     );
     if (!prodRes.rows.length) {
       await client.query("ROLLBACK");
       res.status(400).json({ error: `"${product}" ro'yxatdagi mahsulotga mos kelmadi. Mavjud mahsulotni tanlang.` }); return;
     }
     const canonicalProduct: string = prodRes.rows[0].name;
+    // Bo'lim ↔ mahsulot mosligi: boshqa bo'limga biriktirilgan mahsulotni bu
+    // bo'lim nomidan chiqarib bo'lmaydi — aks holda mahsulot noto'g'ri
+    // konteynerga tushib, zaxira va WIP balans buziladi. Biriktirilmagan
+    // (line_id IS NULL) mahsulotlarga ruxsat beriladi.
+    const productLineId = prodRes.rows[0].line_id as number | null;
+    if (productLineId != null && Number(productLineId) !== Number(lineId)) {
+      await client.query("ROLLBACK");
+      res.status(400).json({
+        error: `"${canonicalProduct}" boshqa bo'limga biriktirilgan — bu bo'lim uni chiqara olmaydi. To'g'ri bo'limni tanlang yoki mahsulot biriktiruvini tekshiring.`,
+      }); return;
+    }
     const unitWeight = Number(prodRes.rows[0].weight) > 0 ? Number(prodRes.rows[0].weight) : 0;
     // PRODUCE kg = kiritilgan kg, aks holda quantity × birlik og'irligi (bot bilan bir xil).
     const produceKg = kgInput > 0 ? kgInput : qty * unitWeight;

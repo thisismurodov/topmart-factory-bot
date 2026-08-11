@@ -123,7 +123,7 @@ function useRawMaterials() {
   });
 }
 
-type ProductOption = { name: string; unitType: string; weight: number };
+type ProductOption = { name: string; unitType: string; weight: number; lineId: number | null };
 
 function useProducts() {
   return useQuery<ProductOption[]>({
@@ -132,7 +132,12 @@ function useProducts() {
       authFetch("/api/products").then((r) => r.json()).then((rows: any[]) =>
         (rows ?? [])
           .filter((p) => p.active !== false)
-          .map((p) => ({ name: p.name, unitType: p.unitType ?? "dona", weight: Number(p.weight) || 0 }))),
+          .map((p) => ({
+            name: p.name,
+            unitType: p.unitType ?? "dona",
+            weight: Number(p.weight) || 0,
+            lineId: p.lineId != null ? Number(p.lineId) : null,
+          }))),
   });
 }
 
@@ -651,7 +656,19 @@ function ProduceModal({ flow, onClose }: { flow: FlowData | undefined; onClose: 
   const [kgVal, setKgVal] = useState("");
   const [note, setNote] = useState("");
 
-  const selectedProduct = useMemo(() => products?.find((p) => p.name === productName), [products, productName]);
+  // Mahsulotlar ro'yxati bo'lim bo'yicha filtrlanadi: faqat tanlangan bo'limga
+  // biriktirilgan yoki hech qaysi bo'limga biriktirilmagan mahsulotlar
+  // ko'rinadi — boshqa bo'lim mahsuloti tanlab qo'yilishining oldi olinadi.
+  const availableProducts = useMemo(() => {
+    if (lineId === "") return [];
+    return (products ?? []).filter((p) => p.lineId == null || p.lineId === lineId);
+  }, [products, lineId]);
+
+  // Bo'lim o'zgarganda, tanlangan mahsulot yangi ro'yxatga kirmasa — tozalaymiz.
+  const productAllowed = productName === "" || availableProducts.some((p) => p.name === productName);
+  if (!productAllowed && productName !== "") setProductName("");
+
+  const selectedProduct = useMemo(() => availableProducts.find((p) => p.name === productName), [availableProducts, productName]);
   const isKg = selectedProduct?.unitType === "kg";
   // Og'irligi 0 bo'lgan mahsulot uchun kg MAJBURIY — aks holda WIP ledger nolga yoziladi va drift kelib chiqadi.
   const isZeroWeight = selectedProduct != null && selectedProduct.weight === 0;
@@ -719,10 +736,19 @@ function ProduceModal({ flow, onClose }: { flow: FlowData | undefined; onClose: 
       </div>
       <div>
         <label className={labelCls}>Mahsulot</label>
-        <select className={fieldCls} value={productName} onChange={(e) => setProductName(e.target.value)}>
-          <option value="">Tanlang...</option>
-          {products?.map((p) => <option key={p.name} value={p.name}>{p.name} ({p.unitType})</option>)}
+        <select className={fieldCls} value={productName} onChange={(e) => setProductName(e.target.value)} disabled={lineId === ""}>
+          <option value="">{lineId === "" ? "Avval bo'limni tanlang..." : "Tanlang..."}</option>
+          {availableProducts.map((p) => (
+            <option key={p.name} value={p.name}>
+              {p.name} ({p.unitType}){p.lineId == null ? " — biriktirilmagan" : ""}
+            </option>
+          ))}
         </select>
+        {lineId !== "" && (
+          <p className="text-[11px] text-muted-foreground mt-1">
+            Faqat shu bo'limga biriktirilgan (yoki biriktirilmagan) mahsulotlar ko'rsatilgan.
+          </p>
+        )}
       </div>
       <div>
         <label className={labelCls}>Miqdor ({selectedProduct?.unitType ?? "dona"})</label>

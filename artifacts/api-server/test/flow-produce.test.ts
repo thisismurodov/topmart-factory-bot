@@ -105,10 +105,11 @@ beforeAll(async () => {
       active BOOLEAN NOT NULL DEFAULT TRUE
     );
     CREATE TABLE products (
-      id     SERIAL PRIMARY KEY,
-      name   TEXT NOT NULL,
-      weight NUMERIC NOT NULL DEFAULT 0,
-      active BOOLEAN NOT NULL DEFAULT TRUE
+      id      SERIAL PRIMARY KEY,
+      name    TEXT NOT NULL,
+      weight  NUMERIC NOT NULL DEFAULT 0,
+      active  BOOLEAN NOT NULL DEFAULT TRUE,
+      line_id INTEGER
     );
     CREATE TABLE inventory (
       id           SERIAL PRIMARY KEY,
@@ -346,6 +347,51 @@ describe("POST /ombor/flow/produce — finished-goods output integrity", () => {
     expect(inv[0].product).toBe(PRODUCT);
     expect(Number(inv[0].quantity)).toBe(2);
     expect(Number(inv[0].weight_kg)).toBe(10);
+  });
+
+  // ── Department ↔ product scoping ────────────────────────────────────────────
+
+  it("rejects a product assigned to ANOTHER department (400) and writes nothing", async () => {
+    const other = await pool.query(
+      `INSERT INTO production_lines (name) VALUES ('Boshqa bo''lim (test)') RETURNING id`,
+    );
+    const otherLineId = other.rows[0].id;
+    await pool.query(
+      `INSERT INTO products (name, weight, line_id) VALUES ('Begona Mahsulot 1kg', 1, $1)`,
+      [otherLineId],
+    );
+    await seedWip(50);
+    const res = await post("/ombor/flow/produce", {
+      lineId, warehouseId: finishedWarehouseId, product: "Begona Mahsulot 1kg", quantity: 5, kg: 5,
+    });
+    expect(res.status).toBe(400);
+    expect(res.json.error).toMatch(/boshqa bo'limga biriktirilgan/);
+    // Only the seed RECEIVE row exists — no PRODUCE, no inventory, no log.
+    expect(await produceRows()).toHaveLength(0);
+    expect(await inventoryRows()).toHaveLength(0);
+    expect(await movements()).toHaveLength(0);
+    await pool.query(`DELETE FROM products WHERE name='Begona Mahsulot 1kg'`);
+    await pool.query(`DELETE FROM production_lines WHERE id=$1`, [otherLineId]);
+  });
+
+  it("accepts a product assigned to the SAME department", async () => {
+    await pool.query(`UPDATE products SET line_id=$1 WHERE name=$2`, [lineId, PRODUCT]);
+    await seedWip(50);
+    const res = await post("/ombor/flow/produce", {
+      lineId, warehouseId: finishedWarehouseId, product: PRODUCT, quantity: 2, kg: 10,
+    });
+    expect(res.status).toBe(200);
+    expect(await produceRows()).toHaveLength(1);
+    await pool.query(`UPDATE products SET line_id=NULL WHERE name=$1`, [PRODUCT]);
+  });
+
+  it("accepts an UNASSIGNED product (line_id IS NULL) from any department", async () => {
+    await seedWip(50);
+    const res = await post("/ombor/flow/produce", {
+      lineId, warehouseId: finishedWarehouseId, product: PRODUCT, quantity: 2, kg: 10,
+    });
+    expect(res.status).toBe(200);
+    expect(await produceRows()).toHaveLength(1);
   });
 
   // ── Invalid input: nothing may be written ───────────────────────────────────

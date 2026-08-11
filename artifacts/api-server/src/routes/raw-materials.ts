@@ -89,14 +89,86 @@ router.patch("/raw-materials/:id", async (req, res): Promise<void> => {
     if (!VALID_CURRENCIES.includes(cur as any)) { res.status(400).json({ error: "currency must be 'UZS' or 'USD'" }); return; }
     vals.push(cur); fields.push(`currency=$${vals.length}`);
   }
-  if (req.body.currentStock !== undefined) { vals.push(Number(req.body.currentStock));fields.push(`current_stock=$${vals.length}`); }
   if (req.body.minimumStock !== undefined) { vals.push(Number(req.body.minimumStock));fields.push(`minimum_stock=$${vals.length}`); }
   if (req.body.active !== undefined)       { vals.push(Boolean(req.body.active));     fields.push(`active=$${vals.length}`); }
 
-  if (fields.length === 0) { res.status(400).json({ error: "No fields to update" }); return; }
-  vals.push(id);
-  await pool.query(`UPDATE raw_materials SET ${fields.join(",")} WHERE id=$${vals.length}`, vals);
-  res.json({ ok: true });
+  // currentStock tahrirlash — ledger yaxlitligi uchun ALOHIDA yo'l:
+  // to'g'ridan-to'g'ri UPDATE o'rniga delta hisoblanib stock_movements'ga
+  // IN/OUT yozuvi qo'shiladi (aks holda raw-reconcile darhol farq topadi).
+  const hasStockChange = req.body.currentStock !== undefined;
+  let newStock: number | null = null;
+  if (hasStockChange) {
+    newStock = Number(req.body.currentStock);
+    if (!isFinite(newStock) || newStock < 0) {
+      res.status(400).json({ error: "currentStock must be a finite number >= 0" }); return;
+    }
+  }
+
+  if (fields.length === 0 && !hasStockChange) { res.status(400).json({ error: "No fields to update" }); return; }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    // FOR UPDATE — parallel tahrir/to'g'rilashlarda eski→yangi delta har doim
+    // haqiqiy bo'lishi uchun qatorni qulflaymiz (raw-adjust bilan bir xil).
+    const matRes = await client.query(
+      "SELECT id, name, unit, current_stock FROM raw_materials WHERE id = $1 FOR UPDATE",
+      [id],
+    );
+    if (!matRes.rows.length) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "Not found" }); return;
+    }
+    const mat = matRes.rows[0];
+
+    if (fields.length > 0) {
+      const updVals = [...vals, id];
+      await client.query(`UPDATE raw_materials SET ${fields.join(",")} WHERE id=$${updVals.length}`, updVals);
+    }
+
+    // Nom o'zgarsa TARIXIY ledger yozuvlarini ham yangi nomga ko'chiramiz —
+    // raw-reconcile sm.product = rm.name bo'yicha bog'laydi, aks holda eski
+    // nomdagi barcha harakatlar "yo'qolib" darhol farq chiqadi.
+    const newName = req.body.name !== undefined ? String(req.body.name) : null;
+    if (newName !== null && newName !== mat.name) {
+      await client.query(
+        "UPDATE stock_movements SET product = $1 WHERE product = $2 AND product_type = 'raw'",
+        [newName, mat.name],
+      );
+    }
+
+    if (hasStockChange) {
+      const oldStock = Number(mat.current_stock) || 0;
+      const delta = (newStock as number) - oldStock;
+      if (delta !== 0) {
+        await client.query(
+          "UPDATE raw_materials SET current_stock = $1 WHERE id = $2",
+          [newStock, id],
+        );
+        const movementType = delta > 0 ? "IN" : "OUT";
+        // Yangi nom kiritilgan bo'lsa ham ledger yozuvi ESKI nom bilan emas,
+        // yangilangan nom bilan mos bo'lishi kerak — reconcile sm.product =
+        // rm.name bo'yicha bog'laydi.
+        const ledgerName = req.body.name !== undefined ? String(req.body.name) : mat.name;
+        const noteText = `Tahrirlash orqali o'zgartirildi: ${oldStock} → ${newStock} ${mat.unit}`;
+        await client.query(
+          `INSERT INTO stock_movements
+             (product, quantity, movement_type, to_warehouse_id, from_warehouse_id, note, created_by, product_type)
+           VALUES ($1,$2,$3,NULL,NULL,$4,$5,'raw')`,
+          [ledgerName, Math.abs(delta), movementType, noteText, req.username || "admin"],
+        );
+      }
+    }
+
+    await client.query("COMMIT");
+    res.json({ ok: true });
+  } catch (e: any) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
 });
 
 // ── DELETE /raw-materials/:id ─────────────────────────────────────────────────

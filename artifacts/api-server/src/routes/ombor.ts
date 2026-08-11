@@ -624,7 +624,14 @@ router.get("/ombor/movements", async (req, res): Promise<void> => {
   const fromFilter = req.query.from && dateRe.test(String(req.query.from)) ? String(req.query.from) : null;
   const toFilter   = req.query.to   && dateRe.test(String(req.query.to))   ? String(req.query.to)   : null;
   const rangeChosen = Boolean(fromFilter || toFilter);
-  const limit      = Math.min(Number(req.query.limit ?? (rangeChosen ? 1000 : 80)), rangeChosen ? 5000 : 200);
+  // balance=ledger → to'liq rekonsiliatsiya ko'rinishi: 0 dan boshlab oldinga
+  // yuruvchi ledger balansi (raw-reconcile bilan bir xil semantika). Bunda
+  // BARCHA harakatlar kerak bo'lgani uchun limitni kengroq qo'yamiz.
+  const ledgerMode = String(req.query.balance ?? "") === "ledger";
+  const limit      = Math.min(
+    Number(req.query.limit ?? (rangeChosen || ledgerMode ? 1000 : 80)),
+    rangeChosen || ledgerMode ? 5000 : 200,
+  );
   const params: unknown[] = [limit];
   const conds: string[] = [];
   if (typeFilter) { params.push(typeFilter); conds.push(`sm.product_type = $${params.length}`); }
@@ -665,7 +672,50 @@ router.get("/ombor/movements", async (req, res): Promise<void> => {
   // Bunday qatorlar uchun delta 0 va balanceAfter ko'rsatilmaydi (null),
   // aks holda balans noto'g'ri siljiydi.
   let balances: Record<number, number | null> | null = null;
-  if (typeFilter === "raw" && prodFilter && !toFilter && rows.length) {
+  if (ledgerMode && typeFilter === "raw" && prodFilter && rows.length) {
+    // Ledger rejimi: 0 dan boshlab ENG ESKI harakatdan oldinga yuramiz —
+    // raw-reconcile ledger_sum bilan bir xil semantika. Oxirgi qatorning
+    // balansi = ledger yig'indisi; u current_stock bilan mos kelmasa, farq
+    // aynan qaysi qatordan boshlanganini ko'rish mumkin.
+    balances = {};
+    // Agar tarix limit tufayli kesilgan bo'lsa, ko'rsatilmagan ESKI qatorlar
+    // yig'indisini SQLda hisoblab, yurishni o'sha ochilish balansidan boshlaymiz —
+    // aks holda barcha balanslar va yakuniy farq noto'g'ri chiqadi.
+    let running = 0;
+    if (rows.length >= limit) {
+      const oldest = rows[rows.length - 1];
+      const baseParams = [...params.slice(1), oldest.created_at, oldest.id];
+      const baseWhere = conds.length ? `${conds.join(" AND ")} AND` : "";
+      // params[0] is LIMIT (unused here); renumber placeholders $2..$n → $1..$(n-1).
+      const renumbered = baseWhere.replace(/\$(\d+)/g, (_m, n) => `$${Number(n) - 1}`);
+      const baseRes = await pool.query(
+        `SELECT COALESCE(SUM(
+            CASE
+              WHEN sm.movement_type = 'IN'                                  THEN  sm.quantity
+              WHEN sm.movement_type = 'OUT' AND sm.from_warehouse_id IS NULL THEN -sm.quantity
+              ELSE 0
+            END
+          ), 0)::numeric AS opening
+         FROM stock_movements sm
+         WHERE ${renumbered} (sm.created_at, sm.id) < ($${baseParams.length - 1}, $${baseParams.length})`,
+        baseParams,
+      );
+      running = Number(baseRes.rows[0].opening) || 0;
+    }
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const r = rows[i];
+      const qty = Number(r.quantity) || 0;
+      const containerOnly =
+        r.movement_type === "TRANSFER" ||
+        (r.movement_type === "OUT" && r.from_warehouse_id != null);
+      if (containerOnly) {
+        balances[r.id] = null;
+        continue;
+      }
+      running += r.movement_type === "OUT" ? -qty : qty;
+      balances[r.id] = running;
+    }
+  } else if (typeFilter === "raw" && prodFilter && !toFilter && rows.length) {
     const stockRes = await pool.query(
       "SELECT current_stock FROM raw_materials WHERE name = $1 LIMIT 1",
       [prodFilter],

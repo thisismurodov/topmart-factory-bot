@@ -215,6 +215,173 @@ function useRawHistory(name: string | null) {
   });
 }
 
+// To'liq ledger tafsiloti (rekonsiliatsiya ko'rinishi): balans 0 dan boshlab
+// oldinga hisoblanadi — oxirgi qator balansi ledger yig'indisiga teng bo'ladi.
+function useRawLedger(name: string | null) {
+  return useQuery<RawMovement[]>({
+    queryKey: [...RAW_HISTORY_KEY, "ledger", name],
+    enabled: !!name,
+    queryFn: async () => {
+      const res = await authFetch(
+        `/api/ombor/movements?type=raw&balance=ledger&limit=1000&product=${encodeURIComponent(name!)}`,
+      );
+      if (!res.ok) throw new Error("Ledger tarixini yuklashda xato");
+      return res.json();
+    },
+  });
+}
+
+// ── Ledger breakdown (reconciliation drilldown) dialog ────────────────────────
+function RawLedgerDialog({
+  material, reconcile, onClose, onResolve,
+}: {
+  material: RawMaterial | null;
+  reconcile: ReconcileItem | null;
+  onClose: () => void;
+  onResolve: (m: RawMaterial) => void;
+}) {
+  const { data: moves = [], isLoading } = useRawLedger(material?.name ?? null);
+  if (!material) return null;
+
+  // API newest-first qaytaradi — jadvalda eng eskisidan boshlab ko'rsatamiz.
+  const ordered = [...moves].reverse();
+  const lastBalance = [...ordered].reverse().find(m => m.balanceAfter != null)?.balanceAfter ?? 0;
+  const gap = material.currentStock - lastBalance;
+  const hasMismatch = Math.abs(gap) > 0.001;
+  const unit = material.unitType;
+  const fmt = (n: number) => n.toLocaleString("ru-RU", { maximumFractionDigits: 3 });
+
+  return (
+    <Dialog open={!!material} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <GitCompareArrows className="w-5 h-5 text-amber-600" /> Ledger tafsiloti — {material.name}
+          </DialogTitle>
+          <DialogDescription>
+            Barcha harakatlar va yig'ilib boruvchi balans. Kulrang qatorlar global zahiraga
+            ta'sir qilmaydi (konteyner ichki harakatlari).
+          </DialogDescription>
+        </DialogHeader>
+
+        {moves.length >= 1000 && (
+          <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+            Faqat so'nggi 1000 ta harakat ko'rsatilmoqda. Balans ustuni ko'rsatilmagan eski
+            yozuvlarni ham hisobga oladi, shuning uchun yakuniy qiymatlar to'g'ri.
+          </div>
+        )}
+
+        <div className="flex-1 overflow-y-auto rounded-lg border">
+          {isLoading ? (
+            <div className="p-4 space-y-2">
+              {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-5 w-full" />)}
+            </div>
+          ) : ordered.length === 0 ? (
+            <div className="p-6 text-center text-sm text-muted-foreground">Harakatlar tarixi yo'q</div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Sana</TableHead>
+                  <TableHead>Harakat</TableHead>
+                  <TableHead className="text-right">Miqdor</TableHead>
+                  <TableHead>Tuzatish / izoh</TableHead>
+                  <TableHead>Kim</TableHead>
+                  <TableHead className="text-right">Balans</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {ordered.map(mv => {
+                  const isIn = mv.movementType === "IN";
+                  const containerOnly = mv.balanceAfter == null;
+                  return (
+                    <TableRow key={mv.id} className={containerOnly ? "opacity-50" : ""}>
+                      <TableCell className="whitespace-nowrap text-muted-foreground">
+                        {formatDateTime(mv.createdAt)}
+                      </TableCell>
+                      <TableCell>
+                        <span className={`inline-flex items-center gap-1 text-xs font-medium ${
+                          mv.movementType === "TRANSFER" ? "text-muted-foreground"
+                            : isIn ? "text-green-700" : "text-red-700"
+                        }`}>
+                          {mv.movementType === "TRANSFER" ? (
+                            <GitCompareArrows className="w-3.5 h-3.5" />
+                          ) : isIn ? (
+                            <ArrowDownToLine className="w-3.5 h-3.5" />
+                          ) : (
+                            <ArrowUpFromLine className="w-3.5 h-3.5" />
+                          )}
+                          {mv.movementType}
+                        </span>
+                      </TableCell>
+                      <TableCell className={`text-right font-medium ${
+                        containerOnly ? "" : isIn ? "text-green-700" : "text-red-700"
+                      }`}>
+                        {containerOnly ? fmt(mv.quantity) : `${isIn ? "+" : "−"}${fmt(mv.quantity)}`}
+                      </TableCell>
+                      <TableCell className="max-w-[260px] text-sm text-muted-foreground break-words">
+                        {mv.note || "—"}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                        {mv.createdBy || "—"}
+                      </TableCell>
+                      <TableCell className="text-right font-medium whitespace-nowrap">
+                        {containerOnly ? (
+                          <span className="text-xs text-muted-foreground">ta'sir yo'q</span>
+                        ) : (
+                          <>{fmt(mv.balanceAfter!)} {unit}</>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          )}
+        </div>
+
+        {!isLoading && (
+          <div className={`rounded-lg border p-3 text-sm space-y-1.5 ${
+            hasMismatch ? "border-amber-300 bg-amber-50" : "border-green-200 bg-green-50"
+          }`}>
+            <div className="flex justify-between gap-4">
+              <span className="text-muted-foreground">Ledger yakuniy balansi</span>
+              <span className="font-medium">{fmt(lastBalance)} {unit}</span>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span className="text-muted-foreground">Hozirgi zahira</span>
+              <span className="font-medium">{fmt(material.currentStock)} {unit}</span>
+            </div>
+            <div className="flex justify-between gap-4 border-t pt-1.5">
+              <span className={hasMismatch ? "font-semibold text-amber-800" : "text-muted-foreground"}>
+                Farq
+              </span>
+              <span className={`font-semibold ${hasMismatch ? "text-amber-800" : "text-green-700"}`}>
+                {hasMismatch
+                  ? `${gap > 0 ? "+" : ""}${fmt(gap)} ${unit} — mos kelmaydi`
+                  : "0 — mos keladi ✓"}
+              </span>
+            </div>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Yopish</Button>
+          {hasMismatch && (
+            <Button
+              className="bg-amber-600 hover:bg-amber-700 text-white"
+              onClick={() => { onClose(); onResolve(material); }}
+              disabled={!reconcile}
+            >
+              Farqni yopish
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function RawHistoryRow({ name, unit }: { name: string; unit: string }) {
   const { data: moves = [], isLoading } = useRawHistory(name);
   return (
@@ -716,6 +883,7 @@ export default function RawMaterials() {
   const [deleteTarget, setDeleteTarget] = useState<RawMaterial | null>(null);
   const [adjustTarget, setAdjustTarget] = useState<RawMaterial | null>(null);
   const [resolveTarget, setResolveTarget] = useState<RawMaterial | null>(null);
+  const [ledgerTarget, setLedgerTarget] = useState<RawMaterial | null>(null);
   const [historyId, setHistoryId] = useState<number | null>(null);
 
   const lowStockCount = useMemo(
@@ -832,7 +1000,7 @@ export default function RawMaterials() {
                           <GapBadge
                             item={rec}
                             unit={m.unitType}
-                            onClick={() => setResolveTarget(m)}
+                            onClick={() => setLedgerTarget(m)}
                           />
                         )}
                       </div>
@@ -868,9 +1036,13 @@ export default function RawMaterials() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          title="Harakatlar tarixi"
+                          title={hasMismatch ? "Ledger tafsiloti" : "Harakatlar tarixi"}
                           className={historyId === m.id ? "bg-muted" : ""}
-                          onClick={() => setHistoryId(prev => (prev === m.id ? null : m.id))}
+                          onClick={() =>
+                            hasMismatch
+                              ? setLedgerTarget(m)
+                              : setHistoryId(prev => (prev === m.id ? null : m.id))
+                          }
                         >
                           <History className="w-4 h-4" />
                         </Button>
@@ -914,6 +1086,13 @@ export default function RawMaterials() {
       <RawAdjustDialog
         material={adjustTarget}
         onClose={() => setAdjustTarget(null)}
+      />
+
+      <RawLedgerDialog
+        material={ledgerTarget}
+        reconcile={ledgerTarget ? (reconcileMap[ledgerTarget.id] as ReconcileItem ?? null) : null}
+        onClose={() => setLedgerTarget(null)}
+        onResolve={(m) => setResolveTarget(m)}
       />
 
       <RawReconcileResolveDialog

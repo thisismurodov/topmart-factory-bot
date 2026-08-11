@@ -602,7 +602,8 @@ function ReceiveModal({ flow, onClose }: { flow: FlowData | undefined; onClose: 
     onError: (e: Error) => toast({ title: "Xatolik", description: e.message, variant: "destructive" }),
   });
 
-  const valid = warehouseId !== "" && lineId !== "" && materialName && Number(kgVal) > 0 && Number(kgVal) <= available;
+  const exceeded = materialName !== "" && Number(kgVal) > 0 && Number(kgVal) > available;
+  const valid = warehouseId !== "" && lineId !== "" && materialName && Number(kgVal) > 0 && !exceeded;
 
   return (
     <ModalShell title="Xom ashyoni bo'limga berish" onClose={onClose}>
@@ -631,6 +632,11 @@ function ReceiveModal({ flow, onClose }: { flow: FlowData | undefined; onClose: 
         <label className={labelCls}>Miqdor (kg)</label>
         <input className={fieldCls} type="number" min="0" step="any" value={kgVal} onChange={(e) => setKgVal(e.target.value)} placeholder="0" />
         {materialName && <p className="text-[11px] text-muted-foreground mt-1">Mavjud: {kg(available)}</p>}
+        {exceeded && (
+          <p className="text-[11px] mt-1 font-medium" style={{ color: "#ef4444" }}>
+            Kiritilgan miqdor konteynerdagi mavjud zahiradan ({kg(available)}) oshib ketdi
+          </p>
+        )}
       </div>
       <div>
         <label className={labelCls}>Izoh (ixtiyoriy)</label>

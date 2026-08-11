@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Route as RouteIcon, Navigation, Lightbulb, AlertTriangle, RotateCcw, MapPinned, Maximize2, Minimize2, ChevronDown, ChevronUp, Home, Truck, Crosshair } from "lucide-react";
+import { Route as RouteIcon, Navigation, Lightbulb, AlertTriangle, RotateCcw, MapPinned, Maximize2, Minimize2, ChevronDown, ChevronUp, Home, Truck, Crosshair, Sparkles } from "lucide-react";
 
 // ── Turlar ──────────────────────────────────────────────────────────────────────
 type MapShop = {
@@ -132,9 +132,18 @@ type SuggestQaytish = {
   qaytishSanasi: string | null;
   dueIso: string | null;
 };
+type SuggestAi = {
+  dokonId: number;
+  nomi: string | null;
+  hudud: string | null;
+  agentName: string | null;
+  score: number;
+  reason: string;
+};
 type SuggestionsData = {
   date: string;
   kun: number;
+  ai?: SuggestAi[] | null;
   agents: SuggestAgent[];
   overdue: SuggestOverdue[];
   qaytish: SuggestQaytish[];
@@ -363,7 +372,7 @@ function SuggestionsPanel({
       </div>
     );
   if (!data) return null;
-  const empty = data.agents.length === 0 && data.overdue.length === 0 && data.qaytish.length === 0;
+  const empty = data.agents.length === 0 && data.overdue.length === 0 && data.qaytish.length === 0 && !(data.ai && data.ai.length > 0);
   if (empty)
     return (
       <div className="text-sm text-muted-foreground border rounded-md py-4 text-center">
@@ -372,6 +381,45 @@ function SuggestionsPanel({
     );
   return (
     <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3 items-start">
+      {/* AI tavsiyalar — LLM reytingi va izohi (faqat AI rejimi yoqilganda keladi) */}
+      {data.ai && data.ai.length > 0 && (
+        <Card className="md:col-span-2 lg:col-span-3 border-violet-200">
+          <CardContent className="p-4 space-y-2">
+            <div className="flex items-center gap-1.5 text-sm font-semibold">
+              <Sparkles className="w-4 h-4 text-violet-600" />
+              AI tavsiyalari — bugun birinchi navbatda
+            </div>
+            <div className="text-[11px] text-muted-foreground -mt-1">
+              Kechikish, nasiya, qaytish va'dasi, masofa va marshrut asosida AI ustuvorlik bergan do'konlar
+            </div>
+            <div className="grid md:grid-cols-2 gap-2">
+              {data.ai.map((s, i) => (
+                <button
+                  key={s.dokonId}
+                  onClick={() => onShop(s.dokonId)}
+                  className="w-full flex items-start gap-2 rounded-md border px-2.5 py-2 text-xs hover:bg-muted text-left"
+                >
+                  <span className="shrink-0 mt-0.5 inline-flex items-center justify-center w-5 h-5 rounded-full bg-violet-100 text-violet-700 font-semibold text-[10px]">
+                    {i + 1}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="font-medium block truncate">
+                      {s.nomi || "Do'kon"}
+                      {s.hudud && <span className="text-muted-foreground font-normal"> · {s.hudud}</span>}
+                      {s.agentName && <span className="text-muted-foreground font-normal"> · 👤 {s.agentName}</span>}
+                    </span>
+                    <span className="text-muted-foreground block">{s.reason}</span>
+                  </span>
+                  <Badge variant="outline" className="shrink-0 h-5 text-[10px] text-violet-700 border-violet-300">
+                    {s.score}
+                  </Badge>
+                </button>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Agentga eng yaqin do'konlar (bugungi GPS bo'yicha) */}
       {data.agents.length > 0 && (
         <Card>
@@ -544,10 +592,18 @@ export default function MapTab({ date, agentId, viloyat, hudud, search, active, 
     enabled: active && mode !== "markers",
   });
 
+  // AI rejimi — LLM reytingi bilan (server 10 daqiqa keshda saqlaydi, xato bo'lsa
+  // jimgina rule-based tavsiyalar ko'rsatiladi)
+  const [aiMode, setAiMode] = useState(false);
+  const sqs = useMemo(() => {
+    if (!aiMode) return hqs;
+    return hqs ? `${hqs}&ai=1` : "?ai=1";
+  }, [hqs, aiMode]);
+
   const { data: sugg, isLoading: suggLoading } = useQuery<SuggestionsData>({
-    queryKey: ["distribution", "suggestions", hqs],
+    queryKey: ["distribution", "suggestions", sqs],
     queryFn: async () => {
-      const r = await authFetch(`/api/distribution/suggestions${hqs}`);
+      const r = await authFetch(`/api/distribution/suggestions${sqs}`);
       if (!r.ok) throw new Error("Tavsiyalar yuklanmadi");
       return r.json();
     },
@@ -1001,10 +1057,29 @@ export default function MapTab({ date, agentId, viloyat, hudud, search, active, 
 
       {/* Tavsiyalar: yaqin do'konlar, kechikkanlar, qaytish vaqti kelganlar */}
       <div className="space-y-2">
-        <div className="text-sm font-semibold flex items-center gap-1.5">
-          <Lightbulb className="w-4 h-4 text-amber-500" />
-          Tavsiyalar
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-sm font-semibold flex items-center gap-1.5">
+            <Lightbulb className="w-4 h-4 text-amber-500" />
+            Tavsiyalar
+          </div>
+          <Button
+            size="sm"
+            variant={aiMode ? "default" : "outline"}
+            className={aiMode ? "h-7 text-xs bg-violet-600 hover:bg-violet-700" : "h-7 text-xs"}
+            onClick={() => setAiMode((v) => !v)}
+          >
+            <Sparkles className="w-3.5 h-3.5 mr-1" />
+            AI tavsiyalar
+          </Button>
         </div>
+        {aiMode && suggLoading && (
+          <div className="text-[11px] text-muted-foreground">AI tahlil qilmoqda…</div>
+        )}
+        {aiMode && !suggLoading && sugg && (!sugg.ai || sugg.ai.length === 0) && (
+          <div className="text-[11px] text-muted-foreground">
+            AI tavsiyasi hozircha mavjud emas — quyida oddiy tavsiyalar ko'rsatilmoqda
+          </div>
+        )}
         <SuggestionsPanel data={sugg} isLoading={suggLoading} onShop={onShop} />
       </div>
     </div>

@@ -1,5 +1,6 @@
 import { Router, type IRouter, type Request } from "express";
 import { pool } from "@workspace/db";
+import { openai } from "@workspace/integrations-openai-ai-server";
 import { computeRouteStats, splitOutliers } from "../lib/routePlanner";
 import { uniqueProductSku } from "../lib/sku";
 import { runRoutePlan } from "../lib/routePlanService";
@@ -2224,6 +2225,93 @@ router.get("/distribution/heatmap", async (req, res): Promise<void> => {
   res.json({ shops, hududlar });
 });
 
+// ── AI tavsiyalar (LLM reyting) ─────────────────────────────────────────────────
+// Nomzod do'konlar (overdue + qaytish + marshrut) LLM'ga beriladi; u biznes
+// kontekst asosida ustuvorlik beradi va har biriga qisqa o'zbekcha izoh yozadi.
+// Xato bo'lsa — jimgina rule-based natijaga qaytiladi (ai: null).
+type AiCandidate = {
+  dokonId: number;
+  nomi: string | null;
+  hudud: string | null;
+  agentName: string | null;
+  days: number | null;          // oxirgi xariddan beri kunlar
+  avgRepeatDays: number | null; // o'rtacha takror interval (kun)
+  nasiya: number;               // qarz qoldig'i (so'm)
+  distKm: number | null;        // agent GPS'idan masofa
+  tartib: number | null;        // bugungi marshrutdagi tartib
+  qaytishSanasi: string | null; // va'da qilingan qaytish sanasi
+  sabab: string | null;         // oxirgi olmaslik sababi
+};
+export type AiSuggestion = {
+  dokonId: number;
+  nomi: string | null;
+  hudud: string | null;
+  agentName: string | null;
+  score: number;   // 0-100 ustuvorlik
+  reason: string;  // qisqa o'zbekcha izoh
+};
+
+const AI_SUGGEST_MODEL = "gpt-5-mini";
+const AI_SUGGEST_TTL_MS = 10 * 60 * 1000; // 10 daqiqa kesh — har refetch'da LLM chaqirilmaydi
+const aiSuggestCache = new Map<string, { at: number; items: AiSuggestion[] }>();
+
+const AI_SUGGEST_SYSTEM = `Sen TopMart distribyutsiya kompaniyasining savdo tahlilchisisan. Senga bugun tashrif buyurish mumkin bo'lgan nomzod do'konlar ro'yxati JSON ko'rinishida beriladi. Har bir do'kon uchun maydonlar:
+- days: oxirgi xariddan beri o'tgan kunlar
+- avgRepeatDays: do'konning o'rtacha xarid intervali (kun, 0 = tarix yo'q)
+- nasiya: qarz qoldig'i (so'm)
+- distKm: agentning hozirgi GPS joyidan masofa (km, null = noma'lum)
+- tartib: bugungi marshrutdagi tartib raqami (null = marshrutda emas)
+- qaytishSanasi: do'kon "keyin keling" degan sana
+- sabab: oxirgi olmaslik sababi kodi
+
+Vazifang: eng muhim 10 tagacha do'konni tanlab, ustuvorlik bo'yicha tartibla.
+Mezonlar: odatiy intervalidan qancha ko'p kechikkani (days vs avgRepeatDays) eng muhim; katta nasiya qarzi ustuvorlikni oshiradi (pul yig'ish kerak); qaytish sanasi kelganlar muhim; yaqin masofa va marshrutdagi kichik tartib qulaylik beradi.
+
+FAQAT quyidagi JSON formatda javob ber, boshqa hech narsa yozma:
+{"items":[{"dokonId":123,"score":95,"reason":"..."}]}
+reason — 1 jumlali qisqa o'zbekcha izoh, masalan: "3 haftadan beri olmayapti, odatda 10 kunda bir oladi, 2.4 mln nasiyasi bor". Raqamlarni o'zgartirma, faqat berilgan ma'lumotdan foydalan.`;
+
+async function rankWithAi(cacheKey: string, candidates: AiCandidate[]): Promise<AiSuggestion[] | null> {
+  if (candidates.length === 0) return [];
+  const cached = aiSuggestCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < AI_SUGGEST_TTL_MS) return cached.items;
+  try {
+    const completion = await openai.chat.completions.create({
+      model: AI_SUGGEST_MODEL,
+      max_completion_tokens: 8192,
+      reasoning_effort: "minimal",
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: AI_SUGGEST_SYSTEM },
+        { role: "user", content: JSON.stringify({ candidates }) },
+      ],
+    });
+    const raw = completion.choices[0]?.message?.content?.trim() || "";
+    const parsed = JSON.parse(raw) as { items?: unknown };
+    if (!Array.isArray(parsed.items)) return null;
+    const byId = new Map(candidates.map((c) => [c.dokonId, c]));
+    const items: AiSuggestion[] = [];
+    for (const it of parsed.items as Record<string, unknown>[]) {
+      const c = byId.get(Number(it.dokonId));
+      if (!c || typeof it.reason !== "string" || it.reason.trim() === "") continue;
+      items.push({
+        dokonId: c.dokonId,
+        nomi: c.nomi,
+        hudud: c.hudud,
+        agentName: c.agentName,
+        score: Math.max(0, Math.min(100, Math.round(Number(it.score) || 0))),
+        reason: it.reason.trim(),
+      });
+      if (items.length >= 10) break;
+    }
+    aiSuggestCache.set(cacheKey, { at: Date.now(), items });
+    return items;
+  } catch {
+    // Jimgina fallback — rule-based tavsiyalar baribir ko'rsatiladi
+    return null;
+  }
+}
+
 // ── Smart Suggestions (rule-based tavsiyalar) ────────────────────────────────────
 // 3 turdagi tavsiya:
 //   agents  — GPS jo'natgan agentlarga eng yaqin, bugun hali kirilmagan do'konlar
@@ -2426,9 +2514,101 @@ router.get("/distribution/suggestions", async (req, res): Promise<void> => {
     })
     .filter(Boolean);
 
+  // ── AI rejimi (?ai=1) — nomzodlarni yig'ib LLM'dan reyting so'raymiz ─────────
+  const q = req.query as Record<string, unknown>;
+  const wantAi = q.ai === "1" || q.ai === "true";
+  let ai: AiSuggestion[] | null = null;
+  if (wantAi) {
+    // Nomzodlar: kechikkanlar + qaytish sanasi kelganlar + bugungi marshrutdagilar
+    const candMap = new Map<number, AiCandidate>();
+    for (const r of overdueRows2) {
+      candMap.set(Number(r.dokon_id), {
+        dokonId: Number(r.dokon_id),
+        nomi: r.nomi as string | null,
+        hudud: r.hudud as string | null,
+        agentName: r.agent_name as string | null,
+        days: Number(r.days),
+        avgRepeatDays: Number(r.avg_repeat_days) || 0,
+        nasiya: 0,
+        distKm: null,
+        tartib: null,
+        qaytishSanasi: null,
+        sabab: null,
+      });
+    }
+    for (const r of qaytishRows) {
+      const id = Number(r.dokon_id);
+      const c = candMap.get(id);
+      if (c) {
+        c.qaytishSanasi = r.qaytish_sanasi as string | null;
+        c.sabab = r.sabab as string | null;
+      } else {
+        candMap.set(id, {
+          dokonId: id,
+          nomi: r.nomi as string | null,
+          hudud: r.hudud as string | null,
+          agentName: r.agent_name as string | null,
+          days: null,
+          avgRepeatDays: null,
+          nasiya: 0,
+          distKm: null,
+          tartib: null,
+          qaytishSanasi: r.qaytish_sanasi as string | null,
+          sabab: r.sabab as string | null,
+        });
+      }
+    }
+    // Marshrutdagi kirilmagan do'konlar — tartib + agent GPS'idan masofa
+    const locByAgent = new Map(locRows.map((l) => [String(l.agent_id), l]));
+    for (const rs of routeShops) {
+      const id = Number(rs.dokon_id);
+      const loc = locByAgent.get(String(rs.agent_telegram_id));
+      const distKm = loc
+        ? haversine(Number(loc.latitude), Number(loc.longitude), Number(rs.latitude), Number(rs.longitude))
+        : null;
+      const c = candMap.get(id);
+      if (c) {
+        c.tartib = rs.tartib as number | null;
+        if (distKm != null) c.distKm = distKm;
+      } else if (candMap.size < 60) {
+        candMap.set(id, {
+          dokonId: id,
+          nomi: rs.nomi as string | null,
+          hudud: rs.hudud as string | null,
+          agentName: null,
+          days: null,
+          avgRepeatDays: null,
+          nasiya: 0,
+          distKm,
+          tartib: rs.tartib as number | null,
+          qaytishSanasi: null,
+          sabab: null,
+        });
+      }
+    }
+    // Nasiya qoldiqlari — bitta so'rovda barcha nomzodlar uchun
+    const candIds = Array.from(candMap.keys());
+    if (candIds.length > 0) {
+      const { rows: nasRows } = await pool.query(
+        `SELECT n.dokon_id, SUM(n.qoldiq)::bigint AS qoldiq
+           FROM distribution.nasiya n
+          WHERE n.qoldiq > 0 AND n.dokon_id = ANY($1::bigint[])
+          GROUP BY n.dokon_id`,
+        [candIds]
+      );
+      for (const nr of nasRows) {
+        const c = candMap.get(Number(nr.dokon_id));
+        if (c) c.nasiya = Number(nr.qoldiq);
+      }
+    }
+    const cacheKey = `${today}|${f.agentId ?? ""}|${f.viloyat ?? ""}|${f.hudud ?? ""}|${f.search ?? ""}`;
+    ai = await rankWithAi(cacheKey, Array.from(candMap.values()));
+  }
+
   res.json({
     date: today,
     kun: dow,
+    ai, // AI reyting (null — AI so'ralmagan yoki xato/fallback)
     agents: agentSuggestions,
     overdue: overdueRows2.map((r) => ({
       dokonId: r.dokon_id,

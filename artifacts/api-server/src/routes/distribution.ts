@@ -1,6 +1,6 @@
 import { Router, type IRouter, type Request } from "express";
 import { pool } from "@workspace/db";
-import { computeRouteStats } from "../lib/routePlanner";
+import { computeRouteStats, splitOutliers } from "../lib/routePlanner";
 import { uniqueProductSku } from "../lib/sku";
 import { runRoutePlan } from "../lib/routePlanService";
 
@@ -960,6 +960,120 @@ router.get("/distribution/shops", async (req, res): Promise<void> => {
       outstanding: Number(r.outstanding),
       status: r.status,
     })),
+  });
+});
+
+// ── Koordinatasi yo'q yoki shubhali do'konlar ──────────────────────────────────
+// noCoord: latitude/longitude yo'q bo'lgan faol do'konlar.
+// badCoord: koordinatasi bor, lekin viloyat medianidan 60+ km uzoq do'konlar
+//           (splitOutliers algoritmi — routePlanService bilan bir xil mantiq).
+// MUHIM: bu marshrut /shops/:id dan OLDIN ro'yxatga olinishi shart —
+//        aks holda Express "bad-coord" ni :id sifatida izohlaydi.
+router.get("/distribution/shops/bad-coord", async (_req, res): Promise<void> => {
+  const { rows } = await pool.query(
+    `SELECT d.id, d.nomi, d.viloyat, d.hudud, d.latitude, d.longitude
+       FROM distribution.dokonlar d
+      WHERE (d.holat IS NULL OR d.holat <> 'nofaol')
+      ORDER BY d.viloyat NULLS LAST, d.nomi`
+  );
+
+  const noCoord: { id: number; nomi: string | null; viloyat: string | null; hudud: string | null }[] = [];
+  const byViloyat = new Map<string, { id: number; nomi: string | null; hudud: string | null; lat: number; lng: number }[]>();
+
+  for (const r of rows) {
+    if (r.latitude == null || r.longitude == null) {
+      noCoord.push({ id: Number(r.id), nomi: r.nomi, viloyat: r.viloyat, hudud: r.hudud });
+      continue;
+    }
+    const key = (r.viloyat as string | null) ?? "__unknown__";
+    if (!byViloyat.has(key)) byViloyat.set(key, []);
+    byViloyat.get(key)!.push({
+      id: Number(r.id),
+      nomi: r.nomi,
+      hudud: r.hudud,
+      lat: Number(r.latitude),
+      lng: Number(r.longitude),
+    });
+  }
+
+  const badCoord: { id: number; nomi: string | null; viloyat: string | null; hudud: string | null; lat: number; lng: number }[] = [];
+  for (const [viloyat, shops] of byViloyat) {
+    const fakeShops = shops.map((s) => ({ ...s, biz: {} }));
+    const { outliers } = splitOutliers(fakeShops as Parameters<typeof splitOutliers>[0]);
+    for (const o of outliers) {
+      badCoord.push({ id: o.id, nomi: o.nomi, viloyat: viloyat === "__unknown__" ? null : viloyat, hudud: o.hudud, lat: o.lat, lng: o.lng });
+    }
+  }
+
+  res.json({ noCoord, badCoord });
+});
+
+// ── Do'kon GPS koordinatasini yangilash ─────────────────────────────────────────
+router.patch("/distribution/shops/:id", async (req, res): Promise<void> => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: "Noto'g'ri do'kon ID" });
+    return;
+  }
+
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const sets: string[] = [];
+  const params: unknown[] = [];
+
+  if (body.latitude !== undefined || body.lat !== undefined) {
+    const raw = body.latitude ?? body.lat;
+    if (raw === null) {
+      params.push(null);
+      sets.push(`latitude = $${params.length}`);
+    } else {
+      const v = Number(raw);
+      if (!Number.isFinite(v) || v < -90 || v > 90) {
+        res.status(400).json({ error: "latitude qiymati noto'g'ri (-90..90)" });
+        return;
+      }
+      params.push(v);
+      sets.push(`latitude = $${params.length}`);
+    }
+  }
+
+  if (body.longitude !== undefined || body.lng !== undefined) {
+    const raw = body.longitude ?? body.lng;
+    if (raw === null) {
+      params.push(null);
+      sets.push(`longitude = $${params.length}`);
+    } else {
+      const v = Number(raw);
+      if (!Number.isFinite(v) || v < -180 || v > 180) {
+        res.status(400).json({ error: "longitude qiymati noto'g'ri (-180..180)" });
+        return;
+      }
+      params.push(v);
+      sets.push(`longitude = $${params.length}`);
+    }
+  }
+
+  if (sets.length === 0) {
+    res.status(400).json({ error: "latitude yoki longitude berilishi shart" });
+    return;
+  }
+
+  params.push(id);
+  const upd = await pool.query(
+    `UPDATE distribution.dokonlar SET ${sets.join(", ")}
+     WHERE id = $${params.length}
+     RETURNING id, nomi, latitude, longitude`,
+    params
+  );
+  if (upd.rows.length === 0) {
+    res.status(404).json({ error: "Do'kon topilmadi" });
+    return;
+  }
+  const r = upd.rows[0];
+  res.json({
+    id: r.id as number,
+    nomi: r.nomi as string | null,
+    latitude: r.latitude != null ? Number(r.latitude) : null,
+    longitude: r.longitude != null ? Number(r.longitude) : null,
   });
 });
 

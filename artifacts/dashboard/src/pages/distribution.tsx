@@ -19,6 +19,7 @@ import {
 import MapTab, { GeoNavLinks, sababLabel } from "@/components/distribution/MapTab";
 import RouteWeekMap from "@/components/distribution/RouteWeekMap";
 import AnalyticsTab from "@/components/distribution/AnalyticsTab";
+import BadCoordPanel from "@/components/distribution/BadCoordPanel";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────────
 const fmtSom = (n: number) => `${Math.round(n).toLocaleString("uz-UZ")} so'm`;
@@ -1199,6 +1200,9 @@ function RoutesTab({ f, update, active, onShop }: { f: Filters; update: (p: Part
     <div className="p-4 space-y-4">
       {/* Haftalik marshrut xaritasi — har kun o'z rangida, marshrutsiz do'konlar kulrang */}
       <RouteWeekMap active={active} onShop={onShop} />
+
+      {/* Koordinatasi yo'q yoki shubhali do'konlar — GPS tahrirlash */}
+      <BadCoordPanel />
 
       <div className="flex flex-wrap gap-2">
         {(data?.kunlar ?? ["dushanba", "seshanba", "chorshanba", "payshanba", "juma", "shanba", "yakshanba"]).map((k, i) => (

@@ -9,6 +9,7 @@
     "start": "node --enable-source-maps ./dist/index.mjs",
     "test": "vitest run",
     "init-db": "tsx ./src/run-init-db.ts",
+    "fix-outlier-shops": "tsx ./src/scripts/fix-outlier-shops-task95.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

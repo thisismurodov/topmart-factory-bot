@@ -2653,10 +2653,15 @@ router.get("/distribution/daily-visits", async (req, res): Promise<void> => {
   const params: unknown[] = [date, dow];
   let agentW = "";
   let shopW = "";
+  let agentIdx = 0; // agentId parametrining $-indeksi (0 = filtr yo'q)
   if (f.agentId) {
     params.push(f.agentId);
-    agentW += ` AND da.telegram_id = $${params.length}`;
+    agentIdx = params.length;
+    agentW += ` AND da.telegram_id = $${agentIdx}`;
   }
+  // savdolar/olmagan/pul_olish jadvallarida agent telegram_id `agent_id` ustunida —
+  // `da` aliasisiz subquery'larda shu yordamchi ishlatiladi
+  const aW = (alias: string): string => (agentIdx ? ` AND ${alias}.agent_id = $${agentIdx}` : "");
   if (f.viloyat) {
     params.push(f.viloyat);
     shopW += ` AND dk.viloyat = $${params.length}`;
@@ -2684,7 +2689,7 @@ router.get("/distribution/daily-visits", async (req, res): Promise<void> => {
               COUNT(*)::int                   AS sales_count
          FROM distribution.savdolar s
          JOIN distribution.dokonlar dk ON dk.id = s.dokon_id
-        WHERE substr(s.created_at,1,10) = $1${agentW}${shopW}
+        WHERE substr(s.created_at,1,10) = $1${aW("s")}${shopW}
         GROUP BY s.agent_id
      ),
      nosale_agg AS (
@@ -2692,7 +2697,7 @@ router.get("/distribution/daily-visits", async (req, res): Promise<void> => {
               COUNT(DISTINCT o.dokon_id)::int AS nosale_shops
          FROM distribution.olmagan_dokonlar o
          JOIN distribution.dokonlar dk ON dk.id = o.dokon_id
-        WHERE substr(o.created_at,1,10) = $1${agentW}${shopW}
+        WHERE substr(o.created_at,1,10) = $1${aW("o")}${shopW}
         GROUP BY o.agent_id
      ),
      payment_agg AS (
@@ -2700,7 +2705,7 @@ router.get("/distribution/daily-visits", async (req, res): Promise<void> => {
               COUNT(DISTINCT p.dokon_id)::int AS payment_only_shops
          FROM distribution.pul_olish p
          JOIN distribution.dokonlar dk ON dk.id = p.dokon_id
-        WHERE substr(p.created_at,1,10) = $1${agentW}${shopW}
+        WHERE substr(p.created_at,1,10) = $1${aW("p")}${shopW}
           AND NOT EXISTS (
             SELECT 1 FROM distribution.savdolar s2
              WHERE s2.dokon_id = p.dokon_id
@@ -2747,7 +2752,7 @@ router.get("/distribution/daily-visits", async (req, res): Promise<void> => {
               s.created_at
          FROM distribution.savdolar s
          JOIN distribution.dokonlar dk ON dk.id = s.dokon_id
-        WHERE substr(s.created_at,1,10) = $1${agentW}${shopW}
+        WHERE substr(s.created_at,1,10) = $1${aW("s")}${shopW}
         ORDER BY s.agent_id, s.dokon_id, s.created_at DESC
      ),
      nosale_stops AS (
@@ -2764,7 +2769,7 @@ router.get("/distribution/daily-visits", async (req, res): Promise<void> => {
             SELECT 1 FROM distribution.savdolar s2
              WHERE s2.dokon_id = o.dokon_id AND s2.agent_id = o.agent_id
                AND substr(s2.created_at,1,10) = $1
-          )${agentW}${shopW}
+          )${aW("o")}${shopW}
         ORDER BY o.agent_id, o.dokon_id, o.created_at DESC
      ),
      payment_stops AS (
@@ -2787,7 +2792,7 @@ router.get("/distribution/daily-visits", async (req, res): Promise<void> => {
             SELECT 1 FROM distribution.olmagan_dokonlar o2
              WHERE o2.dokon_id = p.dokon_id AND o2.agent_id = p.agent_id
                AND substr(o2.created_at,1,10) = $1
-          )${agentW}${shopW}
+          )${aW("p")}${shopW}
         ORDER BY p.agent_id, p.dokon_id, p.created_at DESC
      ),
      all_stops AS (
@@ -2813,20 +2818,57 @@ router.get("/distribution/daily-visits", async (req, res): Promise<void> => {
     params
   );
 
-  // 3. No-sale reasons breakdown per agent
+  // 3. No-sale reasons breakdown per agent — o'z parametrlar massivi
+  // (umumiy params'da $2=dow ishlatilmagani uchun PG bind xatosi berardi)
+  const rParams: unknown[] = [date];
+  let rW = "";
+  if (f.agentId) { rParams.push(f.agentId); rW += ` AND o.agent_id = $${rParams.length}`; }
+  if (f.viloyat) { rParams.push(f.viloyat); rW += ` AND dk.viloyat = $${rParams.length}`; }
+  if (f.hudud) { rParams.push(f.hudud); rW += ` AND dk.hudud = $${rParams.length}`; }
   const reasonsQ = pool.query(
-    `SELECT o.agent_id,
+    `SELECT da.id AS agent_id,
             COALESCE(o.sabab,'boshqa') AS sabab,
             COUNT(*)::int AS cnt
        FROM distribution.olmagan_dokonlar o
        JOIN distribution.dokonlar dk ON dk.id = o.dokon_id
-      WHERE substr(o.created_at,1,10) = $1${agentW}${shopW}
-      GROUP BY o.agent_id, COALESCE(o.sabab,'boshqa')
-      ORDER BY o.agent_id, cnt DESC`,
-    params
+       JOIN distribution.delivery_agents da ON da.telegram_id = o.agent_id AND da.faol = 1
+      WHERE substr(o.created_at,1,10) = $1${rW}
+      GROUP BY da.id, COALESCE(o.sabab,'boshqa')
+      ORDER BY da.id, cnt DESC`,
+    rParams
   );
 
-  const [summary, stops, reasons] = await Promise.all([summaryQ, stopsQ, reasonsQ]);
+  // 4. Agent GPS trail (breadcrumbs) — kun bo'yicha barcha nuqtalar, vaqt tartibida
+  const trailP: unknown[] = [date];
+  let trailW = "";
+  if (f.agentId) {
+    trailP.push(f.agentId);
+    trailW = ` AND da.telegram_id = $${trailP.length}`;
+  }
+  const trailQ = pool.query(
+    `SELECT da.id AS delivery_agent_id,
+            al.latitude, al.longitude, al.created_at
+       FROM distribution.agent_locations al
+       JOIN distribution.delivery_agents da ON da.telegram_id = al.agent_id
+      WHERE substr(al.created_at,1,10) = $1 AND da.faol = 1${trailW}
+        AND al.latitude IS NOT NULL AND al.longitude IS NOT NULL
+      ORDER BY da.id, al.created_at`,
+    trailP
+  );
+
+  const [summary, stops, reasons, trail] = await Promise.all([summaryQ, stopsQ, reasonsQ, trailQ]);
+
+  // Index trail points by delivery_agent_id
+  const trailMap = new Map<number, { lat: number; lng: number; at: string | null }[]>();
+  for (const t of trail.rows) {
+    const k = t.delivery_agent_id as number;
+    if (!trailMap.has(k)) trailMap.set(k, []);
+    trailMap.get(k)!.push({
+      lat: Number(t.latitude),
+      lng: Number(t.longitude),
+      at: t.created_at as string | null,
+    });
+  }
 
   // Index reasons by agent_id
   const reasonMap = new Map<number | string, { sabab: string; cnt: number }[]>();
@@ -2860,6 +2902,7 @@ router.get("/distribution/daily-visits", async (req, res): Promise<void> => {
       salesCount: a.sales_count,
       remaining: Math.max(0, a.planned - a.visited),
       reasons: reasonMap.get(a.id) ?? [],
+      trail: trailMap.get(a.id) ?? [],
       stops: (stopsMap.get(a.id) ?? []).map((s) => ({
         dokonId: s.dokon_id,
         dokonName: s.dokon_name,

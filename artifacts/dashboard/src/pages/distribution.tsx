@@ -23,6 +23,7 @@ import BadCoordPanel from "@/components/distribution/BadCoordPanel";
 import { downloadCsv, toCsv } from "@/lib/csv";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────────
+import DailyVisitsMap from "@/components/distribution/DailyVisitsMap";
 const fmtSom = (n: number) => `${Math.round(n).toLocaleString("uz-UZ")} so'm`;
 const fmtDate = (s: string | null) => (s ? s.slice(0, 10) : "—");
 const fmtDateTime = (s: string | null) => (s ? `${s.slice(0, 10)} ${s.slice(11, 16)}` : "—");
@@ -915,6 +916,7 @@ type DailyAgent = {
   planned: number; visited: number; sold: number; noSale: number;
   salesTotal: number; salesCount: number; remaining: number;
   reasons: { sabab: string; cnt: number }[];
+  trail: { lat: number; lng: number; at: string | null }[];
   stops: DailyStop[];
 };
 type DailyVisits = { date: string; kun: number; agents: DailyAgent[] };
@@ -1196,6 +1198,11 @@ function DailyVisitsTab({ f, active, onShop }: { f: Filters; active: boolean; on
             </div>
           ))}
         </div>
+      )}
+
+      {/* Xarita: kirilgan do'konlar + agent GPS izi */}
+      {data && data.agents.length > 0 && (
+        <DailyVisitsMap agents={data.agents} onShop={onShop} />
       )}
 
       {/* Agent cards */}

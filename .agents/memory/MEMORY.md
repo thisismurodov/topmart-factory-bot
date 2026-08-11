@@ -33,3 +33,4 @@
 - [Distribution route planner design](route-planner-design.md) — filter >60km-from-median GPS outliers BEFORE clustering (badCoord[]); 6-day cap means ~168 shops/region max at 22–28/day.
 - [Distribution data restore paths](distribution-data-restore.md) — bot agent-delete cascades wipe shops/sales; recover from attached_assets/topmart_*.db SQLite snapshots; role='blok' shows name without access.
 - [Two product catalogs (ERP vs savdo bot)](two-product-catalogs.md) — public.products ≠ distribution.mahsulotlar (by design); bridge = dashboard section + sync-to-erp; normalize apostrophe variants when matching names.
+- [PG shared params arrays](pg-shared-params.md) — every pool.query needs its own params array fully referenced by its SQL; spliced WHERE fragments must match the query's aliases.

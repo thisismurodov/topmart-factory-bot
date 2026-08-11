@@ -220,11 +220,26 @@ function useUpdateProduct() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ name, ...data }: ProductForm & { name: string }) => {
-      const res = await authFetch(`/api/products/${encodeURIComponent(name)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...data, rateType: data.unitType }),
-      });
+      const doPatch = (body: Record<string, unknown>) =>
+        authFetch(`/api/products/${encodeURIComponent(name)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      let res = await doPatch({ ...data, rateType: data.unitType });
+      if (res.status === 409) {
+        const err = await res.json().catch(() => ({} as any));
+        if (err?.code === "WEIGHT_LEDGER_CONFLICT") {
+          // Og'irlik o'zgarishi mavjud ishlab chiqarish (ledger) yozuvlariga ta'sir
+          // qilmaydi — foydalanuvchidan aniq tasdiq so'raymiz.
+          const ok = window.confirm(
+            `${err.error ?? "Og'irlik o'zgarishi ledger yozuvlariga ta'sir qilmaydi."}\n\n` +
+            `Eslatma: mavjud ${err.ledgerRows ?? ""} ta ledger yozuvi eski og'irlikda qoladi.`,
+          );
+          if (!ok) throw new Error("Og'irlik o'zgarishi bekor qilindi");
+          res = await doPatch({ ...data, rateType: data.unitType, confirmWeightChange: true });
+        }
+      }
       if (!res.ok) throw new Error("Saqlashda xato");
       return res.json();
     },
@@ -905,6 +920,12 @@ function ProductDialog({
                         <FormControl>
                           <Input type="number" step="0.001" min={0} {...field} />
                         </FormControl>
+                        {isEdit && Number(watchedWeight) !== Number(product?.weight ?? 1) && (
+                          <p className="text-xs text-amber-600">
+                            Diqqat: og'irlik o'zgarishi mavjud ishlab chiqarish (ledger)
+                            yozuvlariga ta'sir qilmaydi — ular eski og'irlikda qoladi.
+                          </p>
+                        )}
                         <FormMessage />
                       </FormItem>
                     )}

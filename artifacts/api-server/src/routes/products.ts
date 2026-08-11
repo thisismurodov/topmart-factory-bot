@@ -19,6 +19,41 @@ async function propagateToDistribution(productName: string): Promise<void> {
 
 const router: IRouter = Router();
 
+// Og'irlik o'zgarishi ledger himoyasi: wip_movements PRODUCE qatorlari mahsulot
+// og'irligi (products.weight) asosida yozilgan. Og'irlik keyin o'zgartirilsa,
+// eski qatorlar jimgina eski qiymatda qoladi va bo'lim WIP balansi buziladi.
+// Mavjud ledger qatorlari bo'lsa — aniq tasdiqsiz og'irlik o'zgarishiga 409
+// qaytariladigan konflikt obyektini beradi (aks holda null).
+async function weightLedgerConflict(
+  productName: string,
+  newWeight: number,
+): Promise<Record<string, unknown> | null> {
+  const curRes = await pool.query(
+    "SELECT weight FROM products WHERE name=$1", [productName],
+  );
+  if (!curRes.rows.length) return null;
+  const curWeight = Number(curRes.rows[0].weight);
+  if (Math.abs(curWeight - newWeight) <= 1e-9) return null;
+  const lgRes = await pool.query(
+    `SELECT COUNT(*)::int AS cnt FROM wip_movements
+     WHERE movement_type='PRODUCE' AND LOWER(product)=LOWER($1)`,
+    [productName],
+  );
+  const ledgerRows = Number(lgRes.rows[0].cnt) || 0;
+  if (ledgerRows === 0) return null;
+  return {
+    code: "WEIGHT_LEDGER_CONFLICT",
+    ledgerRows,
+    oldWeight: curWeight,
+    newWeight,
+    error:
+      `Bu mahsulot bo'yicha ${ledgerRows} ta ishlab chiqarish (ledger) yozuvi mavjud. ` +
+      `Og'irlikni ${curWeight} → ${newWeight} kg ga o'zgartirsangiz, eski yozuvlar eski og'irlikda qoladi ` +
+      `va bo'lim WIP balansi tarixiy qiymatlarga tayangan holda hisoblanaveradi. ` +
+      `Davom etish uchun tasdiqlang.`,
+  };
+}
+
 // ── GET /products — list all ──────────────────────────────────────────────────
 router.get("/products", async (_req, res): Promise<void> => {
   const { rate } = await getUsdToUzsRate();
@@ -118,6 +153,12 @@ router.post("/products", async (req, res): Promise<void> => {
   const finalWeight   = Number(weight) > 0 ? Number(weight) : 1;
 
   try {
+    // POST upsert (ON CONFLICT (name) DO UPDATE) mavjud mahsulot og'irligini ham
+    // yangilaydi — PATCH bilan bir xil ledger himoyasi shu yerda ham kerak.
+    if (req.body?.confirmWeightChange !== true) {
+      const conflict = await weightLedgerConflict(name.trim(), finalWeight);
+      if (conflict) { res.status(409).json(conflict); return; }
+    }
     // SKU kiritilmagan bo'lsa — nomdan avtomatik unikal SKU beriladi
     const skuProvided = typeof sku === "string" && sku.trim() !== "";
     let finalSku = skuProvided ? sku.trim().toUpperCase() : await uniqueProductSku(name.trim());
@@ -196,6 +237,14 @@ router.patch("/products/:name", async (req, res): Promise<void> => {
   }
 
   if (fields.length === 0) { res.status(400).json({ error: "No fields to update" }); return; }
+
+  // Og'irlik ledger himoyasi (izoh yuqorida — weightLedgerConflict).
+  if (req.body.weight !== undefined && req.body.confirmWeightChange !== true) {
+    const newWeight = Number(req.body.weight) > 0 ? Number(req.body.weight) : 1;
+    const conflict = await weightLedgerConflict(productName, newWeight);
+    if (conflict) { res.status(409).json(conflict); return; }
+  }
+
   vals.push(productName);
 
   await pool.query(`UPDATE products SET ${fields.join(",")} WHERE name=$${vals.length}`, vals);

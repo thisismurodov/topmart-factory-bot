@@ -2008,6 +2008,17 @@ def get_packer_assigned_products(packer_name: str) -> list[str]:
         return [r["product_name"] for r in cur.fetchall()]
 
 
+def get_products_for_packer(packer_name: str) -> list[str]:
+    """V3: Packer uchun ko'rsatiladigan mahsulotlar ro'yxati.
+
+    packer_product_assignments'da yozuv bo'lsa — faqat shu mahsulotlar;
+    biriktirilgan mahsulot bo'lmasa — barcha faol mahsulotlar (fallback)."""
+    assigned = get_packer_assigned_products(packer_name)
+    if assigned:
+        return assigned
+    return get_product_names()
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # XOM ASHYO (RAW MATERIALS)
 # ══════════════════════════════════════════════════════════════════════════════

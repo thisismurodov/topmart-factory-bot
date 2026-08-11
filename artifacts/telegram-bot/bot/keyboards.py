@@ -71,10 +71,11 @@ def workers_inline_keyboard(packer_chat_id: int | None = None) -> InlineKeyboard
 def products_inline_keyboard(
     packer_name: str | None = None,
 ) -> InlineKeyboardMarkup:
-    from .database import get_product_names, get_packer_assigned_products
+    from .database import get_product_names, get_products_for_packer
     if packer_name:
-        products = get_packer_assigned_products(packer_name)
-        # Strict: packer only sees their assigned products, no fallback to all
+        # Packer faqat biriktirilgan mahsulotlarni ko'radi;
+        # biriktirilmagan bo'lsa — barcha faol mahsulotlar (fallback).
+        products = get_products_for_packer(packer_name)
     else:
         products = get_product_names()
     buttons = []

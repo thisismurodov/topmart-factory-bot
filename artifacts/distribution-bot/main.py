@@ -2079,7 +2079,11 @@ def _hudud_kb(uid, viloyat):
     kb.add("⬅️ Viloyatga qaytish","❌ Bekor qilish")
     return kb, len(huds)
 
-def _dokon_in_hudud_kb(uid, viloyat, hudud):
+DOKON_KB_PAGE=40  # bitta sahifadagi maksimal dokon tugmasi (Telegram klaviatura ~10KB limiti himoyasi)
+
+def _dokon_in_hudud_kb(uid, viloyat, hudud, page=0):
+    """Hudud ichidagi dokonlar klaviaturasi, sahifalangan.
+    Returns (kb, total, page, pages) — page chegaraga qisqartirilgan bo'lishi mumkin."""
     conn=get_db();c=conn.cursor()
     extra,params=_scope_clause(uid)
     vil_clause="(viloyat=%s OR (viloyat IS NULL AND %s='— Noma''lum') OR (viloyat='' AND %s='— Noma''lum'))"
@@ -2088,10 +2092,18 @@ def _dokon_in_hudud_kb(uid, viloyat, hudud):
                   WHERE holat='faol' AND {vil_clause} AND {hud_clause}{extra}
                   ORDER BY nomi""",(viloyat,viloyat,viloyat,hudud,hudud,hudud)+params)
     rows=c.fetchall(); conn.close()
+    total=len(rows)
+    pages=max(1,(total+DOKON_KB_PAGE-1)//DOKON_KB_PAGE)
+    page=max(0,min(page,pages-1))
     kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=1)
-    for d in rows: kb.add(f"🏪 {d[0]}||{d[1]}")
+    for d in rows[page*DOKON_KB_PAGE:(page+1)*DOKON_KB_PAGE]:
+        kb.add(f"🏪 {d[0]}||{d[1]}")
+    nav=[]
+    if page>0: nav.append("⬅️ Oldingi dokonlar")
+    if page<pages-1: nav.append("➡️ Keyingi dokonlar")
+    if nav: kb.add(*nav)
     kb.add("⬅️ Hududga qaytish","❌ Bekor qilish")
-    return kb, len(rows)
+    return kb, total, page, pages
 
 @bot.message_handler(func=lambda m:m.text=="📦 Tovar berish")
 def tovar_berish(msg):
@@ -2140,16 +2152,41 @@ SAVDO_KB_MAX=80  # bundan ko'p dokonli agent uchun viloyat→hudud bosqichli tan
 
 def _savdo_dokon_ruxsat(uid,did):
     """Tanlangan dokon faol va shu foydalanuvchiga ochiq ekanini tekshiradi.
-    Delivery agent marshrutidagi dokonlar boshqa agentga biriktirilgan bo'ladi,
-    shuning uchun delivery/admin uchun faqat faollik tekshiriladi."""
+    - admin: har qanday faol dokon
+    - delivery: dokon boshqa agentga biriktirilgan bo'ladi, shuning uchun
+      egallik emas — BUGUNGI marshrutga (shu jumladan o'zi qo'shgan ad-hoc
+      dokonlarga) a'zolik tekshiriladi
+    - oddiy agent: faqat o'ziga biriktirilgan faol dokon"""
     user=get_user(uid)
+    if user and user[3]=="delivery" and not is_admin(uid):
+        dlv=_get_delivery_agent_by_tid(uid)
+        kun=_today_kun()
+        if not dlv or not kun: return False
+        conn=get_db();c=conn.cursor()
+        c.execute("""SELECT d.nomi FROM delivery_routes r
+                     JOIN dokonlar d ON d.id=r.dokon_id
+                     WHERE r.delivery_agent_id=%s AND r.kun=%s AND d.id=%s AND d.holat='faol'""",
+                  (dlv[0],kun,did))
+        r=c.fetchone(); conn.close()
+        return r is not None
     conn=get_db();c=conn.cursor()
-    if is_admin(uid) or (user and user[3]=="delivery"):
+    if is_admin(uid):
         c.execute("SELECT nomi FROM dokonlar WHERE id=%s AND holat='faol'",(did,))
     else:
         c.execute("SELECT nomi FROM dokonlar WHERE id=%s AND holat='faol' AND agent_id=%s",(did,uid))
     r=c.fetchone(); conn.close()
     return r is not None
+
+def _dokon_ruxsat_guard(uid,did,user=None):
+    """Yozuvdan OLDINGI yakuniy tekshiruv: dokon faol va shu foydalanuvchiga
+    ochiqligini persist nuqtasida qayta tasdiqlaydi (state buzilgan/eski bo'lsa
+    ham begona dokonga yozib bo'lmaydi). Ruxsat bo'lmasa state tozalanadi."""
+    if _savdo_dokon_ruxsat(uid,did): return True
+    if user is None: user=get_user(uid)
+    clear_state(uid)
+    bot.send_message(uid,"❗ Saqlanmadi: dokon topilmadi, faol emas yoki sizga biriktirilmagan.",
+                     reply_markup=main_kb(user[3]) if user else types.ReplyKeyboardRemove())
+    return False
 
 def _savdo_send_vil(uid,data,total=None):
     kb,nv,nr=_viloyat_kb(uid)
@@ -2190,10 +2227,12 @@ def s_savdo_hudud(msg):
         _savdo_send_vil(uid,data); return
     if not txt.startswith("🏘 "): return
     hud=txt.replace("🏘 ","").rsplit(" (",1)[0].strip()
-    kb,n=_dokon_in_hudud_kb(uid,data.get("sv_vil",""),hud)
+    kb,n,page,pages=_dokon_in_hudud_kb(uid,data.get("sv_vil",""),hud)
     if n==0: bot.send_message(uid,"❗ Bu hududda faol dokon yo'q."); return
+    data["sv_hud"]=hud; data["sv_page"]=page
     set_state(uid,"savdo_dokon",data)
-    bot.send_message(uid,f"🏘 {hud} — {n} ta dokon\n\n🏪 Dokonni tanlang:",reply_markup=kb)
+    sahifa=f" | sahifa {page+1}/{pages}" if pages>1 else ""
+    bot.send_message(uid,f"🏘 {hud} — {n} ta dokon{sahifa}\n\n🏪 Dokonni tanlang:",reply_markup=kb)
 
 @bot.message_handler(func=lambda m:get_state(m.from_user.id)["state"]=="savdo_dokon")
 def s_savdo_dokon(msg):
@@ -2203,6 +2242,12 @@ def s_savdo_dokon(msg):
         kb,nh=_hudud_kb(uid,data["sv_vil"])
         set_state(uid,"savdo_hudud",data)
         bot.send_message(uid,f"📍 {data['sv_vil']}\n\n🏘 Hududni tanlang:",reply_markup=kb)
+        return
+    if txt in ("➡️ Keyingi dokonlar","⬅️ Oldingi dokonlar") and data.get("sv_hud") is not None:
+        page=data.get("sv_page",0)+(1 if txt.startswith("➡️") else -1)
+        kb,n,page,pages=_dokon_in_hudud_kb(uid,data.get("sv_vil",""),data["sv_hud"],page)
+        data["sv_page"]=page; set_state(uid,"savdo_dokon",data)
+        bot.send_message(uid,f"🏘 {data['sv_hud']} — {n} ta dokon | sahifa {page+1}/{pages}\n\n🏪 Dokonni tanlang:",reply_markup=kb)
         return
     if not (txt.startswith("🏪 ") and "||" in txt): return
     try:
@@ -2350,6 +2395,9 @@ def s_savdo_foto_s(msg):
 
 def _check_balans_before_save(uid,data):
     did=data["dokon_id"]; tolov=data["tolov"]
+    # MUHIM: balans yechishdan (apply_balans_delta) OLDIN ruxsat tekshiriladi —
+    # aks holda rad etilgan savdo baribir mijoz balansini kamaytirib qo'yadi
+    if not _dokon_ruxsat_guard(uid,did): return
     balans=get_balans(did)
     if balans>0 and tolov=="nasiya":
         jami=sum(m[2]*data["tanlangan"].get(m[0],0) for m in data["mahsulotlar"])
@@ -2380,6 +2428,9 @@ def _check_balans_before_save(uid,data):
 def s_savdo_balans_confirm(msg):
     uid=msg.from_user.id; data=get_state(uid)["data"]
     balans=data["mavjud_balans"]
+    # Balans yechishdan oldin ruxsatni qayta tekshiramiz (tanlov va tasdiq
+    # orasida dokon o'chirilishi/qayta biriktirilishi mumkin)
+    if not _dokon_ruxsat_guard(uid,data["dokon_id"]): return
     if msg.text=="✅ Ha, ayirish":
         jami=sum(m[2]*data["tanlangan"].get(m[0],0) for m in data["mahsulotlar"])
         deducted=min(balans,jami); yangi_balans=balans-deducted
@@ -2401,6 +2452,8 @@ def _tolov_info_str(data):
 
 def _save_savdo(uid,data):
     user=get_user(uid)
+    # Yakuniy yozish nuqtasi — dokon egaligini shu yerda ham tekshiramiz
+    if not _dokon_ruxsat_guard(uid,data["dokon_id"],user): return
     jami=sum(m[2]*data["tanlangan"].get(m[0],0) for m in data["mahsulotlar"])
     tolov=data["tolov"]
     items=[]; lines=[]
@@ -2498,6 +2551,8 @@ def s_pul_dokon(msg):
         did,dnomi=msg.text.replace("🏪 ","").split("||",1)
         data["dokon_id"]=int(did); data["dokon_nomi"]=dnomi
     except: return
+    if not _savdo_dokon_ruxsat(uid,data["dokon_id"]):
+        bot.send_message(uid,"❗ Bu dokon topilmadi yoki sizga biriktirilmagan."); return
     conn=get_db();c=conn.cursor()
     c.execute("SELECT COALESCE(SUM(qoldiq),0) FROM nasiya WHERE dokon_id=%s AND agent_id=%s AND qoldiq>0",(int(did),uid))
     nasiya_qoldiq=c.fetchone()[0]; conn.close()
@@ -2546,6 +2601,7 @@ def s_pul_nasiya_summa(msg):
         bot.send_message(uid,
             f"⚠️ Siz {fmt(nasiya_qoldiq)}ga qarshi {fmt(summa)} kiritdingiz.\n"
             f"{fmt(ortiqcha)} so'm ORTIQCHA.\n\nTasdiqlaysizmi?",reply_markup=kb); return
+    if not _dokon_ruxsat_guard(uid,did,user): return
     pay_nasiya_fifo(did,uid,summa)
     clear_state(uid)
     yangi_qoldiq=nasiya_qoldiq-summa
@@ -2579,6 +2635,7 @@ def s_pul_nasiya_ortiqcha_confirm(msg):
     if msg.text!="✅ Tasdiqlash": return
     summa=data["ortiqcha_summa"]; nasiya_qoldiq=data["nasiya_qoldiq"]; ortiqcha=data["ortiqcha_diff"]
     did=data["dokon_id"]; dnomi=data["dokon_nomi"]
+    if not _dokon_ruxsat_guard(uid,did,user): return
     owner_tg=pay_nasiya_fifo(did,uid,summa,apply_amount=nasiya_qoldiq,ortiqcha=ortiqcha)
     clear_state(uid)
     bot.send_message(uid,
@@ -2607,6 +2664,7 @@ def s_pul_summa(msg):
     uid=msg.from_user.id; user=get_user(uid); data=get_state(uid)["data"]
     try: summa=int(msg.text.replace(" ","").replace(",",""))
     except: bot.send_message(uid,"❗ Raqam kiriting: 500000"); return
+    if not _dokon_ruxsat_guard(uid,data["dokon_id"],user): return
     record_pul_olish(data["dokon_id"],uid,summa)
     clear_state(uid)
     bot.send_message(uid,f"✅ Pul olish saqlandi!\n🏪 {data['dokon_nomi']}\n💰 {fmt(summa)}",reply_markup=main_kb(user[3]))
@@ -2750,6 +2808,7 @@ def s_nasiya_tolov(msg):
             f"⚠️ Siz {fmt(jami_qoldiq)}ga qarshi {fmt(summa)} kiritdingiz.\n"
             f"{fmt(ortiqcha)} so'm ORTIQCHA.\n\nTasdiqlaysizmi?",reply_markup=kb); return
     # FIFO: eng eski qarzdan boshlab yopiladi (bitta tranzaksiyada)
+    if not _dokon_ruxsat_guard(uid,did,user): return
     pay_nasiya_fifo(did,uid,summa)
     yangi_qoldiq=jami_qoldiq-summa
     status="✅ Barcha qarz to'liq to'landi!" if yangi_qoldiq<=0 else f"🔴 Qolgan qarz: {fmt(yangi_qoldiq)}"
@@ -2781,6 +2840,7 @@ def s_nasiya_tolov_ortiqcha_confirm(msg):
     if msg.text!="✅ Tasdiqlash": return
     summa=data["ortiqcha_summa"]; jami_qoldiq=data["jami_qoldiq"]; ortiqcha=data["ortiqcha_diff"]
     did=data["did"]; dnomi=data["dnomi"]
+    if not _dokon_ruxsat_guard(uid,did,user): return
     owner_tg=pay_nasiya_fifo(did,uid,summa,apply_amount=jami_qoldiq,ortiqcha=ortiqcha)
     clear_state(uid)
     bot.send_message(uid,

@@ -940,8 +940,7 @@ function ProgressBar({ value, max, color }: { value: number; max: number; color:
   );
 }
 
-function DailyAgentCard({ agent, onShop }: { agent: DailyAgent; onShop: (id: number) => void }) {
-  const [open, setOpen] = useState(false);
+function DailyAgentCard({ agent, onShop, open, onToggle }: { agent: DailyAgent; onShop: (id: number) => void; open: boolean; onToggle: () => void }) {
   const visitPct = agent.planned > 0 ? Math.round((agent.visited / agent.planned) * 100) : 0;
   const soldPct = agent.visited > 0 ? Math.round((agent.sold / agent.visited) * 100) : 0;
 
@@ -1029,7 +1028,7 @@ function DailyAgentCard({ agent, onShop }: { agent: DailyAgent; onShop: (id: num
           <div>
             <button
               type="button"
-              onClick={() => setOpen((o) => !o)}
+              onClick={onToggle}
               className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
             >
               {open ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
@@ -1072,6 +1071,10 @@ function DailyAgentCard({ agent, onShop }: { agent: DailyAgent; onShop: (id: num
 }
 
 function DailyVisitsTab({ f, active, onShop }: { f: Filters; active: boolean; onShop: (id: number) => void }) {
+  // Ochilgan kartalar holati parent darajasida saqlanadi — refetch paytida yo'qolmaydi
+  const [expanded, setExpanded] = useState<Record<number, boolean>>({});
+  const toggleExpanded = (agentId: number) =>
+    setExpanded((prev) => ({ ...prev, [agentId]: !prev[agentId] }));
   const p = new URLSearchParams();
   if (f.agentId) p.set("agentId", f.agentId);
   if (f.viloyat) p.set("viloyat", f.viloyat);
@@ -1173,7 +1176,13 @@ function DailyVisitsTab({ f, active, onShop }: { f: Filters; active: boolean; on
       ) : (
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
           {data.agents.map((a) => (
-            <DailyAgentCard key={a.agentId} agent={a} onShop={onShop} />
+            <DailyAgentCard
+              key={a.agentId}
+              agent={a}
+              onShop={onShop}
+              open={!!expanded[a.agentId]}
+              onToggle={() => toggleExpanded(a.agentId)}
+            />
           ))}
         </div>
       )}

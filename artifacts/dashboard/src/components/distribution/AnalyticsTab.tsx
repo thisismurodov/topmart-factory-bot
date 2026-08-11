@@ -10,6 +10,8 @@ import {
 } from "lucide-react";
 
 // ── Turlar ──────────────────────────────────────────────────────────────────────
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
 type AnalyticsData = {
   from: string | null;
   to: string | null;
@@ -87,6 +89,32 @@ function StatCard({
 }
 
 export default function AnalyticsTab({ qs, active }: { qs: string; active: boolean }) {
+  const [exporting, setExporting] = useState(false);
+
+  // Joriy filtr tanlovi bilan CSV (Excel'da ochiladi) yuklab olish
+  async function handleExport() {
+    setExporting(true);
+    try {
+      const r = await authFetch(`/api/distribution/analytics/export${qs}`);
+      if (!r.ok) throw new Error("Eksport muvaffaqiyatsiz");
+      const cd = r.headers.get("Content-Disposition") ?? "";
+      const m = cd.match(/filename="([^"]+)"/);
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = m?.[1] ?? "tahlil.csv";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      alert("Eksport qilishda xatolik yuz berdi. Qayta urinib ko'ring.");
+    } finally {
+      setExporting(false);
+    }
+  }
+
   const { data, isLoading } = useQuery<AnalyticsData>({
     queryKey: ["distribution", "analytics", qs],
     queryFn: async () => {
@@ -123,6 +151,14 @@ export default function AnalyticsTab({ qs, active }: { qs: string; active: boole
 
   return (
     <div className="p-4 space-y-4">
+      {/* Eksport */}
+      <div className="flex justify-end">
+        <Button variant="outline" size="sm" onClick={handleExport} disabled={exporting}>
+          <Download className="w-4 h-4 mr-1.5" />
+          {exporting ? "Yuklanmoqda…" : "Excel/CSV yuklab olish"}
+        </Button>
+      </div>
+
       {/* KPI kartalar */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <StatCard

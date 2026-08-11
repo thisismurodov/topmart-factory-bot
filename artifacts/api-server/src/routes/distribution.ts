@@ -2095,6 +2095,191 @@ router.get("/distribution/agent-km", async (req, res): Promise<void> => {
   });
 });
 
+// ── Tahlil eksporti (CSV) ───────────────────────────────────────────────────────
+// Analytics bilan bir xil filtrlar; CSV ikki bo'lim: kunlik qatorlar + agent KPI.
+// UTF-8 BOM qo'shiladi — Excel faylni to'g'ri kodlashda ochadi.
+function csvEsc(v: unknown): string {
+  const s = String(v ?? "");
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+router.get("/distribution/analytics/export", async (req, res): Promise<void> => {
+  const f = parseFilters(req);
+
+  const dQ = await pool.query(
+    `SELECT to_char(now() AT TIME ZONE 'Asia/Tashkent','YYYY-MM-DD') AS today`
+  );
+  const today = dQ.rows[0].today as string;
+  const fromDate = f.from ?? (() => {
+    const d = new Date(`${today}T12:00:00`);
+    d.setDate(d.getDate() - 29);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  })();
+  const toDate = f.to ?? today;
+  const ef: Filters = { ...f, from: fromDate, to: toDate };
+
+  const swParams: unknown[] = [];
+  const sw = salesWhere(ef, swParams);
+
+  // olmagan_dokonlar filtri (analytics bilan bir xil mantiq)
+  const owParams: unknown[] = [];
+  let ow = "";
+  owParams.push(fromDate); ow += ` AND substr(o.created_at,1,10) >= $${owParams.length}`;
+  owParams.push(toDate);   ow += ` AND substr(o.created_at,1,10) <= $${owParams.length}`;
+  if (ef.agentId) { owParams.push(ef.agentId); ow += ` AND o.agent_id = $${owParams.length}`; }
+  if (ef.viloyat) { owParams.push(ef.viloyat); ow += ` AND d.viloyat = $${owParams.length}`; }
+  if (ef.hudud)   { owParams.push(ef.hudud);   ow += ` AND d.hudud = $${owParams.length}`; }
+  if (ef.search)  { owParams.push(`%${ef.search}%`); ow += ` AND d.nomi ILIKE $${owParams.length}`; }
+  const owOff = ow.replace(/\$(\d+)/g, (_m, n) => `$${Number(n) + swParams.length}`);
+  const combinedP = [...swParams, ...owParams];
+
+  const [dailySR, dailyVisitR, agentSalesR, agentVisitR] = await Promise.all([
+    // Kunlik savdo soni + summa
+    pool.query(`
+      SELECT substr(s.created_at,1,10) AS date,
+             COUNT(*)::int AS sales,
+             COALESCE(SUM(s.jami_summa),0)::bigint AS sales_total
+        FROM distribution.savdolar s
+        JOIN distribution.dokonlar d ON d.id = s.dokon_id
+       WHERE 1=1${sw}
+       GROUP BY substr(s.created_at,1,10)
+    `, swParams),
+
+    // Kunlik noyob tashrif do'konlari (savdolar ∪ olmagan)
+    pool.query(`
+      SELECT v.date, COUNT(DISTINCT v.dokon_id)::int AS visited_shops
+        FROM (
+          SELECT substr(s.created_at,1,10) AS date, s.dokon_id
+            FROM distribution.savdolar s
+            JOIN distribution.dokonlar d ON d.id = s.dokon_id
+           WHERE 1=1${sw}
+          UNION
+          SELECT substr(o.created_at,1,10) AS date, o.dokon_id
+            FROM distribution.olmagan_dokonlar o
+            JOIN distribution.dokonlar d ON d.id = o.dokon_id
+           WHERE 1=1${owOff}
+        ) v
+       GROUP BY v.date
+    `, combinedP),
+
+    // Agent bo'yicha savdo KPI (repeat: do'konning davrgacha istalgan savdosi)
+    pool.query(`
+      WITH ps AS (
+        SELECT s.agent_id, s.dokon_id, s.jami_summa, s.tolov_turi
+          FROM distribution.savdolar s
+          JOIN distribution.dokonlar d ON d.id = s.dokon_id
+         WHERE 1=1${sw}
+      )
+      SELECT ps.agent_id,
+             COUNT(DISTINCT ps.dokon_id)::int AS sold_shops,
+             COUNT(*)::int AS sales_count,
+             COALESCE(SUM(ps.jami_summa),0)::bigint AS sales_total,
+             COUNT(*) FILTER (WHERE ps.tolov_turi IN ('nasiya','aralash'))::int AS nasiya_count,
+             COUNT(DISTINCT ps.dokon_id) FILTER (WHERE EXISTS (
+               SELECT 1 FROM distribution.savdolar prev
+                WHERE prev.dokon_id = ps.dokon_id
+                  AND substr(prev.created_at,1,10) < $1
+             ))::int AS repeat_shops
+        FROM ps
+       GROUP BY ps.agent_id
+    `, swParams),
+
+    // Agent bo'yicha kirilgan noyob do'konlar (savdolar ∪ olmagan)
+    pool.query(`
+      SELECT v.agent_id, COUNT(DISTINCT v.dokon_id)::int AS visited_shops
+        FROM (
+          SELECT s.agent_id, s.dokon_id
+            FROM distribution.savdolar s
+            JOIN distribution.dokonlar d ON d.id = s.dokon_id
+           WHERE 1=1${sw}
+          UNION
+          SELECT o.agent_id, o.dokon_id
+            FROM distribution.olmagan_dokonlar o
+            JOIN distribution.dokonlar d ON d.id = o.dokon_id
+           WHERE 1=1${owOff}
+        ) v
+       GROUP BY v.agent_id
+    `, combinedP),
+  ]);
+
+  // Agent nomlari
+  const namesR = await pool.query(
+    `SELECT telegram_id, name FROM distribution.users WHERE name IS NOT NULL`
+  );
+  const nameMap = new Map<string, string>();
+  for (const r of namesR.rows) nameMap.set(String(r.telegram_id), r.name as string);
+
+  // Kunlik qatorlar — sana oralig'i to'liq (analytics bilan bir xil)
+  const dailySMap = new Map<string, { sales: number; salesTotal: number }>();
+  for (const r of dailySR.rows) {
+    dailySMap.set(r.date as string, { sales: Number(r.sales), salesTotal: Number(r.sales_total) });
+  }
+  const dailyVisitMap = new Map<string, number>();
+  for (const r of dailyVisitR.rows) dailyVisitMap.set(r.date as string, Number(r.visited_shops));
+
+  const lines: string[] = [];
+  lines.push(`Davr,${csvEsc(fromDate)},${csvEsc(toDate)}`);
+  lines.push("");
+  lines.push("Kunlik hisobot");
+  lines.push("Sana,Tashriflar (do'kon),Savdo soni,Savdo summasi (so'm)");
+  const cur = new Date(`${fromDate}T12:00:00`);
+  const end = new Date(`${toDate}T12:00:00`);
+  while (cur <= end) {
+    const dateStr = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}-${String(cur.getDate()).padStart(2, "0")}`;
+    const s = dailySMap.get(dateStr);
+    const visits = dailyVisitMap.get(dateStr) ?? 0;
+    lines.push(`${dateStr},${visits},${s?.sales ?? 0},${s?.salesTotal ?? 0}`);
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  // Agent KPI bo'limi
+  const visitByAgent = new Map<string, number>();
+  for (const r of agentVisitR.rows) visitByAgent.set(String(r.agent_id), Number(r.visited_shops));
+  type AgentRow = {
+    agentId: string; name: string; visited: number; sold: number;
+    salesCount: number; salesTotal: number; nasiya: number; repeat: number;
+  };
+  const agentRows = new Map<string, AgentRow>();
+  const blank = (id: string): AgentRow => ({
+    agentId: id, name: nameMap.get(id) ?? id, visited: visitByAgent.get(id) ?? 0,
+    sold: 0, salesCount: 0, salesTotal: 0, nasiya: 0, repeat: 0,
+  });
+  for (const r of agentSalesR.rows) {
+    const id = String(r.agent_id);
+    const row = blank(id);
+    row.sold = Number(r.sold_shops);
+    row.salesCount = Number(r.sales_count);
+    row.salesTotal = Number(r.sales_total);
+    row.nasiya = Number(r.nasiya_count);
+    row.repeat = Number(r.repeat_shops);
+    agentRows.set(id, row);
+  }
+  for (const id of visitByAgent.keys()) {
+    if (!agentRows.has(id)) agentRows.set(id, blank(id));
+  }
+
+  lines.push("");
+  lines.push("Agent KPI");
+  lines.push("Agent,Kirilgan do'konlar,Sotib olgan do'konlar,Konversiya %,Takroriy %,Nasiya %,Savdo soni,Savdo summasi (so'm)");
+  const sorted = [...agentRows.values()].sort((a, b) => a.name.localeCompare(b.name, "uz"));
+  for (const a of sorted) {
+    const conv = a.visited > 0 ? Math.round((a.sold / a.visited) * 100) : "";
+    const rep = a.sold > 0 ? Math.round((a.repeat / a.sold) * 100) : "";
+    const nas = a.salesCount > 0 ? Math.round((a.nasiya / a.salesCount) * 100) : "";
+    lines.push(
+      `${csvEsc(a.name)},${a.visited},${a.sold},${conv},${rep},${nas},${a.salesCount},${a.salesTotal}`
+    );
+  }
+
+  const csv = "\uFEFF" + lines.join("\r\n") + "\r\n";
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="tahlil_${fromDate}_${toDate}.csv"`
+  );
+  res.send(csv);
+});
+
 // ── Issiqlik xaritasi (heatmap) ──────────────────────────────────────────────────
 // agentId/viloyat/hudud/search filtrlari (sana yo'q — joriy holat ko'rsatiladi).
 // Har bir do'kon uchun oxirgi xariddan o'tgan kunlar soni va rang sinfi:

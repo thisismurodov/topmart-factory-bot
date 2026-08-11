@@ -183,6 +183,19 @@ CREATE TABLE IF NOT EXISTS distribution.field_ops (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_field_ops_client_op ON distribution.field_ops (client_op_id);
 `;
 
+// Every named index declared in the DDL above. Derived from the DDL text so a
+// future `CREATE INDEX IF NOT EXISTS ...` line is verified automatically —
+// no second list to keep in sync.
+function expectedIndexNames(): string[] {
+  const names = [...DDL.matchAll(/CREATE\s+(?:UNIQUE\s+)?INDEX\s+IF\s+NOT\s+EXISTS\s+(\S+)/gi)].map(
+    (m) => m[1],
+  );
+  if (names.length === 0) {
+    throw new Error("No CREATE INDEX statements found in DDL — extraction regex is broken.");
+  }
+  return names;
+}
+
 async function main() {
   const client = await pool.connect();
   try {
@@ -192,6 +205,23 @@ async function main() {
     );
     console.log("distribution schema tables:", rows.map((r) => r.table_name).join(", "));
     console.log(`Total: ${rows.length} tables`);
+
+    // Verify the live DB actually has every named index the schema declares.
+    // CREATE INDEX IF NOT EXISTS is idempotent, but this catches any index
+    // that failed to build (e.g. a unique index blocked by duplicate rows).
+    const expected = expectedIndexNames();
+    const { rows: idxRows } = await client.query(
+      `SELECT indexname FROM pg_indexes WHERE schemaname = 'distribution'`,
+    );
+    const actual = new Set(idxRows.map((r) => r.indexname));
+    const missing = expected.filter((name) => !actual.has(name));
+    if (missing.length > 0) {
+      throw new Error(
+        `Missing indexes on target DB after init: ${missing.join(", ")}. ` +
+          `A unique index may be blocked by duplicate rows — inspect and de-duplicate, then re-run.`,
+      );
+    }
+    console.log(`All ${expected.length} named indexes present:`, expected.join(", "));
   } finally {
     client.release();
     await pool.end();

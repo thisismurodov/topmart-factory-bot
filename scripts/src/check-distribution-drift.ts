@@ -378,6 +378,18 @@ async function main(): Promise<void> {
     stdio: ["ignore", "inherit", "inherit"],
   });
 
+  // TEST-ONLY hook: sun'iy drift kiritish uchun. Faqat drift-checkning o'zini
+  // sinovdan o'tkazadigan test ishlatadi (masalan bitta nusxaga ortiqcha
+  // indeks qo'shib, skript non-zero bilan chiqishini tasdiqlash uchun).
+  // Oddiy ishga tushirishlarda bu env var hech qachon o'rnatilmaydi.
+  const testExtraDdl = process.env["DIST_DRIFT_TEST_EXTRA_DDL"];
+  if (testExtraDdl) {
+    console.log("→ [TEST] DIST_DRIFT_TEST_EXTRA_DDL qo'llanmoqda (sun'iy drift)...");
+    const hookPool = new pg.Pool({ connectionString: tsUrl });
+    await hookPool.query(testExtraDdl);
+    await hookPool.end();
+  }
+
   // 3. Har ikkala natijani Drizzle mirror bilan solishtirish
   const expected = drizzleExpected();
   const expectedIndexes = drizzleExpectedIndexes();

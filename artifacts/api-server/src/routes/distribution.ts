@@ -1952,6 +1952,148 @@ router.get("/distribution/analytics", async (req, res): Promise<void> => {
   });
 });
 
+// ── Agent kunlik km (bosilgan yo'l) — agent_locations GPS nuqtalaridan ──────────
+// Har agent+kun uchun ketma-ket GPS nuqtalari orasidagi Haversine masofalar yig'indisi.
+// >20 km bo'lgan yakka segmentlar GPS sakrash (glitch) deb hisoblanib tashlanadi.
+// Filtrlash: from/to (default oxirgi 30 kun), agentId. km/sale uchun savdolar soni ham.
+router.get("/distribution/agent-km", async (req, res): Promise<void> => {
+  const f = parseFilters(req);
+
+  const dQ = await pool.query(
+    `SELECT to_char(now() AT TIME ZONE 'Asia/Tashkent','YYYY-MM-DD') AS today`
+  );
+  const today = dQ.rows[0].today as string;
+  const fromDate = f.from ?? (() => {
+    const d = new Date(`${today}T12:00:00`);
+    d.setDate(d.getDate() - 29);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  })();
+  const toDate = f.to ?? today;
+
+  const params: unknown[] = [fromDate, toDate];
+  let agentW = "";
+  if (f.agentId) {
+    params.push(f.agentId);
+    agentW = ` AND al.agent_id = $${params.length}`;
+  }
+
+  // seg: har nuqta uchun avvalgi nuqta (bir agent + bir kun ichida, lag oynasi)
+  // dist_km: Haversine; 20 km dan katta yakka segment — GPS glitch, hisobga olinmaydi
+  const { rows } = await pool.query(
+    `WITH pts AS (
+       SELECT al.agent_id,
+              substr(al.created_at,1,10) AS d,
+              al.latitude::float8  AS lat,
+              al.longitude::float8 AS lng,
+              al.created_at
+         FROM distribution.agent_locations al
+        WHERE substr(al.created_at,1,10) >= $1
+          AND substr(al.created_at,1,10) <= $2
+          AND al.latitude IS NOT NULL AND al.longitude IS NOT NULL${agentW}
+     ),
+     seg AS (
+       SELECT agent_id, d, lat, lng,
+              lag(lat) OVER w AS plat,
+              lag(lng) OVER w AS plng
+         FROM pts
+       WINDOW w AS (PARTITION BY agent_id, d ORDER BY created_at)
+     ),
+     dist AS (
+       SELECT agent_id, d,
+              6371 * 2 * asin(sqrt(
+                power(sin(radians(lat - plat) / 2), 2) +
+                cos(radians(plat)) * cos(radians(lat)) *
+                power(sin(radians(lng - plng) / 2), 2)
+              )) AS km
+         FROM seg
+        WHERE plat IS NOT NULL
+     ),
+     daily AS (
+       SELECT agent_id, d AS date,
+              SUM(km) FILTER (WHERE km <= 20) AS km
+         FROM dist
+        GROUP BY agent_id, d
+     ),
+     sales AS (
+       SELECT s.agent_id, substr(s.created_at,1,10) AS date, COUNT(*)::int AS cnt
+         FROM distribution.savdolar s
+        WHERE substr(s.created_at,1,10) >= $1
+          AND substr(s.created_at,1,10) <= $2
+        GROUP BY s.agent_id, substr(s.created_at,1,10)
+     )
+     SELECT dl.agent_id, dl.date,
+            ROUND(COALESCE(dl.km,0)::numeric, 1)::float8 AS km,
+            COALESCE(sa.cnt, 0)::int AS sales_count,
+            da.name AS agent_name,
+            da.mashina_nomeri
+       FROM daily dl
+       LEFT JOIN sales sa ON sa.agent_id = dl.agent_id AND sa.date = dl.date
+       LEFT JOIN distribution.delivery_agents da ON da.telegram_id = dl.agent_id
+      ORDER BY dl.date, da.name`,
+    params
+  );
+
+  type AgentAgg = {
+    agentId: string;
+    agentName: string | null;
+    mashinaNomeri: string | null;
+    days: number;
+    totalKm: number;
+    salesCount: number;
+  };
+  const byAgent = new Map<string, AgentAgg>();
+  const daily: Array<{ date: string; agentId: string; agentName: string | null; km: number; salesCount: number }> = [];
+  for (const r of rows) {
+    const id = String(r.agent_id);
+    const km = Number(r.km);
+    const sc = Number(r.sales_count);
+    daily.push({
+      date: r.date as string,
+      agentId: id,
+      agentName: (r.agent_name as string | null) ?? null,
+      km,
+      salesCount: sc,
+    });
+    const a = byAgent.get(id) ?? {
+      agentId: id,
+      agentName: (r.agent_name as string | null) ?? null,
+      mashinaNomeri: (r.mashina_nomeri as string | null) ?? null,
+      days: 0,
+      totalKm: 0,
+      salesCount: 0,
+    };
+    a.days += 1;
+    a.totalKm += km;
+    a.salesCount += sc;
+    byAgent.set(id, a);
+  }
+
+  const agents = [...byAgent.values()]
+    .map((a) => ({
+      ...a,
+      totalKm: Math.round(a.totalKm * 10) / 10,
+      avgKmPerDay: a.days > 0 ? Math.round((a.totalKm / a.days) * 10) / 10 : null,
+      kmPerSale: a.salesCount > 0 ? Math.round((a.totalKm / a.salesCount) * 10) / 10 : null,
+    }))
+    .sort((x, y) => (x.agentName ?? "").localeCompare(y.agentName ?? ""));
+
+  const totalKm = agents.reduce((s, a) => s + a.totalKm, 0);
+  const totalDays = agents.reduce((s, a) => s + a.days, 0);
+  const totalSales = agents.reduce((s, a) => s + a.salesCount, 0);
+
+  res.json({
+    from: fromDate,
+    to: toDate,
+    summary: {
+      totalKm: Math.round(totalKm * 10) / 10,
+      avgKmPerDay: totalDays > 0 ? Math.round((totalKm / totalDays) * 10) / 10 : null,
+      kmPerSale: totalSales > 0 ? Math.round((totalKm / totalSales) * 10) / 10 : null,
+    },
+    agents,
+    daily,
+  });
+});
+
 // ── Issiqlik xaritasi (heatmap) ──────────────────────────────────────────────────
 // agentId/viloyat/hudud/search filtrlari (sana yo'q — joriy holat ko'rsatiladi).
 // Har bir do'kon uchun oxirgi xariddan o'tgan kunlar soni va rang sinfi:

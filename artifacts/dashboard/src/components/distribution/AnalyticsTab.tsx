@@ -6,7 +6,7 @@ import { authFetch } from "@/App";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  Store, ShoppingBag, Repeat2, CreditCard, CalendarClock, TrendingUp,
+  Store, ShoppingBag, Repeat2, CreditCard, CalendarClock, TrendingUp, Route,
 } from "lucide-react";
 
 // ── Turlar ──────────────────────────────────────────────────────────────────────
@@ -27,7 +27,24 @@ type AnalyticsData = {
   daily: { date: string; visits: number; sales: number; salesTotal: number }[];
 };
 
+type AgentKmData = {
+  from: string | null;
+  to: string | null;
+  summary: { totalKm: number; avgKmPerDay: number | null; kmPerSale: number | null };
+  agents: {
+    agentId: string;
+    agentName: string | null;
+    mashinaNomeri: string | null;
+    days: number;
+    totalKm: number;
+    salesCount: number;
+    avgKmPerDay: number | null;
+    kmPerSale: number | null;
+  }[];
+};
+
 const fmtSom = (n: number) => `${Math.round(n).toLocaleString("uz-UZ")} so'm`;
+const fmtKm = (n: number | null) => (n == null ? "—" : `${n.toLocaleString("uz-UZ")} km`);
 const fmtPct = (v: number | null) => (v == null ? "—" : `${v}%`);
 
 // Grafikda summani qisqa ko'rsatish (1.2 mln, 350 ming)
@@ -75,6 +92,16 @@ export default function AnalyticsTab({ qs, active }: { qs: string; active: boole
     queryFn: async () => {
       const r = await authFetch(`/api/distribution/analytics${qs}`);
       if (!r.ok) throw new Error("Analitika yuklanmadi");
+      return r.json();
+    },
+    enabled: active,
+  });
+
+  const { data: kmData, isLoading: kmLoading } = useQuery<AgentKmData>({
+    queryKey: ["distribution", "agent-km", qs],
+    queryFn: async () => {
+      const r = await authFetch(`/api/distribution/agent-km${qs}`);
+      if (!r.ok) throw new Error("Agent km ma'lumoti yuklanmadi");
       return r.json();
     },
     enabled: active,
@@ -181,6 +208,77 @@ export default function AnalyticsTab({ qs, active }: { qs: string; active: boole
               </ComposedChart>
             </ResponsiveContainer>
           </div>
+        )}
+      </div>
+
+      {/* Agent samaradorligi — GPS bo'yicha bosilgan km va km/savdo */}
+      <div>
+        <div className="text-sm font-semibold mb-2 flex items-center gap-1.5">
+          <Route className="w-4 h-4" />
+          Agent samaradorligi (bosilgan km)
+        </div>
+        {kmLoading ? (
+          <Skeleton className="h-40" />
+        ) : !kmData || kmData.agents.length === 0 ? (
+          <div className="text-sm text-muted-foreground border rounded-md py-8 text-center">
+            Tanlangan davr uchun GPS ma'lumoti yo'q
+          </div>
+        ) : (
+          <Card>
+            <CardContent className="p-4 space-y-3">
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <div className="text-xs text-muted-foreground">Jami bosilgan</div>
+                  <div className="text-lg font-bold">{fmtKm(kmData.summary.totalKm)}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">O'rtacha km/kun</div>
+                  <div className="text-lg font-bold">{fmtKm(kmData.summary.avgKmPerDay)}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">km / savdo</div>
+                  <div className="text-lg font-bold">{fmtKm(kmData.summary.kmPerSale)}</div>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-xs text-muted-foreground border-b">
+                      <th className="text-left py-1.5 pr-2 font-medium">Agent</th>
+                      <th className="text-right py-1.5 px-2 font-medium">GPS kunlar</th>
+                      <th className="text-right py-1.5 px-2 font-medium">Jami km</th>
+                      <th className="text-right py-1.5 px-2 font-medium">km/kun</th>
+                      <th className="text-right py-1.5 px-2 font-medium">Savdo</th>
+                      <th className="text-right py-1.5 pl-2 font-medium">km/savdo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {kmData.agents.map((a) => (
+                      <tr key={a.agentId} className="border-b last:border-0">
+                        <td className="py-1.5 pr-2">
+                          {a.agentName ?? `ID ${a.agentId}`}
+                          {a.mashinaNomeri && (
+                            <span className="text-xs text-muted-foreground ml-1">
+                              ({a.mashinaNomeri})
+                            </span>
+                          )}
+                        </td>
+                        <td className="text-right py-1.5 px-2">{a.days}</td>
+                        <td className="text-right py-1.5 px-2">{fmtKm(a.totalKm)}</td>
+                        <td className="text-right py-1.5 px-2">{fmtKm(a.avgKmPerDay)}</td>
+                        <td className="text-right py-1.5 px-2">{a.salesCount}</td>
+                        <td className="text-right py-1.5 pl-2">{fmtKm(a.kmPerSale)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="text-[11px] text-muted-foreground">
+                GPS nuqtalari orasidagi masofalar yig'indisi. 20 km dan katta sakrashlar
+                (GPS xatosi) hisobga olinmaydi.
+              </div>
+            </CardContent>
+          </Card>
         )}
       </div>
     </div>

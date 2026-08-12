@@ -78,46 +78,96 @@ router.post("/inventory/movement", async (req, res): Promise<void> => {
   try {
     await client.query("BEGIN");
 
+    // Og'irlik sinxroni (ombor.ts bilan bir xil qoida):
+    // - OUT/TRANSFER: mavjud qatordagi og'irlikdan proporsional ayiramiz.
+    // - IN: partiya nisbati (SUM(weight_kg)/SUM(quantity)) bo'yicha hisoblaymiz.
+    // Chiqadigan qatorning turi ko'chadi; yangi kirimda 'finished' deb olamiz.
+
+    // Manba qatori (OUT / TRANSFER uchun)
+    const srcWarehouseId = movement_type === "IN" ? null : from_warehouse_id ?? null;
+    let srcQty = 0, srcWeight = 0;
+    let productType = "finished";
+    if (srcWarehouseId) {
+      const srcRes = await client.query(
+        "SELECT quantity, weight_kg, product_type FROM inventory WHERE warehouse_id=$1 AND product=$2",
+        [srcWarehouseId, product]
+      );
+      if (srcRes.rows.length) {
+        srcQty      = Number(srcRes.rows[0].quantity) || 0;
+        srcWeight   = Number(srcRes.rows[0].weight_kg) || 0;
+        productType = (srcRes.rows[0].product_type as string) || "finished";
+      }
+    }
+    // Proporsional ko'chiriladigan og'irlik (OUT/TRANSFER)
+    const moveWeight = srcQty > 0 && srcWeight > 0
+      ? Math.min(srcWeight, (srcWeight * qty) / srcQty)
+      : 0;
+
+    // IN uchun: kg-mahsulot og'irligini partiya nisbatidan hisoblaymiz
+    let inWeight = 0;
+    if (movement_type === "IN" && to_warehouse_id) {
+      const wr = await client.query(
+        `SELECT CASE WHEN LOWER(p.unit_type) = 'kg' AND COALESCE(SUM(b.quantity),0) > 0
+                     THEN SUM(b.weight_kg)::numeric / SUM(b.quantity)
+                     ELSE 0 END AS kg_per_unit
+         FROM products p
+         LEFT JOIN batches b ON b.product = p.name
+         WHERE p.name = $1
+         GROUP BY p.unit_type`,
+        [product]
+      );
+      const kgPerUnit = wr.rows.length ? Number(wr.rows[0].kg_per_unit) || 0 : 0;
+      inWeight = kgPerUnit > 0 ? qty * kgPerUnit : 0;
+    }
+
     // Record movement
     await client.query(
-      `INSERT INTO stock_movements (product, quantity, movement_type, from_warehouse_id, to_warehouse_id, note, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      `INSERT INTO stock_movements (product, quantity, movement_type, from_warehouse_id, to_warehouse_id, note, created_by, product_type)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
       [product, qty, movement_type,
         from_warehouse_id ?? null, to_warehouse_id ?? null,
-        note ?? "", actingUser(req)]
+        note ?? "", actingUser(req), productType]
     );
 
     // Update inventory
     if (movement_type === "IN" && to_warehouse_id) {
       await client.query(
-        `INSERT INTO inventory (warehouse_id, product, quantity, updated_at)
-         VALUES ($1,$2,$3,NOW())
+        `INSERT INTO inventory (warehouse_id, product, quantity, weight_kg, product_type, updated_at)
+         VALUES ($1,$2,$3,$4,$5,NOW())
          ON CONFLICT (warehouse_id, product)
-         DO UPDATE SET quantity = inventory.quantity + $3, updated_at=NOW()`,
-        [to_warehouse_id, product, qty]
+         DO UPDATE SET quantity = inventory.quantity + EXCLUDED.quantity,
+                       weight_kg = inventory.weight_kg + EXCLUDED.weight_kg,
+                       updated_at=NOW()`,
+        [to_warehouse_id, product, qty, inWeight, productType]
       );
     } else if (movement_type === "OUT" && from_warehouse_id) {
       await client.query(
-        `INSERT INTO inventory (warehouse_id, product, quantity, updated_at)
-         VALUES ($1,$2,$3,NOW())
+        `INSERT INTO inventory (warehouse_id, product, quantity, weight_kg, product_type, updated_at)
+         VALUES ($1,$2,0,0,$3,NOW())
          ON CONFLICT (warehouse_id, product)
-         DO UPDATE SET quantity = GREATEST(0, inventory.quantity - $3), updated_at=NOW()`,
-        [from_warehouse_id, product, qty]
+         DO UPDATE SET quantity = GREATEST(0, inventory.quantity - $4),
+                       weight_kg = GREATEST(0, inventory.weight_kg - $5),
+                       updated_at=NOW()`,
+        [from_warehouse_id, product, productType, qty, moveWeight]
       );
     } else if (movement_type === "TRANSFER" && from_warehouse_id && to_warehouse_id) {
       await client.query(
-        `INSERT INTO inventory (warehouse_id, product, quantity, updated_at)
-         VALUES ($1,$2,$3,NOW())
+        `INSERT INTO inventory (warehouse_id, product, quantity, weight_kg, product_type, updated_at)
+         VALUES ($1,$2,0,0,$3,NOW())
          ON CONFLICT (warehouse_id, product)
-         DO UPDATE SET quantity = GREATEST(0, inventory.quantity - $3), updated_at=NOW()`,
-        [from_warehouse_id, product, qty]
+         DO UPDATE SET quantity = GREATEST(0, inventory.quantity - $4),
+                       weight_kg = GREATEST(0, inventory.weight_kg - $5),
+                       updated_at=NOW()`,
+        [from_warehouse_id, product, productType, qty, moveWeight]
       );
       await client.query(
-        `INSERT INTO inventory (warehouse_id, product, quantity, updated_at)
-         VALUES ($1,$2,$3,NOW())
+        `INSERT INTO inventory (warehouse_id, product, quantity, weight_kg, product_type, updated_at)
+         VALUES ($1,$2,$3,$4,$5,NOW())
          ON CONFLICT (warehouse_id, product)
-         DO UPDATE SET quantity = inventory.quantity + $3, updated_at=NOW()`,
-        [to_warehouse_id, product, qty]
+         DO UPDATE SET quantity = inventory.quantity + EXCLUDED.quantity,
+                       weight_kg = inventory.weight_kg + EXCLUDED.weight_kg,
+                       updated_at=NOW()`,
+        [to_warehouse_id, product, qty, moveWeight, productType]
       );
     }
 

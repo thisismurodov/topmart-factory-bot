@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net";
 import type { Pool } from "pg";
 
 // ── Isolation ──────────────────────────────────────────────────────────────
-const SCHEMA = `topmart_invv2_attr_test_${process.pid}_${Date.now()}`;
+const SCHEMA = `topmart_invv2_wt_test_${process.pid}_${Date.now()}`;
 
 const baseUrl = process.env.RAILWAY_DATABASE_URL || process.env.DATABASE_URL;
 if (!baseUrl) throw new Error("DATABASE_URL must be set to run these tests");
@@ -19,11 +19,8 @@ if (!baseUrl) throw new Error("DATABASE_URL must be set to run these tests");
 let pool: Pool;
 let server: Server;
 let apiUrl: string;
-let warehouseId: number;
-
-// Simulated session user, set per-test. Mirrors requireAuth attaching
-// req.username after session validation.
-let sessionUser: string | undefined;
+let whA: number;
+let whB: number;
 
 async function postMovement(body: Record<string, unknown>): Promise<{ status: number; json: any }> {
   const r = await fetch(`${apiUrl}/inventory/movement`, {
@@ -34,11 +31,13 @@ async function postMovement(body: Record<string, unknown>): Promise<{ status: nu
   return { status: r.status, json: await r.json().catch(() => null) };
 }
 
-async function lastCreatedBy(): Promise<string | null> {
+async function invRow(warehouseId: number, product: string) {
   const { rows } = await pool.query(
-    `SELECT created_by FROM stock_movements ORDER BY id DESC LIMIT 1`,
+    `SELECT quantity::float AS quantity, weight_kg::float AS weight_kg, product_type
+     FROM inventory WHERE warehouse_id=$1 AND product=$2`,
+    [warehouseId, product],
   );
-  return rows.length ? rows[0].created_by : null;
+  return rows[0] ?? null;
 }
 
 beforeAll(async () => {
@@ -92,18 +91,18 @@ beforeAll(async () => {
   `);
 
   const { rows } = await pool.query(
-    `INSERT INTO warehouses (name) VALUES ('K-Attr') RETURNING id`,
+    `INSERT INTO warehouses (name) VALUES ('K-A'),('K-B') RETURNING id`,
   );
-  warehouseId = rows[0].id;
+  whA = rows[0].id;
+  whB = rows[1].id;
+
+  // kg-product with batch history: 10 kg per unit (100 units / 1000 kg).
+  await pool.query(`INSERT INTO products (name, unit_type) VALUES ('KgMahsulot','kg'), ('DonaMahsulot','dona')`);
+  await pool.query(`INSERT INTO batches (product, quantity, weight_kg) VALUES ('KgMahsulot', 100, 1000)`);
 
   const { default: inventoryV2Router } = await import("../src/routes/inventory-v2");
   const app = express();
   app.use(express.json());
-  // Mimic the session middleware: attach req.username when a session exists.
-  app.use((req: any, _res, next) => {
-    if (sessionUser) req.username = sessionUser;
-    next();
-  });
   app.use(inventoryV2Router);
   await new Promise<void>((resolve) => {
     server = app.listen(0, "127.0.0.1", resolve);
@@ -112,7 +111,6 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  sessionUser = undefined;
   await pool.query(`TRUNCATE stock_movements RESTART IDENTITY`);
   await pool.query(`TRUNCATE inventory RESTART IDENTITY`);
 });
@@ -126,43 +124,72 @@ afterAll(async () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-describe("POST /inventory/movement — created_by attribution", () => {
-  it("session user always wins: body created_by/operator cannot spoof", async () => {
-    sessionUser = "admin1";
+describe("POST /inventory/movement — weight_kg sync", () => {
+  it("IN derives weight from batch ratio for kg-products", async () => {
     const { status } = await postMovement({
-      product: "P1", quantity: 5, movement_type: "IN", to_warehouse_id: warehouseId,
-      created_by: "hacker", operator: "hacker2",
+      product: "KgMahsulot", quantity: 5, movement_type: "IN", to_warehouse_id: whA,
     });
     expect(status).toBe(200);
-    expect(await lastCreatedBy()).toBe("admin1");
+    const row = await invRow(whA, "KgMahsulot");
+    expect(row.quantity).toBe(5);
+    expect(row.weight_kg).toBeCloseTo(50); // 10 kg/unit × 5
   });
 
-  it("without a session, body created_by is ignored (no arbitrary attribution)", async () => {
-    const { status } = await postMovement({
-      product: "P2", quantity: 3, movement_type: "IN", to_warehouse_id: warehouseId,
-      created_by: "somebody",
+  it("IN leaves weight at 0 for dona-products", async () => {
+    await postMovement({
+      product: "DonaMahsulot", quantity: 7, movement_type: "IN", to_warehouse_id: whA,
     });
-    expect(status).toBe(200);
-    const by = await lastCreatedBy();
-    expect(by).not.toBe("somebody");
-    expect(by).toBe("bot");
+    const row = await invRow(whA, "DonaMahsulot");
+    expect(row.quantity).toBe(7);
+    expect(row.weight_kg).toBe(0);
   });
 
-  it("without a session, a bot-style operator field is recorded", async () => {
+  it("OUT removes weight proportionally to quantity", async () => {
+    await pool.query(
+      `INSERT INTO inventory (warehouse_id, product, quantity, weight_kg, product_type)
+       VALUES ($1,'KgMahsulot',10,80,'finished')`,
+      [whA],
+    );
     const { status } = await postMovement({
-      product: "P3", quantity: 2, movement_type: "IN", to_warehouse_id: warehouseId,
-      operator: "Omborchi Ali",
+      product: "KgMahsulot", quantity: 4, movement_type: "OUT", from_warehouse_id: whA,
     });
     expect(status).toBe(200);
-    expect(await lastCreatedBy()).toBe("Omborchi Ali");
+    const row = await invRow(whA, "KgMahsulot");
+    expect(row.quantity).toBe(6);
+    expect(row.weight_kg).toBeCloseTo(48); // 80 × (1 − 4/10)
   });
 
-  it("never records an empty created_by", async () => {
+  it("TRANSFER moves proportional weight and product_type to the destination", async () => {
+    await pool.query(
+      `INSERT INTO inventory (warehouse_id, product, quantity, weight_kg, product_type)
+       VALUES ($1,'KgMahsulot',10,80,'wip')`,
+      [whA],
+    );
     const { status } = await postMovement({
-      product: "P4", quantity: 1, movement_type: "IN", to_warehouse_id: warehouseId,
-      created_by: "",
+      product: "KgMahsulot", quantity: 5, movement_type: "TRANSFER",
+      from_warehouse_id: whA, to_warehouse_id: whB,
     });
     expect(status).toBe(200);
-    expect(await lastCreatedBy()).toBe("bot");
+    const src = await invRow(whA, "KgMahsulot");
+    const dst = await invRow(whB, "KgMahsulot");
+    expect(src.quantity).toBe(5);
+    expect(src.weight_kg).toBeCloseTo(40);
+    expect(dst.quantity).toBe(5);
+    expect(dst.weight_kg).toBeCloseTo(40);
+    expect(dst.product_type).toBe("wip");
+  });
+
+  it("OUT of more than available floors both quantity and weight at 0", async () => {
+    await pool.query(
+      `INSERT INTO inventory (warehouse_id, product, quantity, weight_kg, product_type)
+       VALUES ($1,'KgMahsulot',3,30,'finished')`,
+      [whA],
+    );
+    await postMovement({
+      product: "KgMahsulot", quantity: 99, movement_type: "OUT", from_warehouse_id: whA,
+    });
+    const row = await invRow(whA, "KgMahsulot");
+    expect(row.quantity).toBe(0);
+    expect(row.weight_kg).toBe(0);
   });
 });

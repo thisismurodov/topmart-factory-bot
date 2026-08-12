@@ -20,6 +20,7 @@ import MapTab, { GeoNavLinks, sababLabel } from "@/components/distribution/MapTa
 import RouteWeekMap from "@/components/distribution/RouteWeekMap";
 import AnalyticsTab from "@/components/distribution/AnalyticsTab";
 import BadCoordPanel from "@/components/distribution/BadCoordPanel";
+import ShopLocationEditor from "@/components/distribution/ShopLocationEditor";
 import { downloadCsv, toCsv } from "@/lib/csv";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────────
@@ -541,6 +542,9 @@ function ShopDrawer({ shopId, onClose }: { shopId: number | null; onClose: () =>
               <div><div className="text-xs text-muted-foreground flex items-center gap-1"><Truck className="w-3 h-3" /> Agent</div><div className="font-medium">{data.agentName || "—"}</div></div>
               <div><div className="text-xs text-muted-foreground flex items-center gap-1"><ShoppingBag className="w-3 h-3" /> Oxirgi buyurtma</div><div className="font-medium">{fmtDate(data.lastOrderDate)}</div></div>
             </div>
+
+            {/* GPS joylashuv — ko'rish va tahrirlash */}
+            <ShopLocationEditor shopId={data.id} latitude={data.latitude} longitude={data.longitude} />
 
             {/* Yo'l ko'rsatish (navigatsiya) */}
             {data.latitude !== null && data.longitude !== null && (

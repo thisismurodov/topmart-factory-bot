@@ -15,6 +15,7 @@ import { pool } from "@workspace/db";
 import {
   DEFAULT_START_POINT,
   type BizWeights,
+  computeBusinessScores,
   planRoutes,
   splitOutliers,
   validatePlan,
@@ -23,6 +24,128 @@ import {
   type PlanValidation,
   type ShopBusinessSignals,
 } from "./routePlanner";
+
+// ── Bir martalik backfill: eski marshrut qatorlariga biz_score/biz_reasons ─────
+// biz_score/biz_reasons faqat marshrut REJALASHTIRUVCHI orqali saqlanganda
+// yoziladi. Ushbu yangilanishdan OLDIN saqlangan marshrutlar (va bot orqali
+// qo'lda qo'shilgan to'xtashlar, added_by_dlv=1) NULL biz ustunlari bilan
+// qoladi — agentlar hech qanday shoshilinchlik belgisini ko'rmaydi.
+//
+// QAROR: bot orqali qo'shilgan to'xtashlar HAM ball oladi — shoshilinchlik
+// (nasiya, savdo, tashrif) do'konning biznes holatini bildiradi, to'xtash
+// qanday qo'shilganidan qat'i nazar. added_by_dlv bayrog'i o'zgarmaydi.
+//
+// Idempotent: faqat biz_score IS NULL qatorlarni yangilaydi. Ballar
+// computeBusinessScores bilan AGENT kohorti bo'yicha normalizatsiya qilinadi
+// (rejalashtiruvchidagi kabi nisbiy ball — agentning o'z marshruti ichida).
+// Signal umuman bo'lmagan agent kohortida qatorlar NULL bo'lib qoladi
+// (badge yo'q — ma'lumot yo'q).
+export async function backfillRouteBizScores(): Promise<{ scanned: number; updated: number }> {
+  const nullQ = await pool.query(
+    `SELECT r.delivery_agent_id, r.dokon_id
+       FROM distribution.delivery_routes r
+      WHERE r.biz_score IS NULL
+      GROUP BY r.delivery_agent_id, r.dokon_id`
+  );
+  if (nullQ.rows.length === 0) return { scanned: 0, updated: 0 };
+
+  // Agent → do'kon idlari
+  const byAgent = new Map<number, number[]>();
+  const allShopIds = new Set<number>();
+  for (const row of nullQ.rows) {
+    const agentId = Number(row.delivery_agent_id);
+    const dokonId = Number(row.dokon_id);
+    if (!byAgent.has(agentId)) byAgent.set(agentId, []);
+    byAgent.get(agentId)!.push(dokonId);
+    allShopIds.add(dokonId);
+  }
+  const shopIds = [...allShopIds];
+
+  // Rejalashtiruvchidagi BIR XIL signallar: savdo (90 kun), nasiya, oxirgi tashrif
+  const nintyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+  const [salesQ, creditQ, visitQ] = await Promise.all([
+    pool.query(
+      `SELECT s.dokon_id, SUM(t.summa)::bigint AS sales_sum
+         FROM distribution.savdolar s
+         JOIN distribution.savdo_tafsilot t ON t.savdo_id = s.id
+        WHERE s.dokon_id = ANY($1::int[])
+          AND substr(s.created_at, 1, 10) >= $2
+        GROUP BY s.dokon_id`,
+      [shopIds, nintyDaysAgo]
+    ),
+    pool.query(
+      `SELECT dokon_id, SUM(qoldiq)::bigint AS credit_balance
+         FROM distribution.nasiya
+        WHERE dokon_id = ANY($1::int[])
+        GROUP BY dokon_id`,
+      [shopIds]
+    ),
+    pool.query(
+      `SELECT dokon_id,
+              (CURRENT_DATE - MAX(substr(created_at,1,10))::date) AS days_since
+         FROM (
+           SELECT dokon_id, created_at FROM distribution.savdolar
+            WHERE dokon_id = ANY($1::int[])
+           UNION ALL
+           SELECT dokon_id, created_at FROM distribution.olmagan_dokonlar
+            WHERE dokon_id = ANY($1::int[])
+         ) v
+        GROUP BY dokon_id`,
+      [shopIds]
+    ),
+  ]);
+  const salesMap  = new Map<number, number>(salesQ.rows.map((r)  => [Number(r.dokon_id), Number(r.sales_sum)]));
+  const creditMap = new Map<number, number>(creditQ.rows.map((r) => [Number(r.dokon_id), Number(r.credit_balance)]));
+  const daysMap   = new Map<number, number>(visitQ.rows.map((r)  => [Number(r.dokon_id), Number(r.days_since)]));
+
+  let updated = 0;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    for (const [agentId, ids] of byAgent) {
+      // Kohort = agent marshrutidagi do'konlar (nisbiy normalizatsiya shu ichida)
+      const cohort: PlanShop[] = ids.map((id) => ({
+        id,
+        nomi: null,
+        hudud: null,
+        lat: 0,
+        lng: 0,
+        biz: {
+          salesSum: salesMap.get(id),
+          creditBalance: creditMap.get(id),
+          daysSinceVisit: daysMap.get(id),
+        } satisfies ShopBusinessSignals,
+      }));
+      const scores = computeBusinessScores(cohort);
+      if (scores.size === 0) continue; // kohortda signal yo'q — NULL qoladi
+
+      for (const [dokonId, entry] of scores) {
+        const res = await client.query(
+          `UPDATE distribution.delivery_routes
+              SET biz_score = $1, biz_reasons = $2
+            WHERE delivery_agent_id = $3 AND dokon_id = $4 AND biz_score IS NULL`,
+          [
+            entry.score,
+            entry.reasons.length > 0 ? JSON.stringify(entry.reasons) : null,
+            agentId,
+            dokonId,
+          ]
+        );
+        updated += res.rowCount ?? 0;
+      }
+    }
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+
+  return { scanned: nullQ.rows.length, updated };
+}
 
 export type RoutePlanFailure = {
   ok: false;

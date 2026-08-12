@@ -278,9 +278,11 @@ router.get("/reports/product-profitability", async (req, res): Promise<void> => 
 });
 
 // ── GET /reports/profit-trend?months=N ───────────────────────────────────────
-// Oylik foyda trendi: har bir sotuv qatori uchun (miqdor × birlik foyda).
-// Birlik foyda mahsulotning joriy narx/xarajat konfiguratsiyasidan hisoblanadi
-// (product-profitability bilan bir xil model), USD jonli kursda UZS'ga o'tkaziladi.
+// Oylik foyda trendi: har bir sotuv qatori uchun (haqiqiy tushum − birlik xarajat × miqdor).
+// Tushum sotuv qatorining o'zidagi haqiqiy narxdan (si.line_total) olinadi —
+// narx o'zgargan bo'lsa ham o'tgan oylar tarixiy jihatdan to'g'ri ko'rsatiladi.
+// Xarajat esa mahsulotning JORIY konfiguratsiyasidan hisoblanadi (xarajat tarixi
+// saqlanmaydi); USD qiymatlar jonli kursda UZS'ga o'tkaziladi.
 router.get("/reports/profit-trend", async (req, res): Promise<void> => {
   const months = Math.min(Math.max(parseInt((req.query.months as string) ?? "6"), 1), 24);
   const interval = `${months - 1} months`;
@@ -291,27 +293,28 @@ router.get("/reports/profit-trend", async (req, res): Promise<void> => {
       SELECT
         p.name,
         COALESCE(NULLIF(p.weight, 0), 1) AS weight,
-        -- birlik (1 dona / 1 birlik mahsulot) foydasi, UZS'da
-        (CASE WHEN p.unit_type='kg' THEN p.default_sale_price * COALESCE(NULLIF(p.weight,0),1) ELSE p.default_sale_price END
-          * CASE WHEN UPPER(p.currency_type)='USD' THEN $1::numeric ELSE 1 END
-          - (CASE WHEN p.rate_type='kg' THEN p.rate * COALESCE(NULLIF(p.weight,0),1) ELSE p.rate END)
-          - CASE WHEN p.unit_type='kg' THEN (p.electricity_cost + p.other_cost) * COALESCE(NULLIF(p.weight,0),1)
+        -- birlik (1 dona / 1 birlik mahsulot) XARAJATI, UZS'da (joriy konfiguratsiyadan)
+        ((CASE WHEN p.rate_type='kg' THEN p.rate * COALESCE(NULLIF(p.weight,0),1) ELSE p.rate END)
+          + CASE WHEN p.unit_type='kg' THEN (p.electricity_cost + p.other_cost) * COALESCE(NULLIF(p.weight,0),1)
                                        ELSE (p.electricity_cost + p.other_cost) END
-          - COALESCE((
+          + COALESCE((
               SELECT SUM(rm.default_cost * pm.quantity_required * CASE WHEN UPPER(rm.currency)='USD' THEN $1::numeric ELSE 1 END)
               FROM product_materials pm
               JOIN raw_materials rm ON rm.id = pm.raw_material_id
               WHERE pm.product_name = p.name
             ), 0)
-        ) AS unit_profit
+        ) AS unit_cost
       FROM products p
       WHERE p.active = TRUE
     )
     SELECT
       TO_CHAR(DATE_TRUNC('month', s.created_at), 'YYYY-MM') AS month,
       COALESCE(SUM(
-        u.unit_profit *
-        CASE WHEN LOWER(COALESCE(si.sale_type,'')) = 'kg' THEN si.quantity / u.weight ELSE si.quantity END
+        -- haqiqiy tushum: sotuv qatorining o'z narxi (USD bo'lsa kursda UZS'ga)
+        si.line_total * CASE WHEN LOWER(COALESCE(si.currency,'uzs'))='usd' THEN $1::numeric ELSE 1 END
+        -- joriy birlik xarajat × sotilgan birliklar soni
+        - u.unit_cost *
+          CASE WHEN LOWER(COALESCE(si.sale_type,'')) = 'kg' THEN si.quantity / u.weight ELSE si.quantity END
       ), 0) AS profit_uzs,
       COUNT(DISTINCT s.id)::int AS sale_count
     FROM sales s

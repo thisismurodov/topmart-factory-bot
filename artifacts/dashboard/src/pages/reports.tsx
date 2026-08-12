@@ -749,7 +749,7 @@ export default function Reports() {
                 </LineChart>
               </ResponsiveContainer>
               <p className="text-[10px] text-muted-foreground mt-1">
-                Foyda = sotilgan miqdor × mahsulotning joriy birlik foydasi (USD jonli kursda so'mga o'tkazilgan)
+                Foyda = haqiqiy sotuv tushumi (sotuv paytidagi narx) − joriy birlik xarajat × miqdor (USD jonli kursda so'mga o'tkazilgan)
               </p>
             </div>
           )}

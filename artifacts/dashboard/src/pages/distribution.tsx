@@ -1099,7 +1099,28 @@ function exportDailyVisitsCsv(data: DailyVisits) {
       ]);
     }
   }
-  downloadCsv(toCsv([header, ...rows]), `kunlik-tashriflar-${data.date}.csv`);
+  // Agent bo'yicha jamlanma — ekrandagi agent kartalari bilan bir xil qiymatlar
+  const summaryHeader = ["Agent", "Rejalashtirilgan", "Kirildi", "Savdo", "Olmadi", "Savdo jami", "Konversiya %"];
+  const summaryRows: string[][] = data.agents.map((a) => [
+    a.agentName || "—",
+    String(a.planned),
+    String(a.visited),
+    String(a.sold),
+    String(a.noSale),
+    String(Math.round(a.salesTotal)),
+    a.visited > 0 ? String(Math.round((a.sold / a.visited) * 100)) : "",
+  ]);
+
+  const all: string[][] = [
+    ["Tashriflar"],
+    header,
+    ...rows,
+    [""],
+    ["Agentlar jamlanmasi"],
+    summaryHeader,
+    ...summaryRows,
+  ];
+  downloadCsv(toCsv(all), `kunlik-tashriflar-${data.date}.csv`);
 }
 
 function DailyVisitsTab({ f, active, onShop }: { f: Filters; active: boolean; onShop: (id: number) => void }) {

@@ -225,6 +225,9 @@ export default function IshJarayoni() {
         </div>
       )}
 
+      {/* Unassigned products */}
+      <UnassignedProductsPanel departments={data?.departments ?? []} />
+
       {/* Flow canvas */}
       <div
         className="rounded-2xl p-5 relative overflow-hidden"
@@ -358,6 +361,101 @@ export default function IshJarayoni() {
       {receiveOpen && <ReceiveModal flow={data} onClose={() => setReceiveOpen(false)} />}
       {produceOpen && <ProduceModal flow={data} onClose={() => setProduceOpen(false)} />}
       {manageOpen && <ManageContainersModal containers={data?.allContainers ?? []} onClose={() => setManageOpen(false)} />}
+    </div>
+  );
+}
+
+// ── Unassigned products panel ──────────────────────────────────────────────────
+// Bo'limga biriktirilmagan (line_id IS NULL) faol mahsulotlar ro'yxati.
+// Bunday mahsulotlar HAR QANDAY bo'limdan chiqarilishi mumkin — noto'g'ri
+// konteyner xavfi. Bu panel ularni ko'rsatadi va bir bosishda biriktiradi.
+function UnassignedProductsPanel({ departments }: { departments: Department[] }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const { data: products } = useProducts();
+  const [open, setOpen] = useState(false);
+  const [pendingName, setPendingName] = useState<string | null>(null);
+
+  const unassigned = useMemo(
+    () => (products ?? []).filter((p) => p.lineId == null),
+    [products],
+  );
+
+  const mut = useMutation({
+    mutationFn: ({ name, lineId }: { name: string; lineId: number }) =>
+      authFetch(`/api/products/${encodeURIComponent(name)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lineId }),
+      }).then(async (r) => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Xatolik"); return r.json(); }),
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: ["products-list"] });
+      qc.invalidateQueries({ queryKey: ["ombor-flow"] });
+      const dept = departments.find((d) => d.id === v.lineId);
+      toast({ title: "Biriktirildi", description: `${v.name} → ${dept?.name ?? "bo'lim"}` });
+    },
+    onError: (e: Error) => toast({ title: "Xatolik", description: e.message, variant: "destructive" }),
+    onSettled: () => setPendingName(null),
+  });
+
+  if (unassigned.length === 0) return null;
+
+  return (
+    <div className="rounded-xl border" style={{ borderColor: "#fde68a", background: "#fffbeb" }}>
+      <button
+        className="w-full flex items-center gap-2 px-4 py-3 text-sm text-left"
+        style={{ color: "#92400e" }}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <AlertTriangle className="w-4 h-4 shrink-0" />
+        <span className="font-semibold">
+          {unassigned.length} ta mahsulot bo'limga biriktirilmagan
+        </span>
+        <span className="hidden sm:inline text-[12px] opacity-80">
+          — bunday mahsulotlar istalgan bo'limdan chiqarilishi mumkin (xato konteyner xavfi)
+        </span>
+        <span className="ml-auto text-xs font-medium underline shrink-0">
+          {open ? "Yopish" : "Ko'rish va biriktirish"}
+        </span>
+      </button>
+      {open && (
+        <div className="px-4 pb-3 space-y-1.5">
+          {departments.length === 0 && (
+            <p className="text-xs" style={{ color: "#92400e" }}>
+              Bo'lim (liniya) yo'q — avval bo'lim yarating.
+            </p>
+          )}
+          {unassigned.map((p) => (
+            <div
+              key={p.name}
+              className="flex items-center gap-2 rounded-lg bg-white border px-3 py-2"
+              style={{ borderColor: "#fde68a" }}
+            >
+              <span className="text-sm font-medium text-foreground truncate flex-1">
+                {p.name} <span className="text-xs text-muted-foreground">({p.unitType})</span>
+              </span>
+              <select
+                className="rounded-md border border-input bg-background px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-ring shrink-0"
+                value=""
+                disabled={mut.isPending && pendingName === p.name}
+                onChange={(e) => {
+                  const lineId = Number(e.target.value);
+                  if (!lineId) return;
+                  setPendingName(p.name);
+                  mut.mutate({ name: p.name, lineId });
+                }}
+              >
+                <option value="">
+                  {mut.isPending && pendingName === p.name ? "Saqlanmoqda..." : "Bo'limga biriktirish..."}
+                </option>
+                {departments.map((d) => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+              </select>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -754,6 +852,19 @@ function ProduceModal({ flow, onClose }: { flow: FlowData | undefined; onClose: 
           <p className="text-[11px] text-muted-foreground mt-1">
             Faqat shu bo'limga biriktirilgan (yoki biriktirilmagan) mahsulotlar ko'rsatilgan.
           </p>
+        )}
+        {selectedProduct != null && selectedProduct.lineId == null && (
+          <div
+            className="flex items-start gap-2 rounded-lg px-3 py-2 text-[12px] border mt-2"
+            style={{ background: "#fffbeb", borderColor: "#fde68a", color: "#92400e" }}
+          >
+            <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+            <span>
+              Bu mahsulot hech qaysi bo'limga biriktirilmagan — istalgan bo'limdan chiqarish
+              mumkin. Xatolarni oldini olish uchun uni bo'limga biriktiring
+              ("biriktirilmagan mahsulotlar" paneli).
+            </span>
+          </div>
         )}
       </div>
       <div>

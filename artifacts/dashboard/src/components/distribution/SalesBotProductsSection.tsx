@@ -130,6 +130,9 @@ function LinkDialog({ product, onClose }: { product: SavdoProduct; onClose: () =
   const update = useUpdateSavdoProduct();
   const { toast } = useToast();
 
+  // Nom o'xshashligi bo'yicha eng yaqin ERP nomzodlari (aniq taklifdan tashqari)
+  const candidates = fuzzyCandidates(product.nomi, erp, product.taklifSku);
+
   const save = (value: string) =>
     update.mutate(
       { id: product.id, sku: value },
@@ -167,6 +170,25 @@ function LinkDialog({ product, onClose }: { product: SavdoProduct; onClose: () =
             <p className="text-xs text-muted-foreground">
               Nomi mos kelgani uchun <span className="font-mono">{product.taklifSku}</span> taklif qilindi.
             </p>
+          )}
+          {candidates.length > 0 && (
+            <div className="space-y-1">
+              <p className="text-xs text-muted-foreground">O'xshash nomlar bo'yicha takliflar:</p>
+              {candidates.map(({ p, score }) => (
+                <Button
+                  key={p.sku}
+                  variant="outline"
+                  className="w-full justify-start"
+                  disabled={update.isPending}
+                  onClick={() => setSku(p.sku)}
+                >
+                  <Link2 className="w-4 h-4 mr-2 shrink-0" />
+                  <span className="truncate">{p.name}</span>
+                  <span className="font-mono ml-2 text-xs text-muted-foreground">{p.sku}</span>
+                  <span className="ml-auto text-xs text-muted-foreground">{Math.round(score * 100)}%</span>
+                </Button>
+              ))}
+            </div>
           )}
         </div>
         <DialogFooter className="gap-2">

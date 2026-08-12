@@ -12,6 +12,7 @@ from ..database import (
     assign_packer_workers, get_packer_workers, get_workers,
     clear_test_data, delete_worker,
     get_worker_chat_id, set_product_pieces_per_box,
+    get_product_names, get_packer_product_rows, set_packer_products,
 )
 
 ROLE_UZ = {"producer": "Ishlab chiqaruvchi", "preparation": "Tayyorlash", "packaging": "Upakovka", "packer": "Upakovka"}
@@ -22,7 +23,8 @@ ROLE_UZ = {"producer": "Ishlab chiqaruvchi", "preparation": "Tayyorlash", "packa
     PRODUCT_NAME, PRODUCT_TYPE, PRODUCT_RATE,
     PACKER_SELECT, PACKER_WORKERS,
     PRODUCT_BOX_QTY,
-) = range(11)
+    PPROD_SELECT, PPROD_TOGGLE,
+) = range(13)
 
 
 # ── Entry ────────────────────────────────────────────────────────────────────
@@ -100,6 +102,28 @@ async def adm_home_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             reply_markup=InlineKeyboardMarkup(buttons),
         )
         return PACKER_SELECT
+
+    elif action == "packer_products":
+        packers = [r for r in get_all_workers_config() if r["role"] == "packer"]
+        if not packers:
+            await query.edit_message_text(
+                "⚠️ Packer roli bilan hodim yo'q.\n"
+                "Avval «➕ Hodim qo'shish» orqali packer qo'shing.",
+                reply_markup=admin_main_keyboard(),
+            )
+            return ADM_HOME
+        buttons = [
+            [InlineKeyboardButton(f"📦 {r['name']}", callback_data=f"ppa_sel:{i}")]
+            for i, r in enumerate(packers)
+        ]
+        buttons.append([InlineKeyboardButton("⬅️ Ortga", callback_data="adm:back")])
+        context.user_data["ppa_packers"] = [r["name"] for r in packers]
+        await query.edit_message_text(
+            "📦 *Packer mahsulotlari*\nUpakovkachini tanlang:",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(buttons),
+        )
+        return PPROD_SELECT
 
     elif action == "list_workers":
         rows = get_all_workers_config()
@@ -348,6 +372,79 @@ async def packer_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     return ADM_HOME
 
 
+# ── Packer product assignment flow ───────────────────────────────────────────
+
+def _ppa_keyboard(products: list[str], selected: set[str]) -> InlineKeyboardMarkup:
+    buttons = []
+    for i, p in enumerate(products):
+        check = "✅" if p in selected else "☐"
+        buttons.append([InlineKeyboardButton(f"{check} {p}", callback_data=f"ppa_tog:{i}")])
+    buttons.append([InlineKeyboardButton("💾 Saqlash", callback_data="ppa_save")])
+    buttons.append([InlineKeyboardButton("⬅️ Ortga",  callback_data="adm:packer_products")])
+    return InlineKeyboardMarkup(buttons)
+
+
+async def ppa_packer_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    idx = int(query.data.split(":", 1)[1])
+    packers = context.user_data.get("ppa_packers", [])
+    if idx >= len(packers):
+        await query.edit_message_text("⚙️ Admin paneli:", reply_markup=admin_main_keyboard())
+        return ADM_HOME
+    packer_name = packers[idx]
+    products = get_product_names()
+    selected = set(get_packer_product_rows(packer_name)) & set(products)
+
+    context.user_data["ppa_packer_name"] = packer_name
+    context.user_data["ppa_products"]    = products
+    context.user_data["ppa_selected"]    = selected
+
+    await query.edit_message_text(
+        f"📦 *{packer_name}* — mahsulotlarni belgilang:\n"
+        "_Hech biri belgilanmasa — barcha mahsulotlar ko'rinadi._",
+        parse_mode="Markdown",
+        reply_markup=_ppa_keyboard(products, selected),
+    )
+    return PPROD_TOGGLE
+
+
+async def ppa_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    idx = int(query.data.split(":", 1)[1])
+    products = context.user_data.get("ppa_products", [])
+    selected: set = context.user_data.get("ppa_selected", set())
+    if idx < len(products):
+        p = products[idx]
+        if p in selected:
+            selected.discard(p)
+        else:
+            selected.add(p)
+        context.user_data["ppa_selected"] = selected
+        await query.edit_message_reply_markup(reply_markup=_ppa_keyboard(products, selected))
+    return PPROD_TOGGLE
+
+
+async def ppa_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    packer_name = context.user_data.pop("ppa_packer_name")
+    selected    = sorted(context.user_data.pop("ppa_selected", set()))
+    context.user_data.pop("ppa_products", None)
+
+    set_packer_products(packer_name, selected)
+
+    if selected:
+        prod_list = "\n".join(f"• {p}" for p in selected)
+        text = f"✅ *{packer_name}* uchun mahsulotlar belgilandi:\n{prod_list}"
+    else:
+        text = f"✅ *{packer_name}* uchun cheklov olib tashlandi — barcha mahsulotlar ko'rinadi."
+    await query.edit_message_text(text, parse_mode="Markdown")
+    await query.message.reply_text("⚙️ Admin paneli:", reply_markup=admin_main_keyboard())
+    return ADM_HOME
+
+
 # ── Cancel ────────────────────────────────────────────────────────────────────
 
 async def adm_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -471,6 +568,15 @@ def build_admin_handler() -> ConversationHandler:
             PACKER_WORKERS: [
                 CallbackQueryHandler(packer_worker_toggle, pattern=r"^pk_tog:"),
                 CallbackQueryHandler(packer_save,          pattern=r"^pk_save$"),
+            ],
+            PPROD_SELECT: [
+                CallbackQueryHandler(ppa_packer_selected,  pattern=r"^ppa_sel:"),
+                CallbackQueryHandler(adm_home_callback,    pattern=r"^adm:"),
+            ],
+            PPROD_TOGGLE: [
+                CallbackQueryHandler(ppa_toggle,           pattern=r"^ppa_tog:"),
+                CallbackQueryHandler(ppa_save,             pattern=r"^ppa_save$"),
+                CallbackQueryHandler(adm_home_callback,    pattern=r"^adm:"),
             ],
         },
         fallbacks=[

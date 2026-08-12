@@ -136,6 +136,7 @@ def admin_main_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("➕ Hodim qo'shish",        callback_data="adm:add_worker")],
         [InlineKeyboardButton("➕ Mahsulot qo'shish",     callback_data="adm:add_product")],
         [InlineKeyboardButton("👔 Upakovkachi belgilash", callback_data="adm:assign_packer")],
+        [InlineKeyboardButton("📦 Packer mahsulotlari",   callback_data="adm:packer_products")],
         [InlineKeyboardButton("📋 Hodimlar ro'yxati",     callback_data="adm:list_workers")],
         [InlineKeyboardButton("📦 Mahsulotlar ro'yxati",  callback_data="adm:list_products")],
         [InlineKeyboardButton("💰 Maosh boshqaruvi",      callback_data="adm:salary")],

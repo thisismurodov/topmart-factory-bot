@@ -117,5 +117,25 @@ class PackerProductsTest(unittest.TestCase):
             conn.close()
 
 
+    def test_set_packer_products_replaces_assignments(self):
+        """Admin UI helper: to'liq almashtirish semantikasi."""
+        db.set_packer_products("PackerFree", ["Arqon 6mm"])
+        try:
+            self.assertEqual(db.get_packer_product_rows("PackerFree"), ["Arqon 6mm"])
+            self.assertEqual(db.get_products_for_packer("PackerFree"), ["Arqon 6mm"])
+            db.set_packer_products("PackerFree", ["Arqon 4mm"])
+            self.assertEqual(db.get_packer_product_rows("PackerFree"), ["Arqon 4mm"])
+        finally:
+            db.set_packer_products("PackerFree", [])
+
+    def test_set_packer_products_empty_clears_and_restores_fallback(self):
+        db.set_packer_products("PackerFree", ["Arqon 4mm"])
+        db.set_packer_products("PackerFree", [])
+        self.assertEqual(db.get_packer_product_rows("PackerFree"), [])
+        self.assertEqual(
+            db.get_products_for_packer("PackerFree"), ["Arqon 4mm", "Arqon 6mm"]
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

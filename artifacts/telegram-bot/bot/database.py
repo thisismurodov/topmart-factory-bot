@@ -2020,6 +2020,33 @@ def has_packer_assignments(packer_name: str) -> bool:
         return cur.fetchone() is not None
 
 
+def get_packer_product_rows(packer_name: str) -> list[str]:
+    """Packer'ga biriktirilgan BARCHA mahsulot nomlari (faol/nofaol farqsiz) —
+    admin boshqaruv UI'si mavjud yozuvlarni to'liq ko'rishi uchun."""
+    with get_conn() as (conn, cur):
+        cur.execute(
+            "SELECT product_name FROM packer_product_assignments WHERE packer_name = %s ORDER BY product_name",
+            (packer_name,),
+        )
+        return [r["product_name"] for r in cur.fetchall()]
+
+
+def set_packer_products(packer_name: str, product_names: list[str]) -> None:
+    """Packer mahsulot biriktirmalarini to'liq almashtiradi.
+    Bo'sh ro'yxat = barcha yozuvlar o'chiriladi (fallback: hamma faol mahsulot)."""
+    with get_conn() as (conn, cur):
+        cur.execute(
+            "DELETE FROM packer_product_assignments WHERE packer_name = %s",
+            (packer_name,),
+        )
+        for p in product_names:
+            cur.execute(
+                """INSERT INTO packer_product_assignments (packer_name, product_name)
+                   VALUES (%s, %s) ON CONFLICT DO NOTHING""",
+                (packer_name, p),
+            )
+
+
 def get_products_for_packer(packer_name: str) -> list[str]:
     """V3: Packer uchun ko'rsatiladigan mahsulotlar ro'yxati.
 

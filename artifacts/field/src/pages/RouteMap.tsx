@@ -236,7 +236,7 @@ export default function RouteMap() {
     const dOpt = totalRouteDistance(pendingShops, startPoint.lat, startPoint.lon);
     const savedMeters = dOrig - dOpt;
     if (savedMeters < 100) return null; // arzimas farq — ko'rsatmaymiz
-    return savedMeters / 1000;
+    return { km: savedMeters / 1000, min: estimateEtaMinutes(savedMeters) };
   }, [route, savedOrder, pendingShops, startPoint]);
 
   // T006 — marshrut hududi plitkalarini fonda oldindan yuklab qo'yamiz
@@ -381,7 +381,7 @@ export default function RouteMap() {
       {/* Optimal rejimda tejalgan masofa belgisi */}
       {optimalMode && savedKm !== null && (
         <div className="absolute top-[11.25rem] right-4 z-[410] bg-green-600 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-md animate-in fade-in slide-in-from-top-1 duration-300">
-          ~{savedKm < 10 ? savedKm.toFixed(1) : Math.round(savedKm)} km tejaysiz
+          ~{savedKm.km < 10 ? savedKm.km.toFixed(1) : Math.round(savedKm.km)} km / ~{savedKm.min} min tejaysiz
         </div>
       )}
 

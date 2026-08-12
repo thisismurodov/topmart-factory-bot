@@ -301,6 +301,12 @@ router.post("/products", async (req, res): Promise<void> => {
     const p = rows[0];
     // Savdo katalogi sinxronizatsiyasi (in_sales bo'yicha)
     await syncSalesCatalog(p.name);
+    // Legacy (in_sales=FALSE, lekin SKU orqali bog'langan) mahsulotlar uchun
+    // POST upsert ham PATCH kabi nom/narx'ni savdo botga uzatishi kerak —
+    // aks holda dashboard POST orqali narx yangilasa agentlar eski narxni ko'radi.
+    if (p.in_sales !== true) {
+      await propagateToDistribution(p.name);
+    }
     res.status(201).json({
       id: p.id, name: p.name, sku: p.sku,
       unitType: p.unit_type, currencyType: p.currency_type,

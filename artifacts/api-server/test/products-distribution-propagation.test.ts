@@ -251,11 +251,28 @@ describe("POST /products SKU to'qnashuv va upsert", () => {
     expect(r.status).toBe(201);
     expect(r.json.sku).toBe("ARQON-5MM-T"); // mavjud SKU ustun
 
+    // POST upsert'ning O'ZI ham eski SKU orqali yangi narxni propagate qiladi
+    let m = await mahsulot("ARQON-5MM-T");
+    expect(m!.narx).toBe(15000);
+    expect(m!.nomi).toBe("Arqon 5mm test");
+
     // Keyingi PATCH hali ham eski SKU orqali propagate qiladi
     const p = await patch("Arqon 5mm test", { defaultSalePrice: 16000 });
     expect(p.status).toBe(200);
-    const m = await mahsulot("ARQON-5MM-T");
+    m = await mahsulot("ARQON-5MM-T");
     expect(m!.narx).toBe(16000);
+  });
+
+  it("USD mahsulot POST upsert'da nomi sinxronlanadi, narx TEGILMAYDI", async () => {
+    const r = await post({
+      name: "Kanop USD test",
+      currencyType: "USD",
+      defaultSalePrice: 5.75,
+    });
+    expect(r.status).toBe(201);
+    const m = await mahsulot("KANOP-USD-T");
+    expect(m!.narx).toBe(45000); // eski UZS narx saqlanadi
+    expect(m!.nomi).toBe("Kanop USD test");
   });
 });
 

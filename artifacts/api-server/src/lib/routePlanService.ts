@@ -247,9 +247,18 @@ export async function runRoutePlan(opts: {
       for (const r of plan.routes) {
         for (const st of r.stops) {
           await client.query(
-            `INSERT INTO distribution.delivery_routes (delivery_agent_id, kun, dokon_id, tartib, created_at, added_by_dlv, force_saved)
-             VALUES ($1, $2, $3, $4, $5, 0, $6)`,
-            [agentId, r.kun, st.id, st.tartib, nowIso, forceApplied ? 1 : 0]
+            `INSERT INTO distribution.delivery_routes (delivery_agent_id, kun, dokon_id, tartib, created_at, added_by_dlv, force_saved, biz_score, biz_reasons)
+             VALUES ($1, $2, $3, $4, $5, 0, $6, $7, $8)`,
+            [
+              agentId,
+              r.kun,
+              st.id,
+              st.tartib,
+              nowIso,
+              forceApplied ? 1 : 0,
+              st.bizScore ?? null,
+              st.bizReasons && st.bizReasons.length > 0 ? JSON.stringify(st.bizReasons) : null,
+            ]
           );
         }
       }

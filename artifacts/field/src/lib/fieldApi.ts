@@ -87,6 +87,10 @@ export interface RouteShop {
   rating: number;
   avgRepeatDays: number;
   status: "sold" | "nosale" | "pending";
+  /** Rejalashtirishda hisoblangan ustuvorlik bali (0-100), bo'lmasa null */
+  bizScore: number | null;
+  /** Ustuvorlik sabablari, masalan ["VIP", "Nasiya: 1.2M so'm", "35 kun bormagan"] */
+  bizReasons: string[] | null;
 }
 
 export interface RouteStats {

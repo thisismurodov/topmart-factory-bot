@@ -84,7 +84,43 @@ L.Icon.Default.mergeOptions({
   shadowUrl: markerShadow,
 });
 
-function createNumberedIcon(number: number, status: string, isNext = false) {
+// ── Ustuvorlik (biznes signallari) ────────────────────────────────────────────
+// Reja saqlanganda planner'dan kelgan bizScore/bizReasons.
+// Past ustuvorlik — indikator yo'q (vizual shovqin bo'lmasin).
+const URGENT_SCORE_MIN = 40;
+
+export function isUrgentShop(shop: Pick<RouteShop, "bizScore" | "bizReasons">): boolean {
+  return (
+    (shop.bizScore ?? 0) >= URGENT_SCORE_MIN &&
+    Array.isArray(shop.bizReasons) &&
+    shop.bizReasons.length > 0
+  );
+}
+
+/** Sabab matnini kichik badge ko'rinishida — nasiya uchun 💳, VIP uchun ⭐. */
+function reasonBadgeText(reason: string): string {
+  if (reason.toLowerCase().startsWith("nasiya")) return `💳 ${reason}`;
+  if (reason === "VIP") return "⭐ VIP";
+  return reason; // masalan "35 kun bormagan"
+}
+
+function UrgencyBadges({ shop, className = "" }: { shop: RouteShop; className?: string }) {
+  if (!isUrgentShop(shop)) return null;
+  return (
+    <div className={`flex flex-wrap gap-1.5 ${className}`}>
+      {shop.bizReasons!.map((r) => (
+        <span
+          key={r}
+          className="inline-flex items-center rounded-full bg-red-50 text-red-700 border border-red-200 px-2 py-0.5 text-xs font-semibold"
+        >
+          {reasonBadgeText(r)}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function createNumberedIcon(number: number, status: string, isNext = false, urgent = false) {
   let bgColor = "#f59e0b"; // amber (pending)
   let glyph = String(number);
   if (status === "sold") { bgColor = "#10b981"; glyph = "✓"; } // green
@@ -93,9 +129,14 @@ function createNumberedIcon(number: number, status: string, isNext = false) {
 
   const size = isNext ? 40 : 30;
   const ring = isNext ? `<span class="tm-ring" style="border-color:${bgColor}"></span>` : "";
+  // Ustuvor do'kon (pending) — kichik qizil "!" nishoni burchakda
+  const urgentDot =
+    urgent && status === "pending"
+      ? `<span style="position:absolute;top:-5px;right:-5px;z-index:2;background:#dc2626;color:white;width:16px;height:16px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:bold;border:2px solid white;box-shadow:0 1px 3px rgba(0,0,0,0.4)">!</span>`
+      : "";
   return L.divIcon({
     className: "custom-div-icon",
-    html: `<div class="tm-pop" style="position:relative;background-color: ${bgColor}; width: ${size}px; height: ${size}px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; border: 3px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.35); font-size: ${isNext ? 18 : 14}px;">${ring}<span style="position:relative;z-index:1">${isNext ? number : glyph}</span></div>`,
+    html: `<div class="tm-pop" style="position:relative;background-color: ${bgColor}; width: ${size}px; height: ${size}px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; border: 3px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.35); font-size: ${isNext ? 18 : 14}px;">${ring}${urgentDot}<span style="position:relative;z-index:1">${isNext ? number : glyph}</span></div>`,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
   });
@@ -371,7 +412,8 @@ export default function RouteMap() {
               icon={createNumberedIcon(
                 displayTartib.get(shop.dokonId) ?? shop.tartib,
                 shop.status,
-                shop.dokonId === nextShop?.dokonId
+                shop.dokonId === nextShop?.dokonId,
+                isUrgentShop(shop)
               )}
               zIndexOffset={shop.dokonId === nextShop?.dokonId ? 1000 : 0}
               eventHandlers={{ click: () => setSheetShop(shop.dokonId) }}
@@ -444,6 +486,9 @@ export default function RouteMap() {
               <Car className="w-6 h-6" />
             </Button>
           </div>
+
+          {/* Ustuvorlik sabablari — reja saqlanganda planner'dan kelgan signallar */}
+          <UrgencyBadges shop={nextShop} className="mb-3" />
 
           {/* T004 — boyitilgan ma'lumot: reyting, oxirgi tashrif, oxirgi xarid */}
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-3 text-sm">

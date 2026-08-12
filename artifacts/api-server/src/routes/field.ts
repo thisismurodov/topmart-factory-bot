@@ -169,7 +169,7 @@ router.get("/field/route/today", async (req, res) => {
       return;
     }
     const { rows } = await pool.query(
-      `SELECT r.dokon_id, r.tartib, d.nomi, d.egasi, d.telefon, d.hudud,
+      `SELECT r.dokon_id, r.tartib, r.biz_score, r.biz_reasons, d.nomi, d.egasi, d.telefon, d.hudud,
               d.latitude, d.longitude, d.last_order_date, d.total_orders,
               d.total_sales, d.avg_repeat_days,
               (SELECT ls.jami_summa FROM distribution.savdolar ls
@@ -213,6 +213,18 @@ router.get("/field/route/today", async (req, res) => {
       const totalSales = Number(r.total_sales) || 0;
       const avgRepeatDays = Number(r.avg_repeat_days) || 0;
       const lastOrderDate = (r.last_order_date as string) || null;
+      // Rejalashtirishda saqlangan biznes ustuvorlik signallari (bo'lmasa null)
+      let bizReasons: string[] | null = null;
+      if (r.biz_reasons) {
+        try {
+          const parsed = JSON.parse(r.biz_reasons as string);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            bizReasons = parsed.filter((x): x is string => typeof x === "string");
+          }
+        } catch {
+          bizReasons = null;
+        }
+      }
       return {
         dokonId: Number(r.dokon_id),
         tartib: Number(r.tartib) || 0,
@@ -229,6 +241,8 @@ router.get("/field/route/today", async (req, res) => {
         rating: computeShopRating(totalOrders, totalSales, avgRepeatDays, lastOrderDate),
         avgRepeatDays,
         status,
+        bizScore: r.biz_score != null ? Number(r.biz_score) : null,
+        bizReasons,
       };
     });
     res.json({

@@ -175,6 +175,9 @@ export const deliveryRoutesTable = distribution.table(
     addedByDlv: integer("added_by_dlv").default(0),
     // 1 — marshrut crossing ogohlantirishiga qaramay force=true bilan saqlangan (audit)
     forceSaved: integer("force_saved").default(0),
+    // Biznes ustuvorlik signallari — reja saqlanganda routePlanner'dan ko'chiriladi
+    bizScore: integer("biz_score"),
+    bizReasons: text("biz_reasons"), // JSON massiv, masalan ["VIP","35 kun bormagan"]
   },
   (t) => [
     uniqueIndex("uq_routes_agent_kun_dokon").on(t.deliveryAgentId, t.kun, t.dokonId),

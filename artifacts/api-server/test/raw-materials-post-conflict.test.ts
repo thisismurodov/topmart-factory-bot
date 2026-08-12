@@ -120,10 +120,29 @@ async function seedMaterial(stock: number): Promise<number> {
 }
 
 describe("POST /raw-materials — conflicting name must not silently reset stock", () => {
-  it("creates a brand-new material normally", async () => {
+  it("creates a brand-new material with an opening IN movement", async () => {
     const res = await post("/raw-materials", { name: MAT, currentStock: 50 });
     expect(res.status).toBe(201);
     expect(res.json.currentStock).toBe(50);
+
+    const mv = await movements();
+    expect(mv).toHaveLength(1);
+    expect(mv[0].movement_type).toBe("IN");
+    expect(mv[0].product_type).toBe("raw");
+    expect(mv[0].product).toBe(MAT);
+    expect(Number(mv[0].quantity)).toBe(50);
+
+    const rec = await get("/ombor/raw-reconcile");
+    expect(rec.status).toBe(200);
+    const row = rec.json.find((r: any) => r.id === res.json.id);
+    expect(row.hasMismatch).toBe(false);
+    expect(row.ledgerSum).toBe(50);
+  });
+
+  it("creates a zero-stock material with no movement", async () => {
+    const res = await post("/raw-materials", { name: MAT });
+    expect(res.status).toBe(201);
+    expect(res.json.currentStock).toBe(0);
     expect(await movements()).toHaveLength(0);
   });
 

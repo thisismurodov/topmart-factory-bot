@@ -85,6 +85,19 @@ router.post("/raw-materials", async (req, res): Promise<void> => {
         [name.trim(), unitType, Number(defaultCost), cur, newStock, Number(minimumStock), Boolean(active)]
       );
       row = ins.rows[0];
+
+      // Yangi material nolga teng bo'lmagan zahira bilan yaratilsa — ochilish
+      // balansi uchun IN yozuvi kerak, aks holda raw-reconcile birinchi
+      // kundanoq farq topadi (current_stock > 0, ledgerSum = 0).
+      if (newStock > 0) {
+        const noteText = `Boshlang'ich balans: ${newStock} ${row.unit}`;
+        await client.query(
+          `INSERT INTO stock_movements
+             (product, quantity, movement_type, to_warehouse_id, from_warehouse_id, note, created_by, product_type)
+           VALUES ($1,$2,'IN',NULL,NULL,$3,$4,'raw')`,
+          [row.name, newStock, noteText, req.username || "admin"],
+        );
+      }
     } else {
       const mat = existing.rows[0];
       const upd = await client.query(

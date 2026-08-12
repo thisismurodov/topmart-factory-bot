@@ -3,7 +3,12 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import pg from "pg";
-import { performFieldSale, performFieldPayment, performFieldNoSale } from "../src/routes/field";
+import {
+  performFieldSale,
+  performFieldPayment,
+  performFieldNoSale,
+  queryFieldRouteToday,
+} from "../src/routes/field";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /field/ops — idempotentlik testi (field_ops.client_op_id UNIQUE)
@@ -239,6 +244,86 @@ describe("field_ops idempotentlik — olinmadi (performFieldNoSale)", () => {
     const { rows } = await client.query(
       `SELECT COUNT(*)::int AS n FROM field_ops WHERE client_op_id = $1`,
       [OP_NOSALE],
+    );
+    expect(Number(rows[0].n)).toBe(1);
+  });
+});
+
+describe("route/today — takror yuborilgan olinmadi tashrifi statusi", () => {
+  // Alohida dokon + marshrut: mavjud dokonda savdolar bor (status 'sold' bo'lardi)
+  const OP_ROUTE_NOSALE = "idem-route-nosale-1";
+  const KUN = 1;
+  let routeDokonId = 0;
+  let deliveryAgentId = 0;
+  const tkToday = () =>
+    new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tashkent" }).format(new Date());
+
+  beforeAll(async () => {
+    const dokon = await client.query(
+      `INSERT INTO dokonlar (nomi, egasi, telefon, viloyat, hudud, agent_id, holat, created_at)
+       VALUES ('ROUTE NOSALE DOKON', 'Test', '', 'Namangan', 'Test tuman', $1, 'faol', '2026-01-01T09:00:00') RETURNING id`,
+      [AGENT_TG],
+    );
+    routeDokonId = Number(dokon.rows[0].id);
+    const ag = await client.query(`SELECT id FROM delivery_agents WHERE telegram_id = $1`, [AGENT_TG]);
+    deliveryAgentId = Number(ag.rows[0].id);
+    await client.query(
+      `INSERT INTO delivery_routes (delivery_agent_id, dokon_id, kun, tartib) VALUES ($1, $2, $3, 1)`,
+      [deliveryAgentId, routeDokonId, KUN],
+    );
+  });
+
+  async function routeToday() {
+    const c = await testPool.connect();
+    try {
+      return await queryFieldRouteToday(
+        c,
+        { id: deliveryAgentId, telegramId: AGENT_TG },
+        KUN,
+        tkToday(),
+      );
+    } finally {
+      c.release();
+    }
+  }
+
+  it("olinmadi yozilgunga qadar status 'pending'", async () => {
+    const r = await routeToday();
+    const shop = r.shops.find((s) => s.dokonId === routeDokonId);
+    expect(shop?.status).toBe("pending");
+    expect(r.stats.nosale).toBe(0);
+  });
+
+  it("olinmadi ikki marta yuborilsa ham status 'nosale', stats.nosale = 1", async () => {
+    const c = await testPool.connect();
+    try {
+      const first = await performFieldNoSale(c, AGENT_TG, {
+        clientOpId: OP_ROUTE_NOSALE,
+        dokonId: routeDokonId,
+        sabab: "egasi_yoq",
+      });
+      expect(first.kind).toBe("ok");
+      const second = await performFieldNoSale(c, AGENT_TG, {
+        clientOpId: OP_ROUTE_NOSALE,
+        dokonId: routeDokonId,
+        sabab: "egasi_yoq",
+      });
+      expect(second.kind).toBe("duplicate");
+    } finally {
+      c.release();
+    }
+
+    const r = await routeToday();
+    const shop = r.shops.find((s) => s.dokonId === routeDokonId);
+    expect(shop?.status).toBe("nosale");
+    expect(r.stats.nosale).toBe(1);
+    expect(r.stats.done).toBe(1);
+    expect(r.stats.pending).toBe(r.stats.total - 1);
+
+    // olmagan_dokonlar'da faqat bitta qator — takror yuborish yangi yozuv yaratmagan
+    const { rows } = await client.query(
+      `SELECT COUNT(*)::int AS n FROM olmagan_dokonlar WHERE dokon_id = $1 AND agent_id = $2`,
+      [routeDokonId, AGENT_TG],
     );
     expect(Number(rows[0].n)).toBe(1);
   });

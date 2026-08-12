@@ -171,18 +171,18 @@ router.get("/field/me", async (req, res) => {
 });
 
 // ── GET /field/route/today — bugungi marshrut + tashrif holati ────────────────
-router.get("/field/route/today", async (req, res) => {
-  const agent = agentOf(req as FieldRequest);
-  // Dev rejimida ?kun=1..7 override — dam kunida ham marshrutni test qilish uchun
-  const kun = todayKun(req);
-  const today = tkToday();
-  try {
-    // Juma (kun=5) — dam olish kuni (bot _today_kun() bilan sinxron bo'lishi shart)
-    if (kun === 5) {
-      res.json({ kun, sana: today, dam: true, shops: [], stats: emptyStats() });
-      return;
-    }
-    const { rows } = await pool.query(
+// Marshrut so'rovi + status/stats hisobi — testdan to'g'ridan-to'g'ri chaqirish
+// mumkin bo'lishi uchun alohida funksiya (route/today handler shuni ishlatadi).
+export async function queryFieldRouteToday(
+  q: Pick<PoolClient, "query">,
+  agent: { id: number; telegramId: number },
+  kun: number,
+  today: string,
+): Promise<{
+  shops: Array<Record<string, unknown> & { dokonId: number; status: "sold" | "nosale" | "pending" }>;
+  stats: { total: number; done: number; sold: number; nosale: number; pending: number; savdoSumma: number };
+}> {
+  const { rows } = await q.query(
       `SELECT r.dokon_id, r.tartib, r.biz_score, r.biz_reasons, d.nomi, d.egasi, d.telefon, d.hudud,
               d.latitude, d.longitude, d.last_order_date, d.total_orders,
               d.total_sales, d.avg_repeat_days,
@@ -204,12 +204,12 @@ router.get("/field/route/today", async (req, res) => {
          JOIN distribution.dokonlar d ON d.id = r.dokon_id
         WHERE r.delivery_agent_id = $1 AND r.kun = $2
         ORDER BY r.tartib, r.id`,
-      [agent.id, kun, agent.telegramId, today],
-    );
-    let sold = 0;
-    let nosale = 0;
-    let savdoSumma = 0;
-    const shops = rows.map((r) => {
+    [agent.id, kun, agent.telegramId, today],
+  );
+  let sold = 0;
+  let nosale = 0;
+  let savdoSumma = 0;
+  const shops = rows.map((r) => {
       const saleId = r.sale_id != null ? Number(r.sale_id) : null;
       const nosaleId = r.nosale_id != null ? Number(r.nosale_id) : null;
       const status: "sold" | "nosale" | "pending" = saleId
@@ -248,21 +248,33 @@ router.get("/field/route/today", async (req, res) => {
         bizScore: r.biz_score != null ? Number(r.biz_score) : null,
         bizReasons,
       };
-    });
-    res.json({
-      kun,
-      sana: today,
-      dam: false,
-      shops,
-      stats: {
-        total: shops.length,
-        done: sold + nosale,
-        sold,
-        nosale,
-        pending: shops.length - sold - nosale,
-        savdoSumma,
-      },
-    });
+  });
+  return {
+    shops,
+    stats: {
+      total: shops.length,
+      done: sold + nosale,
+      sold,
+      nosale,
+      pending: shops.length - sold - nosale,
+      savdoSumma,
+    },
+  };
+}
+
+router.get("/field/route/today", async (req, res) => {
+  const agent = agentOf(req as FieldRequest);
+  // Dev rejimida ?kun=1..7 override — dam kunida ham marshrutni test qilish uchun
+  const kun = todayKun(req);
+  const today = tkToday();
+  try {
+    // Juma (kun=5) — dam olish kuni (bot _today_kun() bilan sinxron bo'lishi shart)
+    if (kun === 5) {
+      res.json({ kun, sana: today, dam: true, shops: [], stats: emptyStats() });
+      return;
+    }
+    const { shops, stats } = await queryFieldRouteToday(pool, agent, kun, today);
+    res.json({ kun, sana: today, dam: false, shops, stats });
   } catch (err) {
     req.log.error({ err }, "field route/today xatosi");
     res.status(500).json({ error: "Marshrutni olishda xato" });

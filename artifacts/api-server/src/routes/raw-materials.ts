@@ -58,18 +58,65 @@ router.post("/raw-materials", async (req, res): Promise<void> => {
     res.status(400).json({ error: "currency must be 'UZS' or 'USD'" }); return;
   }
 
+  const newStock = Number(currentStock);
+  if (!isFinite(newStock) || newStock < 0) {
+    res.status(400).json({ error: "currentStock must be a finite number >= 0" }); return;
+  }
+
+  const client = await pool.connect();
   try {
-    const { rows } = await pool.query(
-      `INSERT INTO raw_materials (name, unit, unit_type, default_cost, currency, current_stock, minimum_stock, active)
-       VALUES ($1,$2,$2,$3,$4,$5,$6,$7)
-       ON CONFLICT (name) DO UPDATE SET
-         unit=$2, unit_type=$2, default_cost=$3, currency=$4, current_stock=$5, minimum_stock=$6, active=$7
-       RETURNING *`,
-      [name.trim(), unitType, Number(defaultCost), cur, Number(currentStock), Number(minimumStock), Boolean(active)]
+    await client.query("BEGIN");
+
+    // Mavjud nom bo'lsa — zahirani JIMGINA almashtirmaymiz: PATCH'dagi kabi
+    // delta hisoblanib stock_movements'ga IN/OUT yozuvi qo'shiladi, aks holda
+    // raw-reconcile darhol farq topadi. FOR UPDATE — parallel o'zgarishlarda
+    // delta har doim haqiqiy bo'lishi uchun.
+    const existing = await client.query(
+      "SELECT id, name, unit, current_stock FROM raw_materials WHERE name = $1 FOR UPDATE",
+      [name.trim()],
     );
-    res.status(201).json(toRow(rows[0]));
+
+    let row;
+    if (existing.rows.length === 0) {
+      const ins = await client.query(
+        `INSERT INTO raw_materials (name, unit, unit_type, default_cost, currency, current_stock, minimum_stock, active)
+         VALUES ($1,$2,$2,$3,$4,$5,$6,$7)
+         RETURNING *`,
+        [name.trim(), unitType, Number(defaultCost), cur, newStock, Number(minimumStock), Boolean(active)]
+      );
+      row = ins.rows[0];
+    } else {
+      const mat = existing.rows[0];
+      const upd = await client.query(
+        `UPDATE raw_materials SET
+           unit=$1, unit_type=$1, default_cost=$2, currency=$3, current_stock=$4, minimum_stock=$5, active=$6
+         WHERE id=$7
+         RETURNING *`,
+        [unitType, Number(defaultCost), cur, newStock, Number(minimumStock), Boolean(active), mat.id]
+      );
+      row = upd.rows[0];
+
+      const oldStock = Number(mat.current_stock) || 0;
+      const delta = newStock - oldStock;
+      if (delta !== 0) {
+        const movementType = delta > 0 ? "IN" : "OUT";
+        const noteText = `Qayta qo'shish (POST) orqali o'zgartirildi: ${oldStock} → ${newStock} ${mat.unit}`;
+        await client.query(
+          `INSERT INTO stock_movements
+             (product, quantity, movement_type, to_warehouse_id, from_warehouse_id, note, created_by, product_type)
+           VALUES ($1,$2,$3,NULL,NULL,$4,$5,'raw')`,
+          [mat.name, Math.abs(delta), movementType, noteText, req.username || "admin"],
+        );
+      }
+    }
+
+    await client.query("COMMIT");
+    res.status(201).json(toRow(row));
   } catch (err: any) {
+    await client.query("ROLLBACK");
     res.status(409).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 

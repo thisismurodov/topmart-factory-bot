@@ -106,6 +106,8 @@ function StatCard({
 
 export default function AnalyticsTab({ qs, active }: { qs: string; active: boolean }) {
   const [exporting, setExporting] = useState(false);
+  // km trend: bitta agentni ajratib ko'rsatish (null = hammasi)
+  const [focusedAgent, setFocusedAgent] = useState<string | null>(null);
 
   // Joriy filtr tanlovi bilan XLSX (2 varaq) yoki CSV yuklab olish
   async function handleExport(format: "xlsx" | "csv") {
@@ -172,6 +174,11 @@ export default function AnalyticsTab({ qs, active }: { qs: string; active: boole
     id: a.agentId,
     name: a.agentName ?? `ID ${a.agentId}`,
   }));
+  // Filtr o'zgarganda eski tanlov ro'yxatda bo'lmasa — hammasini ko'rsatamiz
+  const effectiveFocus =
+    focusedAgent != null && kmAgents.some((a) => a.id === focusedAgent)
+      ? focusedAgent
+      : null;
   const kmTrend = (() => {
     if (!kmData?.daily?.length) return [] as Record<string, unknown>[];
     const byDate = new Map<string, Record<string, unknown>>();
@@ -332,6 +339,41 @@ export default function AnalyticsTab({ qs, active }: { qs: string; active: boole
                   <div className="text-xs text-muted-foreground mb-1.5">
                     Kunlik km dinamikasi (agent bo'yicha)
                   </div>
+                  {kmAgents.length > 1 && (
+                    <div className="flex flex-wrap gap-1.5 mb-2">
+                      <button
+                        type="button"
+                        onClick={() => setFocusedAgent(null)}
+                        className={`text-[11px] px-2 py-0.5 rounded-full border transition-colors ${
+                          effectiveFocus == null
+                            ? "bg-primary text-primary-foreground border-primary"
+                            : "bg-background text-muted-foreground hover:bg-muted"
+                        }`}
+                      >
+                        Hammasi
+                      </button>
+                      {kmAgents.map((a, i) => (
+                        <button
+                          key={a.id}
+                          type="button"
+                          onClick={() =>
+                            setFocusedAgent((cur) => (cur === a.id ? null : a.id))
+                          }
+                          className={`text-[11px] px-2 py-0.5 rounded-full border transition-colors flex items-center gap-1 ${
+                            effectiveFocus === a.id
+                              ? "bg-primary text-primary-foreground border-primary"
+                              : "bg-background text-muted-foreground hover:bg-muted"
+                          }`}
+                        >
+                          <span
+                            className="inline-block w-2 h-2 rounded-full"
+                            style={{ background: AGENT_COLORS[i % AGENT_COLORS.length] }}
+                          />
+                          {a.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <div className="h-64">
                     <ResponsiveContainer width="100%" height="100%">
                       <ComposedChart data={kmTrend} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
@@ -344,19 +386,30 @@ export default function AnalyticsTab({ qs, active }: { qs: string; active: boole
                             name,
                           ]}
                         />
-                        <Legend wrapperStyle={{ fontSize: 12 }} />
-                        {kmAgents.map((a, i) => (
-                          <Line
-                            key={a.id}
-                            type="monotone"
-                            dataKey={`a${a.id}`}
-                            name={a.name}
-                            stroke={AGENT_COLORS[i % AGENT_COLORS.length]}
-                            strokeWidth={2}
-                            dot={{ r: 2.5 }}
-                            connectNulls
-                          />
-                        ))}
+                        <Legend
+                          wrapperStyle={{ fontSize: 12, cursor: "pointer" }}
+                          onClick={(e: { dataKey?: unknown }) => {
+                            const key = String(e?.dataKey ?? "");
+                            if (!key.startsWith("a")) return;
+                            const id = key.slice(1);
+                            setFocusedAgent((cur) => (cur === id ? null : id));
+                          }}
+                        />
+                        {kmAgents
+                          .map((a, i) => ({ ...a, color: AGENT_COLORS[i % AGENT_COLORS.length] }))
+                          .filter((a) => effectiveFocus == null || a.id === effectiveFocus)
+                          .map((a) => (
+                            <Line
+                              key={a.id}
+                              type="monotone"
+                              dataKey={`a${a.id}`}
+                              name={a.name}
+                              stroke={a.color}
+                              strokeWidth={2}
+                              dot={{ r: 2.5 }}
+                              connectNulls
+                            />
+                          ))}
                       </ComposedChart>
                     </ResponsiveContainer>
                   </div>

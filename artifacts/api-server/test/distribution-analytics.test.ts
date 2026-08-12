@@ -604,3 +604,192 @@ describe("GET /distribution/suggestions", () => {
     expect(bodyFiltered.overdue.length).toBeLessThanOrEqual(body.overdue.length);
   });
 });
+
+// ── /distribution/analytics/export ↔ /distribution/analytics muvofiqligi ─────
+// Export endpoint'i analytics'dagi kunlik/KPI so'rovlarini takrorlaydi — biri
+// o'zgartirilib ikkinchisi qolsa, supervisor ekrandagi grafikdан farqli raqam
+// yuklab oladi. Bu testlar ikkala javobni bevosita solishtiradi.
+describe("GET /distribution/analytics/export — grafiklar bilan muvofiqlik", () => {
+  async function getCsv(p: string): Promise<{ raw: string; hasBomBytes: boolean; contentType: string; disposition: string }> {
+    const r = await fetch(`${apiUrl}${p}`);
+    if (r.status !== 200) {
+      const body = await r.text().catch(() => "(unreadable)");
+      throw new Error(`GET ${p} returned ${r.status}: ${body.slice(0, 500)}`);
+    }
+    // Diqqat: fetch().text() UTF-8 BOM'ni dekodlashda olib tashlaydi —
+    // BOM'ni xom baytlar (EF BB BF) darajasida tekshiramiz
+    const buf = Buffer.from(await r.arrayBuffer());
+    const hasBomBytes = buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf;
+    const raw = buf.toString("utf8");
+    return {
+      raw,
+      hasBomBytes,
+      contentType: r.headers.get("content-type") ?? "",
+      disposition: r.headers.get("content-disposition") ?? "",
+    };
+  }
+
+  // CSV'ni bo'limlarga ajratish: "Kunlik hisobot" va "Agent KPI"
+  function parseCsvSections(raw: string): {
+    hasBom: boolean;
+    davr: string[];
+    dailyHeader: string;
+    daily: Array<{ date: string; visits: number; sales: number; salesTotal: number }>;
+    agentHeader: string;
+    agents: Array<{
+      name: string; visited: number; sold: number;
+      conv: string; rep: string; nas: string; salesCount: number; salesTotal: number;
+    }>;
+  } {
+    const hasBom = raw.charCodeAt(0) === 0xfeff;
+    const text = hasBom ? raw.slice(1) : raw;
+    const lines = text.split("\r\n");
+    const dailyIdx = lines.indexOf("Kunlik hisobot");
+    const agentIdx = lines.indexOf("Agent KPI");
+    if (dailyIdx < 0 || agentIdx < 0) throw new Error("CSV bo'limlari topilmadi");
+    const daily: Array<{ date: string; visits: number; sales: number; salesTotal: number }> = [];
+    for (let i = dailyIdx + 2; i < lines.length && lines[i] !== ""; i++) {
+      const [date, visits, sales, salesTotal] = lines[i].split(",");
+      daily.push({ date, visits: Number(visits), sales: Number(sales), salesTotal: Number(salesTotal) });
+    }
+    const agents: Array<{
+      name: string; visited: number; sold: number;
+      conv: string; rep: string; nas: string; salesCount: number; salesTotal: number;
+    }> = [];
+    for (let i = agentIdx + 2; i < lines.length && lines[i] !== ""; i++) {
+      const cols = lines[i].split(",");
+      // Fixture nomlarida vergul yo'q — oddiy split yetarli
+      agents.push({
+        name: cols[0], visited: Number(cols[1]), sold: Number(cols[2]),
+        conv: cols[3], rep: cols[4], nas: cols[5],
+        salesCount: Number(cols[6]), salesTotal: Number(cols[7]),
+      });
+    }
+    return {
+      hasBom,
+      davr: lines[0].split(","),
+      dailyHeader: lines[dailyIdx + 1],
+      daily,
+      agentHeader: lines[agentIdx + 1],
+      agents,
+    };
+  }
+
+  const Q = `from=${DATE_B}&to=${DATE_D}`;
+
+  it("CSV strukturasi: BOM, sarlavhalar, bo'limlar, headerlar", async () => {
+    const { raw, hasBomBytes, contentType, disposition } = await getCsv(`/distribution/analytics/export?${Q}`);
+    expect(contentType).toContain("text/csv");
+    expect(disposition).toContain(`tahlil_${DATE_B}_${DATE_D}.csv`);
+    const p = parseCsvSections(raw);
+    expect(hasBomBytes || p.hasBom).toBe(true);
+    expect(p.davr).toEqual(["Davr", DATE_B, DATE_D]);
+    expect(p.dailyHeader).toBe("Sana,Tashriflar (do'kon),Savdo soni,Savdo summasi (so'm)");
+    expect(p.agentHeader).toBe(
+      "Agent,Kirilgan do'konlar,Sotib olgan do'konlar,Konversiya %,Takroriy %,Nasiya %,Savdo soni,Savdo summasi (so'm)"
+    );
+    // CRLF va yakuniy qator tugashi
+    expect(raw.endsWith("\r\n")).toBe(true);
+  });
+
+  it("kunlik bo'lim analytics endpoint'ining daily massiviga aynan teng", async () => {
+    const [{ raw }, analytics] = await Promise.all([
+      getCsv(`/distribution/analytics/export?${Q}`),
+      getJson(`/distribution/analytics?${Q}`),
+    ]);
+    const p = parseCsvSections(raw);
+    // Bir xil sanalar, bir xil tartib, bir xil qiymatlar
+    expect(p.daily).toEqual(
+      analytics.daily.map((d: any) => ({
+        date: d.date, visits: d.visits, sales: d.sales, salesTotal: d.salesTotal,
+      }))
+    );
+    // Muvofiqlik tasodifiy bo'sh massivlar tufayli emasligini tekshiramiz
+    expect(p.daily.length).toBe(6);
+    expect(p.daily.some((d) => d.sales > 0)).toBe(true);
+  });
+
+  it("agentId filtri bilan ham kunlik bo'lim analytics'ga teng", async () => {
+    const q = `${Q}&agentId=8001`;
+    const [{ raw }, analytics] = await Promise.all([
+      getCsv(`/distribution/analytics/export?${q}`),
+      getJson(`/distribution/analytics?${q}`),
+    ]);
+    const p = parseCsvSections(raw);
+    expect(p.daily).toEqual(
+      analytics.daily.map((d: any) => ({
+        date: d.date, visits: d.visits, sales: d.sales, salesTotal: d.salesTotal,
+      }))
+    );
+  });
+
+  it("per-agent qatorlar yig'indisi analytics KPI'ga mos (savdo soni/summasi, sold, nasiya)", async () => {
+    const [{ raw }, analytics] = await Promise.all([
+      getCsv(`/distribution/analytics/export?${Q}`),
+      getJson(`/distribution/analytics?${Q}`),
+    ]);
+    const p = parseCsvSections(raw);
+    expect(p.agents.length).toBe(2); // Agent Alpha, Agent Beta
+    const sum = (fn: (a: (typeof p.agents)[number]) => number) => p.agents.reduce((s, a) => s + fn(a), 0);
+    expect(sum((a) => a.salesCount)).toBe(analytics.kpi.salesCount);
+    expect(sum((a) => a.salesTotal)).toBe(analytics.kpi.salesTotal);
+    // Fixture'da har do'kon bitta agentga tegishli — sold/visited yig'indisi aggregate bilan teng
+    expect(sum((a) => a.sold)).toBe(analytics.kpi.soldShops);
+    expect(sum((a) => a.visited)).toBe(analytics.kpi.visitedShops);
+  });
+
+  it("per-agent konversiya/takroriy/nasiya foizlari aggregate formulaga mos", async () => {
+    // Bitta agentga filtrlangan analytics KPI == shu agentning eksport qatori
+    for (const agentId of ["8001", "8002"] as const) {
+      const q = `${Q}&agentId=${agentId}`;
+      const [{ raw: allCsv }, analytics] = await Promise.all([
+        getCsv(`/distribution/analytics/export?${Q}`),
+        getJson(`/distribution/analytics?${q}`),
+      ]);
+      const p = parseCsvSections(allCsv);
+      const name = agentId === "8001" ? "Agent Alpha" : "Agent Beta";
+      const row = p.agents.find((a) => a.name === name);
+      expect(row).toBeDefined();
+      // Foizlar: analytics null → CSV bo'sh katak, aks holda bir xil butun son
+      const pctEq = (csvVal: string, apiVal: number | null) => {
+        if (apiVal === null) expect(csvVal).toBe("");
+        else expect(Number(csvVal)).toBe(apiVal);
+      };
+      pctEq(row!.conv, analytics.kpi.conversionPct);
+      pctEq(row!.rep, analytics.kpi.repeatPct);
+      pctEq(row!.nas, analytics.kpi.nasiyaPct);
+      // Mutlaq qiymatlar ham mos bo'lishi kerak
+      expect(row!.visited).toBe(analytics.kpi.visitedShops);
+      expect(row!.sold).toBe(analytics.kpi.soldShops);
+      expect(row!.salesCount).toBe(analytics.kpi.salesCount);
+      expect(row!.salesTotal).toBe(analytics.kpi.salesTotal);
+    }
+  });
+
+  it("faqat olmagan tashrifi bor agent ham eksportda ko'rinadi (0 savdo, bo'sh foizlar to'g'ri)", async () => {
+    // DATE_C..DATE_C oralig'ida faqat olmagan tashriflar bor (agent 8001)
+    const q = `from=${DATE_C}&to=${DATE_C}`;
+    const [{ raw }, analytics] = await Promise.all([
+      getCsv(`/distribution/analytics/export?${q}`),
+      getJson(`/distribution/analytics?${q}`),
+    ]);
+    const p = parseCsvSections(raw);
+    const alpha = p.agents.find((a) => a.name === "Agent Alpha");
+    expect(alpha).toBeDefined();
+    expect(alpha!.sold).toBe(0);
+    expect(alpha!.salesCount).toBe(0);
+    expect(alpha!.visited).toBe(analytics.kpi.visitedShops);
+    // sold=0 → konversiya 0, repeat/nasiya bo'sh (analytics'da null)
+    expect(Number(alpha!.conv)).toBe(analytics.kpi.conversionPct);
+    expect(alpha!.rep).toBe("");
+    expect(analytics.kpi.repeatPct).toBeNull();
+    expect(alpha!.nas).toBe("");
+    expect(analytics.kpi.nasiyaPct).toBeNull();
+    // Kunlik bo'lim ham teng
+    expect(p.daily).toEqual(
+      analytics.daily.map((d: any) => ({
+        date: d.date, visits: d.visits, sales: d.sales, salesTotal: d.salesTotal,
+      }))
+    );
+  });
+});

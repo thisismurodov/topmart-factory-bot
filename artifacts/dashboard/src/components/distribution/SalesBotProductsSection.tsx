@@ -17,7 +17,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Bot, Copy, Link2, Pencil, Plus, RotateCcw, Trash2, Zap } from "lucide-react";
+import { Bot, Copy, Link2, Pencil, Plus, RotateCcw, Trash2, TriangleAlert, Zap } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
 
@@ -502,6 +502,9 @@ export function SalesBotProductsSection({ onCreateMaster }: { onCreateMaster?: (
   const missing = items.filter((p) => p.faol && !p.erpBor);
   const linkable = items.filter((p) => p.faol && !p.sku && p.taklifSku);
   const unlinked = items.filter((p) => p.faol && !p.sku);
+  // Dangling: sku bor, lekin masterda bunday SKU yo'q (o'chirilgan/o'zgargan)
+  const brokenSku = items.filter((p) => p.faol && p.sku && !p.erpNomi);
+  const problemCount = unlinked.length + brokenSku.length;
 
   const runSync = (ids?: number[]) =>
     sync.mutate(ids ? { ids } : {}, {
@@ -570,6 +573,46 @@ export function SalesBotProductsSection({ onCreateMaster }: { onCreateMaster?: (
         </div>
       </div>
 
+      {problemCount > 0 && (
+        <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-start gap-2">
+            <TriangleAlert className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
+            <div className="text-sm text-amber-800">
+              <p className="font-semibold">
+                {problemCount} ta faol savdo mahsuloti master katalogga bog'lanmagan
+              </p>
+              <p className="text-amber-700 mt-0.5">
+                {unlinked.length > 0 && `${unlinked.length} tasida SKU yo'q`}
+                {unlinked.length > 0 && brokenSku.length > 0 && " · "}
+                {brokenSku.length > 0 && `${brokenSku.length} tasining SKU'si masterda topilmadi`}
+                {" — narx sinxronizatsiyasi va hisobotlar bu mahsulotlar uchun ishlamaydi."}
+              </p>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            {linkable.length > 0 && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={autoLink.isPending}
+                onClick={() =>
+                  autoLink.mutate(undefined, {
+                    onSuccess: (r) =>
+                      toast({ title: r.linked > 0 ? `${r.linked} ta mahsulot SKU orqali bog'landi` : "Bog'lanadigan mahsulot topilmadi" }),
+                    onError: (e) => toast({ title: "Bog'lashda xato", description: e.message, variant: "destructive" }),
+                  })
+                }
+              >
+                <Link2 className="w-4 h-4 mr-2" /> Avto-bog'lash ({linkable.length})
+              </Button>
+            )}
+            <Button size="sm" onClick={() => setQuickQueue([...unlinked, ...brokenSku])}>
+              <Zap className="w-4 h-4 mr-2" /> Tezkor bog'lash ({problemCount})
+            </Button>
+          </div>
+        </div>
+      )}
+
       <div className="rounded-xl border bg-card shadow-sm overflow-x-auto">
         <Table>
           <TableHeader>
@@ -635,6 +678,25 @@ export function SalesBotProductsSection({ onCreateMaster }: { onCreateMaster?: (
                               {p.sku}
                             </Badge>
                           </button>
+                        ) : p.sku ? (
+                          <div className="flex items-center gap-1.5">
+                            <Badge
+                              className="bg-red-100 text-red-700 hover:bg-red-100 border border-red-200 shadow-none font-mono"
+                              title="Bu SKU master katalogda topilmadi — bog'lanish uzilgan"
+                            >
+                              {p.sku} ?
+                            </Badge>
+                            {p.faol && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-6 px-2 text-xs"
+                                onClick={() => setLinkTarget(p)}
+                              >
+                                Bog'lash
+                              </Button>
+                            )}
+                          </div>
                         ) : p.erpBor ? (
                           <div className="flex items-center gap-1.5">
                             <Badge className="bg-green-100 text-green-700 hover:bg-green-100 border border-green-200 shadow-none">

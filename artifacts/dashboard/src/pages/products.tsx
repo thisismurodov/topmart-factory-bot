@@ -19,7 +19,7 @@ import {
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Plus, Trash2, Pencil, Package } from "lucide-react";
+import { Plus, Trash2, Pencil, Package, Scale } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
 import { SalesBotProductsSection } from "@/components/distribution/SalesBotProductsSection";
 
@@ -1208,11 +1208,168 @@ function ProductDialog({
   );
 }
 
+// ── Weight audit ─────────────────────────────────────────────────────────────
+// Og'irlik auditi: mahsulot og'irligi o'zgartirilgan bo'lsa, eski ishlab
+// chiqarish (PRODUCE ledger) yozuvlari eski og'irlikda qolgan bo'lishi mumkin.
+// Bu dialog har bir yozuvning nazarda tutilgan birlik og'irligini joriy
+// og'irlik bilan solishtirib, farqlarni ko'rsatadi.
+type WeightAuditRow = {
+  id: number;
+  createdAt: string;
+  lineId: number;
+  createdBy: string;
+  note: string;
+  weightKg: number;
+  quantity: number | null;
+  impliedUnitWeight: number | null;
+  deviationKg: number | null;
+  deviationPct: number | null;
+  status: "ok" | "outdated" | "unknown";
+};
+
+type WeightAudit = {
+  product: string;
+  unitType: string;
+  currentWeight: number;
+  tolerance: number;
+  totals: { ledgerRows: number; ok: number; outdated: number; unknownQty: number; totalKg: number };
+  rows: WeightAuditRow[];
+};
+
+function useWeightAudit(productName: string | null) {
+  return useQuery<WeightAudit>({
+    queryKey: ["weight-audit", productName],
+    queryFn: async () => {
+      const res = await authFetch(`/api/products/${encodeURIComponent(productName!)}/weight-audit`);
+      if (!res.ok) throw new Error("Auditni yuklashda xato");
+      return res.json();
+    },
+    enabled: !!productName,
+  });
+}
+
+const auditStatusBadge = (status: WeightAuditRow["status"]) => {
+  if (status === "outdated") {
+    return <Badge className="bg-red-100 text-red-700 hover:bg-red-100 border border-red-200 shadow-none">Eski og'irlik</Badge>;
+  }
+  if (status === "unknown") {
+    return <Badge variant="secondary">Miqdor noma'lum</Badge>;
+  }
+  return <Badge className="bg-green-100 text-green-700 hover:bg-green-100 border border-green-200 shadow-none">Mos</Badge>;
+};
+
+function WeightAuditDialog({ product, onClose }: { product: Product | null; onClose: () => void }) {
+  const { data, isLoading, isError } = useWeightAudit(product?.name ?? null);
+
+  return (
+    <Dialog open={!!product} onOpenChange={o => !o && onClose()}>
+      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Scale className="w-5 h-5 text-primary" /> Og'irlik auditi — {product?.name}
+          </DialogTitle>
+          <DialogDescription>
+            Har bir ishlab chiqarish yozuvining nazarda tutilgan birlik og'irligi
+            joriy og'irlik bilan solishtiriladi. Og'irlik o'zgartirilgan bo'lsa,
+            eski yozuvlar eski qiymatda qoladi — farqlar shu yerda ko'rinadi.
+          </DialogDescription>
+        </DialogHeader>
+
+        {isLoading ? (
+          <div className="space-y-2">
+            {[1, 2, 3].map(i => <Skeleton key={i} className="h-9 w-full" />)}
+          </div>
+        ) : isError || !data ? (
+          <div className="text-center py-8 text-sm text-destructive border rounded-lg">
+            Auditni yuklashda xato yuz berdi
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
+              <div className="rounded-lg border p-3">
+                <div className="text-xs text-muted-foreground">Joriy og'irlik</div>
+                <div className="font-mono font-semibold">{data.currentWeight} kg</div>
+              </div>
+              <div className="rounded-lg border p-3">
+                <div className="text-xs text-muted-foreground">Ledger yozuvlari</div>
+                <div className="font-mono font-semibold">{data.totals.ledgerRows} ta</div>
+              </div>
+              <div className={`rounded-lg border p-3 ${data.totals.outdated > 0 ? "border-red-200 bg-red-50" : ""}`}>
+                <div className="text-xs text-muted-foreground">Eski og'irlikda</div>
+                <div className={`font-mono font-semibold ${data.totals.outdated > 0 ? "text-red-700" : "text-green-700"}`}>
+                  {data.totals.outdated} ta
+                </div>
+              </div>
+              <div className="rounded-lg border p-3">
+                <div className="text-xs text-muted-foreground">Miqdor noma'lum</div>
+                <div className="font-mono font-semibold">{data.totals.unknownQty} ta</div>
+              </div>
+            </div>
+
+            {data.rows.length === 0 ? (
+              <div className="text-center py-8 text-sm text-muted-foreground border rounded-lg">
+                <Package className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                Bu mahsulot bo'yicha ishlab chiqarish yozuvlari yo'q
+              </div>
+            ) : (
+              <div className="rounded-lg border overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Sana</TableHead>
+                      <TableHead>Izoh</TableHead>
+                      <TableHead className="text-right">Miqdor</TableHead>
+                      <TableHead className="text-right">Ledger kg</TableHead>
+                      <TableHead className="text-right">Birlik og'irligi</TableHead>
+                      <TableHead className="text-right">Farq</TableHead>
+                      <TableHead>Holat</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {data.rows.map(r => (
+                      <TableRow key={r.id} className={r.status === "outdated" ? "bg-red-50/50" : ""}>
+                        <TableCell className="text-xs whitespace-nowrap">
+                          {new Date(r.createdAt).toLocaleString("uz-UZ", {
+                            year: "numeric", month: "2-digit", day: "2-digit",
+                            hour: "2-digit", minute: "2-digit",
+                          })}
+                          <div className="text-[10px] text-muted-foreground">{r.createdBy}</div>
+                        </TableCell>
+                        <TableCell className="text-xs max-w-[180px] truncate" title={r.note}>{r.note}</TableCell>
+                        <TableCell className="text-right font-mono text-xs">
+                          {r.quantity != null ? r.quantity : "—"}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs">{r.weightKg} kg</TableCell>
+                        <TableCell className="text-right font-mono text-xs">
+                          {r.impliedUnitWeight != null ? `${r.impliedUnitWeight} kg` : "—"}
+                        </TableCell>
+                        <TableCell className={`text-right font-mono text-xs ${
+                          r.status === "outdated" ? "text-red-600 font-semibold" : "text-muted-foreground"
+                        }`}>
+                          {r.deviationKg != null
+                            ? `${r.deviationKg > 0 ? "+" : ""}${r.deviationKg} kg (${r.deviationPct! > 0 ? "+" : ""}${r.deviationPct}%)`
+                            : "—"}
+                        </TableCell>
+                        <TableCell>{auditStatusBadge(r.status)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function Products() {
   const [createOpen, setCreateOpen]   = useState(false);
   const [editProduct, setEditProduct] = useState<Product | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Product | null>(null);
+  const [auditProduct, setAuditProduct] = useState<Product | null>(null);
 
   const { data: products = [], isLoading } = useProducts();
   const { data: rawMaterials = [] }        = useRawMaterials();
@@ -1341,6 +1498,15 @@ export default function Products() {
                               variant="ghost"
                               size="icon"
                               className="h-8 w-8"
+                              title="Og'irlik auditi"
+                              onClick={() => setAuditProduct(p)}
+                            >
+                              <Scale className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
                               onClick={() => setEditProduct(p)}
                             >
                               <Pencil className="w-4 h-4" />
@@ -1363,6 +1529,8 @@ export default function Products() {
       </div>
 
       <SalesBotProductsSection onCreateMaster={() => setCreateOpen(true)} />
+
+      <WeightAuditDialog product={auditProduct} onClose={() => setAuditProduct(null)} />
 
       <ProductDialog
         open={createOpen}

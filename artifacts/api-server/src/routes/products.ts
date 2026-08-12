@@ -456,4 +456,95 @@ router.get("/products/:name/profitability", async (req, res): Promise<void> => {
   });
 });
 
+// ── GET /products/:name/weight-audit ──────────────────────────────────────────
+// Og'irlik auditi: har bir PRODUCE (wip_movements) qatorining nazarda tutilgan
+// birlik og'irligini (weight_kg / miqdor) joriy products.weight bilan solishtiradi.
+// Miqdor ledgerda saqlanmaydi — u ikki manbadan tiklanadi:
+//   1) Bot partiyalari: note = 'Partiya: <batch_code>' → batches jadvalidan
+//      SUM(quantity) (bitta batch_code ostida bir mahsulot bir necha qatorda
+//      bo'lishi mumkin, shu bois SUM).
+//   2) Dashboard /ombor/flow/produce: standart note = 'Tayyor chiqarildi: <qty>'
+//      dan regexp bilan ajratiladi.
+// Miqdor tiklanmasa qator status='unknown' bilan qaytadi (audit halol bo'lsin).
+// Chegirma (tolerance): joriy og'irlikning 1% i yoki 0.001 kg — kattarog'i.
+router.get("/products/:name/weight-audit", async (req, res): Promise<void> => {
+  const productName = decodeURIComponent(req.params.name);
+  const prodRes = await pool.query(
+    "SELECT name, weight, unit_type FROM products WHERE name=$1", [productName],
+  );
+  if (!prodRes.rows.length) { res.status(404).json({ error: "Product not found" }); return; }
+  const currentWeight = Number(prodRes.rows[0].weight) > 0 ? Number(prodRes.rows[0].weight) : 1;
+
+  // batches — bot jadvali; yangi bo'sh DBda bo'lmasligi mumkin.
+  const hasBatches = (await pool.query(
+    `SELECT to_regclass('batches') IS NOT NULL AS ok`,
+  )).rows[0]?.ok === true;
+
+  const batchJoin = hasBatches
+    ? `LEFT JOIN LATERAL (
+         SELECT SUM(b.quantity)::numeric AS qty
+         FROM batches b
+         WHERE wm.note = 'Partiya: ' || b.batch_code
+           AND LOWER(b.product) = LOWER(wm.product)
+       ) bq ON TRUE`
+    : `LEFT JOIN LATERAL (SELECT NULL::numeric AS qty) bq ON TRUE`;
+
+  const { rows } = await pool.query(
+    `SELECT wm.id, wm.line_id, wm.weight_kg::float8 AS weight_kg, wm.note,
+            wm.created_by, wm.created_at,
+            COALESCE(
+              bq.qty,
+              substring(wm.note FROM '^Tayyor (?:mahsulot )?chiqarildi: ([0-9]+(?:\\.[0-9]+)?)$')::numeric
+            )::float8 AS quantity
+     FROM wip_movements wm
+     ${batchJoin}
+     WHERE wm.movement_type='PRODUCE' AND LOWER(wm.product)=LOWER($1)
+     ORDER BY wm.created_at DESC, wm.id DESC`,
+    [productName],
+  );
+
+  const tolerance = Math.max(0.001, currentWeight * 0.01);
+  let mismatched = 0;
+  let unknownQty = 0;
+  const auditRows = rows.map((r) => {
+    const qty = r.quantity != null && Number(r.quantity) > 0 ? Number(r.quantity) : null;
+    const weightKg = Number(r.weight_kg) || 0;
+    const implied = qty != null ? weightKg / qty : null;
+    let status: "ok" | "outdated" | "unknown";
+    if (implied == null) { status = "unknown"; unknownQty++; }
+    else if (Math.abs(implied - currentWeight) > tolerance) { status = "outdated"; mismatched++; }
+    else { status = "ok"; }
+    return {
+      id:                r.id,
+      createdAt:         r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
+      lineId:            r.line_id,
+      createdBy:         r.created_by,
+      note:              r.note,
+      weightKg,
+      quantity:          qty,
+      impliedUnitWeight: implied != null ? Math.round(implied * 1000) / 1000 : null,
+      deviationKg:       implied != null ? Math.round((implied - currentWeight) * 1000) / 1000 : null,
+      deviationPct:      implied != null && currentWeight > 0
+        ? Math.round(((implied - currentWeight) / currentWeight) * 10000) / 100
+        : null,
+      status,
+    };
+  });
+
+  res.json({
+    product:       prodRes.rows[0].name,
+    unitType:      prodRes.rows[0].unit_type,
+    currentWeight,
+    tolerance,
+    totals: {
+      ledgerRows: auditRows.length,
+      ok:         auditRows.length - mismatched - unknownQty,
+      outdated:   mismatched,
+      unknownQty,
+      totalKg:    Math.round(auditRows.reduce((s, r) => s + r.weightKg, 0) * 1000) / 1000,
+    },
+    rows: auditRows,
+  });
+});
+
 export default router;

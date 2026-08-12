@@ -187,6 +187,51 @@ function LinkDialog({ product, onClose }: { product: SavdoProduct; onClose: () =
   );
 }
 
+// ── Nom o'xshashligi (fuzzy) bo'yicha nomzodlar ────────────────────────────────
+// Trigram (3-harfli bo'laklar) o'xshashligi: "Shlang 3/4" vs "Shlang 3-4" kabi
+// biroz farq qiladigan nomlarni ham topadi. Apostrof variantlari va bo'shliqlar
+// normallashtiriladi (API'dagi nameNorm bilan bir xil ruhda).
+function fuzzyNorm(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[’ʻʼ`´']/g, "")
+    .replace(/[^a-z0-9а-яё]+/gi, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function trigrams(s: string): Set<string> {
+  const padded = `  ${s} `;
+  const out = new Set<string>();
+  for (let i = 0; i + 3 <= padded.length; i++) out.add(padded.slice(i, i + 3));
+  return out;
+}
+
+function trigramSimilarity(a: string, b: string): number {
+  const ta = trigrams(a);
+  const tb = trigrams(b);
+  if (ta.size === 0 || tb.size === 0) return 0;
+  let common = 0;
+  for (const t of ta) if (tb.has(t)) common++;
+  return common / (ta.size + tb.size - common); // Jaccard
+}
+
+// Eng yaqin 3 ta ERP nomzodini qaytaradi (o'xshashligi past bo'lganlar tashlanadi)
+function fuzzyCandidates(
+  name: string,
+  erp: ErpProductLite[],
+  excludeSku?: string | null
+): { p: ErpProductLite; score: number }[] {
+  const n = fuzzyNorm(name);
+  if (!n) return [];
+  return erp
+    .filter((p) => p.sku !== excludeSku)
+    .map((p) => ({ p, score: trigramSimilarity(n, fuzzyNorm(p.name)) }))
+    .filter((c) => c.score >= 0.3)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3);
+}
+
 // ── Tezkor bog'lash rejimi ──────────────────────────────────────────────────────
 // Bog'lanmagan mahsulotlarni ketma-ket ko'rsatadi: ERP tanlab bog'lash,
 // ERP'da yo'q bo'lsa yaratib bog'lash (sync-to-erp), yoki keyingisiga o'tish.
@@ -221,6 +266,9 @@ function QuickLinkDialog({
   const filtered = filter.trim()
     ? erp.filter((p) => norm(p.name).includes(norm(filter)) || norm(p.sku).includes(norm(filter)))
     : erp;
+
+  // Nom o'xshashligi bo'yicha eng yaqin ERP nomzodlari (aniq mosidan tashqari)
+  const candidates = fuzzyCandidates(product.nomi, erp, product.taklifSku);
 
   const linkTo = (sku: string) =>
     update.mutate(
@@ -273,6 +321,27 @@ function QuickLinkDialog({
               Taklif: <span className="font-mono ml-1">{product.taklifSku}</span>
               <span className="ml-1 text-muted-foreground">(nomi mos)</span>
             </Button>
+          )}
+          {candidates.length > 0 && (
+            <div className="space-y-1">
+              <p className="text-xs text-muted-foreground">O'xshash nomlar bo'yicha takliflar:</p>
+              {candidates.map(({ p, score }) => (
+                <Button
+                  key={p.sku}
+                  variant="outline"
+                  className="w-full justify-start"
+                  disabled={pending}
+                  onClick={() => linkTo(p.sku)}
+                >
+                  <Link2 className="w-4 h-4 mr-2 shrink-0" />
+                  <span className="truncate">{p.name}</span>
+                  <span className="font-mono ml-2 text-xs text-muted-foreground">{p.sku}</span>
+                  <span className="ml-auto text-xs text-muted-foreground">
+                    {Math.round(score * 100)}%
+                  </span>
+                </Button>
+              ))}
+            </div>
           )}
           <Input
             placeholder="ERP mahsulotini qidirish..."

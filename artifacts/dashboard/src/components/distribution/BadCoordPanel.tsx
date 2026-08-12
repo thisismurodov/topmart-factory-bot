@@ -57,8 +57,11 @@ function EditRow({
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  // 409 gps_outlier: yangi koordinata viloyat medianidan >60 km — menejer
+  // aniq tasdiqlasa (confirmOutlier: true) qayta yuboriladi.
+  const [outlierKm, setOutlierKm] = useState<number | null>(null);
 
-  const save = async () => {
+  const save = async (confirmOutlier = false) => {
     const latN = parseFloat(lat);
     const lngN = parseFloat(lng);
     if (!Number.isFinite(latN) || latN < -90 || latN > 90) {
@@ -71,17 +74,23 @@ function EditRow({
     }
     setSaving(true);
     setErr(null);
+    if (!confirmOutlier) setOutlierKm(null);
     try {
       const r = await authFetch(`/api/distribution/shops/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ latitude: latN, longitude: lngN }),
+        body: JSON.stringify({ latitude: latN, longitude: lngN, ...(confirmOutlier ? { confirmOutlier: true } : {}) }),
       });
       if (!r.ok) {
-        const j = (await r.json()) as { error?: string };
+        const j = (await r.json()) as { error?: string; distanceKm?: number };
+        if (r.status === 409 && j.error === "gps_outlier") {
+          setOutlierKm(j.distanceKm ?? 0);
+          return;
+        }
         setErr(j.error || "Xatolik yuz berdi");
         return;
       }
+      setOutlierKm(null);
       setSaved(true);
       setEditing(false);
       onSaved();
@@ -170,6 +179,34 @@ function EditRow({
           </div>
           {err && (
             <div className="w-full text-xs text-red-600 pl-0">{err}</div>
+          )}
+          {outlierKm != null && (
+            <div className="w-full rounded-md border border-red-300 bg-red-50 dark:bg-red-950/20 dark:border-red-800 p-2 text-xs" data-testid="gps-outlier-confirm">
+              <div className="text-red-700 dark:text-red-400 mb-1.5">
+                ⚠️ Yangi koordinata viloyat dokonlaridan ~{outlierKm} km uzoqda — xato bo'lishi mumkin.
+                Do'kon haqiqatan shu yerda bo'lsa, tasdiqlab saqlang.
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  className="h-7 text-xs bg-red-600 hover:bg-red-700 text-white"
+                  disabled={saving}
+                  onClick={() => void save(true)}
+                  data-testid="button-confirm-outlier"
+                >
+                  {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : "Baribir saqlash"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  disabled={saving}
+                  onClick={() => setOutlierKm(null)}
+                >
+                  Bekor qilish
+                </Button>
+              </div>
+            </div>
           )}
           <div className="w-full text-[10px] text-muted-foreground">
             Google Maps'da do'kon pinini o'ng bosing → "Bu yerning koordinatlari" → nusxalang

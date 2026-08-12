@@ -1194,6 +1194,37 @@ def sabab_kb():
 def viloyat_kb():
     kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=3)
     kb.add("Namangan","Farg'ona","Andijon"); kb.add("❌ Bekor qilish"); return kb
+def gps_confirm_kb():
+    kb=types.ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.add("✅ Ha, joylashuv to'g'ri")
+    kb.add(types.KeyboardButton("📍 Qayta yuborish",request_location=True))
+    kb.add("❌ Bekor qilish"); return kb
+
+# ── GPS outlier tekshiruvi: yangi dokon koordinatasi viloyat medianidan
+#    GPS_OUTLIER_KM dan uzoq bo'lsa — ehtimol xato (marshrut rejasidan tushib qoladi).
+GPS_OUTLIER_KM=60
+def _haversine_km(lat1,lon1,lat2,lon2):
+    import math
+    dlat=math.radians(lat2-lat1); dlon=math.radians(lon2-lon1)
+    a=math.sin(dlat/2)**2+math.cos(math.radians(lat1))*math.cos(math.radians(lat2))*math.sin(dlon/2)**2
+    return 2*6371*math.asin(math.sqrt(a))
+def _gps_outlier_km(viloyat,lat,lon):
+    """Koordinata viloyat dokonlari medianidan >GPS_OUTLIER_KM uzoq bo'lsa masofani (km) qaytaradi, aks holda None."""
+    if lat is None or lon is None or not viloyat: return None
+    try:
+        conn=get_db();c=conn.cursor()
+        c.execute("""SELECT latitude,longitude FROM dokonlar
+                     WHERE viloyat=%s AND latitude IS NOT NULL AND longitude IS NOT NULL
+                       AND COALESCE(holat,'faol')='faol'""",(viloyat,))
+        pts=c.fetchall();conn.close()
+        if len(pts)<3: return None  # median ishonchsiz — tekshirmaymiz (routePlanner splitOutliers bilan bir xil)
+        lats=sorted(float(p[0]) for p in pts); lons=sorted(float(p[1]) for p in pts)
+        mlat=lats[len(lats)//2]; mlon=lons[len(lons)//2]
+        dist=_haversine_km(mlat,mlon,float(lat),float(lon))
+        return dist if dist>GPS_OUTLIER_KM else None
+    except Exception as e:
+        logging.warning(f"GPS outlier tekshiruvi xatosi: {e}")
+        return None
 
 # ── GLOBAL CANCEL — must be the FIRST handler registered ─────
 @bot.message_handler(func=lambda m:m.text=="❌ Bekor qilish")
@@ -1852,13 +1883,44 @@ def s_dokon_hudud(msg):
     set_state(uid,"dokon_location",data)
     bot.send_message(uid,"📍 Location yuboring:",reply_markup=location_kb())
 
+def _handle_dokon_location(uid,data,lat,lon):
+    _record_agent_location(uid,lat,lon,"dokon")
+    user=get_user(uid)
+    viloyat=user[4] if user else None
+    dist=_gps_outlier_km(viloyat,lat,lon)
+    if dist is not None:
+        data["pending_lat"]=lat; data["pending_lon"]=lon
+        set_state(uid,"dokon_loc_confirm",data)
+        bot.send_message(uid,
+            f"⚠️ Diqqat! Bu joylashuv {viloyat} dokonlari markazidan ~{dist:.0f} km uzoqda.\n"
+            f"Koordinata xato bo'lsa, dokon marshrut rejalariga kirmaydi.\n\n"
+            f"Joylashuv to'g'rimi?",
+            reply_markup=gps_confirm_kb())
+        return
+    data["lat"]=lat; data["lon"]=lon
+    set_state(uid,"dokon_foto",data)
+    bot.send_message(uid,"📸 Dokon rasmini yuboring:",reply_markup=skip_kb())
+
 @bot.message_handler(content_types=["location"],func=lambda m:get_state(m.from_user.id)["state"]=="dokon_location")
 def s_dokon_loc(msg):
     uid=msg.from_user.id; data=get_state(uid)["data"]
-    data["lat"]=msg.location.latitude; data["lon"]=msg.location.longitude
-    _record_agent_location(uid,data["lat"],data["lon"],"dokon")
-    set_state(uid,"dokon_foto",data)
-    bot.send_message(uid,"📸 Dokon rasmini yuboring:",reply_markup=skip_kb())
+    _handle_dokon_location(uid,data,msg.location.latitude,msg.location.longitude)
+
+@bot.message_handler(content_types=["location"],func=lambda m:get_state(m.from_user.id)["state"]=="dokon_loc_confirm")
+def s_dokon_loc_retry(msg):
+    uid=msg.from_user.id; data=get_state(uid)["data"]
+    data.pop("pending_lat",None); data.pop("pending_lon",None)
+    _handle_dokon_location(uid,data,msg.location.latitude,msg.location.longitude)
+
+@bot.message_handler(func=lambda m:get_state(m.from_user.id)["state"]=="dokon_loc_confirm")
+def s_dokon_loc_confirm(msg):
+    uid=msg.from_user.id; data=get_state(uid)["data"]
+    if msg.text=="✅ Ha, joylashuv to'g'ri":
+        data["lat"]=data.pop("pending_lat",None); data["lon"]=data.pop("pending_lon",None)
+        set_state(uid,"dokon_foto",data)
+        bot.send_message(uid,"📸 Dokon rasmini yuboring:",reply_markup=skip_kb())
+        return
+    bot.send_message(uid,"❗ Tasdiqlash uchun \"✅ Ha, joylashuv to'g'ri\" tugmasini bosing yoki 📍 joylashuvni qayta yuboring.",reply_markup=gps_confirm_kb())
 
 @bot.message_handler(content_types=["photo"],func=lambda m:get_state(m.from_user.id)["state"]=="dokon_foto")
 def s_dokon_foto_p(msg):

@@ -6,7 +6,7 @@ import { authFetch } from "@/App";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  Store, ShoppingBag, Repeat2, CreditCard, CalendarClock, TrendingUp, Route,
+  Store, ShoppingBag, Repeat2, CreditCard, CalendarClock, TrendingUp, Route, Download,
 } from "lucide-react";
 
 // ── Turlar ──────────────────────────────────────────────────────────────────────

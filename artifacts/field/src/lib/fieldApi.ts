@@ -261,6 +261,31 @@ export interface NewShopResponse {
   duplicate: boolean;
   dokonId?: number | null;
   routeAdded?: boolean;
+  gpsWarning?: { distanceKm: number; thresholdKm: number } | null;
+}
+
+export interface GpsCheckResponse {
+  outlier: boolean;
+  distanceKm: number | null;
+  thresholdKm: number;
+  viloyat: string | null;
+}
+
+// Saqlashdan OLDIN koordinatani tekshirish (online bo'lsa). Xato/timeout —
+// null (bloklamaydi): offline'da yoki server javob bermasa saqlash davom etadi.
+export async function checkShopGps(lat: number, lon: number, timeoutMs = 4000): Promise<GpsCheckResponse | null> {
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    const res = await fetchFieldApi<GpsCheckResponse>(
+      `/shops/gps-check?lat=${lat}&lon=${lon}`,
+      { signal: ctrl.signal },
+    );
+    clearTimeout(t);
+    return res;
+  } catch {
+    return null;
+  }
 }
 
 // Hooks

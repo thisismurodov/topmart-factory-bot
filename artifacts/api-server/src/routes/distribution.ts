@@ -4,6 +4,7 @@ import { openai } from "@workspace/integrations-openai-ai-server";
 import { computeRouteStats, splitOutliers } from "../lib/routePlanner";
 import { uniqueProductSku } from "../lib/sku";
 import { runRoutePlan } from "../lib/routePlanService";
+import { gpsOutlierKm, GPS_OUTLIER_KM } from "../lib/gpsOutlier";
 
 // Distribyutsiya moduli o'zining `distribution` sxemasida yashaydi (o'zbekcha jadval
 // nomlari — savdolar, dokonlar, nasiya ...). Bu yerdagi barcha endpointlar faqat
@@ -1056,6 +1057,44 @@ router.patch("/distribution/shops/:id", async (req, res): Promise<void> => {
   if (sets.length === 0) {
     res.status(400).json({ error: "latitude yoki longitude berilishi shart" });
     return;
+  }
+
+  // GPS outlier ogohlantirishi: yangi koordinata viloyat medianidan >60 km
+  // uzoq bo'lsa, 409 qaytariladi — mijoz confirmOutlier: true bilan tasdiqlab
+  // qayta yuborsa saqlanadi (uzoq, lekin to'g'ri do'konlar uchun).
+  // Qisman yangilashda (faqat lat YOKI faqat lng) yakuniy juftlik mavjud
+  // qiymat bilan birlashtirilib tekshiriladi — aks holda bitta koordinatani
+  // o'zgartirib guard'ni chetlab o'tish mumkin bo'lardi.
+  const newLatRaw = body.latitude ?? body.lat;
+  const newLngRaw = body.longitude ?? body.lng;
+  if (body.confirmOutlier !== true && (newLatRaw != null || newLngRaw != null)) {
+    const shopQ = await pool.query(
+      `SELECT viloyat, latitude, longitude FROM distribution.dokonlar WHERE id = $1`,
+      [id],
+    );
+    if (shopQ.rows.length === 0) {
+      res.status(404).json({ error: "Do'kon topilmadi" });
+      return;
+    }
+    const row = shopQ.rows[0];
+    const finalLat = newLatRaw != null ? Number(newLatRaw) : (row.latitude != null ? Number(row.latitude) : null);
+    const finalLng = newLngRaw != null ? Number(newLngRaw) : (row.longitude != null ? Number(row.longitude) : null);
+    const distKm = await gpsOutlierKm(
+      pool,
+      row.viloyat as string | null,
+      finalLat,
+      finalLng,
+      id,
+    );
+    if (distKm != null) {
+      res.status(409).json({
+        error: "gps_outlier",
+        message: `Koordinata ${shopQ.rows[0].viloyat} dokonlari markazidan ~${Math.round(distKm)} km uzoqda — xato bo'lishi mumkin. Tasdiqlash uchun confirmOutlier: true bilan qayta yuboring.`,
+        distanceKm: Math.round(distKm),
+        thresholdKm: GPS_OUTLIER_KM,
+      });
+      return;
+    }
   }
 
   params.push(id);

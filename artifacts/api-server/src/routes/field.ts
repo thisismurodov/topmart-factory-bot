@@ -3,6 +3,7 @@ import { z } from "zod";
 import { pool } from "@workspace/db";
 import type { PoolClient } from "pg";
 import { fieldAuth, type FieldRequest, type FieldAgent } from "../middleware/telegramInitData";
+import { gpsOutlierKm, GPS_OUTLIER_KM } from "../lib/gpsOutlier";
 
 // ── TopMart Field Assistant API ────────────────────────────────────────────────
 // Delivery agent Telegram Mini App (/field) uchun endpointlar. Auth: Telegram
@@ -903,6 +904,36 @@ const shopSchema = z.object({
   lon: z.number().min(-180).max(180).nullable().optional(),
 });
 
+// ── GET /field/shops/gps-check — koordinata outlier'mi? (saqlashdan OLDIN) ────
+// Field ilova yangi do'kon navbatga qo'yishdan oldin online bo'lsa shu bilan
+// tekshiradi; outlier bo'lsa agentga ogohlantirish ko'rsatib tasdiq so'raydi.
+router.get("/field/shops/gps-check", async (req, res) => {
+  const agent = agentOf(req as FieldRequest);
+  const lat = Number(req.query.lat);
+  const lon = Number(req.query.lon);
+  if (!Number.isFinite(lat) || lat < -90 || lat > 90 || !Number.isFinite(lon) || lon < -180 || lon > 180) {
+    res.status(400).json({ error: "lat/lon noto'g'ri" });
+    return;
+  }
+  try {
+    const userQ = await pool.query(
+      `SELECT viloyat FROM distribution.users WHERE telegram_id = $1`,
+      [agent.telegramId],
+    );
+    const viloyat = userQ.rows.length > 0 ? (userQ.rows[0].viloyat as string) : null;
+    const distKm = await gpsOutlierKm(pool, viloyat, lat, lon);
+    res.json({
+      outlier: distKm != null,
+      distanceKm: distKm != null ? Math.round(distKm) : null,
+      thresholdKm: GPS_OUTLIER_KM,
+      viloyat,
+    });
+  } catch (err) {
+    req.log.error({ err }, "field shops/gps-check xatosi");
+    res.status(500).json({ error: "GPS tekshiruvida xato" });
+  }
+});
+
 router.post("/field/shops", async (req, res) => {
   const agent = agentOf(req as FieldRequest);
   const parsed = shopSchema.safeParse(req.body);
@@ -966,7 +997,16 @@ router.post("/field/shops", async (req, res) => {
       [clientOpId, agent.telegramId, dokonId, dokonId, nowIso],
     );
     await client.query("COMMIT");
-    res.json({ ok: true, duplicate: false, dokonId, routeAdded });
+
+    // GPS outlier ogohlantirishi (bloklamaydi — offline navbat 4xx da yo'qolmasin):
+    // koordinata viloyat medianidan >60 km bo'lsa, javobda gpsWarning qaytadi.
+    let gpsWarning: { distanceKm: number; thresholdKm: number } | null = null;
+    if (lat != null && lon != null) {
+      const distKm = await gpsOutlierKm(pool, viloyat, lat, lon, dokonId).catch(() => null);
+      if (distKm != null) gpsWarning = { distanceKm: Math.round(distKm), thresholdKm: GPS_OUTLIER_KM };
+    }
+
+    res.json({ ok: true, duplicate: false, dokonId, routeAdded, gpsWarning });
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
     if (isUniqueViolation(err)) {

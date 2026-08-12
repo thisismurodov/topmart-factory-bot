@@ -5,12 +5,13 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
 import { enqueueNewShop } from "@/lib/sync";
+import { checkShopGps } from "@/lib/fieldApi";
 import { useGps } from "@/hooks/useGps";
 import { markVisitSaved } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, MapPin, Store } from "lucide-react";
+import { AlertTriangle, ArrowLeft, MapPin, Store } from "lucide-react";
 
 export default function NewShopForm() {
   const [, setLocation] = useLocation();
@@ -21,9 +22,29 @@ export default function NewShopForm() {
   const [telefon, setTelefon] = useState("");
   const [hudud, setHudud] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [checking, setChecking] = useState(false);
+  // GPS outlier ogohlantirishi: koordinata viloyat dokonlaridan >60 km uzoqda
+  // bo'lsa, saqlashdan OLDIN agent tasdiqlashi kerak (marshrutdan tushib qolmasin).
+  const [gpsWarn, setGpsWarn] = useState<{ distanceKm: number; viloyat: string | null } | null>(null);
 
-  const handleSubmit = async () => {
-    if (nomi.trim().length < 2 || submitted) return;
+  const handleSubmit = async (skipGpsCheck = false) => {
+    if (nomi.trim().length < 2 || submitted || checking) return;
+
+    // Online bo'lsa — navbatga qo'yishdan oldin koordinatani tekshiramiz.
+    // Offline yoki server javob bermasa — bloklamaymiz (saqlash davom etadi).
+    if (!skipGpsCheck && location && navigator.onLine) {
+      setChecking(true);
+      const check = await checkShopGps(location.lat, location.lon);
+      setChecking(false);
+      if (check?.outlier && check.distanceKm != null) {
+        setGpsWarn({ distanceKm: check.distanceKm, viloyat: check.viloyat });
+        if (window.Telegram?.WebApp?.HapticFeedback) {
+          window.Telegram.WebApp.HapticFeedback.notificationOccurred("warning");
+        }
+        return;
+      }
+    }
+
     setSubmitted(true);
 
     // Avval IndexedDB'ga yoziladi (offline'da ham), keyin navigatsiya
@@ -122,16 +143,49 @@ export default function NewShopForm() {
             )}
           </div>
         </div>
+        {gpsWarn && (
+          <div className="flex items-start gap-3 rounded-xl p-4 border bg-red-500/10 border-red-500/30" data-testid="gps-outlier-warning">
+            <AlertTriangle className="w-6 h-6 shrink-0 text-red-600" />
+            <div className="text-sm">
+              <b>Joylashuv shubhali!</b> Bu nuqta {gpsWarn.viloyat ?? "viloyat"} dokonlaridan ~{gpsWarn.distanceKm} km uzoqda.
+              Koordinata xato bo'lsa, do'kon marshrut rejalariga kirmaydi. GPS to'g'ri joyda ekaniga ishonchingiz komil bo'lsa,
+              "Baribir saqlash" tugmasini bosing.
+            </div>
+          </div>
+        )}
       </div>
 
-      <div className="fixed bottom-0 left-0 right-0 p-4 bg-background/95 backdrop-blur border-t z-20 max-w-md mx-auto">
-        <Button
-          className="w-full h-14 text-lg font-bold bg-violet-600 hover:bg-violet-700"
-          disabled={nomi.trim().length < 2 || submitted}
-          onClick={handleSubmit}
-        >
-          {submitted ? "Saqlanmoqda..." : "DO'KONNI SAQLASH"}
-        </Button>
+      <div className="fixed bottom-0 left-0 right-0 p-4 bg-background/95 backdrop-blur border-t z-20 max-w-md mx-auto flex flex-col gap-2">
+        {gpsWarn ? (
+          <>
+            <Button
+              className="w-full h-14 text-lg font-bold bg-red-600 hover:bg-red-700"
+              disabled={submitted}
+              onClick={() => handleSubmit(true)}
+              data-testid="button-save-anyway"
+            >
+              {submitted ? "Saqlanmoqda..." : "BARIBIR SAQLASH"}
+            </Button>
+            <Button
+              variant="outline"
+              className="w-full h-12"
+              disabled={submitted}
+              onClick={() => setGpsWarn(null)}
+              data-testid="button-cancel-outlier"
+            >
+              Ortga — joylashuvni tekshiraman
+            </Button>
+          </>
+        ) : (
+          <Button
+            className="w-full h-14 text-lg font-bold bg-violet-600 hover:bg-violet-700"
+            disabled={nomi.trim().length < 2 || submitted || checking}
+            onClick={() => handleSubmit()}
+            data-testid="button-save-shop"
+          >
+            {checking ? "GPS tekshirilmoqda..." : submitted ? "Saqlanmoqda..." : "DO'KONNI SAQLASH"}
+          </Button>
+        )}
       </div>
     </div>
   );

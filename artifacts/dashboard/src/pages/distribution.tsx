@@ -200,6 +200,8 @@ type ShopDetail = Shop & {
 };
 type RoutesData = {
   kun: number; kunlar: string[];
+  // Har agent uchun hal qilinmagan kesishishlar soni (haftalik xaritadagi ⚠️ bilan bir xil)
+  agentStats?: { agentId: number; crossCount: number }[];
   routes: {
     agentId: number; agentName: string | null; mashinaNomeri: string | null; tartib: number;
     dokonId: number; dokonName: string | null; telefon: string | null;
@@ -1310,12 +1312,23 @@ function DailyVisitsTab({ f, active, onShop }: { f: Filters; active: boolean; on
 function RoutesTab({ f, update, active, onShop }: { f: Filters; update: (p: Partial<Filters>) => void; active: boolean; onShop: (id: number) => void }) {
   const kun = f.kun ?? "";
   const { data, isLoading } = useDist<RoutesData>(["routes", kun], `routes${kun ? `?kun=${kun}` : ""}`, active);
+  // Kesishish (⚠️) belgisi bosilganda tushuntirish ko'rsatiladigan agent (null — yopiq)
+  const [crossInfoAgent, setCrossInfoAgent] = useState<number | null>(null);
 
   const grouped = useMemo(() => {
     if (!data) return [];
-    const m = new Map<number, { agentName: string | null; mashinaNomeri: string | null; stops: RoutesData["routes"] }>();
+    const crossByAgent = new Map((data.agentStats ?? []).map((s) => [s.agentId, s.crossCount]));
+    const m = new Map<number, { agentId: number; agentName: string | null; mashinaNomeri: string | null; crossCount: number; stops: RoutesData["routes"] }>();
     for (const r of data.routes) {
-      if (!m.has(r.agentId)) m.set(r.agentId, { agentName: r.agentName, mashinaNomeri: r.mashinaNomeri, stops: [] });
+      if (!m.has(r.agentId)) {
+        m.set(r.agentId, {
+          agentId: r.agentId,
+          agentName: r.agentName,
+          mashinaNomeri: r.mashinaNomeri,
+          crossCount: crossByAgent.get(r.agentId) ?? 0,
+          stops: [],
+        });
+      }
       m.get(r.agentId)!.stops.push(r);
     }
     return Array.from(m.values());
@@ -1363,6 +1376,24 @@ function RoutesTab({ f, update, active, onShop }: { f: Filters; update: (p: Part
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5">
+                      {/* Hal qilinmagan kesishishlar — haftalik xaritadagi ⚠️ bilan bir xil signal */}
+                      {g.crossCount > 0 && (
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => setCrossInfoAgent((cur) => (cur === g.agentId ? null : g.agentId))}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              setCrossInfoAgent((cur) => (cur === g.agentId ? null : g.agentId));
+                            }
+                          }}
+                          title="Bu kunning marshrutida hal qilinmagan kesishishlar bor — bosing"
+                          className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300 px-1.5 py-0.5 text-[10px] font-semibold cursor-pointer"
+                        >
+                          ⚠️ {g.crossCount}
+                        </span>
+                      )}
                       {/* Audit belgisi: marshrut kesishish ogohlantirishiga qaramay majburiy saqlangan */}
                       {g.stops.some((s) => s.forceSaved) && (
                         <Badge
@@ -1378,6 +1409,20 @@ function RoutesTab({ f, update, active, onShop }: { f: Filters; update: (p: Part
                       </Badge>
                     </div>
                   </div>
+                  {/* Kesishish tushuntirishi (⚠️ bosilganda) — RouteWeekMap bilan bir xil matn */}
+                  {crossInfoAgent === g.agentId && g.crossCount > 0 && data && (
+                    <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] text-amber-900">
+                      <span className="font-semibold capitalize">{data.kunlar[data.kun - 1]}</span> marshrutida{" "}
+                      <span className="font-semibold">{g.crossCount} ta kesishish</span> qolgan.
+                      Kesishish — marshrut chizig'ining o'z-o'zini kesib o'tishi: agent bir joydan ikki marta o'tadi,
+                      bu ortiqcha kilometr va vaqt degani. Bunday marshrut odatda kesishishlar bilan majburan (force)
+                      saqlangan — avto-optimallash ularni bartaraf eta olmagan. Yechim: "AI marshrut" orqali qayta
+                      rejalashtiring yoki do'konlar tartibini qo'lda o'zgartiring.
+                      <button className="ml-2 underline" onClick={() => setCrossInfoAgent(null)}>
+                        Yopish
+                      </button>
+                    </div>
+                  )}
                   <div className="space-y-1">
                     {g.stops.map((s) => (
                       <div

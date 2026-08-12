@@ -1364,7 +1364,7 @@ router.get("/distribution/routes", async (req, res): Promise<void> => {
     `SELECT
        da.id AS agent_id, da.name AS agent_name, da.mashina_nomeri,
        r.tartib, d.id AS dokon_id, d.nomi AS dokon_name, d.telefon,
-       d.viloyat, d.hudud, r.force_saved,
+       d.viloyat, d.hudud, d.latitude, d.longitude, r.force_saved,
        EXISTS (SELECT 1 FROM distribution.savdolar s
                 WHERE s.dokon_id = d.id AND substr(s.created_at,1,10) = $2) AS visited
      FROM distribution.delivery_routes r
@@ -1375,9 +1375,27 @@ router.get("/distribution/routes", async (req, res): Promise<void> => {
     [kun, today]
   );
 
+  // Har agent uchun kesishishlar soni (haftalik xaritadagi ⚠️ bilan bir xil signal).
+  // Faqat koordinatali to'xtashlar hisobga olinadi; tartib bo'yicha saralangan.
+  const agentPts = new Map<number, { lat: number; lng: number; nomi: string | null }[]>();
+  for (const r of rows) {
+    if (r.latitude == null || r.longitude == null) continue;
+    let pts = agentPts.get(r.agent_id);
+    if (!pts) {
+      pts = [];
+      agentPts.set(r.agent_id, pts);
+    }
+    pts.push({ lat: Number(r.latitude), lng: Number(r.longitude), nomi: r.dokon_name as string | null });
+  }
+  const agentStats = [...agentPts.entries()].map(([agentId, pts]) => ({
+    agentId,
+    crossCount: computeRouteStats(pts).crossCount,
+  }));
+
   res.json({
     kun,
     kunlar: KUNLAR,
+    agentStats,
     routes: rows.map((r) => ({
       agentId: r.agent_id,
       agentName: r.agent_name,

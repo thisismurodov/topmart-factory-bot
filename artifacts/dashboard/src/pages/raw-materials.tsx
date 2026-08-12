@@ -36,6 +36,12 @@ type RawMaterial = {
   createdAt: string;
 };
 
+type ProductMaterialLink = {
+  id: number;
+  productName: string;
+  rawMaterialId: number;
+};
+
 type ReconcileItem = {
   id: number;
   name: string;
@@ -64,6 +70,7 @@ type RawMaterialForm = z.infer<typeof rawMaterialSchema>;
 const RAW_MATERIALS_KEY  = ["raw-materials"];
 const RAW_HISTORY_KEY    = ["raw-history"];
 const RAW_RECONCILE_KEY  = ["raw-reconcile"];
+const PRODUCT_MATERIALS_KEY = ["product-materials-all"];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function isLowStock(rm: RawMaterial): boolean {
@@ -99,6 +106,20 @@ function useRawReconcile() {
       return res.json();
     },
     // Refresh every 2 minutes; not critical to be real-time
+    staleTime: 2 * 60 * 1000,
+  });
+}
+
+// Qaysi mahsulotlar (BOM) ushbu xom ashyoni ishlatishini bilish uchun —
+// jadvalda "X ta mahsulotda" ko'rsatiladi va o'chirishda ogohlantiriladi.
+function useProductMaterialLinks() {
+  return useQuery<ProductMaterialLink[]>({
+    queryKey: PRODUCT_MATERIALS_KEY,
+    queryFn: async () => {
+      const res = await authFetch("/api/product-materials");
+      if (!res.ok) throw new Error("Mahsulot bog'lanishlarini yuklashda xato");
+      return res.json();
+    },
     staleTime: 2 * 60 * 1000,
   });
 }
@@ -386,7 +407,7 @@ function RawHistoryRow({ name, unit }: { name: string; unit: string }) {
   const { data: moves = [], isLoading } = useRawHistory(name);
   return (
     <TableRow className="bg-muted/30 hover:bg-muted/30">
-      <TableCell colSpan={8} className="py-3">
+      <TableCell colSpan={9} className="py-3">
         <div className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
           <History className="w-3.5 h-3.5" /> So'nggi to'g'rilashlar / harakatlar
         </div>
@@ -870,7 +891,18 @@ function GapBadge({ item, unit, onClick }: { item: ReconcileItem; unit: string; 
 export default function RawMaterials() {
   const { data: materials = [], isLoading } = useRawMaterials();
   const { data: reconcile = [] } = useRawReconcile();
+  const { data: pmLinks = [] } = useProductMaterialLinks();
   const deleteMut = useDeleteRawMaterial();
+
+  // rawMaterialId → unikal mahsulot nomlari ro'yxati
+  const usageMap = useMemo(() => {
+    const map: Record<number, string[]> = {};
+    for (const link of pmLinks) {
+      const arr = map[link.rawMaterialId] ?? (map[link.rawMaterialId] = []);
+      if (!arr.includes(link.productName)) arr.push(link.productName);
+    }
+    return map;
+  }, [pmLinks]);
 
   // Build a fast id→reconcile lookup
   const reconcileMap = useMemo(
@@ -964,6 +996,7 @@ export default function RawMaterials() {
               <TableHead className="text-right">UZS ekvivalenti</TableHead>
               <TableHead className="text-right">Hozirgi zahira</TableHead>
               <TableHead className="text-right">Minimal zahira</TableHead>
+              <TableHead className="text-center">Mahsulotlarda</TableHead>
               <TableHead className="text-center">Holat</TableHead>
               <TableHead className="text-right">Amal</TableHead>
             </TableRow>
@@ -972,14 +1005,14 @@ export default function RawMaterials() {
             {isLoading ? (
               [1, 2, 3, 4].map(i => (
                 <TableRow key={i}>
-                  {[1, 2, 3, 4, 5, 6, 7, 8].map(j => (
+                  {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(j => (
                     <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
                   ))}
                 </TableRow>
               ))
             ) : materials.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">
+                <TableCell colSpan={9} className="text-center py-12 text-muted-foreground">
                   <Boxes className="w-10 h-10 mx-auto mb-2 opacity-20" />
                   Xom ashyolar yo'q. "Qo'shish" tugmasini bosing.
                 </TableCell>
@@ -1019,6 +1052,19 @@ export default function RawMaterials() {
                     </TableCell>
                     <TableCell className="text-right text-muted-foreground">
                       {m.minimumStock.toLocaleString("ru-RU")} {m.unitType}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      {(usageMap[m.id]?.length ?? 0) > 0 ? (
+                        <Badge
+                          variant="secondary"
+                          className="text-xs cursor-default"
+                          title={`Ishlatiladigan mahsulotlar: ${usageMap[m.id].join(", ")}`}
+                        >
+                          {usageMap[m.id].length} ta mahsulotda
+                        </Badge>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
                     </TableCell>
                     <TableCell className="text-center">
                       {low ? (
@@ -1107,6 +1153,13 @@ export default function RawMaterials() {
             <AlertDialogTitle>Xom ashyoni o'chirish</AlertDialogTitle>
             <AlertDialogDescription>
               <strong>{deleteTarget?.name}</strong> o'chiriladi. Bu amalni qaytarib bo'lmaydi.
+              {deleteTarget && (usageMap[deleteTarget.id]?.length ?? 0) > 0 && (
+                <span className="mt-2 block rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-800">
+                  Diqqat: bu xom ashyo <strong>{usageMap[deleteTarget.id].length} ta mahsulot</strong> tarkibida
+                  ishlatiladi ({usageMap[deleteTarget.id].join(", ")}). O'chirilsa, o'sha mahsulotlarning
+                  material ro'yxati (BOM) ham buziladi.
+                </span>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

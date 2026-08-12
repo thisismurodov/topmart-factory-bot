@@ -255,12 +255,24 @@ function emptyStats() {
   return { total: 0, done: 0, sold: 0, nosale: 0, pending: 0, savdoSumma: 0 };
 }
 
+// Master flag sharti: SKU orqali bog'langan qator faqat master in_sales=TRUE
+// bo'lsa sotiladi; SKU'siz legacy (migratsiya qilinmagan) qator sotuvda qoladi.
+// Throwaway test bazalarida public.products bo'lmasligi mumkin — mavjudligini tekshiramiz.
+async function masterFlagCond(q: (sql: string, vals?: unknown[]) => Promise<{ rows: any[] }>): Promise<string> {
+  const reg = await q(`SELECT to_regclass('public.products') IS NOT NULL AS ok`);
+  if (!reg.rows[0]?.ok) return "TRUE";
+  return `(COALESCE(m.sku,'') = ''
+           OR EXISTS (SELECT 1 FROM public.products p WHERE p.sku = m.sku AND p.in_sales = TRUE))`;
+}
+
 // ── GET /field/products — faol mahsulotlar ────────────────────────────────────
 router.get("/field/products", async (req, res) => {
   try {
+    const cond = await masterFlagCond((sql, vals) => pool.query(sql, vals as any[]));
     const { rows } = await pool.query(
-      `SELECT id, nomi, narx, birlik FROM distribution.mahsulotlar
-        WHERE faol = 1 ORDER BY nomi`,
+      `SELECT m.id, m.nomi, m.narx, m.birlik FROM distribution.mahsulotlar m
+        WHERE m.faol = 1 AND ${cond}
+        ORDER BY m.nomi`,
     );
     res.json(
       rows.map((r) => ({
@@ -392,8 +404,10 @@ export async function performFieldSale(
 
     // Narxlar serverda mahsulotlar jadvalidan olinadi (klient narx yubormaydi)
     const ids = items.map((i) => i.mahsulotId);
+    const cond = await masterFlagCond((sql, vals) => client.query(sql, vals as any[]));
     const prodQ = await client.query(
-      `SELECT id, narx FROM distribution.mahsulotlar WHERE id = ANY($1) AND faol = 1`,
+      `SELECT m.id, m.narx FROM distribution.mahsulotlar m
+        WHERE m.id = ANY($1) AND m.faol = 1 AND ${cond}`,
       [ids],
     );
     const priceMap = new Map<number, number>(

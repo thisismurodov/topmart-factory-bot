@@ -6,7 +6,7 @@ const router: IRouter = Router();
 
 router.get("/inventory", async (_req, res): Promise<void> => {
   const [productsResult, producedResult, soldResult] = await Promise.all([
-    pool.query("SELECT name FROM products ORDER BY name"),
+    pool.query("SELECT name FROM products WHERE in_production = TRUE ORDER BY name"),
     pool.query(
       `SELECT product, COALESCE(SUM(quantity), 0) AS qty, COALESCE(SUM(weight_kg), 0) AS kg
        FROM batches GROUP BY product`

@@ -72,7 +72,9 @@ beforeAll(async () => {
       active BOOLEAN NOT NULL DEFAULT TRUE,
       payroll_method TEXT NOT NULL DEFAULT 'PRODUCT_RATE',
       pieces_per_box INTEGER NOT NULL DEFAULT 1,
-      line_id INTEGER
+      line_id INTEGER,
+      in_sales BOOLEAN NOT NULL DEFAULT FALSE,
+      in_production BOOLEAN NOT NULL DEFAULT TRUE
     );
     CREATE TABLE wip_movements (
       id SERIAL PRIMARY KEY,

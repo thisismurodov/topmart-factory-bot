@@ -980,7 +980,7 @@ router.get("/ombor/flow", async (_req, res): Promise<void> => {
     pool.query(`
       SELECT pl.id, pl.name,
         (SELECT COUNT(*) FROM production_line_workers plw WHERE plw.line_id = pl.id)::int AS worker_count,
-        (SELECT COUNT(*) FROM products p WHERE p.line_id = pl.id AND p.active = TRUE)::int AS product_count,
+        (SELECT COUNT(*) FROM products p WHERE p.line_id = pl.id AND p.active = TRUE AND p.in_production = TRUE)::int AS product_count,
         COALESCE(SUM(CASE WHEN wm.movement_type='RECEIVE' THEN wm.weight_kg
                           WHEN wm.movement_type='PRODUCE' THEN -wm.weight_kg ELSE 0 END), 0)::numeric AS wip_kg,
         COALESCE(SUM(CASE WHEN wm.movement_type='RECEIVE'
@@ -1182,11 +1182,15 @@ router.post("/ombor/flow/produce", async (req, res): Promise<void> => {
     }
     // Mahsulot mavjud bo'lishi shart — og'irligi kg fallback uchun olinadi.
     const prodRes = await client.query(
-      "SELECT name, weight, line_id FROM products WHERE LOWER(name)=LOWER($1) ORDER BY id LIMIT 1", [product],
+      "SELECT name, weight, line_id, in_production FROM products WHERE LOWER(name)=LOWER($1) ORDER BY id LIMIT 1", [product],
     );
     if (!prodRes.rows.length) {
       await client.query("ROLLBACK");
       res.status(400).json({ error: `"${product}" ro'yxatdagi mahsulotga mos kelmadi. Mavjud mahsulotni tanlang.` }); return;
+    }
+    if (prodRes.rows[0].in_production === false) {
+      await client.query("ROLLBACK");
+      res.status(400).json({ error: `"${prodRes.rows[0].name}" ishlab chiqarish modulida emas (faqat savdo) — ishlab chiqarish kiritib bo'lmaydi.` }); return;
     }
     const canonicalProduct: string = prodRes.rows[0].name;
     // Bo'lim ↔ mahsulot mosligi: boshqa bo'limga biriktirilgan mahsulotni bu

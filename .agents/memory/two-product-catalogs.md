@@ -1,14 +1,12 @@
 ---
-name: Two product catalogs (ERP vs savdo bot)
-description: How public.products and distribution.mahsulotlar relate, and the SKU bridge that links them
+name: Master product record (ERP vs savdo bot)
+description: One master product with module flags; sales catalog is a downstream projection
 ---
+# Master product / projection decision
 
-- `public.products` (ERP/zavod) and `distribution.mahsulotlar` (savdo bot) are intentionally separate catalogs.
-- **SKU bridge (unified catalog):** `mahsulotlar.sku` links a bot product to exactly one ERP product via `products.sku`.
-  - `products.sku` non-blank values are UNIQUE via partial index `idx_products_sku_unique ... WHERE sku <> ''` — defined in BOTH api-server init-db.ts and Drizzle schema (drift-checked).
-  - Existing ERP SKUs are **mixed case** (`shrk35`, `SHKR28`) — never uppercase an SKU before matching; compare exact strings. Only newly auto-generated SKUs are uppercased.
-  - Product creation is dashboard-only; both Telegram bots' add-product flows are disabled with redirect messages.
-  - ERP PATCH propagates name + price (UZS only, per-unit) to linked mahsulotlar by sku; `mahsulotlar.narx` is bigint UZS.
-  - Name-conflict upsert on products must PRESERVE the existing non-blank sku (`CASE WHEN products.sku <> '' THEN products.sku ELSE EXCLUDED.sku END`) or bot links silently break.
-- When matching by name (auto-link, sync-to-erp), normalize apostrophe variants (`' ’ ʼ \` ´`) and whitespace; link only when the match is unique on both sides.
-- **Why:** one physical product must have one identity across factory + distribution; SKU is that identity, names drift.
+- The ERP product table is the ONE master; per-module participation flags say where each product is used. The distribution sales catalog is a downstream projection keyed by SKU — never a second source of truth.
+- **Why:** two independently-edited catalogs required manual "Bog'lash" linking and produced dozens of orphaned sales products; projection-side edits silently diverged from ERP.
+- **How to apply:**
+  - Create/edit products only through the master API; projections update via sync. Direct projection edits are reserved for legacy unlinked rows (migration only).
+  - A module flag must be enforced in that module's *selection and pricing* queries everywhere (dashboard, API, both Telegram bots) — a flag that is stored and displayed but not filtered on is a lie in the UI and will be rejected in review.
+  - Historical/report queries stay unfiltered; flags gate selection, not history.

@@ -69,7 +69,8 @@ beforeAll(async () => {
       id      SERIAL PRIMARY KEY,
       name    TEXT NOT NULL,
       line_id INTEGER,
-      active  BOOLEAN NOT NULL DEFAULT TRUE
+      active  BOOLEAN NOT NULL DEFAULT TRUE,
+      in_production BOOLEAN NOT NULL DEFAULT TRUE
     );
     CREATE TABLE inventory (
       id           SERIAL PRIMARY KEY,

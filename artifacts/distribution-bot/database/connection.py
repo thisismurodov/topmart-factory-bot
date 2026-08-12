@@ -272,6 +272,33 @@ def init_db():
     try:
         cur = conn.cursor()
         cur.execute(_INIT_DDL)
+        # Bot sotuv katalogi public.products (ERP master) in_sales flagini o'qiydi.
+        # Yangi (faqat-distribution) bazada ham mavjud bo'lishi shart — factory
+        # telegram-bot init_db'sidagi bilan bir xil idempotent CREATE+ALTER nusxasi.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS public.products (
+                name      TEXT PRIMARY KEY,
+                rate_type TEXT NOT NULL DEFAULT 'dona',
+                rate      NUMERIC(12,2) NOT NULL DEFAULT 100
+            )
+            ;
+            ALTER TABLE public.products
+              ADD COLUMN IF NOT EXISTS id               SERIAL UNIQUE,
+              ADD COLUMN IF NOT EXISTS sku              TEXT NOT NULL DEFAULT '',
+              ADD COLUMN IF NOT EXISTS unit_type        TEXT NOT NULL DEFAULT 'dona',
+              ADD COLUMN IF NOT EXISTS currency_type    TEXT NOT NULL DEFAULT 'UZS',
+              ADD COLUMN IF NOT EXISTS default_sale_price NUMERIC(12,2) NOT NULL DEFAULT 0,
+              ADD COLUMN IF NOT EXISTS salary_cost      NUMERIC(12,2) NOT NULL DEFAULT 0,
+              ADD COLUMN IF NOT EXISTS electricity_cost NUMERIC(12,2) NOT NULL DEFAULT 0,
+              ADD COLUMN IF NOT EXISTS other_cost       NUMERIC(12,2) NOT NULL DEFAULT 0,
+              ADD COLUMN IF NOT EXISTS minimum_stock    INTEGER NOT NULL DEFAULT 0,
+              ADD COLUMN IF NOT EXISTS active           BOOLEAN NOT NULL DEFAULT TRUE,
+              ADD COLUMN IF NOT EXISTS weight           NUMERIC(12,3) NOT NULL DEFAULT 1,
+              ADD COLUMN IF NOT EXISTS created_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+              ADD COLUMN IF NOT EXISTS pieces_per_box   INTEGER NOT NULL DEFAULT 1,
+              ADD COLUMN IF NOT EXISTS in_sales         BOOLEAN NOT NULL DEFAULT FALSE,
+              ADD COLUMN IF NOT EXISTS in_production    BOOLEAN NOT NULL DEFAULT TRUE
+        """)
         conn.commit()
         cur.close()
         log.info("distribution schema initialized")

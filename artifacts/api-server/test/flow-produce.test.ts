@@ -109,7 +109,8 @@ beforeAll(async () => {
       name    TEXT NOT NULL,
       weight  NUMERIC NOT NULL DEFAULT 0,
       active  BOOLEAN NOT NULL DEFAULT TRUE,
-      line_id INTEGER
+      line_id INTEGER,
+      in_production BOOLEAN NOT NULL DEFAULT TRUE
     );
     CREATE TABLE inventory (
       id           SERIAL PRIMARY KEY,
@@ -372,6 +373,21 @@ describe("POST /ombor/flow/produce — finished-goods output integrity", () => {
     expect(await movements()).toHaveLength(0);
     await pool.query(`DELETE FROM products WHERE name='Begona Mahsulot 1kg'`);
     await pool.query(`DELETE FROM production_lines WHERE id=$1`, [otherLineId]);
+  });
+
+  it("rejects a sales-only product (in_production=FALSE) with 400 and writes nothing", async () => {
+    await pool.query(
+      `INSERT INTO products (name, weight, in_production) VALUES ('Faqat Savdo Mahsuloti', 1, FALSE)`,
+    );
+    await seedWip(50);
+    const res = await post("/ombor/flow/produce", {
+      lineId, warehouseId: finishedWarehouseId, product: "Faqat Savdo Mahsuloti", quantity: 5, kg: 5,
+    });
+    expect(res.status).toBe(400);
+    expect(res.json.error).toMatch(/ishlab chiqarish modulida emas/);
+    expect(await produceRows()).toHaveLength(0);
+    expect(await inventoryRows()).toHaveLength(0);
+    await pool.query(`DELETE FROM products WHERE name='Faqat Savdo Mahsuloti'`);
   });
 
   it("accepts a product assigned to the SAME department", async () => {

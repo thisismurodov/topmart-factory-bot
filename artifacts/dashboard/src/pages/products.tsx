@@ -49,6 +49,8 @@ type Product = {
   marginPct: number;
   minimumStock: number;
   piecesPerBox: number;
+  inSales: boolean;
+  inProduction: boolean;
   active: boolean;
   createdAt: string;
 };
@@ -96,6 +98,8 @@ const productSchema = z.object({
   minimumStock: z.coerce.number().min(0).int(),
   piecesPerBox: z.coerce.number().int().min(1).default(1),
   active: z.boolean().default(true),
+  inSales: z.boolean().default(true),
+  inProduction: z.boolean().default(true),
   payrollMethod: z.enum(["PRODUCT_RATE", "ROLE_BASED_KG"]).default("PRODUCT_RATE"),
   lineId: z.coerce.number().nullable().optional(),
 });
@@ -737,6 +741,8 @@ function ProductDialog({
       minimumStock: product?.minimumStock ?? 0,
       piecesPerBox: product?.piecesPerBox ?? 1,
       active: product?.active ?? true,
+      inSales: product?.inSales ?? true,
+      inProduction: product?.inProduction ?? true,
     },
   });
 
@@ -882,6 +888,46 @@ function ProductDialog({
                           <SelectItem value="USD">USD ($)</SelectItem>
                         </SelectContent>
                       </Select>
+                    </FormItem>
+                  )}
+                />
+              </div>
+              {/* Bitta mahsulot bazasi: modullar (Savdo / Ishlab chiqarish) */}
+              <div className="rounded-md border bg-muted/30 p-3 space-y-2">
+                <p className="text-xs font-semibold text-muted-foreground">
+                  Qayerda ishlatiladi? (bitta master yozuv — modullar)
+                </p>
+                <FormField
+                  control={form.control}
+                  name="inSales"
+                  render={({ field }) => (
+                    <FormItem className="flex items-center gap-2 space-y-0">
+                      <FormControl>
+                        <Switch checked={field.value} onCheckedChange={field.onChange} />
+                      </FormControl>
+                      <div>
+                        <FormLabel className="font-normal">Savdoda ishlatiladi</FormLabel>
+                        <p className="text-xs text-muted-foreground">
+                          Savdo bot va agent ilovasi katalogida avtomatik ko'rinadi
+                        </p>
+                      </div>
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="inProduction"
+                  render={({ field }) => (
+                    <FormItem className="flex items-center gap-2 space-y-0">
+                      <FormControl>
+                        <Switch checked={field.value} onCheckedChange={field.onChange} />
+                      </FormControl>
+                      <div>
+                        <FormLabel className="font-normal">Ishlab chiqarishda ishlatiladi</FormLabel>
+                        <p className="text-xs text-muted-foreground">
+                          Ishlab chiqarish, BOM va ombor modullari uchun
+                        </p>
+                      </div>
                     </FormItem>
                   )}
                 />
@@ -1239,7 +1285,21 @@ export default function Products() {
                         : "text-red-600";
                     return (
                       <TableRow key={p.id} className={!p.active ? "opacity-50" : ""}>
-                        <TableCell className="font-medium">{p.name}</TableCell>
+                        <TableCell className="font-medium">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span>{p.name}</span>
+                            {p.inSales && (
+                              <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-blue-200 text-blue-700 bg-blue-50">
+                                Savdo
+                              </Badge>
+                            )}
+                            {p.inProduction && (
+                              <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-violet-200 text-violet-700 bg-violet-50">
+                                I.chiqarish
+                              </Badge>
+                            )}
+                          </div>
+                        </TableCell>
                         <TableCell className="text-muted-foreground text-xs font-mono">
                           {p.sku || "—"}
                         </TableCell>
@@ -1302,7 +1362,7 @@ export default function Products() {
         </Table>
       </div>
 
-      <SalesBotProductsSection />
+      <SalesBotProductsSection onCreateMaster={() => setCreateOpen(true)} />
 
       <ProductDialog
         open={createOpen}

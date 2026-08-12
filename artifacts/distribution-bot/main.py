@@ -1817,11 +1817,19 @@ def add_prod(msg):
         "Dashboard → Mahsulotlar → «Yangi savdo mahsuloti».\n"
         "Bu yerda narx o'zgartirish va o'chirish ishlayveradi.")
 
+def is_master_linked(mid):
+    """SKU orqali ERP masteriga bog'langan qatorlarni bot orqali tahrirlash taqiqlanadi."""
+    conn=get_db();c=conn.cursor()
+    c.execute("SELECT COALESCE(sku,'') FROM mahsulotlar WHERE id=%s",(mid,))
+    row=c.fetchone(); conn.close()
+    return bool(row and row[0])
 @bot.message_handler(commands=["updateprice"])
 def upd_price(msg):
     if not is_admin(msg.from_user.id): return
     try:
         p=msg.text.split()[1].split("|"); mid,narx=int(p[0]),int(p[1])
+        if is_master_linked(mid):
+            bot.send_message(msg.from_user.id,MASTER_LINKED_MSG); return
         conn=get_db();c=conn.cursor()
         c.execute("UPDATE mahsulotlar SET narx=%s WHERE id=%s",(narx,mid))
         conn.commit();conn.close()
@@ -1833,6 +1841,8 @@ def del_prod(msg):
     if not is_admin(msg.from_user.id): return
     try:
         mid=int(msg.text.split()[1])
+        if is_master_linked(mid):
+            bot.send_message(msg.from_user.id,MASTER_LINKED_MSG); return
         conn=get_db();c=conn.cursor()
         c.execute("UPDATE mahsulotlar SET faol=0 WHERE id=%s",(mid,))
         conn.commit();conn.close()
@@ -2173,7 +2183,7 @@ def tovar_berish(msg):
     if not user: return
     if check_pending(uid): return
     conn=get_db();c=conn.cursor()
-    c.execute("SELECT id,nomi,narx,birlik FROM mahsulotlar WHERE faol=1 ORDER BY nomi")
+    c.execute("SELECT id,nomi,narx,birlik FROM mahsulotlar WHERE faol=1 AND (COALESCE(sku,'')='' OR EXISTS (SELECT 1 FROM public.products p WHERE p.sku=mahsulotlar.sku AND p.in_sales=TRUE)) ORDER BY nomi")
     mahsulotlar=c.fetchall(); conn.close()
     if not mahsulotlar: bot.send_message(uid,"❗ Mahsulotlar yo'q."); return
     # Delivery agent: today's route only
@@ -3906,6 +3916,8 @@ def mah_narx_tanla(msg):
         rest=msg.text.lstrip("✏️").lstrip()
         mid=int(rest.split("|")[0])
         nomi=rest.split("|",1)[1].split(" —")[0].strip()
+        if is_master_linked(mid):
+            bot.send_message(uid,MASTER_LINKED_MSG,reply_markup=mah_menu_kb()); clear_state(uid); return
         data["mid"]=mid; data["nomi"]=nomi; set_state(uid,"mah_narx_kirit",data)
         bot.send_message(uid,f"💰 {nomi} uchun yangi narxni kiriting (so'mda):",reply_markup=cancel_kb())
     except Exception as e:
@@ -3916,6 +3928,8 @@ def mah_narx_kirit(msg):
     uid=msg.from_user.id; data=get_state(uid)["data"]
     try: narx=int(msg.text.replace(" ","").replace(",",""))
     except: bot.send_message(uid,"❗ Raqam kiriting, masalan: 40000"); return
+    if is_master_linked(data["mid"]):
+        clear_state(uid); bot.send_message(uid,MASTER_LINKED_MSG,reply_markup=mah_menu_kb()); return
     conn=get_db();c=conn.cursor()
     c.execute("UPDATE mahsulotlar SET narx=%s WHERE id=%s",(narx,data["mid"]))
     conn.commit();conn.close();clear_state(uid)
@@ -3946,6 +3960,8 @@ def mah_ochir_tanla(msg):
         rest=msg.text.lstrip("🗑").lstrip()
         mid=int(rest.split("|")[0])
         nomi=rest.split("|",1)[1].split(" —")[0].strip()
+        if is_master_linked(mid):
+            bot.send_message(uid,MASTER_LINKED_MSG,reply_markup=mah_menu_kb()); clear_state(uid); return
         data["mid"]=mid; data["nomi"]=nomi; set_state(uid,"mah_ochir_tasdiq",data)
         bot.send_message(uid,
             f"⚠️ Rostdan ham o'chirasizmi?\n\n📝 {nomi}",
@@ -3959,6 +3975,8 @@ def mah_ochir_tasdiq(msg):
     if msg.text!="✅ Tasdiqlash":
         clear_state(uid)
         bot.send_message(uid,"Bekor qilindi.",reply_markup=mah_menu_kb()); return
+    if is_master_linked(data["mid"]):
+        clear_state(uid); bot.send_message(uid,MASTER_LINKED_MSG,reply_markup=mah_menu_kb()); return
     conn=get_db();c=conn.cursor()
     c.execute("UPDATE mahsulotlar SET faol=0 WHERE id=%s",(data["mid"],))
     conn.commit();conn.close();clear_state(uid)

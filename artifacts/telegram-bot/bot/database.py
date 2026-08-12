@@ -79,7 +79,9 @@ def init_db() -> None:
               ADD COLUMN IF NOT EXISTS active           BOOLEAN NOT NULL DEFAULT TRUE,
               ADD COLUMN IF NOT EXISTS weight           NUMERIC(12,3) NOT NULL DEFAULT 1,
               ADD COLUMN IF NOT EXISTS created_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-              ADD COLUMN IF NOT EXISTS pieces_per_box   INTEGER NOT NULL DEFAULT 1
+              ADD COLUMN IF NOT EXISTS pieces_per_box   INTEGER NOT NULL DEFAULT 1,
+              ADD COLUMN IF NOT EXISTS in_sales         BOOLEAN NOT NULL DEFAULT FALSE,
+              ADD COLUMN IF NOT EXISTS in_production    BOOLEAN NOT NULL DEFAULT TRUE
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS batches (
@@ -667,14 +669,14 @@ def get_all_workers_config() -> list[dict]:
 
 def get_products() -> list[tuple[str, str, float]]:
     with get_conn() as (conn, cur):
-        cur.execute("SELECT name, rate_type, rate FROM products WHERE active=TRUE ORDER BY name")
+        cur.execute("SELECT name, rate_type, rate FROM products WHERE active=TRUE AND in_production=TRUE ORDER BY name")
         rows = cur.fetchall()
     return [(r["name"], r["rate_type"], float(r["rate"])) for r in rows]
 
 
 def get_product_names() -> list[str]:
     with get_conn() as (conn, cur):
-        cur.execute("SELECT name FROM products WHERE active=TRUE ORDER BY name")
+        cur.execute("SELECT name FROM products WHERE active=TRUE AND in_production=TRUE ORDER BY name")
         return [r["name"] for r in cur.fetchall()]
 
 
@@ -1562,7 +1564,7 @@ def get_sale_products() -> list[dict]:
                       unit_type        AS unit,
                       default_sale_price AS default_price,
                       currency_type    AS currency
-               FROM products WHERE active = TRUE ORDER BY name"""
+               FROM products WHERE active = TRUE AND in_sales = TRUE ORDER BY name"""
         )
         return cur.fetchall()
 
@@ -1575,7 +1577,7 @@ def get_sale_product_by_id(prod_id: int) -> dict | None:
                       unit_type        AS unit,
                       default_sale_price AS default_price,
                       currency_type    AS currency
-               FROM products WHERE id = %s AND active = TRUE""",
+               FROM products WHERE id = %s AND active = TRUE AND in_sales = TRUE""",
             (prod_id,),
         )
         return cur.fetchone()
@@ -1597,7 +1599,7 @@ def get_price_for_qty(product_id: int, qty: float) -> tuple[float, str]:
                 return float(tier["price"] or 0), tier["currency"] or "UZS"
         cur.execute(
             """SELECT default_sale_price AS price, currency_type AS currency
-               FROM products WHERE id = %s AND active = TRUE""",
+               FROM products WHERE id = %s AND active = TRUE AND in_sales = TRUE""",
             (product_id,),
         )
         prod = cur.fetchone()

@@ -60,24 +60,6 @@ function useSavdoProducts() {
   });
 }
 
-type SaveVars = { nomi: string; narx: number; birlik: string };
-
-function useCreateSavdoProduct() {
-  const qc = useQueryClient();
-  return useMutation<unknown, Error, SaveVars>({
-    mutationFn: async (data) => {
-      const res = await authFetch("/api/distribution/products", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      if (!res.ok) await readError(res, "Saqlashda xato");
-      return res.json();
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: SAVDO_PRODUCTS_KEY }),
-  });
-}
-
 type UpdateVars = { id: number; nomi?: string; narx?: number; birlik?: string; faol?: boolean; sku?: string };
 
 function useUpdateSavdoProduct() {
@@ -302,7 +284,14 @@ function QuickLinkDialog({
             {isLoading ? (
               <div className="p-3 text-sm text-muted-foreground">Yuklanmoqda...</div>
             ) : filtered.length === 0 ? (
-              <div className="p-3 text-sm text-muted-foreground">Mos ERP mahsuloti topilmadi</div>
+              <div className="p-3 text-sm space-y-2">
+                <p className="text-muted-foreground">
+                  Hech narsa topilmadi — bu mahsulot ERP (master) bazasida mavjud emas.
+                </p>
+                <Button size="sm" variant="secondary" disabled={pending} onClick={createAndLink}>
+                  <Plus className="w-4 h-4 mr-1" /> Yangi mahsulot yaratish va bog'lash
+                </Button>
+              </div>
             ) : (
               filtered.map((p) => (
                 <button
@@ -338,16 +327,17 @@ function QuickLinkDialog({
 }
 
 // ── Qo'shish / tahrirlash dialogi ───────────────────────────────────────────────
-function SavdoProductDialog({ product, onClose }: { product: SavdoProduct | null; onClose: () => void }) {
-  const [nomi, setNomi] = useState(product?.nomi ?? "");
-  const [narx, setNarx] = useState(product ? String(product.narx) : "");
-  const [birlik, setBirlik] = useState(product?.birlik === "kg" ? "kg" : "dona");
+// Faqat legacy (SKU'siz) qatorlarni tahrirlash uchun — yangi mahsulot yaratish
+// master oqimida (Mahsulotlar bo'limi) bo'ladi.
+function SavdoProductDialog({ product, onClose }: { product: SavdoProduct; onClose: () => void }) {
+  const [nomi, setNomi] = useState(product.nomi);
+  const [narx, setNarx] = useState(String(product.narx));
+  const [birlik, setBirlik] = useState(product.birlik === "kg" ? "kg" : "dona");
   const [localErr, setLocalErr] = useState<string | null>(null);
 
-  const create = useCreateSavdoProduct();
   const update = useUpdateSavdoProduct();
-  const pending = create.isPending || update.isPending;
-  const serverErr = create.error?.message || update.error?.message || null;
+  const pending = update.isPending;
+  const serverErr = update.error?.message || null;
 
   const submit = () => {
     const narxNum = Number(narx);
@@ -361,15 +351,14 @@ function SavdoProductDialog({ product, onClose }: { product: SavdoProduct | null
     }
     setLocalErr(null);
     const vars = { nomi: nomi.trim(), narx: narxNum, birlik };
-    if (product) update.mutate({ id: product.id, ...vars }, { onSuccess: onClose });
-    else create.mutate(vars, { onSuccess: onClose });
+    update.mutate({ id: product.id, ...vars }, { onSuccess: onClose });
   };
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{product ? "Mahsulotni tahrirlash" : "Yangi savdo mahsuloti"}</DialogTitle>
+          <DialogTitle>Mahsulotni tahrirlash</DialogTitle>
           <DialogDescription>
             Bu ro'yxat savdo (agent) boti bilan umumiy — o'zgarish botda darhol ko'rinadi.
           </DialogDescription>
@@ -427,8 +416,7 @@ function SavdoProductDialog({ product, onClose }: { product: SavdoProduct | null
 }
 
 // ── Asosiy bo'lim ───────────────────────────────────────────────────────────────
-export function SalesBotProductsSection() {
-  const [addOpen, setAddOpen] = useState(false);
+export function SalesBotProductsSection({ onCreateMaster }: { onCreateMaster?: () => void }) {
   const [editTarget, setEditTarget] = useState<SavdoProduct | null>(null);
   const [deactivateTarget, setDeactivateTarget] = useState<SavdoProduct | null>(null);
   const [syncAllOpen, setSyncAllOpen] = useState(false);
@@ -475,6 +463,8 @@ export function SalesBotProductsSection() {
           </p>
           <p className="text-xs text-muted-foreground mt-0.5">
             Savdo (agent) botidagi katalog bilan umumiy ro'yxat — bu yerdagi o'zgarish botda darhol ko'rinadi.
+            Yangi mahsulot yuqoridagi master katalogda ("Savdoda ishlatiladi" bilan) yaratiladi;
+            bu yerdagi bog'lash vositalari faqat eski yozuvlarni migratsiya qilish uchun.
           </p>
         </div>
         <div className="flex gap-2">
@@ -503,9 +493,11 @@ export function SalesBotProductsSection() {
               <Copy className="w-4 h-4 mr-2" /> ERP ga nusxalash ({missing.length})
             </Button>
           )}
-          <Button onClick={() => setAddOpen(true)}>
-            <Plus className="w-4 h-4 mr-2" /> Yangi mahsulot
-          </Button>
+          {onCreateMaster && (
+            <Button onClick={onCreateMaster}>
+              <Plus className="w-4 h-4 mr-2" /> Yangi mahsulot (master)
+            </Button>
+          )}
         </div>
       </div>
 
@@ -620,15 +612,24 @@ export function SalesBotProductsSection() {
                       </TableCell>
                       <TableCell>
                         <div className="flex gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8"
-                            onClick={() => setEditTarget(p)}
-                          >
-                            <Pencil className="w-4 h-4" />
-                          </Button>
-                          {p.faol ? (
+                          {p.sku ? (
+                            <span
+                              className="text-xs text-muted-foreground self-center px-1"
+                              title="Master katalogga bog'langan — nomi, narxi va holatini yuqoridagi Mahsulotlar jadvalida tahrirlang"
+                            >
+                              Master orqali
+                            </span>
+                          ) : (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={() => setEditTarget(p)}
+                            >
+                              <Pencil className="w-4 h-4" />
+                            </Button>
+                          )}
+                          {p.sku ? null : p.faol ? (
                             <Button
                               variant="ghost"
                               size="icon"
@@ -669,7 +670,6 @@ export function SalesBotProductsSection() {
         </Table>
       </div>
 
-      {addOpen && <SavdoProductDialog product={null} onClose={() => setAddOpen(false)} />}
       {editTarget && <SavdoProductDialog product={editTarget} onClose={() => setEditTarget(null)} />}
       {linkTarget && <LinkDialog product={linkTarget} onClose={() => setLinkTarget(null)} />}
       {quickQueue && quickQueue.length > 0 && (

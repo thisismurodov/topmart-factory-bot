@@ -81,7 +81,8 @@ beforeAll(async () => {
       name TEXT PRIMARY KEY,
       unit_type TEXT NOT NULL DEFAULT 'dona',
       currency_type TEXT NOT NULL DEFAULT 'UZS',
-      default_sale_price NUMERIC(12,2) NOT NULL DEFAULT 0
+      default_sale_price NUMERIC(12,2) NOT NULL DEFAULT 0,
+      in_production BOOLEAN NOT NULL DEFAULT TRUE
     );
     CREATE TABLE batches (
       id SERIAL PRIMARY KEY,

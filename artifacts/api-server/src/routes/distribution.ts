@@ -192,47 +192,15 @@ router.get("/distribution/products", async (_req, res): Promise<void> => {
   );
 });
 
-router.post("/distribution/products", async (req, res): Promise<void> => {
-  const body = (req.body ?? {}) as Record<string, unknown>;
-  const nomi = typeof body.nomi === "string" ? body.nomi.trim().replace(/\s+/g, " ") : "";
-  const narxRaw = Number(body.narx);
-  const birlik = body.birlik === "kg" ? "kg" : "dona";
-
-  if (!nomi) {
-    res.status(400).json({ error: "Mahsulot nomi kiritilishi shart" });
-    return;
-  }
-  if (!Number.isFinite(narxRaw) || narxRaw <= 0) {
-    res.status(400).json({ error: "Narx musbat son bo'lishi kerak" });
-    return;
-  }
-  const narx = Math.round(narxRaw);
-
-  const dup = await pool.query(
-    `SELECT id, faol FROM distribution.mahsulotlar
-     WHERE ${nameNorm("nomi")} = ${nameNorm("$1")} ORDER BY faol DESC LIMIT 1`,
-    [nomi]
-  );
-  if (dup.rows.length > 0 && Number(dup.rows[0].faol) === 1) {
-    res.status(409).json({ error: "Bu nomdagi mahsulot allaqachon bor" });
-    return;
-  }
-  if (dup.rows.length > 0) {
-    // Nofaol (o'chirilgan) mahsulot qayta tiklanadi — dublikat yaratilmaydi
-    const upd = await pool.query(
-      `UPDATE distribution.mahsulotlar SET nomi = $1, narx = $2, birlik = $3, faol = 1
-       WHERE id = $4 RETURNING id`,
-      [nomi, narx, birlik, dup.rows[0].id]
-    );
-    res.json({ id: upd.rows[0].id as number, reactivated: true });
-    return;
-  }
-  const ins = await pool.query(
-    `INSERT INTO distribution.mahsulotlar (nomi, narx, birlik, faol)
-     VALUES ($1, $2, $3, 1) RETURNING id`,
-    [nomi, narx, birlik]
-  );
-  res.status(201).json({ id: ins.rows[0].id as number, reactivated: false });
+// Yagona master siyosati: savdo katalogida to'g'ridan-to'g'ri mahsulot yaratish
+// O'CHIRILGAN. Yangi mahsulot faqat POST /products (inSales=true) orqali yaratiladi
+// va proyeksiya avtomatik sinxronlanadi.
+router.post("/distribution/products", async (_req, res): Promise<void> => {
+  res.status(410).json({
+    error:
+      "Savdo katalogiga to'g'ridan-to'g'ri mahsulot qo'shish o'chirilgan — " +
+      "yangi mahsulotni Mahsulotlar (master) bo'limida «Savdoda ishlatiladi» belgisi bilan yarating.",
+  });
 });
 
 // Savdo botida bor, lekin ERP katalogida yo'q mahsulotlarni public.products'ga
@@ -268,8 +236,8 @@ router.post("/distribution/products/sync-to-erp", async (req, res): Promise<void
     const sku = await uniqueProductSku(String(m.nomi));
     const unit = m.birlik === "kg" ? "kg" : "dona";
     const ins = await pool.query(
-      `INSERT INTO public.products (name, sku, unit_type, rate_type, currency_type, default_sale_price, active)
-       VALUES ($1, $2, $3, $3, 'UZS', $4, TRUE)
+      `INSERT INTO public.products (name, sku, unit_type, rate_type, currency_type, default_sale_price, active, in_sales)
+       VALUES ($1, $2, $3, $3, 'UZS', $4, TRUE, TRUE)
        ON CONFLICT (name) DO NOTHING RETURNING name, sku`,
       [String(m.nomi), sku, unit, Number(m.narx ?? 0)]
     );
@@ -288,6 +256,24 @@ router.patch("/distribution/products/:id", async (req, res): Promise<void> => {
     return;
   }
   const body = (req.body ?? {}) as Record<string, unknown>;
+
+  // Master-bog'langan qatorlar (sku bor) — nomi/narx/birlik/faol FAQAT master
+  // (public.products) orqali o'zgaradi; bu route faqat sku bog'lash/uzish uchun.
+  if (
+    body.nomi !== undefined || body.narx !== undefined ||
+    body.birlik !== undefined || body.faol !== undefined
+  ) {
+    const cur = await pool.query(
+      `SELECT COALESCE(sku,'') AS sku FROM distribution.mahsulotlar WHERE id = $1`, [id]
+    );
+    if (cur.rows.length > 0 && cur.rows[0].sku !== "") {
+      res.status(409).json({
+        error: "Bu mahsulot master katalogga bog'langan — nomi, narxi va holatini Mahsulotlar (master) jadvalida tahrirlang",
+      });
+      return;
+    }
+  }
+
   const sets: string[] = [];
   const params: unknown[] = [];
   let nomiVal: string | null = null;
@@ -406,6 +392,13 @@ router.patch("/distribution/products/:id", async (req, res): Promise<void> => {
     return;
   }
   const r = upd.rows[0];
+  // Bog'lash (migratsiya) SKU o'rnatganda master yozuvda in_sales=TRUE muhrlanadi
+  if (typeof body.sku === "string" && body.sku.trim() !== "") {
+    await pool.query(
+      `UPDATE public.products SET in_sales = TRUE WHERE sku = $1 AND in_sales = FALSE`,
+      [body.sku.trim()]
+    );
+  }
   res.json({
     id: r.id as number,
     nomi: r.nomi as string,
@@ -432,6 +425,14 @@ router.post("/distribution/products/auto-link", async (_req, res): Promise<void>
             WHERE p2.sku <> '' AND ${nameNorm("p2.name")} = ${nameNorm("m.nomi")}) = 1
      RETURNING m.id, m.nomi, m.sku`
   );
+  // Bog'langan master yozuvlarda in_sales=TRUE muhrlanadi
+  if (rows.length > 0) {
+    await pool.query(
+      `UPDATE public.products SET in_sales = TRUE
+       WHERE in_sales = FALSE AND sku = ANY($1::text[])`,
+      [rows.map((r) => String(r.sku))]
+    );
+  }
   res.json({ linked: rows.length, items: rows.map((r) => ({ id: r.id, nomi: r.nomi, sku: r.sku })) });
 });
 

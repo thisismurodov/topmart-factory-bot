@@ -46,6 +46,30 @@ export async function initDb(): Promise<void> {
       ADD COLUMN IF NOT EXISTS pieces_per_box INTEGER NOT NULL DEFAULT 1
   `);
 
+  // products.in_sales / in_production — Bitta mahsulot bazasi modullari (Task 104):
+  // bitta master yozuv savdo va ishlab chiqarish bo'limlarida qaysi rejimda
+  // ishlatilishini belgilaydi.
+  await pool.query(`
+    ALTER TABLE IF EXISTS products
+      ADD COLUMN IF NOT EXISTS in_sales BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS in_production BOOLEAN NOT NULL DEFAULT TRUE
+  `);
+
+  // Backfill: savdo katalogiga (distribution.mahsulotlar) SKU orqali bog'langan
+  // mahsulotlar avtomatik "savdoda ishlatiladi" deb belgilanadi. Idempotent va
+  // o'z-o'zini tuzatadi: in_sales o'chirilsa sync mahsulotni faol=0 qiladi,
+  // shuning uchun bu backfill uni qayta yoqmaydi.
+  await pool.query(`
+    DO $$ BEGIN
+      IF to_regclass('distribution.mahsulotlar') IS NOT NULL THEN
+        UPDATE products p SET in_sales = TRUE
+         WHERE p.in_sales = FALSE AND p.sku <> ''
+           AND EXISTS (SELECT 1 FROM distribution.mahsulotlar m
+                        WHERE m.faol = 1 AND m.sku = p.sku);
+      END IF;
+    END $$
+  `);
+
   // products.sku — yagona katalog identifikatori: bo'sh bo'lmagan SKU'lar unikal
   await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_products_sku_unique

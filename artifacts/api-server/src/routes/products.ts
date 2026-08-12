@@ -17,6 +17,93 @@ async function propagateToDistribution(productName: string): Promise<void> {
   );
 }
 
+// ── Bitta mahsulot bazasi (ONE PRODUCT = ONE MASTER RECORD) sinxronizatsiyasi ──
+// in_sales = TRUE bo'lgan master mahsulot savdo katalogida (distribution.
+// mahsulotlar) avtomatik faol bo'ladi. Bog'lash tartibi:
+//   1) SKU bo'yicha mavjud qator → yangilash (nomi/birlik, UZS bo'lsa narx) + faol=1
+//   2) Normallashtirilgan nom bo'yicha mavjud (bog'lanmagan) qator → SKU muhrlash
+//      (eski savdo mahsulotini master yozuvga migratsiya qilish yo'li)
+//   3) Hech biri topilmasa → yangi qator INSERT (USD narx jonli kursda UZS'ga)
+// in_sales FALSE qilinganda SKU orqali bog'langan qator faol=0 bo'ladi.
+const distNameNorm = (expr: string): string =>
+  "regexp_replace(regexp_replace(lower(trim(" + expr + ")), '[''’ʼ`´]', '', 'g'), '\\s+', ' ', 'g')";
+
+async function distCatalogExists(): Promise<boolean> {
+  const r = await pool.query(`SELECT to_regclass('distribution.mahsulotlar') IS NOT NULL AS ok`);
+  return r.rows[0]?.ok === true;
+}
+
+export async function syncSalesCatalog(productName: string): Promise<void> {
+  if (!(await distCatalogExists())) return;
+  const pr = await pool.query(
+    `SELECT name, sku, unit_type, currency_type, default_sale_price, in_sales
+     FROM products WHERE name = $1`, [productName]
+  );
+  if (!pr.rows.length) return;
+  const p = pr.rows[0];
+  const sku = String(p.sku || "");
+  const inSales = p.in_sales === true;
+
+  if (!inSales) {
+    // Savdodan chiqarilgan — bog'langan savdo qatorini nofaol qilamiz
+    if (sku !== "") {
+      await pool.query(
+        `UPDATE distribution.mahsulotlar SET faol = 0 WHERE sku = $1 AND faol = 1`, [sku]
+      );
+    }
+    return;
+  }
+  if (sku === "") return; // master yozuvda SKU bo'lishi shart (avto-yaratiladi)
+
+  const birlik = String(p.unit_type) === "kg" ? "kg" : "dona";
+  const isUzs = String(p.currency_type) === "UZS";
+  const price = Number(p.default_sale_price) || 0;
+
+  // 1) SKU bo'yicha mavjud qator
+  const upd = await pool.query(
+    `UPDATE distribution.mahsulotlar SET
+       nomi = $2, birlik = $3, faol = 1,
+       narx = CASE WHEN $4::boolean AND $5::bigint > 0 THEN $5::bigint ELSE narx END
+     WHERE sku = $1`,
+    [sku, String(p.name), birlik, isUzs, isUzs ? Math.round(price) : 0]
+  );
+  if ((upd.rowCount ?? 0) > 0) return;
+
+  // 2) Nom bo'yicha mavjud (SKU'siz yoki nofaol) qator — migratsiya bog'lash
+  const byName = await pool.query(
+    `SELECT id FROM distribution.mahsulotlar
+     WHERE ${distNameNorm("nomi")} = ${distNameNorm("$1")}
+       AND (sku IS NULL OR sku = '')
+     ORDER BY faol DESC, id LIMIT 1`,
+    [String(p.name)]
+  );
+  // UZS bo'lmasa yoki narx 0 bo'lsa — jonli kursda UZS'ga aylantiramiz (insert uchun)
+  let narxUzs = isUzs ? Math.round(price) : 0;
+  if (!isUzs && price > 0) {
+    try {
+      const { rate } = await getUsdToUzsRate();
+      narxUzs = Math.round(price * rate);
+    } catch { narxUzs = 0; }
+  }
+  if (byName.rows.length > 0) {
+    await pool.query(
+      `UPDATE distribution.mahsulotlar SET
+         sku = $2, nomi = $3, birlik = $4, faol = 1,
+         narx = CASE WHEN $5::bigint > 0 THEN $5::bigint ELSE narx END
+       WHERE id = $1`,
+      [byName.rows[0].id, sku, String(p.name), birlik, narxUzs]
+    );
+    return;
+  }
+
+  // 3) Yangi savdo katalog qatori
+  await pool.query(
+    `INSERT INTO distribution.mahsulotlar (nomi, narx, birlik, faol, sku)
+     VALUES ($1, $2, $3, 1, $4)`,
+    [String(p.name), narxUzs, birlik, sku]
+  );
+}
+
 const router: IRouter = Router();
 
 // Og'irlik o'zgarishi ledger himoyasi: wip_movements PRODUCE qatorlari mahsulot
@@ -63,6 +150,7 @@ router.get("/products", async (_req, res): Promise<void> => {
       p.default_sale_price, p.weight, p.rate, p.rate_type,
       p.salary_cost, p.electricity_cost, p.other_cost,
       p.minimum_stock, p.active, p.created_at, p.payroll_method,
+      p.in_sales, p.in_production,
       p.line_id,
       pl.name AS line_name,
       COALESCE(p.pieces_per_box, 1) AS pieces_per_box,
@@ -129,6 +217,8 @@ router.get("/products", async (_req, res): Promise<void> => {
       marginPct,
       minimumStock:       row.minimum_stock,
       piecesPerBox:       Number(row.pieces_per_box) || 1,
+      inSales:            row.in_sales === true,
+      inProduction:       row.in_production !== false,
       active:             row.active,
       createdAt:          row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
     };
@@ -144,6 +234,12 @@ router.post("/products", async (req, res): Promise<void> => {
     minimumStock = 0, active = true, piecesPerBox = 1,
     lineId = null,
   } = req.body ?? {};
+  // Bitta mahsulot bazasi modullari: aniq berilmasa mavjud qiymat saqlanadi
+  // (yangi yozuvda: in_sales=FALSE, in_production=TRUE default'lari ishlaydi)
+  const inSales: boolean | null =
+    typeof req.body?.inSales === "boolean" ? req.body.inSales : null;
+  const inProduction: boolean | null =
+    typeof req.body?.inProduction === "boolean" ? req.body.inProduction : null;
 
   if (!name || typeof name !== "string" || name.trim().length === 0) {
     res.status(400).json({ error: "name is required" }); return;
@@ -171,18 +267,24 @@ router.post("/products", async (req, res): Promise<void> => {
         ({ rows } = await pool.query(
           `INSERT INTO products
              (name, sku, unit_type, currency_type, default_sale_price, weight, rate, rate_type,
-              salary_cost, electricity_cost, other_cost, minimum_stock, active, pieces_per_box, line_id)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+              salary_cost, electricity_cost, other_cost, minimum_stock, active, pieces_per_box, line_id,
+              in_sales, in_production)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
+                   COALESCE($16, FALSE), COALESCE($17, TRUE))
            ON CONFLICT (name) DO UPDATE SET
              sku = CASE WHEN products.sku <> '' THEN products.sku ELSE EXCLUDED.sku END,
              unit_type=$3, currency_type=$4, default_sale_price=$5, weight=$6, rate=$7, rate_type=$8,
              salary_cost=$9, electricity_cost=$10, other_cost=$11, minimum_stock=$12, active=$13,
-             pieces_per_box=$14, line_id=$15
+             pieces_per_box=$14, line_id=$15,
+             in_sales=COALESCE($16, products.in_sales),
+             in_production=COALESCE($17, products.in_production)
            RETURNING id, name, sku, unit_type, currency_type, default_sale_price, weight, rate, rate_type,
-                     salary_cost, electricity_cost, other_cost, minimum_stock, active, pieces_per_box, line_id`,
+                     salary_cost, electricity_cost, other_cost, minimum_stock, active, pieces_per_box, line_id,
+                     in_sales, in_production`,
           [name.trim(), finalSku, unitType, currencyType, Number(defaultSalePrice), finalWeight, Number(rate),
            finalRateType, Number(salaryCost), Number(electricityCost), Number(otherCost),
-           Number(minimumStock), Boolean(active), Math.max(1, Number(piecesPerBox) || 1), finalLineId]
+           Number(minimumStock), Boolean(active), Math.max(1, Number(piecesPerBox) || 1), finalLineId,
+           inSales, inProduction]
         ));
         break;
       } catch (e: any) {
@@ -197,6 +299,8 @@ router.post("/products", async (req, res): Promise<void> => {
       }
     }
     const p = rows[0];
+    // Savdo katalogi sinxronizatsiyasi (in_sales bo'yicha)
+    await syncSalesCatalog(p.name);
     res.status(201).json({
       id: p.id, name: p.name, sku: p.sku,
       unitType: p.unit_type, currencyType: p.currency_type,
@@ -205,6 +309,7 @@ router.post("/products", async (req, res): Promise<void> => {
       salaryCost: Number(p.salary_cost), electricityCost: Number(p.electricity_cost),
       otherCost: Number(p.other_cost), minimumStock: p.minimum_stock,
       piecesPerBox: Number(p.pieces_per_box) || 1, active: p.active,
+      inSales: p.in_sales === true, inProduction: p.in_production !== false,
     });
   } catch (err: any) {
     res.status(409).json({ error: err.message });
@@ -223,6 +328,7 @@ router.patch("/products/:name", async (req, res): Promise<void> => {
     ["salary_cost", "salaryCost"], ["electricity_cost", "electricityCost"],
     ["other_cost", "otherCost"], ["minimum_stock", "minimumStock"], ["active", "active"],
     ["payroll_method", "payrollMethod"], ["pieces_per_box", "piecesPerBox"], ["line_id", "lineId"],
+    ["in_sales", "inSales"], ["in_production", "inProduction"],
   ];
 
   for (const [col, key] of allowed) {
@@ -248,8 +354,21 @@ router.patch("/products/:name", async (req, res): Promise<void> => {
   vals.push(productName);
 
   await pool.query(`UPDATE products SET ${fields.join(",")} WHERE name=$${vals.length}`, vals);
-  // Narx o'zgargan bo'lsa — SKU orqali bog'langan savdo bot mahsulotiga ham uzatamiz
-  await propagateToDistribution(productName);
+  // Savdo katalogi sinxronizatsiyasi:
+  //  - in_sales aniq o'zgartirilgan bo'lsa → to'liq sync (faollashtirish/o'chirish)
+  //  - aks holda in_sales=TRUE mahsulotlar uchun ham to'liq sync
+  //  - legacy (in_sales=FALSE, lekin SKU bog'langan) uchun nom/narx propagatsiyasi
+  if (req.body.inSales !== undefined) {
+    await syncSalesCatalog(productName);
+  } else {
+    const st = await pool.query(`SELECT in_sales FROM products WHERE name=$1`, [productName]);
+    if (st.rows.length && st.rows[0].in_sales === true) {
+      await syncSalesCatalog(productName);
+    } else {
+      // Narx o'zgargan bo'lsa — SKU orqali bog'langan savdo bot mahsulotiga uzatamiz
+      await propagateToDistribution(productName);
+    }
+  }
   res.json({ ok: true });
 });
 

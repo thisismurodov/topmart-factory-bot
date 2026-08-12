@@ -117,9 +117,19 @@ beforeAll(async () => {
       pieces_per_box INTEGER NOT NULL DEFAULT 1,
       line_id INTEGER,
       payroll_method TEXT NOT NULL DEFAULT 'PRODUCT_RATE',
+      in_sales BOOLEAN NOT NULL DEFAULT FALSE,
+      in_production BOOLEAN NOT NULL DEFAULT TRUE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE UNIQUE INDEX idx_products_sku_unique ON public.products (sku) WHERE sku <> '';
+    CREATE TABLE product_price_tiers (
+      id SERIAL PRIMARY KEY,
+      product_id INTEGER NOT NULL,
+      min_quantity NUMERIC NOT NULL,
+      max_quantity NUMERIC NOT NULL,
+      price NUMERIC NOT NULL,
+      currency TEXT NOT NULL DEFAULT 'UZS'
+    );
     CREATE SCHEMA distribution;
     CREATE TABLE distribution.mahsulotlar (
       id SERIAL PRIMARY KEY,
@@ -129,7 +139,17 @@ beforeAll(async () => {
       faol INTEGER NOT NULL DEFAULT 1,
       sku TEXT NOT NULL DEFAULT ''
     );
+    CREATE TABLE distribution.delivery_agents (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      telegram_id BIGINT NOT NULL,
+      hudud TEXT,
+      faol INTEGER NOT NULL DEFAULT 1
+    );
   `);
+  await pool.query(
+    `INSERT INTO distribution.delivery_agents (name, telegram_id) VALUES ('Test agent', 777001)`,
+  );
 
   // ERP mahsulotlari
   await pool.query(`
@@ -147,9 +167,16 @@ beforeAll(async () => {
   `);
 
   const { default: productsRouter } = await import("../src/routes/products");
+  const { default: distributionRouter } = await import("../src/routes/distribution");
+  const { default: salesProductsRouter } = await import("../src/routes/sales-products");
+  process.env.FIELD_DEV_BYPASS = "1";
+  const { default: fieldRouter } = await import("../src/routes/field");
   const app = express();
   app.use(express.json());
   app.use(productsRouter);
+  app.use(distributionRouter);
+  app.use(salesProductsRouter);
+  app.use(fieldRouter);
   server = app.listen(0);
   const { port } = server.address() as AddressInfo;
   apiUrl = `http://127.0.0.1:${port}`;
@@ -229,5 +256,189 @@ describe("POST /products SKU to'qnashuv va upsert", () => {
     expect(p.status).toBe(200);
     const m = await mahsulot("ARQON-5MM-T");
     expect(m!.narx).toBe(16000);
+  });
+});
+
+describe("Bitta mahsulot bazasi — in_sales sinxronizatsiyasi", () => {
+  it("POST inSales=true yangi mahsulotni savdo katalogiga avtomatik qo'shadi", async () => {
+    const r = await post({
+      name: "Master yangi test", sku: "MASTER-NEW-T",
+      defaultSalePrice: 5000, unitType: "kg", inSales: true,
+    });
+    expect(r.status).toBe(201);
+    expect(r.json.inSales).toBe(true);
+    const { rows } = await pool.query(
+      `SELECT nomi, narx, birlik, faol FROM distribution.mahsulotlar WHERE sku = 'MASTER-NEW-T'`,
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].nomi).toBe("Master yangi test");
+    expect(Number(rows[0].narx)).toBe(5000);
+    expect(rows[0].birlik).toBe("kg");
+    expect(Number(rows[0].faol)).toBe(1);
+  });
+
+  it("POST inSales=true nom mos kelsa mavjud bog'lanmagan savdo qatorini SKU bilan bog'laydi (dublikat yaratmaydi)", async () => {
+    const r = await post({
+      name: "Bogliqsiz mahsulot", sku: "BOGLIQSIZ-T",
+      defaultSalePrice: 11000, inSales: true,
+    });
+    expect(r.status).toBe(201);
+    const { rows } = await pool.query(
+      `SELECT id, sku, narx FROM distribution.mahsulotlar WHERE ${"regexp_replace(regexp_replace(lower(trim(nomi)), '[''’ʼ`´]', '', 'g'), '\\s+', ' ', 'g')"} = 'bogliqsiz mahsulot'`,
+    );
+    expect(rows.length).toBe(1); // yangi qator YARATILMAGAN
+    expect(rows[0].sku).toBe("BOGLIQSIZ-T");
+    expect(Number(rows[0].narx)).toBe(11000);
+  });
+
+  it("PATCH inSales=false bog'langan savdo qatorini nofaol qiladi, true qayta yoqadi", async () => {
+    let r = await patch("Master yangi test", { inSales: false });
+    expect(r.status).toBe(200);
+    let q = await pool.query(`SELECT faol FROM distribution.mahsulotlar WHERE sku = 'MASTER-NEW-T'`);
+    expect(Number(q.rows[0].faol)).toBe(0);
+
+    r = await patch("Master yangi test", { inSales: true });
+    expect(r.status).toBe(200);
+    q = await pool.query(`SELECT faol FROM distribution.mahsulotlar WHERE sku = 'MASTER-NEW-T'`);
+    expect(Number(q.rows[0].faol)).toBe(1);
+  });
+
+  it("inSales berilmagan POST upsert mavjud flag'ni saqlaydi", async () => {
+    const r = await post({ name: "Master yangi test", defaultSalePrice: 5500 });
+    expect(r.status).toBe(201);
+    expect(r.json.inSales).toBe(true); // COALESCE — flag o'zgarmaydi
+  });
+
+  it("inSales=false faol mahsulot savdo katalogida ko'rinmaydi va narxlanmaydi", async () => {
+    const r = await post({ name: "Savdodan tashqari test", defaultSalePrice: 4000, inSales: false });
+    expect(r.status).toBe(201);
+    const id = r.json.id;
+
+    const list = await fetch(`${apiUrl}/sales-products`).then(x => x.json());
+    expect(list.some((p: any) => p.name === "Savdodan tashqari test")).toBe(false);
+
+    const price = await fetch(`${apiUrl}/sales-products/${id}/price?qty=1`);
+    expect(price.status).toBe(404);
+  });
+
+  it("inSales=true mahsulot savdo katalogida ko'rinadi va narxlanadi", async () => {
+    const r = await post({ name: "Savdoda bor test", defaultSalePrice: 3000, inSales: true });
+    expect(r.status).toBe(201);
+    const id = r.json.id;
+
+    const list = await fetch(`${apiUrl}/sales-products`).then(x => x.json());
+    expect(list.some((p: any) => p.name === "Savdoda bor test")).toBe(true);
+
+    const price = await fetch(`${apiUrl}/sales-products/${id}/price?qty=1`).then(x => x.json());
+    expect(price.price).toBe(3000);
+  });
+
+  it("legacy POST /sales-products in_sales=TRUE qo'yadi va savdo katalogiga sinxronlaydi", async () => {
+    const r = await fetch(`${apiUrl}/sales-products`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Legacy shim test", defaultPrice: 2500 }),
+    });
+    expect(r.status).toBe(201);
+    const p = await pool.query(`SELECT in_sales, sku FROM public.products WHERE name='Legacy shim test'`);
+    expect(p.rows[0].in_sales).toBe(true);
+    const d = await pool.query(
+      `SELECT faol, narx FROM distribution.mahsulotlar WHERE sku = $1`, [p.rows[0].sku],
+    );
+    expect(d.rows).toHaveLength(1);
+    expect(Number(d.rows[0].narx)).toBe(2500);
+  });
+
+  it("legacy PUT /sales-products narxni proyeksiyaga ham sinxronlaydi", async () => {
+    const p = await pool.query(`SELECT id, sku FROM public.products WHERE name='Legacy shim test'`);
+    const r = await fetch(`${apiUrl}/sales-products/${p.rows[0].id}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ defaultPrice: 2600 }),
+    });
+    expect(r.status).toBe(200);
+    const d = await pool.query(
+      `SELECT narx FROM distribution.mahsulotlar WHERE sku = $1`, [p.rows[0].sku],
+    );
+    expect(Number(d.rows[0].narx)).toBe(2600);
+  });
+
+  it("legacy DELETE /sales-products faqat savdodan chiqaradi — master active saqlanadi", async () => {
+    const p = await pool.query(`SELECT id, sku FROM public.products WHERE name='Legacy shim test'`);
+    const r = await fetch(`${apiUrl}/sales-products/${p.rows[0].id}`, { method: "DELETE" });
+    expect(r.status).toBe(200);
+    const m = await pool.query(`SELECT active, in_sales FROM public.products WHERE name='Legacy shim test'`);
+    expect(m.rows[0].active).toBe(true);
+    expect(m.rows[0].in_sales).toBe(false);
+    const d = await pool.query(
+      `SELECT faol FROM distribution.mahsulotlar WHERE sku = $1`, [p.rows[0].sku],
+    );
+    expect(Number(d.rows[0].faol)).toBe(0);
+  });
+
+  it("field katalogi: in_sales=false master'ga bog'langan qator ko'rinmaydi, legacy sku'siz qoladi", async () => {
+    // Master savdodan chiqarilgan, lekin proyeksiya qatori qo'lda faol qoldirilgan holat
+    await pool.query(`
+      INSERT INTO public.products (name, sku, in_sales) VALUES ('Field disabled test', 'FIELD-DIS-T', FALSE);
+      INSERT INTO distribution.mahsulotlar (nomi, narx, sku, faol) VALUES ('Field disabled test', 5000, 'FIELD-DIS-T', 1);
+    `);
+    const list = await fetch(`${apiUrl}/field/products`, {
+      headers: { "X-Field-Dev-Id": "777001" },
+    }).then((x) => x.json());
+    const names = list.map((p: any) => p.nomi);
+    expect(names).not.toContain("Field disabled test");
+    expect(names).toContain("Bogliqsiz mahsulot"); // legacy sku='' sotuvda qoladi
+  });
+
+  it("field savdo narx so'rovi: in_sales=false mahsulot narxlanmaydi", async () => {
+    // performFieldSale ishlatadigan narx sharti bilan bir xil so'rov:
+    // bog'langan-lekin-o'chirilgan qator chiqmasligi, legacy sku='' chiqishi kerak.
+    const m = await pool.query(`SELECT id FROM distribution.mahsulotlar WHERE sku='FIELD-DIS-T'`);
+    const legacy = await pool.query(`SELECT id FROM distribution.mahsulotlar WHERE nomi='Bogliqsiz mahsulot'`);
+    const ids = [Number(m.rows[0].id), Number(legacy.rows[0].id)];
+    const q = await pool.query(
+      `SELECT m.id FROM distribution.mahsulotlar m
+        WHERE m.id = ANY($1) AND m.faol = 1
+          AND (COALESCE(m.sku,'') = ''
+               OR EXISTS (SELECT 1 FROM public.products p WHERE p.sku = m.sku AND p.in_sales = TRUE))`,
+      [ids],
+    );
+    const found = q.rows.map((r) => Number(r.id));
+    expect(found).toContain(ids[1]);
+    expect(found).not.toContain(ids[0]);
+  });
+
+  it("bog'langan savdo qatorini to'g'ridan-to'g'ri PATCH qilish 409 — faqat master orqali", async () => {
+    const q = await pool.query(
+      `SELECT id FROM distribution.mahsulotlar WHERE sku = 'ARQON-5MM-T'`
+    );
+    const id = q.rows[0].id;
+    const res = await fetch(`${apiUrl}/distribution/products/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ narx: 123456 }),
+    });
+    expect(res.status).toBe(409);
+    const after = await pool.query(
+      `SELECT narx FROM distribution.mahsulotlar WHERE id = $1`, [id]
+    );
+    expect(Number(after.rows[0].narx)).not.toBe(123456);
+  });
+
+  it("bog'lanmagan (sku='') qatorni PATCH qilish hali ham mumkin (legacy tahrir)", async () => {
+    const q = await pool.query(
+      `INSERT INTO distribution.mahsulotlar (nomi, narx, sku) VALUES ('Legacy tahrir testi', 100, '') RETURNING id`
+    );
+    const id = q.rows[0].id;
+    const res = await fetch(`${apiUrl}/distribution/products/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ narx: 8888 }),
+    });
+    expect(res.status).toBe(200);
+    const after = await pool.query(
+      `SELECT narx FROM distribution.mahsulotlar WHERE id = $1`, [id]
+    );
+    expect(Number(after.rows[0].narx)).toBe(8888);
   });
 });

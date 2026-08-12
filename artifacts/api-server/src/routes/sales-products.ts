@@ -1,5 +1,7 @@
 import { Router, type IRouter } from "express";
 import { pool } from "@workspace/db";
+import { syncSalesCatalog } from "./products";
+import { uniqueProductSku } from "../lib/sku";
 
 const VALID_SALE_TYPES = ["dona", "kg"] as const;
 const VALID_CURRENCIES  = ["UZS", "USD"] as const;
@@ -13,7 +15,7 @@ const router: IRouter = Router();
 router.get("/sales-products", async (_req, res): Promise<void> => {
   const { rows } = await pool.query(
     `SELECT id, name, unit_type AS sale_type, default_sale_price AS default_price, currency_type AS currency, active
-     FROM products WHERE active = TRUE ORDER BY name`
+     FROM products WHERE active = TRUE AND in_sales = TRUE ORDER BY name`
   );
 
   const ids = rows.map(r => r.id);
@@ -60,15 +62,19 @@ router.post("/sales-products", async (req, res): Promise<void> => {
   }
 
   try {
+    // Master yozuvda SKU bo'lishi shart — savdo katalogi SKU orqali bog'lanadi.
+    const autoSku = await uniqueProductSku(name.trim());
     const { rows } = await pool.query(
-      `INSERT INTO products (name, unit_type, rate_type, currency_type, default_sale_price, active)
-       VALUES ($1,$2,$2,$3,$4,TRUE)
+      `INSERT INTO products (name, sku, unit_type, rate_type, currency_type, default_sale_price, active, in_sales)
+       VALUES ($1,$5,$2,$2,$3,$4,TRUE,TRUE)
        ON CONFLICT (name) DO UPDATE
-         SET unit_type=$2, rate_type=$2, currency_type=$3, default_sale_price=$4, active=TRUE
+         SET unit_type=$2, rate_type=$2, currency_type=$3, default_sale_price=$4, active=TRUE, in_sales=TRUE,
+             sku = CASE WHEN products.sku <> '' THEN products.sku ELSE EXCLUDED.sku END
        RETURNING id, name, unit_type AS sale_type, default_sale_price AS default_price, currency_type AS currency`,
-      [name.trim(), saleType, currency, Number(defaultPrice)]
+      [name.trim(), saleType, currency, Number(defaultPrice), autoSku]
     );
     const r = rows[0];
+    await syncSalesCatalog(r.name);
     res.status(201).json({
       id: r.id, name: r.name,
       saleType: r.sale_type, defaultPrice: Number(r.default_price), currency: r.currency,
@@ -104,7 +110,11 @@ router.put("/sales-products/:id", async (req, res): Promise<void> => {
 
   vals.push(id);
   try {
-    await pool.query(`UPDATE products SET ${sets.join(",")} WHERE id=$${vals.length}`, vals);
+    const upd = await pool.query(
+      `UPDATE products SET ${sets.join(",")} WHERE id=$${vals.length} RETURNING name`, vals,
+    );
+    // Master o'zgardi — savdo katalogi proyeksiyasini darhol sinxronlaymiz.
+    if (upd.rows.length) await syncSalesCatalog(upd.rows[0].name);
     res.json({ ok: true });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
@@ -112,10 +122,15 @@ router.put("/sales-products/:id", async (req, res): Promise<void> => {
 });
 
 // ── DELETE (soft) ─────────────────────────────────────────────────────────────
+// Savdo modulidan chiqaradi (in_sales=FALSE) — master 'active' TEGILMAYDI,
+// aks holda ishlab chiqarish mahsuloti butunlay yashirinib qolar edi.
 router.delete("/sales-products/:id", async (req, res): Promise<void> => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
-  await pool.query("UPDATE products SET active=FALSE WHERE id=$1", [id]);
+  const upd = await pool.query(
+    "UPDATE products SET in_sales=FALSE WHERE id=$1 RETURNING name", [id],
+  );
+  if (upd.rows.length) await syncSalesCatalog(upd.rows[0].name); // faol=0 proyeksiyada
   res.json({ ok: true });
 });
 
@@ -151,7 +166,7 @@ router.post("/sales-products/:id/tiers", async (req, res): Promise<void> => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const prod = await client.query("SELECT id FROM products WHERE id=$1", [id]);
+    const prod = await client.query("SELECT id FROM products WHERE id=$1 AND in_sales=TRUE", [id]);
     if (!prod.rows.length) { await client.query("ROLLBACK"); res.status(404).json({ error: "Product not found" }); return; }
 
     // Serialize concurrent tier writes per product to keep overlap-check atomic.
@@ -209,7 +224,7 @@ router.get("/sales-products/:id/price", async (req, res): Promise<void> => {
   const qty = Number(req.query.qty) || 0;
 
   const { rows } = await pool.query(
-    "SELECT default_sale_price AS default_price, currency_type AS currency FROM products WHERE id=$1", [id]
+    "SELECT default_sale_price AS default_price, currency_type AS currency FROM products WHERE id=$1 AND active = TRUE AND in_sales = TRUE", [id]
   );
   if (!rows.length) { res.status(404).json({ error: "Not found" }); return; }
 

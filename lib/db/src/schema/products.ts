@@ -19,6 +19,9 @@ export const productsTable = pgTable("products", {
   minimumStock:      integer("minimum_stock").notNull().default(0),
   piecesPerBox:      integer("pieces_per_box").notNull().default(1),
   payrollMethod:     text("payroll_method").notNull().default("PRODUCT_RATE"),
+  // Bitta mahsulot bazasi (master katalog) modullari: savdo / ishlab chiqarish
+  inSales:           boolean("in_sales").notNull().default(false),
+  inProduction:      boolean("in_production").notNull().default(true),
   active:            boolean("active").notNull().default(true),
   lineId:            integer("line_id"),
   createdAt:         timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

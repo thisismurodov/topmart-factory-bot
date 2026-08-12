@@ -287,7 +287,9 @@ describe("Distribution bot: fresh DB boots via init_db() alone", () => {
     const referenced = new Set<string>();
     // Case-SENSITIVE: SQL keywords are uppercase in the bot source, while
     // Python's own `from x import y` is lowercase and must not match.
-    const re = /\b(?:FROM|JOIN|INTO|UPDATE)\s+(?:distribution\.)?([a-z_][a-z0-9_]*)/g;
+    // public. — bot ERP master katalogini (public.products, init_db yaratadi)
+    // in_sales flagi uchun o'qiydi; bu jadvallar public sxemada tekshiriladi.
+    const re = /\b(?:FROM|JOIN|INTO|UPDATE)\s+(?:distribution\.|public\.)?([a-z_][a-z0-9_]*)/g;
     for (const m of mainPySource.matchAll(re)) {
       const t = m[1].toLowerCase();
       if (!NOT_TABLES.has(t)) referenced.add(t);
@@ -295,7 +297,7 @@ describe("Distribution bot: fresh DB boots via init_db() alone", () => {
     expect(referenced.size).toBeGreaterThanOrEqual(13); // sanity: extraction worked
 
     const { rows } = await client.query(
-      `SELECT table_name FROM information_schema.tables WHERE table_schema = 'distribution'`,
+      `SELECT table_name FROM information_schema.tables WHERE table_schema IN ('distribution','public')`,
     );
     const have = new Set(rows.map((r) => r.table_name as string));
     const missing = [...referenced].filter((t) => !have.has(t));

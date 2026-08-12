@@ -131,7 +131,7 @@ function useProducts() {
     queryFn: () =>
       authFetch("/api/products").then((r) => r.json()).then((rows: any[]) =>
         (rows ?? [])
-          .filter((p) => p.active !== false)
+          .filter((p) => p.active !== false && p.inProduction !== false)
           .map((p) => ({
             name: p.name,
             unitType: p.unitType ?? "dona",

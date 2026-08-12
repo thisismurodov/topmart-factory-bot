@@ -1899,6 +1899,124 @@ router.get("/distribution/live-status", async (req, res): Promise<void> => {
   });
 });
 
+// ── Analytics uchun umumiy qurilish bloklari ────────────────────────────────────
+// /distribution/analytics va /distribution/analytics/export bir xil default sana
+// oralig'i, salesWhere/olmagan WHERE bo'laklari va kunlik so'rovlarni ishlatadi.
+// Ular ilgari nusxa-ko'chirish bilan ikki joyda saqlanardi — endi bitta
+// buildAnalyticsData() ikkalasiga ham xizmat qiladi (drift strukturaviy oldini olinadi).
+
+export type AnalyticsDailyRow = { date: string; visits: number; sales: number; salesTotal: number };
+
+type AnalyticsData = {
+  fromDate: string;
+  toDate: string;
+  ef: Filters;
+  sw: string;          // salesWhere bo'lagi (s/d alias)
+  swParams: unknown[]; // sw uchun parametrlar; swParams[0] = fromDate
+  owOff: string;       // olmagan WHERE, $N indekslari swParams.length ga siljitilgan
+  combinedP: unknown[]; // [swParams, ...owParams] — sw + owOff birga ishlatilganda
+  daily: AnalyticsDailyRow[]; // to'liq sana oralig'i, bo'sh kunlar 0 bilan
+};
+
+// Asia/Tashkent bo'yicha default oxirgi 30 kun (from/to berilmasa)
+async function resolveAnalyticsRange(f: Filters): Promise<{ fromDate: string; toDate: string }> {
+  const dQ = await pool.query(
+    `SELECT to_char(now() AT TIME ZONE 'Asia/Tashkent','YYYY-MM-DD') AS today`
+  );
+  const today = dQ.rows[0].today as string;
+  const fromDate = f.from ?? (() => {
+    const d = new Date(`${today}T12:00:00`);
+    d.setDate(d.getDate() - 29);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  })();
+  const toDate = f.to ?? today;
+  return { fromDate, toDate };
+}
+
+// Filtrlar + kunlik savdo/tashrif so'rovlari — ikkala endpoint uchun yagona manba.
+// sw: salesWhere barcha savdo filtrlarini (tolovTuri, mahsulotId, search ham) qo'shadi.
+// ow: olmagan_dokonlar filtri — faqat sana+agent+do'kon maydonlari
+// (tolovTuri/mahsulotId olmagan tashriflar bilan bog'liq emas).
+async function buildAnalyticsData(f: Filters): Promise<AnalyticsData> {
+  const { fromDate, toDate } = await resolveAnalyticsRange(f);
+
+  // ef: from/to kafolatli — salesWhere har doim date filtrni qo'shadi
+  const ef: Filters = { ...f, from: fromDate, to: toDate };
+
+  const swParams: unknown[] = [];
+  const sw = salesWhere(ef, swParams);
+
+  const owParams: unknown[] = [];
+  let ow = "";
+  owParams.push(fromDate); ow += ` AND substr(o.created_at,1,10) >= $${owParams.length}`;
+  owParams.push(toDate);   ow += ` AND substr(o.created_at,1,10) <= $${owParams.length}`;
+  if (ef.agentId) { owParams.push(ef.agentId); ow += ` AND o.agent_id = $${owParams.length}`; }
+  if (ef.viloyat) { owParams.push(ef.viloyat); ow += ` AND d.viloyat = $${owParams.length}`; }
+  if (ef.hudud)   { owParams.push(ef.hudud);   ow += ` AND d.hudud = $${owParams.length}`; }
+  if (ef.search)  { owParams.push(`%${ef.search}%`); ow += ` AND d.nomi ILIKE $${owParams.length}`; }
+
+  // owOff: olmagan WHERE $N indekslarini swParams soni qadar siljitamiz
+  // (birlashtirilgan so'rovlarda [swParams,...owParams] ishlatiladi)
+  const owOff = ow.replace(/\$(\d+)/g, (_m, n) => `$${Number(n) + swParams.length}`);
+  const combinedP = [...swParams, ...owParams];
+
+  const [dailySR, dailyVisitR] = await Promise.all([
+    // Kunlik savdolar statistikasi (savdo soni + summasi)
+    pool.query(`
+      SELECT substr(s.created_at,1,10) AS date,
+             COUNT(*)::int AS sales,
+             COALESCE(SUM(s.jami_summa),0)::bigint AS sales_total
+        FROM distribution.savdolar s
+        JOIN distribution.dokonlar d ON d.id = s.dokon_id
+       WHERE 1=1${sw}
+       GROUP BY substr(s.created_at,1,10)
+    `, swParams),
+
+    // Kunlik NOYOB tashrif qilingan do'konlar (savdolar ∪ olmagan, UNION-dedupe)
+    // UNION (DISTINCT) har kunda bir xil do'kon bir marta hisoblanishini kafolatlaydi
+    pool.query(`
+      SELECT v.date, COUNT(DISTINCT v.dokon_id)::int AS visited_shops
+        FROM (
+          SELECT substr(s.created_at,1,10) AS date, s.dokon_id
+            FROM distribution.savdolar s
+            JOIN distribution.dokonlar d ON d.id = s.dokon_id
+           WHERE 1=1${sw}
+          UNION
+          SELECT substr(o.created_at,1,10) AS date, o.dokon_id
+            FROM distribution.olmagan_dokonlar o
+            JOIN distribution.dokonlar d ON d.id = o.dokon_id
+           WHERE 1=1${owOff}
+        ) v
+       GROUP BY v.date
+    `, combinedP),
+  ]);
+
+  // Kunlik qatorlarni sana oralig'i bo'yicha birlashtirish (bo'sh kunlar 0)
+  const dailySMap = new Map<string, { sales: number; salesTotal: number }>();
+  for (const r of dailySR.rows) {
+    dailySMap.set(r.date as string, { sales: Number(r.sales), salesTotal: Number(r.sales_total) });
+  }
+  const dailyVisitMap = new Map<string, number>();
+  for (const r of dailyVisitR.rows) dailyVisitMap.set(r.date as string, Number(r.visited_shops));
+
+  const daily: AnalyticsDailyRow[] = [];
+  const cur = new Date(`${fromDate}T12:00:00`);
+  const end = new Date(`${toDate}T12:00:00`);
+  while (cur <= end) {
+    const dateStr = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}-${String(cur.getDate()).padStart(2, "0")}`;
+    const s = dailySMap.get(dateStr);
+    daily.push({
+      date: dateStr,
+      visits: dailyVisitMap.get(dateStr) ?? 0,
+      sales: s?.sales ?? 0,
+      salesTotal: s?.salesTotal ?? 0,
+    });
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  return { fromDate, toDate, ef, sw, swParams, owOff, combinedP, daily };
+}
+
 // ── Analytics (savdo/conversion/repeat/nasiya foizlari va kunlik dinamika) ────────
 // from/to/agentId/viloyat/hudud/tolovTuri/mahsulotId/search filtrlari qo'llanadi.
 // conversionPct = soldShops / visitedShops * 100 (visit bo'lmasa null).
@@ -1912,43 +2030,11 @@ router.get("/distribution/live-status", async (req, res): Promise<void> => {
 router.get("/distribution/analytics", async (req, res): Promise<void> => {
   const f = parseFilters(req);
 
-  const dQ = await pool.query(
-    `SELECT to_char(now() AT TIME ZONE 'Asia/Tashkent','YYYY-MM-DD') AS today`
-  );
-  const today = dQ.rows[0].today as string;
+  // Umumiy qism (sana oralig'i, filtr bo'laklari, kunlik qatorlar) — buildAnalyticsData
+  const { fromDate, toDate, sw, swParams, owOff, combinedP, daily } =
+    await buildAnalyticsData(f);
 
-  const fromDate = f.from ?? (() => {
-    const d = new Date(`${today}T12:00:00`);
-    d.setDate(d.getDate() - 29);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  })();
-  const toDate = f.to ?? today;
-
-  // ef: from/to kafolatli — salesWhere har doim date filtrni qo'shadi
-  const ef: Filters = { ...f, from: fromDate, to: toDate };
-
-  // sw: salesWhere barcha savdo filtrlarini (tolovTuri, mahsulotId, search ham) qo'shadi.
-  // swParams[0] = fromDate (salesWhere 'from'ni birinchi push qiladi).
-  const swParams: unknown[] = [];
-  const sw = salesWhere(ef, swParams);
-
-  // ow: olmagan_dokonlar filtri — faqat sana+agent+do'kon maydonlari
-  // (tolovTuri/mahsulotId olmagan tashriflar bilan bog'liq emas)
-  const owParams: unknown[] = [];
-  let ow = "";
-  owParams.push(fromDate); ow += ` AND substr(o.created_at,1,10) >= $${owParams.length}`;
-  owParams.push(toDate);   ow += ` AND substr(o.created_at,1,10) <= $${owParams.length}`;
-  if (ef.agentId) { owParams.push(ef.agentId); ow += ` AND o.agent_id = $${owParams.length}`; }
-  if (ef.viloyat) { owParams.push(ef.viloyat); ow += ` AND d.viloyat = $${owParams.length}`; }
-  if (ef.hudud)   { owParams.push(ef.hudud);   ow += ` AND d.hudud = $${owParams.length}`; }
-  if (ef.search)  { owParams.push(`%${ef.search}%`); ow += ` AND d.nomi ILIKE $${owParams.length}`; }
-
-  // owOff: olmagan WHERE $N indekslarini swParams soni qadar siljitamiz
-  // (visited shops birlashtirilgan so'rovida [swParams,...owParams] ishlatiladi)
-  const owOff = ow.replace(/\$(\d+)/g, (_m, n) => `$${Number(n) + swParams.length}`);
-  const combinedP = [...swParams, ...owParams];
-
-  const [kpiR, visitedR, dailySR, dailyVisitR] = await Promise.all([
+  const [kpiR, visitedR] = await Promise.all([
     // 1. Savdolar KPI — barcha filtrlar (salesWhere orqali)
     pool.query(`
       WITH period_sales AS (
@@ -1989,35 +2075,6 @@ router.get("/distribution/analytics", async (req, res): Promise<void> => {
            WHERE 1=1${owOff}
         ) v
     `, combinedP),
-
-    // 3. Kunlik savdolar statistikasi (savdo soni + summasi)
-    pool.query(`
-      SELECT substr(s.created_at,1,10) AS date,
-             COUNT(*)::int AS sales,
-             COALESCE(SUM(s.jami_summa),0)::bigint AS sales_total
-        FROM distribution.savdolar s
-        JOIN distribution.dokonlar d ON d.id = s.dokon_id
-       WHERE 1=1${sw}
-       GROUP BY substr(s.created_at,1,10)
-    `, swParams),
-
-    // 4. Kunlik NOYOB tashrif qilingan do'konlar (savdolar ∪ olmagan, UNION-dedupe)
-    // UNION (DISTINCT) har kunda bir xil do'kon bir marta hisoblanishini kafolatlaydi
-    pool.query(`
-      SELECT v.date, COUNT(DISTINCT v.dokon_id)::int AS visited_shops
-        FROM (
-          SELECT substr(s.created_at,1,10) AS date, s.dokon_id
-            FROM distribution.savdolar s
-            JOIN distribution.dokonlar d ON d.id = s.dokon_id
-           WHERE 1=1${sw}
-          UNION
-          SELECT substr(o.created_at,1,10) AS date, o.dokon_id
-            FROM distribution.olmagan_dokonlar o
-            JOIN distribution.dokonlar d ON d.id = o.dokon_id
-           WHERE 1=1${owOff}
-        ) v
-       GROUP BY v.date
-    `, combinedP),
   ]);
 
   const k = kpiR.rows[0];
@@ -2026,39 +2083,14 @@ router.get("/distribution/analytics", async (req, res): Promise<void> => {
   const repeatShops   = Number(k.repeat_shops ?? 0);
   const nasiCnt       = Number(k.nasiya_count);
   const totalSalesCnt = Number(k.sales_count);
-  const workDays      = Number(k.work_days);
 
-  // Kunlik qatorlarni sana oralig'i bo'yicha birlashtirish
-  // dailySMap: faqat savdo soni/summasi (visits uchun ishlatilmaydi — UNION dedupe quyida)
-  const dailySMap = new Map<string, { sales: number; salesTotal: number }>();
-  for (const r of dailySR.rows) {
-    dailySMap.set(r.date as string, {
-      sales: Number(r.sales),
-      salesTotal: Number(r.sales_total),
-    });
-  }
-  // dailyVisitMap: UNION DISTINCT so'rovidan — har kunda noyob tashrif qilingan do'konlar soni
-  // (bir do'kon savdo ham, olmagan ham bo'lsa BIR marta hisoblanadi)
-  const dailyVisitMap = new Map<string, number>();
-  for (const r of dailyVisitR.rows) {
-    dailyVisitMap.set(r.date as string, Number(r.visited_shops));
-  }
-
-  const daily: Array<{ date: string; visits: number; sales: number; salesTotal: number }> = [];
   // shopDayPairs: jami shop-kun juftliklari, visitWorkDays: tashrif bor kunlar soni
   // avgVisitsPerDay denominator = visitWorkDays (savdo+olmagan), "olmagan-only" davrda to'g'ri ishlaydi
   let shopDayPairs = 0;
   let visitWorkDays = 0;
-  const cur = new Date(`${fromDate}T12:00:00`);
-  const end = new Date(`${toDate}T12:00:00`);
-  while (cur <= end) {
-    const dateStr = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}-${String(cur.getDate()).padStart(2, "0")}`;
-    const s = dailySMap.get(dateStr);
-    const visits = dailyVisitMap.get(dateStr) ?? 0;
-    daily.push({ date: dateStr, visits, sales: s?.sales ?? 0, salesTotal: s?.salesTotal ?? 0 });
-    shopDayPairs += visits;
-    if (visits > 0) visitWorkDays += 1;
-    cur.setDate(cur.getDate() + 1);
+  for (const row of daily) {
+    shopDayPairs += row.visits;
+    if (row.visits > 0) visitWorkDays += 1;
   }
 
   res.json({
@@ -2232,62 +2264,12 @@ function csvEsc(v: unknown): string {
 router.get("/distribution/analytics/export", async (req, res): Promise<void> => {
   const f = parseFilters(req);
 
-  const dQ = await pool.query(
-    `SELECT to_char(now() AT TIME ZONE 'Asia/Tashkent','YYYY-MM-DD') AS today`
-  );
-  const today = dQ.rows[0].today as string;
-  const fromDate = f.from ?? (() => {
-    const d = new Date(`${today}T12:00:00`);
-    d.setDate(d.getDate() - 29);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  })();
-  const toDate = f.to ?? today;
-  const ef: Filters = { ...f, from: fromDate, to: toDate };
+  // Umumiy qism (sana oralig'i, filtr bo'laklari, kunlik qatorlar) — analytics
+  // endpointi bilan AYNAN bir xil manba, drift bo'lishi mumkin emas.
+  const { fromDate, toDate, sw, swParams, owOff, combinedP, daily: dailyRows } =
+    await buildAnalyticsData(f);
 
-  const swParams: unknown[] = [];
-  const sw = salesWhere(ef, swParams);
-
-  // olmagan_dokonlar filtri (analytics bilan bir xil mantiq)
-  const owParams: unknown[] = [];
-  let ow = "";
-  owParams.push(fromDate); ow += ` AND substr(o.created_at,1,10) >= $${owParams.length}`;
-  owParams.push(toDate);   ow += ` AND substr(o.created_at,1,10) <= $${owParams.length}`;
-  if (ef.agentId) { owParams.push(ef.agentId); ow += ` AND o.agent_id = $${owParams.length}`; }
-  if (ef.viloyat) { owParams.push(ef.viloyat); ow += ` AND d.viloyat = $${owParams.length}`; }
-  if (ef.hudud)   { owParams.push(ef.hudud);   ow += ` AND d.hudud = $${owParams.length}`; }
-  if (ef.search)  { owParams.push(`%${ef.search}%`); ow += ` AND d.nomi ILIKE $${owParams.length}`; }
-  const owOff = ow.replace(/\$(\d+)/g, (_m, n) => `$${Number(n) + swParams.length}`);
-  const combinedP = [...swParams, ...owParams];
-
-  const [dailySR, dailyVisitR, agentSalesR, agentVisitR] = await Promise.all([
-    // Kunlik savdo soni + summa
-    pool.query(`
-      SELECT substr(s.created_at,1,10) AS date,
-             COUNT(*)::int AS sales,
-             COALESCE(SUM(s.jami_summa),0)::bigint AS sales_total
-        FROM distribution.savdolar s
-        JOIN distribution.dokonlar d ON d.id = s.dokon_id
-       WHERE 1=1${sw}
-       GROUP BY substr(s.created_at,1,10)
-    `, swParams),
-
-    // Kunlik noyob tashrif do'konlari (savdolar ∪ olmagan)
-    pool.query(`
-      SELECT v.date, COUNT(DISTINCT v.dokon_id)::int AS visited_shops
-        FROM (
-          SELECT substr(s.created_at,1,10) AS date, s.dokon_id
-            FROM distribution.savdolar s
-            JOIN distribution.dokonlar d ON d.id = s.dokon_id
-           WHERE 1=1${sw}
-          UNION
-          SELECT substr(o.created_at,1,10) AS date, o.dokon_id
-            FROM distribution.olmagan_dokonlar o
-            JOIN distribution.dokonlar d ON d.id = o.dokon_id
-           WHERE 1=1${owOff}
-        ) v
-       GROUP BY v.date
-    `, combinedP),
-
+  const [agentSalesR, agentVisitR] = await Promise.all([
     // Agent bo'yicha savdo KPI (repeat: do'konning davrgacha istalgan savdosi)
     pool.query(`
       WITH ps AS (
@@ -2335,30 +2317,7 @@ router.get("/distribution/analytics/export", async (req, res): Promise<void> => 
   const nameMap = new Map<string, string>();
   for (const r of namesR.rows) nameMap.set(String(r.telegram_id), r.name as string);
 
-  // Kunlik qatorlar — sana oralig'i to'liq (analytics bilan bir xil)
-  const dailySMap = new Map<string, { sales: number; salesTotal: number }>();
-  for (const r of dailySR.rows) {
-    dailySMap.set(r.date as string, { sales: Number(r.sales), salesTotal: Number(r.sales_total) });
-  }
-  const dailyVisitMap = new Map<string, number>();
-  for (const r of dailyVisitR.rows) dailyVisitMap.set(r.date as string, Number(r.visited_shops));
-
-  // Kunlik qatorlar (CSV va XLSX uchun umumiy)
-  type DailyRow = { date: string; visits: number; sales: number; salesTotal: number };
-  const dailyRows: DailyRow[] = [];
-  const cur = new Date(`${fromDate}T12:00:00`);
-  const end = new Date(`${toDate}T12:00:00`);
-  while (cur <= end) {
-    const dateStr = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}-${String(cur.getDate()).padStart(2, "0")}`;
-    const s = dailySMap.get(dateStr);
-    dailyRows.push({
-      date: dateStr,
-      visits: dailyVisitMap.get(dateStr) ?? 0,
-      sales: s?.sales ?? 0,
-      salesTotal: s?.salesTotal ?? 0,
-    });
-    cur.setDate(cur.getDate() + 1);
-  }
+  // Kunlik qatorlar (CSV va XLSX uchun umumiy) — buildAnalyticsData'dan (dailyRows)
 
   // Agent KPI bo'limi
   const visitByAgent = new Map<string, number>();

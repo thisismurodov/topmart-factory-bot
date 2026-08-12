@@ -124,6 +124,94 @@ describe("computeBusinessScores", () => {
   });
 });
 
+// Task: hudud butunlay nasiyasiz va tashrif tarixisiz bo'lganda ustuvorlik
+// tartibi buzilmasligi — NaN yo'q, geo-angle fallback ishlaydi.
+describe("computeBusinessScores — bo'sh signal chekka holatlari", () => {
+  it("aralash: ba'zi do'konlarda biz yo'q, qolganlari nol — bo'sh map, NaN yo'q", () => {
+    const base = makeShops(10);
+    const shops = base.map((s, i) =>
+      i % 2 === 0 ? s : { ...s, biz: { salesSum: 0, creditBalance: 0, daysSinceVisit: 0 } }
+    );
+    const scores = computeBusinessScores(shops);
+    expect(scores.size).toBe(0);
+    for (const e of scores.values()) {
+      expect(Number.isNaN(e.score)).toBe(false);
+    }
+  });
+
+  it("undefined signal maydonlari (bo'sh biz obyekti) — bo'sh map", () => {
+    const shops = makeShops(8).map((s) => ({ ...s, biz: {} }));
+    const scores = computeBusinessScores(shops);
+    expect(scores.size).toBe(0);
+  });
+
+  it("faqat bitta signal noldan farqli — boshqa signallar NaN bermaydi, ballar 0-100 oralig'ida", () => {
+    // maxSales=0 va maxDays=0 bo'lsa ham bo'linish NaN qilmasligi kerak
+    const shops = makeShops(5).map((s, i) => ({
+      ...s,
+      biz: { salesSum: 0, creditBalance: i === 0 ? 700_000 : 0, daysSinceVisit: 0 },
+    }));
+    const scores = computeBusinessScores(shops);
+    expect(scores.size).toBe(5);
+    for (const e of scores.values()) {
+      expect(Number.isFinite(e.score)).toBe(true);
+      expect(e.score).toBeGreaterThanOrEqual(0);
+      expect(e.score).toBeLessThanOrEqual(100);
+    }
+    expect(scores.get(shops[0].id)!.score).toBe(40);
+  });
+});
+
+describe("planRoutes — bo'sh signallar bilan geo fallback", () => {
+  it("businessPriority=true + barcha signallar nol — natija businessPriority=false bilan BIR XIL (geo-angle tartib)", () => {
+    const base = makeShops(60, 7);
+    const zeroBiz = base.map((s) => ({ ...s, biz: { salesSum: 0, creditBalance: 0, daysSinceVisit: 0 } }));
+
+    const planBiz = planRoutes(zeroBiz, { days: [1, 2], targetSize: 30, businessPriority: true });
+    const planGeo = planRoutes(base, { days: [1, 2], targetSize: 30, businessPriority: false });
+
+    expect(planBiz.businessPriorityActive).toBe(false);
+    expect(planGeo.businessPriorityActive).toBe(false);
+    expect(planBiz.routes).toHaveLength(planGeo.routes.length);
+    // Klasterlar kunlarga geo-angle bo'yicha biriktirilgan — kun/stop tartibi mos
+    planBiz.routes.forEach((r, i) => {
+      expect(r.kun).toBe(planGeo.routes[i].kun);
+      expect(r.stops.map((st) => st.id)).toEqual(planGeo.routes[i].stops.map((st) => st.id));
+      // bizSummary/bizScore to'ldirilmaydi
+      expect(r.bizSummary).toBeUndefined();
+      r.stops.forEach((st) => {
+        expect(st.bizScore).toBeUndefined();
+        expect(st.tartib).toBeGreaterThan(0);
+      });
+    });
+    expect(planBiz.totalKm).toBe(planGeo.totalKm);
+  });
+
+  it("bo'sh signallar — hech qanday NaN yo'q (stats, km, score)", () => {
+    const shops = makeShops(45, 11).map((s) => ({ ...s, biz: { salesSum: 0, creditBalance: 0, daysSinceVisit: 0 } }));
+    const plan = planRoutes(shops, { days: [1, 2], businessPriority: true });
+    expect(Number.isFinite(plan.totalKm)).toBe(true);
+    expect(Number.isFinite(plan.avgScore)).toBe(true);
+    for (const r of plan.routes) {
+      for (const v of Object.values(r.stats)) {
+        if (typeof v === "number") expect(Number.isNaN(v)).toBe(false);
+      }
+      expect(r.stats.crossCount).toBe(0);
+    }
+    const v = validatePlan(plan, shops);
+    expect(v.ok).toBe(true);
+  });
+
+  it("biz maydoni umuman yo'q + businessPriority=true — geo fallback, validatePlan.ok", () => {
+    const shops = makeShops(30, 3); // biz yo'q
+    const plan = planRoutes(shops, { days: [1], businessPriority: true });
+    expect(plan.businessPriorityActive).toBe(false);
+    expect(plan.routes[0].bizSummary).toBeUndefined();
+    expect(countCrossings(plan.routes[0].stops)).toBe(0);
+    expect(validatePlan(plan, shops).ok).toBe(true);
+  });
+});
+
 describe("priorityPullForward", () => {
   it("kesishishsiz geo-tartib kesishishsiz qoladi", () => {
     const base = makeShops(20);

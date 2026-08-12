@@ -3853,43 +3853,11 @@ def mah_qosh_start(msg):
         "U yerda mahsulotga SKU beriladi va zavod katalogi bilan bog'lanadi.",
         reply_markup=mah_menu_kb())
 
-@bot.message_handler(func=lambda m:get_state(m.from_user.id)["state"]=="mah_qosh_nomi")
-def mah_qosh_nomi(msg):
-    uid=msg.from_user.id; data=get_state(uid)["data"]
-    data["nomi"]=msg.text.strip(); set_state(uid,"mah_qosh_birlik",data)
-    bot.send_message(uid,"📦 Narx turini tanlang:",reply_markup=birlik_kb())
-
-@bot.message_handler(func=lambda m:get_state(m.from_user.id)["state"]=="mah_qosh_birlik")
-def mah_qosh_birlik(msg):
-    uid=msg.from_user.id; data=get_state(uid)["data"]
-    if msg.text not in("Dona","Kg","Metr"):
-        bot.send_message(uid,"❗ Quyidagilardan birini tanlang:",reply_markup=birlik_kb()); return
-    data["birlik"]=msg.text.lower(); set_state(uid,"mah_qosh_narx",data)
-    bot.send_message(uid,f"💰 {data['nomi']} narxini kiriting (so'mda):",reply_markup=cancel_kb())
-
-@bot.message_handler(func=lambda m:get_state(m.from_user.id)["state"]=="mah_qosh_narx")
-def mah_qosh_narx(msg):
-    uid=msg.from_user.id; data=get_state(uid)["data"]
-    try: narx=int(msg.text.replace(" ","").replace(",",""))
-    except: bot.send_message(uid,"❗ Raqam kiriting, masalan: 35000"); return
-    data["narx"]=narx; set_state(uid,"mah_qosh_tasdiq",data)
-    bot.send_message(uid,
-        f"📋 Yangi mahsulot:\n\n"
-        f"📝 Nomi: {data['nomi']}\n"
-        f"📦 Birlik: {data['birlik']}\n"
-        f"💰 Narx: {fmt(narx)}\n\n"
-        f"Tasdiqlaysizmi?",reply_markup=tasdiq_kb())
-
-@bot.message_handler(func=lambda m:get_state(m.from_user.id)["state"]=="mah_qosh_tasdiq")
-def mah_qosh_tasdiq(msg):
-    uid=msg.from_user.id; data=get_state(uid)["data"]
-    if msg.text!="✅ Tasdiqlash":
-        clear_state(uid)
-        bot.send_message(uid,"Bekor qilindi.",reply_markup=mah_menu_kb()); return
-    conn=get_db();c=conn.cursor()
-    c.execute("INSERT INTO mahsulotlar (nomi,narx,birlik) VALUES (%s,%s,%s)",(data["nomi"],data["narx"],data["birlik"]))
-    conn.commit();conn.close();clear_state(uid)
-    bot.send_message(uid,f"✅ Mahsulot qo'shildi!\n\n📝 {data['nomi']} — {fmt(data['narx'])}/{data['birlik']}",reply_markup=mah_menu_kb())
+# Eslatma (yagona katalog siyosati): mah_qosh_* state handlerlari olib tashlangan —
+# ular hech qayerdan set_state qilinmasa ham, mahsulotlarga SKU'siz (bog'lanmagan)
+# to'g'ridan-to'g'ri INSERT yo'lini ochiq qoldirar edi. Yangi mahsulot faqat
+# dashboard (POST /products, inSales=true) orqali yaratiladi va SKU bilan
+# savdo katalogiga avtomatik proyeksiyalanadi.
 
 @bot.message_handler(func=lambda m:m.text=="✏️ Narx o'zgartirish")
 def mah_narx_start(msg):

@@ -173,6 +173,37 @@ print(json.dumps(bad))
   });
 });
 
+describe("Yagona katalog (SKU) siyosati: bot mahsulot yozuvini yarata olmasligi", () => {
+  // Task: bot orqali qo'shilgan mahsulotlar sku='' (bog'lanmagan) qatorlar hosil
+  // qilar edi. Yangi mahsulot FAQAT dashboard/POST /products orqali yaratiladi.
+  // Bu guard bot manbalarida mahsulotlarga INSERT qaytib kelmasligini AST orqali
+  // tekshiradi (execute() literallari + f-string fragmentlari).
+  it("bot sources contain no INSERT into mahsulotlar", () => {
+    const py = `
+import ast, glob, json
+bad = []
+for path in ["main.py"] + sorted(glob.glob("database/*.py")):
+    tree = ast.parse(open(path).read())
+    for node in ast.walk(tree):
+        vals = []
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            vals.append((node.value, getattr(node, "lineno", "?")))
+        if isinstance(node, ast.JoinedStr):
+            for part in node.values:
+                if isinstance(part, ast.Constant) and isinstance(part.value, str):
+                    vals.append((part.value, getattr(node, "lineno", "?")))
+        for v, ln in vals:
+            u = " ".join(v.upper().split())
+            if "INSERT INTO" in u and "MAHSULOTLAR" in u and "SAVDO_TAFSILOT" not in u:
+                bad.append(f"{path}:{ln}: {v[:80]!r}")
+print(json.dumps(bad))
+`;
+    const out = execFileSync("python3", ["-c", py], { cwd: botDir, stdio: "pipe" }).toString().trim();
+    const bad = JSON.parse(out.split("\n").pop()!) as string[];
+    expect(bad, `Bot mahsulot yaratmasligi kerak (dashboard'dan yaratiladi):\n${bad.join("\n")}`).toEqual([]);
+  });
+});
+
 describe("Distribution bot: every SQL statement plans on PostgreSQL (dialect sweep)", () => {
   // SQLite-era dialect errors (bare non-aggregated GROUP BY columns,
   // GROUP_CONCAT, strftime, unqualified columns in ON CONFLICT ... DO UPDATE)

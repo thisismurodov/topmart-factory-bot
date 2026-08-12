@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { authFetch } from "@/App";
 import { Button } from "@/components/ui/button";
@@ -14,6 +13,8 @@ import { Sparkles, Loader2, AlertTriangle, MapPin, TrendingUp } from "lucide-rea
 // ko'rib chiqiladi (dry-run), keyin "Saqlash" bosilganda delivery_routes ga yoziladi.
 // Biznes ustuvorligi: nasiya (qarz), savdo hajmi va oxirgi tashrifdan o'tgan kunlar
 // asosida eng muhim do'konlar haftaning boshiga va kun boshiga joylashtiriladi.
+import { useEffect, useState } from "react";
+import { useGetMe } from "@workspace/api-client-react";
 
 type PlanAgent = { id: number; name: string | null; mashinaNomeri: string | null };
 
@@ -151,6 +152,29 @@ export default function RoutePlanDialog({ agents }: { agents: PlanAgent[] }) {
   const [viloyat, setViloyat] = useState("");
   const [agentId, setAgentId] = useState("");
   const [presetId, setPresetId] = useState("muvozanatli");
+  // Har bir menejerning oxirgi tanlagan preseti localStorage da saqlanadi
+  // (kalit foydalanuvchi nomiga bog'liq) — dialog qayta ochilganda tiklanadi.
+  const { data: me } = useGetMe();
+  const presetStorageKey = me?.username ? `topmart_route_preset_${me.username}` : null;
+  useEffect(() => {
+    if (!presetStorageKey) return;
+    try {
+      const saved = localStorage.getItem(presetStorageKey);
+      if (saved && (saved === CUSTOM_PRESET_ID || BIZ_PRESETS.some((p) => p.id === saved))) setPresetId(saved);
+    } catch {
+      // localStorage mavjud bo'lmasa (private mode) — default qoladi
+    }
+  }, [presetStorageKey]);
+  const choosePreset = (v: string) => {
+    setPresetId(v);
+    if (presetStorageKey) {
+      try {
+        localStorage.setItem(presetStorageKey, v);
+      } catch {
+        // saqlab bo'lmasa ham tanlov joriy sessiyada ishlayveradi
+      }
+    }
+  };
   // Maxsus rejim slayder qiymatlari (0–100, backend jamini 100 ga normalizatsiya qiladi)
   const [customWeights, setCustomWeights] = useState<Weights>({ credit: 40, days: 35, sales: 25 });
   // Reja tuzilgan paytdagi preset — banner shu nomni ko'rsatadi (keyin picker o'zgarsa ham)
@@ -277,7 +301,7 @@ export default function RoutePlanDialog({ agents }: { agents: PlanAgent[] }) {
         {/* Biznes ustuvorlik preseti: nasiya/tashrif/savdo vaznlari */}
         <div className="space-y-1">
           <div className="text-xs font-medium text-muted-foreground">Biznes ustuvorligi</div>
-          <Select value={presetId} onValueChange={(v) => { setPresetId(v); setPlan(null); setPlanPreset(null); }}>
+          <Select value={presetId} onValueChange={(v) => { choosePreset(v); setPlan(null); setPlanPreset(null); }}>
             <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Ustuvorlik preseti" /></SelectTrigger>
             <SelectContent>
               {BIZ_PRESETS.map((p) => (

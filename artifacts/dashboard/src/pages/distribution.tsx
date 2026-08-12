@@ -999,7 +999,7 @@ function DailyAgentCard({ agent, onShop, open, onToggle }: { agent: DailyAgent; 
   };
 
   return (
-    <Card>
+    <Card id={`daily-agent-card-${agent.agentId}`}>
       <CardContent className="p-4 space-y-3">
         {/* Header */}
         <div className="flex items-start justify-between gap-2">
@@ -1178,6 +1178,16 @@ function DailyVisitsTab({ f, active, onShop }: { f: Filters; active: boolean; on
       }
       return next;
     });
+  // Xaritadan tanlash: iz/GPS nuqta bosilganda kartani ochib scroll qilamiz; null — bekor qilish
+  const selectFromMap = (agentId: number | null) => {
+    setSelectedAgentId(agentId);
+    if (agentId == null) return;
+    setExpanded((prev) => ({ ...prev, [agentId]: true }));
+    // Karta DOM'da yangilangach scroll qilamiz
+    setTimeout(() => {
+      document.getElementById(`daily-agent-card-${agentId}`)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }, 50);
+  };
   const p = new URLSearchParams();
   if (f.agentId) p.set("agentId", f.agentId);
   if (f.viloyat) p.set("viloyat", f.viloyat);
@@ -1278,7 +1288,7 @@ function DailyVisitsTab({ f, active, onShop }: { f: Filters; active: boolean; on
 
       {/* Xarita: kirilgan do'konlar + agent GPS izi */}
       {data && data.agents.length > 0 && (
-        <DailyVisitsMap agents={data.agents} onShop={onShop} selectedAgentId={selectedAgentId} />
+        <DailyVisitsMap agents={data.agents} onShop={onShop} selectedAgentId={selectedAgentId} onSelectAgent={selectFromMap} />
       )}
 
       {/* Agent cards */}

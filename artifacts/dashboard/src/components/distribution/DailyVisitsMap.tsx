@@ -47,16 +47,21 @@ export default function DailyVisitsMap({
   agents,
   onShop,
   selectedAgentId = null,
+  onSelectAgent,
 }: {
   agents: DailyMapAgent[];
   onShop: (id: number) => void;
   selectedAgentId?: number | null;
+  // Xaritadan agent tanlash: iz/oxirgi GPS nuqtasi bosilganda id, fon bosilganda null
+  onSelectAgent?: (agentId: number | null) => void;
 }) {
   const divRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const layerRef = useRef<L.LayerGroup | null>(null);
   const onShopRef = useRef(onShop);
   onShopRef.current = onShop;
+  const onSelectAgentRef = useRef(onSelectAgent);
+  onSelectAgentRef.current = onSelectAgent;
   const fittedRef = useRef(false);
   const prevSelectedRef = useRef<number | null>(null);
 
@@ -69,6 +74,8 @@ export default function DailyVisitsMap({
       maxZoom: 19,
     }).addTo(map);
     layerRef.current = L.layerGroup().addTo(map);
+    // Fon bosilganda tanlovni bekor qilish (marker/iz bosilishi propagatsiyani to'xtatadi)
+    map.on("click", () => onSelectAgentRef.current?.(null));
     mapRef.current = map;
     return () => {
       map.remove();
@@ -98,6 +105,11 @@ export default function DailyVisitsMap({
         bounds.extend(p);
         if (isSelected) selectedBounds.extend(p);
       };
+      // Iz/oxirgi GPS nuqtasi bosilganda: tanlash yoki (tanlangan bo'lsa) bekor qilish
+      const handleSelect = (e: L.LeafletMouseEvent) => {
+        L.DomEvent.stopPropagation(e);
+        onSelectAgentRef.current?.(isSelected ? null : a.agentId);
+      };
 
       // GPS iz (breadcrumb) — polyline
       if (a.trail.length > 1) {
@@ -109,6 +121,7 @@ export default function DailyVisitsMap({
           dashArray: "6 6",
         })
           .bindTooltip(`🚚 ${a.agentName || "Agent"} — GPS izi (${a.trail.length} nuqta)`, { sticky: true })
+          .on("click", handleSelect)
           .addTo(layer);
         pts.forEach((p) => extend(p));
         // Oxirgi joy — kichik doira
@@ -118,6 +131,7 @@ export default function DailyVisitsMap({
           fillOpacity: dimmed ? 0.25 : 1, opacity: dimmed ? 0.25 : 1,
         })
           .bindTooltip(`🚚 ${esc(a.agentName || "Agent")} — oxirgi GPS ${last.at ? last.at.slice(11, 16) : ""}`)
+          .on("click", handleSelect)
           .addTo(layer);
       } else if (a.trail.length === 1) {
         const t = a.trail[0];
@@ -126,6 +140,7 @@ export default function DailyVisitsMap({
           fillOpacity: dimmed ? 0.25 : 1, opacity: dimmed ? 0.25 : 1,
         })
           .bindTooltip(`🚚 ${esc(a.agentName || "Agent")} — GPS ${t.at ? t.at.slice(11, 16) : ""}`)
+          .on("click", handleSelect)
           .addTo(layer);
         extend([t.lat, t.lng]);
       }

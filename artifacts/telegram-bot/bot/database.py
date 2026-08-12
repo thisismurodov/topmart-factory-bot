@@ -554,6 +554,18 @@ def init_db() -> None:
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_wip_line_created ON wip_movements (line_id, created_at DESC)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_wip_type ON wip_movements (movement_type)")
+        # Manfiy WIP Telegram ogohlantirishlari dedupe jadvali (API initDb bilan
+        # sinxron — dual-init qoidasi): har bir bo'lim uchun kuniga ko'pi bilan
+        # bitta xabar. API lib/wipAlerts.ts va bot/wip_alerts.py yozadi.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS wip_negative_alerts (
+                line_id    INTEGER NOT NULL,
+                alert_date DATE NOT NULL,
+                wip_kg     NUMERIC(12,3) NOT NULL DEFAULT 0,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (line_id, alert_date)
+            )
+        """)
         # Ishlab chiqaruvchi (producer) rollarini 'individual' deb belgilaymiz:
         # config roli a'zolari standart 'producer' rolini ham tutsa — bu producer roli.
         # Idempotent: producer = individual o'zgarmas qoida (qayta ishga tushishda xavfsiz).
@@ -1161,6 +1173,9 @@ def create_batch_session(
         # qolgan balansni sessiya davomida kuzatamiz (bir nechta mahsulot bir
         # liniyada bo'lishi mumkin).
         locked_line_balance: dict[int, float] = {}
+        # Sessiya tegib o'tgan liniyalar — commit'dan keyin manfiy balans
+        # tekshiruvi uchun (Telegram ogohlantirish, bot/wip_alerts.py).
+        touched_line_ids: set[int] = set()
 
         for it in items:
             product   = it["product"]
@@ -1221,6 +1236,7 @@ def create_batch_session(
             # Ishlab chiqarilgan og'irlik: aniq weight_kg bo'lsa o'shani, aks holda
             # dona × dona-og'irligi (products.weight). Faqat liniya aniqlangan bo'lsa.
             if prod_line_id:
+                touched_line_ids.add(int(prod_line_id))
                 produce_kg = weight_kg if weight_kg > 0 else quantity * product_weight
                 if produce_kg > 0:
                     # WIP balans himoyasi — API /ombor/flow/produce bilan bir xil.
@@ -1301,6 +1317,13 @@ def create_batch_session(
                         "minimum_stock": min_stock,
                         "unit":          req["unit"] or "",
                     }
+
+    # COMMIT'dan keyin: sessiya tegib o'tgan liniyalarning haqiqiy balansi
+    # minusga tushgan bo'lsa adminlarga Telegram ogohlantirish (best-effort,
+    # kuniga liniya boshiga 1 marta — wip_negative_alerts dedupe).
+    if touched_line_ids:
+        from bot.wip_alerts import check_and_notify_negative_wip
+        check_and_notify_negative_wip(touched_line_ids)
 
     return {
         "batch_code":    batch_code,

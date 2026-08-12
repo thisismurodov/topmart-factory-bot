@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { pool } from "@workspace/db";
 import { getUsdToUzsRate } from "../lib/exchangeRate";
+import { notifyNegativeWip, NEGATIVE_WIP_EPS } from "../lib/wipAlerts";
 
 const router: IRouter = Router();
 
@@ -1107,6 +1108,13 @@ router.get("/ombor/flow", async (_req, res): Promise<void> => {
   for (const d of departments) {
     if (d.wipKg < 0) {
       alerts.push({ level: "danger", text: `${d.name}: WIP manfiy (${d.wipKg.toFixed(0)} kg) — qabul qilinganidan ko'p ishlab chiqarilgan` });
+      // Telegram ogohlantirish (adminlarga, kuniga bo'lim boshiga 1 marta).
+      // Bot PRODUCE'ni to'g'ridan-to'g'ri DB'ga yozadi va tuzatishlar ham
+      // balansni minusga tushirishi mumkin — shu sababli manfiy holat qayerdan
+      // kelib chiqqanidan qat'i nazar, dashboard flow so'rovi ham ushlaydi.
+      if (d.wipKg < -NEGATIVE_WIP_EPS) {
+        void notifyNegativeWip(Number(d.id), String(d.name), d.wipKg);
+      }
     } else if (d.wipKg > 0 && d.todayProduced === 0) {
       alerts.push({ level: "warn", text: `${d.name}: ${d.wipKg.toFixed(0)} kg jarayonda, lekin bugun ishlab chiqarish yo'q` });
     }
@@ -1258,6 +1266,13 @@ router.post("/ombor/flow/produce", async (req, res): Promise<void> => {
       [canonicalProduct, qty, warehouseId, note || `Tayyor mahsulot chiqarildi: ${qty}`, actingUser(req)],
     );
     await client.query("COMMIT");
+    // Manfiy balansga o'tish nazorati: PRODUCE bo'lim balansini minusga
+    // tushirgan bo'lsa, adminlarga Telegram xabar (best-effort, javobni
+    // kutmaymiz — dedupe kuniga bo'lim boshiga 1 marta).
+    const newWipKg = wipKg - produceKg;
+    if (newWipKg < -NEGATIVE_WIP_EPS) {
+      void notifyNegativeWip(Number(lineId), String(lineRes.rows[0].name), newWipKg);
+    }
     res.json({ ok: true });
   } catch (e: any) {
     await client.query("ROLLBACK");

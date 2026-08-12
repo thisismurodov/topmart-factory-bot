@@ -374,6 +374,18 @@ export async function initDb(): Promise<void> {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_wip_type ON wip_movements (movement_type)
   `);
+  // Manfiy WIP Telegram ogohlantirishlari dedupe jadvali: har bir bo'lim uchun
+  // kuniga ko'pi bilan bitta xabar (PRIMARY KEY (line_id, alert_date) atomik
+  // himoya). Faqat API yozadi (lib/wipAlerts.ts) — bot bu jadvalga tegmaydi.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS wip_negative_alerts (
+      line_id    INTEGER NOT NULL,
+      alert_date DATE NOT NULL,
+      wip_kg     NUMERIC(12,3) NOT NULL DEFAULT 0,
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (line_id, alert_date)
+    )
+  `);
 
   // ── Bir martalik backfill: eski partiyalarning xom ashyo sarfi ────────────
   // Harakat logi qo'shilishidan OLDIN yaratilgan partiyalar xom ashyoni

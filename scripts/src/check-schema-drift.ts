@@ -51,7 +51,8 @@ import {
 // qo'shing. Faqat runtime'da bo'lgan (Drizzle'siz) yordamchi jadvallar —
 // db_meta, admin_sessions, audit_logs, ai_analysis_runs, sale_items,
 // sale_payments, sale_events, sales_products, sales_product_tiers,
-// sale_products, line_role_config — bu yerga KIRMAYDI (kanonik sxema yo'q).
+// sale_products, line_role_config, wip_negative_alerts — bu yerga KIRMAYDI
+// (kanonik sxema yo'q).
 // Parallel validation'lar bir-birining bazasini DROP qilmasligi uchun nom
 // har bir ishga tushirishda unikal (pid + timestamp).
 //

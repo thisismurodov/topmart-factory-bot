@@ -2575,6 +2575,31 @@ FAQAT quyidagi JSON formatda javob ber, boshqa hech narsa yozma:
 {"items":[{"dokonId":123,"score":95,"reason":"..."}]}
 reason — 1 jumlali qisqa o'zbekcha izoh, masalan: "3 haftadan beri olmayapti, odatda 10 kunda bir oladi, 2.4 mln nasiyasi bor". Raqamlarni o'zgartirma, faqat berilgan ma'lumotdan foydalan.`;
 
+// AI reytingidan bugun allaqachon tashrif buyurilgan do'konlarni chiqarib
+// tashlaydi (savdolar YOKI olmagan_dokonlar qatori bugun paydo bo'lgan bo'lsa).
+// Kesh TTL ichida ham har javob oldidan chaqiriladi — shunda agent do'konga
+// kirgan zahoti tavsiya kartadan yo'qoladi.
+export async function filterVisitedToday(
+  items: AiSuggestion[] | null,
+  today: string
+): Promise<AiSuggestion[] | null> {
+  if (!items || items.length === 0) return items;
+  const ids = items.map((it) => it.dokonId);
+  const { rows } = await pool.query(
+    `SELECT DISTINCT v.dokon_id FROM (
+       SELECT s.dokon_id FROM distribution.savdolar s
+        WHERE s.dokon_id = ANY($1::bigint[]) AND substr(s.created_at,1,10) = $2
+       UNION ALL
+       SELECT o.dokon_id FROM distribution.olmagan_dokonlar o
+        WHERE o.dokon_id = ANY($1::bigint[]) AND substr(o.created_at,1,10) = $2
+     ) v`,
+    [ids, today]
+  );
+  if (rows.length === 0) return items;
+  const visited = new Set(rows.map((r) => Number(r.dokon_id)));
+  return items.filter((it) => !visited.has(it.dokonId));
+}
+
 async function rankWithAi(cacheKey: string, candidates: AiCandidate[]): Promise<AiSuggestion[] | null> {
   if (candidates.length === 0) return [];
   const cached = aiSuggestCache.get(cacheKey);
@@ -2907,6 +2932,11 @@ router.get("/distribution/suggestions", async (req, res): Promise<void> => {
     }
     const cacheKey = `${today}|${f.agentId ?? ""}|${f.viloyat ?? ""}|${f.hudud ?? ""}|${f.search ?? ""}`;
     ai = await rankWithAi(cacheKey, Array.from(candMap.values()));
+    // Keshdagi reyting eskirgan bo'lishi mumkin: agent tavsiya etilgan do'konga
+    // bugun kirib bo'lgan bo'lsa (savdolar yoki olmagan_dokonlar qatori paydo
+    // bo'lsa), o'sha do'kon kartada qolmasligi kerak. Shu sababli har javobdan
+    // oldin AI natijasi bugungi tashriflarga qarshi qayta filtrlanadi.
+    ai = await filterVisitedToday(ai, today);
   }
 
   res.json({

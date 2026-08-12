@@ -1461,13 +1461,27 @@ router.post("/distribution/route-plan", async (req, res): Promise<void> => {
   const replace = body.replace === true;
   // force: faqat crossing blokini chetlab o'tadi; dublikat/yo'qolgan do'kon baribir bloklaydi
   const force = body.force === true;
+  // weights: sessiyaga mos biznes ustuvorlik vaznlari {credit, days, sales}.
+  // Berilgan bo'lsa — barcha uchtasi manfiy bo'lmagan son bo'lishi shart (jami > 0).
+  let bizWeights: { credit: number; days: number; sales: number } | null = null;
+  if (body.weights != null) {
+    const w = body.weights as Record<string, unknown>;
+    const credit = Number(w.credit);
+    const days = Number(w.days);
+    const sales = Number(w.sales);
+    if (![credit, days, sales].every((v) => Number.isFinite(v) && v >= 0) || credit + days + sales <= 0) {
+      res.status(400).json({ error: "weights noto'g'ri: credit/days/sales manfiy bo'lmagan sonlar bo'lishi va jami > 0 bo'lishi kerak" });
+      return;
+    }
+    bizWeights = { credit, days, sales };
+  }
 
   if (!Number.isInteger(agentId) || agentId <= 0) {
     res.status(400).json({ error: "agentId noto'g'ri" });
     return;
   }
 
-  const run = await runRoutePlan({ agentId, viloyat: viloyat || null, save, replace, force });
+  const run = await runRoutePlan({ agentId, viloyat: viloyat || null, save, replace, force, bizWeights });
   if (!run.ok) {
     res.status(run.status).json({ error: run.error, ...(run.extra ?? {}) });
     return;

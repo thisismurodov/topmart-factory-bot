@@ -481,6 +481,8 @@ export type PlanOptions = {
   // Biznes ustuvorligi: do'konda biz? ma'lumotlari bo'lsa, nasiya/savdo/tashrif
   // asosida klasterlarni kunlarga va kun ichidagi tartibni ustuvorlik bilan belgilaydi.
   businessPriority?: boolean;
+  // Biznes ballari vaznlari (nasiya/tashrif/savdo) — berilmasa DEFAULT_BIZ_WEIGHTS
+  bizWeights?: Partial<BizWeights> | null;
 };
 
 // Agentlar kunni boshlaydigan baza: Dang'ara, Farg'ona viloyati
@@ -497,9 +499,37 @@ function fmtUzs(amount: number): string {
   return `${Math.round(amount)} so'm`;
 }
 
+// Biznes ustuvorlik vaznlari (foizlarda, jami 100 bo'lishi shart emas — normalizatsiya qilinadi)
+export type BizWeights = {
+  credit: number; // nasiya balansi
+  days: number;   // oxirgi tashrifdan o'tgan kunlar
+  sales: number;  // savdo hajmi
+};
+
+export const DEFAULT_BIZ_WEIGHTS: BizWeights = { credit: 40, days: 35, sales: 25 };
+
+// Har qanday manfiy bo'lmagan vaznlarni jami 100 ga normalizatsiya qiladi.
+// Noto'g'ri (manfiy/NaN/jami 0) bo'lsa — default qaytadi.
+export function normalizeBizWeights(w?: Partial<BizWeights> | null): BizWeights {
+  if (!w) return DEFAULT_BIZ_WEIGHTS;
+  const credit = Number(w.credit);
+  const days = Number(w.days);
+  const sales = Number(w.sales);
+  if (![credit, days, sales].every((v) => Number.isFinite(v) && v >= 0)) return DEFAULT_BIZ_WEIGHTS;
+  const sum = credit + days + sales;
+  if (sum <= 0) return DEFAULT_BIZ_WEIGHTS;
+  return {
+    credit: (credit / sum) * 100,
+    days: (days / sum) * 100,
+    sales: (sales / sum) * 100,
+  };
+}
+
 // Har do'kon uchun biznes bali (0-100) va sabablar ro'yxatini hisoblaydi.
-// Signallar: nasiya balansi (40%), oxirgi tashrifdan kunlar (35%), savdo hajmi (25%).
-export function computeBusinessScores(shops: PlanShop[]): BizScoreMap {
+// Signallar (default): nasiya balansi (40%), oxirgi tashrifdan kunlar (35%), savdo hajmi (25%).
+// weights parametri orqali sessiyaga mos vaznlar berilishi mumkin.
+export function computeBusinessScores(shops: PlanShop[], weights?: Partial<BizWeights> | null): BizScoreMap {
+  const w = normalizeBizWeights(weights);
   const result: BizScoreMap = new Map();
   let maxSales = 0, maxCredit = 0, maxDays = 0;
   for (const s of shops) {
@@ -520,7 +550,7 @@ export function computeBusinessScores(shops: PlanShop[]): BizScoreMap {
     const creditNorm = maxCredit > 0 ? (biz.creditBalance   ?? 0) / maxCredit : 0;
     const daysNorm   = maxDays   > 0 ? (biz.daysSinceVisit  ?? 0) / maxDays   : 0;
 
-    const score = Math.min(100, Math.round(creditNorm * 40 + daysNorm * 35 + salesNorm * 25));
+    const score = Math.min(100, Math.round(creditNorm * w.credit + daysNorm * w.days + salesNorm * w.sales));
     const reasons: string[] = [];
     if (salesNorm >= 0.7) reasons.push("VIP");
     if ((biz.creditBalance ?? 0) > 0) reasons.push(`Nasiya: ${fmtUzs(biz.creditBalance!)}`);
@@ -799,7 +829,7 @@ export function planRoutes(shops: PlanShop[], opts: PlanOptions = {}): PlanResul
 
   // Biznes signallari mavjud bo'lsa — ballar hisoblanadi
   const bizActive = opts.businessPriority === true;
-  const bizScores: BizScoreMap = bizActive ? computeBusinessScores(shops) : new Map();
+  const bizScores: BizScoreMap = bizActive ? computeBusinessScores(shops, opts.bizWeights) : new Map();
 
   // 3. Klasterlarni kunlarga biriktirish
   //    • Biznes ustuvorligi yoqilgan: eng yuqori o'rtacha bal → birinchi kun (dushanba)

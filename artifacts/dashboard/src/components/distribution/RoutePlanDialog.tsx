@@ -70,6 +70,35 @@ type PlanResult = {
 
 const KUNLAR = ["dushanba", "seshanba", "chorshanba", "payshanba", "juma", "shanba", "yakshanba"];
 
+// Biznes ustuvorlik presetlari: nasiya / tashrif oralig'i / savdo vaznlari (jami 100)
+type BizPreset = {
+  id: string;
+  label: string;
+  desc: string;
+  weights: { credit: number; days: number; sales: number };
+};
+
+const BIZ_PRESETS: BizPreset[] = [
+  {
+    id: "muvozanatli",
+    label: "Muvozanatli",
+    desc: "Nasiya 40% · Tashrif 35% · Savdo 25%",
+    weights: { credit: 40, days: 35, sales: 25 },
+  },
+  {
+    id: "nasiya",
+    label: "Nasiya yig'ish",
+    desc: "Nasiya 60% · Tashrif 20% · Savdo 20%",
+    weights: { credit: 60, days: 20, sales: 20 },
+  },
+  {
+    id: "faollashtirish",
+    label: "Faollashtirish",
+    desc: "Tashrif 55% · Nasiya 20% · Savdo 25%",
+    weights: { credit: 20, days: 55, sales: 25 },
+  },
+];
+
 function fmtMin(min: number): string {
   const h = Math.floor(min / 60);
   const m = min % 60;
@@ -99,6 +128,9 @@ export default function RoutePlanDialog({ agents }: { agents: PlanAgent[] }) {
   const [open, setOpen] = useState(false);
   const [viloyat, setViloyat] = useState("");
   const [agentId, setAgentId] = useState("");
+  const [presetId, setPresetId] = useState("muvozanatli");
+  // Reja tuzilgan paytdagi preset — banner shu nomni ko'rsatadi (keyin picker o'zgarsa ham)
+  const [planPreset, setPlanPreset] = useState<BizPreset | null>(null);
   const [plan, setPlan] = useState<PlanResult | null>(null);
   const [phase, setPhase] = useState<"idle" | "planning" | "saving" | "force-saving">("idle");
   const [error, setError] = useState<string | null>(null);
@@ -128,6 +160,7 @@ export default function RoutePlanDialog({ agents }: { agents: PlanAgent[] }) {
         body: JSON.stringify({
           viloyat,
           agentId: Number(agentId),
+          weights: (BIZ_PRESETS.find((p) => p.id === presetId) ?? BIZ_PRESETS[0]).weights,
           save,
           // Foydalanuvchi rejani ko'rib bo'lgach saqlaydi — eski marshrut almashtiriladi
           replace: save,
@@ -147,6 +180,7 @@ export default function RoutePlanDialog({ agents }: { agents: PlanAgent[] }) {
         return;
       }
       setPlan(j);
+      setPlanPreset(BIZ_PRESETS.find((p) => p.id === presetId) ?? BIZ_PRESETS[0]);
       if (j.saved) {
         // Xarita va marshrut ro'yxatlarini yangilaymiz
         qc.invalidateQueries({ queryKey: ["distribution", "route-map"] });
@@ -163,6 +197,7 @@ export default function RoutePlanDialog({ agents }: { agents: PlanAgent[] }) {
     setOpen(o);
     if (!o) {
       setPlan(null);
+      setPlanPreset(null);
       setError(null);
       setForceable(false);
     }
@@ -208,6 +243,22 @@ export default function RoutePlanDialog({ agents }: { agents: PlanAgent[] }) {
           </Select>
         </div>
 
+        {/* Biznes ustuvorlik preseti: nasiya/tashrif/savdo vaznlari */}
+        <div className="space-y-1">
+          <div className="text-xs font-medium text-muted-foreground">Biznes ustuvorligi</div>
+          <Select value={presetId} onValueChange={(v) => { setPresetId(v); setPlan(null); setPlanPreset(null); }}>
+            <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Ustuvorlik preseti" /></SelectTrigger>
+            <SelectContent>
+              {BIZ_PRESETS.map((p) => (
+                <SelectItem key={p.id} value={p.id}>
+                  <span className="font-medium">{p.label}</span>
+                  <span className="text-xs text-muted-foreground"> — {p.desc}</span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
         {error && (
           <div className="flex items-start gap-2 text-sm text-red-600 bg-red-50 dark:bg-red-950/30 rounded-md p-2.5">
             <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {error}
@@ -221,8 +272,11 @@ export default function RoutePlanDialog({ agents }: { agents: PlanAgent[] }) {
               <div className="flex items-start gap-2 text-xs bg-indigo-50 dark:bg-indigo-950/30 rounded-md p-2.5">
                 <TrendingUp className="w-3.5 h-3.5 shrink-0 mt-0.5 text-indigo-600" />
                 <div className="text-indigo-700 dark:text-indigo-300">
-                  <span className="font-semibold">Biznes ustuvorligi faol</span> —
-                  {" "}nasiya qoldig'i katta, savdo hajmi yuqori yoki uzoq bormagan do'konlar
+                  <span className="font-semibold">
+                    Biznes ustuvorligi faol{planPreset ? ` · ${planPreset.label}` : ""}
+                  </span> —
+                  {planPreset ? ` ${planPreset.desc}. ` : " "}
+                  Nasiya qoldig'i katta, savdo hajmi yuqori yoki uzoq bormagan do'konlar
                   haftaning boshiga va kun boshiga joylashtirildi.
                 </div>
               </div>

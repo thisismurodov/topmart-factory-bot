@@ -14,6 +14,7 @@
 import { pool } from "@workspace/db";
 import {
   DEFAULT_START_POINT,
+  type BizWeights,
   planRoutes,
   splitOutliers,
   validatePlan,
@@ -55,6 +56,8 @@ export async function runRoutePlan(opts: {
   replace?: boolean;
   // force=true: crossing blokini chetlab o'tadi (dublikat/yo'qolgan do'kon baribir bloklaydi)
   force?: boolean;
+  // Biznes ustuvorlik vaznlari (nasiya/tashrif/savdo) — berilmasa default 40/35/25
+  bizWeights?: Partial<BizWeights> | null;
 }): Promise<RoutePlanRun> {
   const { agentId } = opts;
   const viloyat = opts.viloyat?.trim() ? opts.viloyat.trim() : null;
@@ -185,6 +188,7 @@ export async function runRoutePlan(opts: {
   const plan = planRoutes(inliers, {
     startPoint: DEFAULT_START_POINT,
     businessPriority: hasBizSignals,
+    bizWeights: opts.bizWeights,
   });
   const validation = validatePlan(plan, inliers);
 

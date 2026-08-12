@@ -97,6 +97,31 @@ describe("computeBusinessScores", () => {
     expect(scores.get(1)!.reasons.some((r) => r.includes("kun bormagan"))).toBe(true);
     expect(scores.get(2)!.reasons.some((r) => r.includes("kun bormagan"))).toBe(false);
   });
+
+  it("maxsus vaznlar ballarni o'zgartiradi (nasiya 60%)", () => {
+    const shops: PlanShop[] = [
+      { id: 1, nomi: "A", hudud: null, lat: 41.0, lng: 71.0, biz: { creditBalance: 1_000_000, salesSum: 0, daysSinceVisit: 0 } },
+    ];
+    const scores = computeBusinessScores(shops, { credit: 60, days: 20, sales: 20 });
+    expect(scores.get(1)!.score).toBe(60);
+  });
+
+  it("vaznlar jami 100 bo'lmasa — normalizatsiya qilinadi", () => {
+    const shops: PlanShop[] = [
+      { id: 1, nomi: "A", hudud: null, lat: 41.0, lng: 71.0, biz: { creditBalance: 1_000_000, salesSum: 0, daysSinceVisit: 0 } },
+    ];
+    // credit=3, days=1, sales=1 → credit ulushi 60%
+    const scores = computeBusinessScores(shops, { credit: 3, days: 1, sales: 1 });
+    expect(scores.get(1)!.score).toBe(60);
+  });
+
+  it("noto'g'ri vaznlar (manfiy yoki jami 0) — default 40/35/25 ishlatiladi", () => {
+    const shops: PlanShop[] = [
+      { id: 1, nomi: "A", hudud: null, lat: 41.0, lng: 71.0, biz: { creditBalance: 1_000_000, salesSum: 0, daysSinceVisit: 0 } },
+    ];
+    expect(computeBusinessScores(shops, { credit: -1, days: 50, sales: 51 }).get(1)!.score).toBe(40);
+    expect(computeBusinessScores(shops, { credit: 0, days: 0, sales: 0 }).get(1)!.score).toBe(40);
+  });
 });
 
 describe("priorityPullForward", () => {
@@ -192,6 +217,37 @@ describe("planRoutes businessPriority rejimi", () => {
       const v = validatePlan(plan, shopsWithBiz);
       expect(v.ok).toBe(true);
     }
+  });
+
+  it("bizWeights planRoutes orqali kun tartibini o'zgartiradi (nasiya vs tashrif preset)", () => {
+    // Ikki klaster: A-hudud katta nasiya, B-hudud uzoq bormagan.
+    // Nasiya-preset A'ni birinchi kunga, tashrif-preset B'ni birinchi kunga qo'yishi kerak.
+    const shopsA: PlanShop[] = Array.from({ length: 10 }, (_, i) => ({
+      id: i + 1, nomi: `A${i}`, hudud: "A", lat: 41.0 + i * 0.005, lng: 71.0 + i * 0.005,
+      biz: { creditBalance: 5_000_000, daysSinceVisit: 1, salesSum: 100_000 },
+    }));
+    const shopsB: PlanShop[] = Array.from({ length: 10 }, (_, i) => ({
+      id: 100 + i, nomi: `B${i}`, hudud: "B", lat: 41.5 + i * 0.005, lng: 71.5 + i * 0.005,
+      biz: { creditBalance: 0, daysSinceVisit: 60, salesSum: 100_000 },
+    }));
+    const shops = [...shopsA, ...shopsB];
+
+    const nasiyaPlan = planRoutes(shops, {
+      days: [1, 2], targetSize: 10, businessPriority: true,
+      bizWeights: { credit: 60, days: 20, sales: 20 },
+    });
+    const tashrifPlan = planRoutes(shops, {
+      days: [1, 2], targetSize: 10, businessPriority: true,
+      bizWeights: { credit: 20, days: 55, sales: 25 },
+    });
+
+    const firstDayIds = (p: ReturnType<typeof planRoutes>) =>
+      new Set(p.routes.find((r) => r.kun === 1)!.stops.map((s) => s.id));
+
+    // Nasiya preset: birinchi kun A-klasterga (id < 100)
+    expect([...firstDayIds(nasiyaPlan)].every((id) => id < 100)).toBe(true);
+    // Tashrif preset: birinchi kun B-klasterga (id >= 100)
+    expect([...firstDayIds(tashrifPlan)].every((id) => id >= 100)).toBe(true);
   });
 
   it("barcha signallar nol — businessPriorityActive=false, geo tartib saqlanadi", () => {

@@ -138,6 +138,8 @@ export default function RouteWeekMap({ active, onShop }: { active: boolean; onSh
   const [agentSel, setAgentSel] = useState<string>("");
   const [hiddenKuns, setHiddenKuns] = useState<Set<number>>(new Set());
   const [showUnassigned, setShowUnassigned] = useState(true);
+  // Kesishish (⚠️) belgisi bosilganda tushuntirish ko'rsatiladigan kun (null — yopiq)
+  const [crossInfoKun, setCrossInfoKun] = useState<number | null>(null);
 
   const qs = agentSel ? `?agentId=${agentSel}` : "";
   const { data, isLoading } = useQuery<RouteMapData>({
@@ -364,7 +366,28 @@ export default function RouteWeekMap({ active, onShop }: { active: boolean; onSh
                 {st && (
                   <span className="font-normal opacity-80 normal-case">
                     · {Math.round(st.km)} km · ~{fmtMin(st.min)} · ⭐{Math.round(st.scoreSum / st.n)} · ⚡
-                    {Math.round(st.effSum / st.n)}%{st.crossSum > 0 ? ` · ✂️${st.crossSum}` : ""}
+                    {Math.round(st.effSum / st.n)}%
+                  </span>
+                )}
+                {st && st.crossSum > 0 && (
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setCrossInfoKun((cur) => (cur === kun ? null : kun));
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        setCrossInfoKun((cur) => (cur === kun ? null : kun));
+                      }
+                    }}
+                    title="Bu kunning marshrutida hal qilinmagan kesishishlar bor — bosing"
+                    className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300 px-1.5 py-0.5 text-[10px] font-semibold normal-case cursor-pointer"
+                  >
+                    ⚠️ {st.crossSum}
                   </span>
                 )}
               </button>
@@ -377,6 +400,21 @@ export default function RouteWeekMap({ active, onShop }: { active: boolean; onSh
           >
             <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: UNASSIGNED_COLOR }} />
             Marshrutsiz · {data.unassigned.length}
+          </button>
+        </div>
+      )}
+
+      {/* Kesishish tushuntirishi (⚠️ bosilganda) */}
+      {data && crossInfoKun !== null && (kunRouteStats.get(crossInfoKun)?.crossSum ?? 0) > 0 && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] text-amber-900">
+          <span className="font-semibold capitalize">{data.kunlar[crossInfoKun - 1]}</span> marshrutida{" "}
+          <span className="font-semibold">{kunRouteStats.get(crossInfoKun)!.crossSum} ta kesishish</span> qolgan.
+          Kesishish — marshrut chizig'ining o'z-o'zini kesib o'tishi: agent bir joydan ikki marta o'tadi,
+          bu ortiqcha kilometr va vaqt degani. Bunday marshrut odatda kesishishlar bilan majburan (force)
+          saqlangan — avto-optimallash ularni bartaraf eta olmagan. Yechim: "AI marshrut" orqali qayta
+          rejalashtiring yoki do'konlar tartibini qo'lda o'zgartiring.
+          <button className="ml-2 underline" onClick={() => setCrossInfoKun(null)}>
+            Yopish
           </button>
         </div>
       )}

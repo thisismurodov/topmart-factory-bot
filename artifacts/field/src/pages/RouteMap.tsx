@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useLocation } from "wouter";
 import { MapContainer, Marker, Polyline, useMap } from "react-leaflet";
 import L from "leaflet";
-import { useFieldRouteToday, RouteShop } from "@/lib/fieldApi";
+import { useFieldRouteToday, useFieldMe, RouteShop } from "@/lib/fieldApi";
 import { useGps } from "@/hooks/useGps";
 import {
   calculateDistance,
@@ -51,6 +51,8 @@ function nearestNeighborSort(
 
   return [...sorted, ...noCoords];
 }
+
+const OPTIMAL_ORDER_PREFIX = "field_optimal_order:";
 
 /** Umumiy yo'l uzunligi (metr): startdan boshlab do'konlar ketma-ketligi bo'ylab. */
 function totalRouteDistance(
@@ -110,20 +112,27 @@ function MapUpdater({ center }: { center: [number, number] }) {
 export default function RouteMap() {
   const [, setLocation] = useLocation();
   const { data: route, isLoading } = useFieldRouteToday();
+  const { data: me } = useFieldMe();
   const { location } = useGps();
   const [promptedShop, setPromptedShop] = useState<number | null>(null);
   // T008 — do'kon bo'yicha bottom sheet (marker yoki karta bosilganda)
   const [sheetShop, setSheetShop] = useState<number | null>(null);
   // T007 — forma saqlagach bir martalik "✓ Saqlandi" animatsiyasi
   const [showSaved, setShowSaved] = useState(() => consumeVisitSaved());
-  // Optimal tartib rejimi
-  const [optimalMode, setOptimalMode] = useState(false);
+  // Optimal tartib rejimi — saqlangan tartib (dokonId ro'yxati) yoki null
+  const [savedOrder, setSavedOrder] = useState<number[] | null>(null);
+  const optimalMode = savedOrder !== null;
 
+  const storageKey =
+    me && route && !route.dam ? optimalOrderKey(me.agent.id, route.sana) : null;
+
+  // Sahifa ochilganda saqlangan tartibni tiklash + eski kunlarni tozalash
   useEffect(() => {
-    if (!showSaved) return;
-    const t = setTimeout(() => setShowSaved(false), 1500);
-    return () => clearTimeout(t);
-  }, [showSaved]);
+    if (!storageKey) return;
+    cleanupStaleOrders(storageKey);
+    const saved = loadSavedOrder(storageKey);
+    if (saved) setSavedOrder(saved);
+  }, [storageKey]);
 
   // Boshlang'ich nuqta: agent GPS → oxirgi bajarilgan do'kon → Toshkent
   const startPoint = useMemo(() => {
@@ -136,29 +145,58 @@ export default function RouteMap() {
     return { lat: 41.2995, lon: 69.2401 };
   }, [route, location]);
 
+  const toggleOptimal = () => {
+    if (!route) return;
+    if (optimalMode) {
+      // Asl tartibga qaytish — saqlangan tartibni o'chirish
+      setSavedOrder(null);
+      if (storageKey) clearOrder(storageKey);
+      return;
+    }
+    // NN tartibni bir marta hisoblab, saqlab qo'yamiz
+    const pending = route.shops.filter(s => s.status === "pending");
+    const ids = nearestNeighborSort(pending, startPoint.lat, startPoint.lon).map(s => s.dokonId);
+    setSavedOrder(ids);
+    if (storageKey) saveOrder(storageKey, ids);
+  };
+
+  useEffect(() => {
+    if (!showSaved) return;
+    const t = setTimeout(() => setShowSaved(false), 1500);
+    return () => clearTimeout(t);
+  }, [showSaved]);
+
   const pendingShops = useMemo(() => {
     if (!route) return [];
     const pending = route.shops.filter(s => s.status === "pending");
-    if (!optimalMode) {
+    if (!savedOrder) {
       return pending.sort((a, b) => a.tartib - b.tartib);
     }
-    return nearestNeighborSort(pending, startPoint.lat, startPoint.lon);
-  }, [route, optimalMode, startPoint]);
+    // Saqlangan tartib bo'yicha: ro'yxatda bo'lmagan (yangi) do'konlar oxiriga
+    const pos = new Map(savedOrder.map((id, i) => [id, i]));
+    return [...pending].sort((a, b) => {
+      const ia = pos.get(a.dokonId);
+      const ib = pos.get(b.dokonId);
+      if (ia != null && ib != null) return ia - ib;
+      if (ia != null) return -1;
+      if (ib != null) return 1;
+      return a.tartib - b.tartib;
+    });
+  }, [route, savedOrder]);
 
-  // Optimal rejimda tejaladigan masofa (km): asl tartib vs NN tartib, bir xil startdan
+  // Optimal rejimda tejaladigan masofa (km): asl tartib vs joriy (saqlangan) tartib
   const savedKm = useMemo(() => {
-    if (!route) return null;
+    if (!route || !savedOrder) return null;
     const pending = route.shops.filter(s => s.status === "pending");
     const withCoords = pending.filter(s => s.latitude != null && s.longitude != null);
     if (withCoords.length < 2) return null;
     const original = [...pending].sort((a, b) => a.tartib - b.tartib);
-    const optimal = nearestNeighborSort(pending, startPoint.lat, startPoint.lon);
     const dOrig = totalRouteDistance(original, startPoint.lat, startPoint.lon);
-    const dOpt = totalRouteDistance(optimal, startPoint.lat, startPoint.lon);
+    const dOpt = totalRouteDistance(pendingShops, startPoint.lat, startPoint.lon);
     const savedMeters = dOrig - dOpt;
     if (savedMeters < 100) return null; // arzimas farq — ko'rsatmaymiz
     return savedMeters / 1000;
-  }, [route, startPoint]);
+  }, [route, savedOrder, pendingShops, startPoint]);
 
   // T006 — marshrut hududi plitkalarini fonda oldindan yuklab qo'yamiz
   // (kuniga bir marta): internet yo'q joyda ham xarita ochiladi.
@@ -283,7 +321,7 @@ export default function RouteMap() {
       {/* Optimal tartib toggle — header paneldan pastda, xarita ustida suzuvchi tugma */}
       <button
         type="button"
-        onClick={() => setOptimalMode(v => !v)}
+        onClick={toggleOptimal}
         className={[
           "absolute top-[8.5rem] right-4 z-[410]",
           "flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-semibold",
@@ -464,4 +502,42 @@ export default function RouteMap() {
       )}
     </div>
   );
+}
+
+function optimalOrderKey(agentId: number, sana: string): string {
+  return `${OPTIMAL_ORDER_PREFIX}${agentId}:${sana}`;
+}
+
+function clearOrder(key: string) {
+  try {
+    localStorage.removeItem(key);
+  } catch {}
+}
+
+/** Eski kunlarning saqlangan tartiblarini tozalash (localStorage to'lib ketmasin). */
+function cleanupStaleOrders(currentKey: string) {
+  try {
+    const stale: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(OPTIMAL_ORDER_PREFIX) && k !== currentKey) stale.push(k);
+    }
+    stale.forEach(k => localStorage.removeItem(k));
+  } catch {}
+}
+
+function loadSavedOrder(key: string): number[] | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr) && arr.every(x => typeof x === "number")) return arr;
+  } catch {}
+  return null;
+}
+
+function saveOrder(key: string, ids: number[]) {
+  try {
+    localStorage.setItem(key, JSON.stringify(ids));
+  } catch {}
 }

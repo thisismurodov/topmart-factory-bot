@@ -35,3 +35,4 @@
 - [Distribution data restore paths](distribution-data-restore.md) — bot agent-delete cascades wipe shops/sales; recover from attached_assets/topmart_*.db SQLite snapshots; role='blok' shows name without access.
 - [Audit-log writes must be transactional](audit-log-writes.md) — read→UPDATE→audit INSERT need one txn + FOR UPDATE or parallel edits corrupt the chain; `??` swallows explicit null in PATCH bodies.
 - [Two product catalogs (ERP vs savdo bot)](two-product-catalogs.md) — public.products ≠ distribution.mahsulotlar (by design); bridge = dashboard section + sync-to-erp; normalize apostrophe variants when matching names.
+- [Last-write-wins sync needs server-side versioning](lww-sync-versioning.md) — client seq guards alone fail review; use op_seq conditional upsert + tombstone (no DELETE) so late PUTs can't resurrect resets.

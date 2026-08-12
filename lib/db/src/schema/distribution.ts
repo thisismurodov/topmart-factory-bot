@@ -216,6 +216,23 @@ export const fieldOpsTable = distribution.table(
   (t) => [uniqueIndex("uq_field_ops_client_op").on(t.clientOpId)],
 );
 
+export const fieldRouteOrdersTable = distribution.table(
+  "field_route_orders",
+  {
+    id: serial("id").primaryKey(),
+    deliveryAgentId: bigint("delivery_agent_id", { mode: "number" }).notNull(),
+    sana: text("sana").notNull(),
+    dokonIds: text("dokon_ids").notNull(),
+    // Klientdan kelgan monoton o'suvchi operatsiya belgisi (Date.now() asosida).
+    // Kechikkan eski PUT yangi holatni ustidan yozmasligi uchun — upsert faqat
+    // op_seq kattaroq bo'lsa qo'llanadi. Reset ham tombstone ('[]') sifatida
+    // shu mexanizm orqali yoziladi.
+    opSeq: bigint("op_seq", { mode: "number" }).notNull().default(0),
+    updatedAt: text("updated_at"),
+  },
+  (t) => [uniqueIndex("uq_field_route_orders_agent_sana").on(t.deliveryAgentId, t.sana)],
+);
+
 // Do'kon GPS pin ko'chirish audit jurnali: kim, qachon, qayerdan qayerga.
 // Faqat API PATCH /distribution/shops/:id yozadi (dashboard pin drag/edit).
 export const dokonLocationLogTable = distribution.table(

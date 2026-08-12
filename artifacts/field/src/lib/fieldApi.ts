@@ -382,8 +382,29 @@ export const submitPayment = (data: PaymentInput) =>
     body: JSON.stringify(data),
   });
 
+export interface RouteOrderResponse {
+  sana: string;
+  order: number[] | null;
+}
 export const submitNewShop = (data: NewShopInput) =>
   fetchFieldApi<NewShopResponse>("/shops", {
     method: "POST",
     body: JSON.stringify(data),
+  });
+
+export const fetchRouteOrder = () =>
+  fetchFieldApi<RouteOrderResponse>("/route/order");
+
+// opSeq — monoton o'suvchi operatsiya belgisi (Date.now() asosida): server
+// faqat kattaroq opSeq'li mutatsiyani qabul qiladi, kechikkan eski PUT yangi
+// reset/saqlashni ustidan yoza olmaydi.
+export const putRouteOrder = (order: number[], opSeq: number) =>
+  fetchFieldApi<{ ok: boolean; applied: boolean }>("/route/order", {
+    method: "PUT",
+    body: JSON.stringify({ order, opSeq }),
+  });
+
+export const deleteRouteOrder = (opSeq: number) =>
+  fetchFieldApi<{ ok: boolean; applied: boolean }>(`/route/order?opSeq=${opSeq}`, {
+    method: "DELETE",
   });

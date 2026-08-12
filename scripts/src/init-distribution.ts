@@ -12,6 +12,7 @@ const pool = new Pool({
   ssl: process.env.RAILWAY_DATABASE_URL ? { rejectUnauthorized: false } : false,
 });
 
+// hint: Logic changed on both sides. Requires understanding intent of each change.
 const DDL = `
 CREATE SCHEMA IF NOT EXISTS distribution;
 
@@ -199,6 +200,15 @@ CREATE TABLE IF NOT EXISTS distribution.dokon_location_log (
   created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_dokon_location_log_dokon ON distribution.dokon_location_log (dokon_id, created_at);
+CREATE TABLE IF NOT EXISTS distribution.field_route_orders (
+  id SERIAL PRIMARY KEY,
+  delivery_agent_id BIGINT NOT NULL,
+  sana TEXT NOT NULL,
+  dokon_ids TEXT NOT NULL,
+  op_seq BIGINT NOT NULL DEFAULT 0,
+  updated_at TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_field_route_orders_agent_sana ON distribution.field_route_orders (delivery_agent_id, sana);
 `;
 
 // Every named index declared in the DDL above. Derived from the DDL text so a

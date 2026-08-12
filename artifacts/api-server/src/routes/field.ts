@@ -269,6 +269,128 @@ router.get("/field/route/today", async (req, res) => {
   }
 });
 
+// ── Optimal tartib server nusxasi (field_route_orders) ───────────────────────
+// Agent "Optimal tartib"ni yoqsa, dokonId ketma-ketligi qurilmalar orasida
+// sinxron bo'lishi uchun server tomonda ham saqlanadi (localStorage fallback).
+// Bir agent + bir sana = bitta yozuv (UNIQUE), upsert bilan yangilanadi.
+
+// Poyga himoyasi SERVER tomonda: har bir mutatsiya klientdan monoton o'suvchi
+// op_seq (Date.now() asosida) bilan keladi; upsert faqat op_seq mavjud
+// qatordagidan KATTAROQ bo'lsa qo'llanadi (atomik, bitta SQL'da). Reset (asl
+// tartib) qatorni o'chirmaydi — tombstone ('[]') yozadi, shunda kechikkan eski
+// PUT reset'dan keyin yetib kelsa ham qayta tirilmaydi.
+
+const routeOrderSchema = z.object({
+  order: z.array(z.number().int().positive()).max(500),
+  opSeq: z.number().int().positive(),
+});
+
+export async function getFieldRouteOrder(
+  q: Pick<PoolClient, "query">,
+  deliveryAgentId: number,
+  sana: string,
+): Promise<number[] | null> {
+  const { rows } = await q.query(
+    `SELECT dokon_ids FROM distribution.field_route_orders
+      WHERE delivery_agent_id = $1 AND sana = $2`,
+    [deliveryAgentId, sana],
+  );
+  if (rows.length === 0) return null;
+  try {
+    const parsed = JSON.parse(rows[0].dokon_ids as string);
+    if (Array.isArray(parsed) && parsed.length > 0 && parsed.every((x) => typeof x === "number")) {
+      return parsed;
+    }
+  } catch {}
+  return null; // tombstone ('[]') yoki buzilgan JSON — saqlangan tartib yo'q
+}
+
+/** Shartli upsert: faqat opSeq mavjud qatordagidan katta bo'lsa yoziladi.
+ *  Qaytadi: true = qo'llandi, false = eskirgan operatsiya (rad etildi). */
+export async function upsertFieldRouteOrder(
+  q: Pick<PoolClient, "query">,
+  deliveryAgentId: number,
+  sana: string,
+  order: number[],
+  opSeq: number,
+  nowIso: string,
+): Promise<boolean> {
+  const { rows } = await q.query(
+    `INSERT INTO distribution.field_route_orders (delivery_agent_id, sana, dokon_ids, op_seq, updated_at)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (delivery_agent_id, sana)
+     DO UPDATE SET dokon_ids = EXCLUDED.dokon_ids, op_seq = EXCLUDED.op_seq, updated_at = EXCLUDED.updated_at
+     WHERE field_route_orders.op_seq < EXCLUDED.op_seq
+     RETURNING id`,
+    [deliveryAgentId, sana, JSON.stringify(order), opSeq, nowIso],
+  );
+  return rows.length > 0;
+}
+
+/** Reset — tombstone ('[]') yozish, xuddi shu opSeq shartli upsert bilan. */
+export async function deleteFieldRouteOrder(
+  q: Pick<PoolClient, "query">,
+  deliveryAgentId: number,
+  sana: string,
+  opSeq: number,
+  nowIso: string,
+): Promise<boolean> {
+  return upsertFieldRouteOrder(q, deliveryAgentId, sana, [], opSeq, nowIso);
+}
+
+// GET /field/route/order — bugungi saqlangan tartib ({ order: number[] | null })
+router.get("/field/route/order", async (req, res) => {
+  const agent = agentOf(req as FieldRequest);
+  try {
+    const order = await getFieldRouteOrder(pool, agent.id, tkToday());
+    res.json({ sana: tkToday(), order });
+  } catch (err) {
+    req.log.error({ err }, "field route/order GET xatosi");
+    res.status(500).json({ error: "Tartibni olishda xato" });
+  }
+});
+
+// PUT /field/route/order — bugungi tartibni saqlash/yangilash
+router.put("/field/route/order", async (req, res) => {
+  const agent = agentOf(req as FieldRequest);
+  const parsed = routeOrderSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Noto'g'ri ma'lumot", details: parsed.error.flatten() });
+    return;
+  }
+  try {
+    const applied = await upsertFieldRouteOrder(
+      pool,
+      agent.id,
+      tkToday(),
+      parsed.data.order,
+      parsed.data.opSeq,
+      tkNowIso(),
+    );
+    res.json({ ok: true, applied });
+  } catch (err) {
+    req.log.error({ err }, "field route/order PUT xatosi");
+    res.status(500).json({ error: "Tartibni saqlashda xato" });
+  }
+});
+
+// DELETE /field/route/order?opSeq=... — "Asl tartib" (reset): tombstone yoziladi
+router.delete("/field/route/order", async (req, res) => {
+  const agent = agentOf(req as FieldRequest);
+  const opSeq = Number(req.query.opSeq);
+  if (!Number.isInteger(opSeq) || opSeq <= 0) {
+    res.status(400).json({ error: "opSeq talab qilinadi (musbat butun son)" });
+    return;
+  }
+  try {
+    const applied = await deleteFieldRouteOrder(pool, agent.id, tkToday(), opSeq, tkNowIso());
+    res.json({ ok: true, applied });
+  } catch (err) {
+    req.log.error({ err }, "field route/order DELETE xatosi");
+    res.status(500).json({ error: "Tartibni o'chirishda xato" });
+  }
+});
+
 function emptyStats() {
   return { total: 0, done: 0, sold: 0, nosale: 0, pending: 0, savdoSumma: 0 };
 }

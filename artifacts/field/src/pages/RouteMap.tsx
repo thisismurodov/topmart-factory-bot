@@ -2,7 +2,20 @@ import { useEffect, useState, useMemo } from "react";
 import { useLocation } from "wouter";
 import { MapContainer, Marker, Polyline, useMap } from "react-leaflet";
 import L from "leaflet";
-import { useFieldRouteToday, useFieldMe, RouteShop } from "@/lib/fieldApi";
+import {
+  useFieldRouteToday,
+  useFieldMe,
+  RouteShop,
+  fetchRouteOrder,
+  putRouteOrder,
+  deleteRouteOrder,
+} from "@/lib/fieldApi";
+import {
+  RouteOrderSyncer,
+  optimalOrderKey,
+  loadSavedOrder,
+  cleanupStaleOrders,
+} from "@/lib/routeOrderSync";
 import { useGps } from "@/hooks/useGps";
 import {
   calculateDistance,
@@ -51,9 +64,6 @@ function nearestNeighborSort(
 
   return [...sorted, ...noCoords];
 }
-
-const OPTIMAL_ORDER_PREFIX = "field_optimal_order:";
-
 /** Umumiy yo'l uzunligi (metr): startdan boshlab do'konlar ketma-ketligi bo'ylab. */
 function totalRouteDistance(
   shops: RouteShop[],
@@ -136,12 +146,48 @@ export default function RouteMap() {
   const storageKey =
     me && route && !route.dam ? optimalOrderKey(me.agent.id, route.sana) : null;
 
-  // Sahifa ochilganda saqlangan tartibni tiklash + eski kunlarni tozalash
+  // Sahifa ochilganda saqlangan tartibni tiklash + eski kunlarni tozalash.
+  // Avval localStorage (tez, offline'da ham ishlaydi), so'ng server bilan
+  // sinxron: lokal o'zgarish yuborilmagan bo'lsa (dirty) — serverga push,
+  // aks holda server nusxasi ustun (boshqa qurilmada saqlangan bo'lishi mumkin).
+  // Poyga himoyasi (eskirgan GET / kechikkan PUT javobi) — RouteOrderSyncer.
+  const [syncer, setSyncer] = useState<RouteOrderSyncer | null>(null);
   useEffect(() => {
-    if (!storageKey) return;
+    if (!storageKey) {
+      setSyncer(null);
+      return;
+    }
     cleanupStaleOrders(storageKey);
     const saved = loadSavedOrder(storageKey);
     if (saved) setSavedOrder(saved);
+
+    const s = new RouteOrderSyncer(
+      storageKey,
+      {
+        fetchOrder: fetchRouteOrder,
+        putOrder: putRouteOrder,
+        deleteOrder: deleteRouteOrder,
+      },
+      // Server mutatsiyani rad etsa (boshqa qurilmada yangiroq holat) —
+      // server nusxasi UI'ga qo'llanadi
+      (order) => {
+        if (!cancelled) setSavedOrder(order);
+      },
+    );
+    setSyncer(s);
+
+    let cancelled = false;
+    const sync = async () => {
+      const res = await s.sync();
+      if (!cancelled && res.changed) setSavedOrder(res.order ?? null);
+    };
+    void sync();
+    const onOnline = () => void sync();
+    window.addEventListener("online", onOnline);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("online", onOnline);
+    };
   }, [storageKey]);
 
   // Boshlang'ich nuqta: agent GPS → oxirgi bajarilgan do'kon → Toshkent
@@ -158,16 +204,16 @@ export default function RouteMap() {
   const toggleOptimal = () => {
     if (!route) return;
     if (optimalMode) {
-      // Asl tartibga qaytish — saqlangan tartibni o'chirish
+      // Asl tartibga qaytish — lokal va server nusxalarini o'chirish
       setSavedOrder(null);
-      if (storageKey) clearOrder(storageKey);
+      syncer?.clear();
       return;
     }
-    // NN tartibni bir marta hisoblab, saqlab qo'yamiz
+    // NN tartibni bir marta hisoblab, saqlab qo'yamiz (lokal + server)
     const pending = route.shops.filter(s => s.status === "pending");
     const ids = nearestNeighborSort(pending, startPoint.lat, startPoint.lon).map(s => s.dokonId);
     setSavedOrder(ids);
-    if (storageKey) saveOrder(storageKey, ids);
+    syncer?.save(ids);
   };
 
   useEffect(() => {
@@ -516,42 +562,4 @@ export default function RouteMap() {
       )}
     </div>
   );
-}
-
-function optimalOrderKey(agentId: number, sana: string): string {
-  return `${OPTIMAL_ORDER_PREFIX}${agentId}:${sana}`;
-}
-
-function clearOrder(key: string) {
-  try {
-    localStorage.removeItem(key);
-  } catch {}
-}
-
-/** Eski kunlarning saqlangan tartiblarini tozalash (localStorage to'lib ketmasin). */
-function cleanupStaleOrders(currentKey: string) {
-  try {
-    const stale: string[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (k && k.startsWith(OPTIMAL_ORDER_PREFIX) && k !== currentKey) stale.push(k);
-    }
-    stale.forEach(k => localStorage.removeItem(k));
-  } catch {}
-}
-
-function loadSavedOrder(key: string): number[] | null {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return null;
-    const arr = JSON.parse(raw);
-    if (Array.isArray(arr) && arr.every(x => typeof x === "number")) return arr;
-  } catch {}
-  return null;
-}
-
-function saveOrder(key: string, ids: number[]) {
-  try {
-    localStorage.setItem(key, JSON.stringify(ids));
-  } catch {}
 }

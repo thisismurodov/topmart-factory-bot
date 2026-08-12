@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import pg from "pg";
-import { performFieldSale, performFieldPayment } from "../src/routes/field";
+import { performFieldSale, performFieldPayment, performFieldNoSale } from "../src/routes/field";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /field/ops — idempotentlik testi (field_ops.client_op_id UNIQUE)
@@ -187,6 +187,58 @@ describe("field_ops idempotentlik — to'lov (performFieldPayment)", () => {
     const { rows } = await client.query(
       `SELECT COUNT(*)::int AS n FROM field_ops WHERE client_op_id = $1`,
       [OP_PAYMENT],
+    );
+    expect(Number(rows[0].n)).toBe(1);
+  });
+});
+
+async function noSale(clientOpId: string) {
+  const c = await testPool.connect();
+  try {
+    return await performFieldNoSale(c, AGENT_TG, {
+      clientOpId,
+      dokonId,
+      sabab: "egasi_yoq",
+    });
+  } finally {
+    c.release();
+  }
+}
+
+describe("field_ops idempotentlik — olinmadi (performFieldNoSale)", () => {
+  const OP_NOSALE = "idem-nosale-op-1";
+
+  it("birinchi olinmadi yozuvi muvaffaqiyatli saqlandi", async () => {
+    const r = await noSale(OP_NOSALE);
+    expect(r.kind).toBe("ok");
+  });
+
+  it("takror olinmadi → duplicate, olmagan_dokonlar soni 1 da qoladi", async () => {
+    const r = await noSale(OP_NOSALE);
+    expect(r.kind).toBe("duplicate");
+    const { rows } = await client.query(
+      `SELECT COUNT(*)::int AS n FROM olmagan_dokonlar WHERE dokon_id = $1 AND agent_id = $2`,
+      [dokonId, AGENT_TG],
+    );
+    expect(Number(rows[0].n)).toBe(1);
+  });
+
+  it("duplicate javob birinchi yozuv id'sini qaytaradi", async () => {
+    const first = await client.query(
+      `SELECT result_id FROM field_ops WHERE client_op_id = $1`,
+      [OP_NOSALE],
+    );
+    const r = await noSale(OP_NOSALE);
+    expect(r.kind).toBe("duplicate");
+    if (r.kind === "duplicate") {
+      expect(r.id).toBe(Number(first.rows[0].result_id));
+    }
+  });
+
+  it("olinmadi field_ops jadvali faqat bitta qator saqlagan", async () => {
+    const { rows } = await client.query(
+      `SELECT COUNT(*)::int AS n FROM field_ops WHERE client_op_id = $1`,
+      [OP_NOSALE],
     );
     expect(Number(rows[0].n)).toBe(1);
   });

@@ -601,28 +601,28 @@ const noSaleSchema = z.object({
   lon: z.number().min(-180).max(180).optional(),
 });
 
-router.post("/field/visits/no-sale", async (req, res) => {
-  const agent = agentOf(req as FieldRequest);
-  const parsed = noSaleSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: "Noto'g'ri ma'lumot", details: parsed.error.issues });
-    return;
-  }
-  const { clientOpId, dokonId, sabab, sababText, qaytishSanasi, lat, lon } = parsed.data;
+export type FieldNoSaleInput = z.infer<typeof noSaleSchema>;
 
-  if (!(await dokonInAgentScope(pool, agent, dokonId))) {
-    res.status(404).json({ error: "Do'kon topilmadi" });
-    return;
-  }
-  const client = await pool.connect();
+export type FieldNoSaleResult =
+  | { kind: "duplicate"; id: number | null }
+  | { kind: "not_found"; message: string }
+  | { kind: "ok"; id: number };
+
+// Bot _save_olmadi porti — BITTA tranzaksiya. performFieldSale bilan bir xil
+// idempotentlik semantikasi: field_ops.client_op_id UNIQUE, takror → duplicate.
+// Xato bo'lsa ROLLBACK qilib qayta uloqtiradi (unique violation'ni handler ushlaydi).
+export async function performFieldNoSale(
+  client: PoolClient,
+  agentTelegramId: number,
+  input: FieldNoSaleInput,
+): Promise<FieldNoSaleResult> {
+  const { clientOpId, dokonId, sabab, sababText, qaytishSanasi, lat, lon } = input;
+  await client.query("BEGIN");
   try {
-    await client.query("BEGIN");
-
     const existing = await findExistingOp(client, clientOpId);
     if (existing) {
       await client.query("ROLLBACK");
-      res.json({ ok: true, duplicate: true, id: existing.resultId });
-      return;
+      return { kind: "duplicate", id: existing.resultId };
     }
 
     const dokonQ = await client.query(
@@ -631,8 +631,7 @@ router.post("/field/visits/no-sale", async (req, res) => {
     );
     if (dokonQ.rows.length === 0) {
       await client.query("ROLLBACK");
-      res.status(404).json({ error: "Do'kon topilmadi" });
-      return;
+      return { kind: "not_found", message: "Do'kon topilmadi" };
     }
 
     const nowIso = tkNowIso();
@@ -641,21 +640,52 @@ router.post("/field/visits/no-sale", async (req, res) => {
       `INSERT INTO distribution.olmagan_dokonlar
          (dokon_id, agent_id, sabab, sabab_text, latitude, longitude, qaytish_sanasi, foto, created_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,NULL,$8) RETURNING id`,
-      [dokonId, agent.telegramId, sabab, text, lat ?? null, lon ?? null, qaytishSanasi ?? null, nowIso],
+      [dokonId, agentTelegramId, sabab, text, lat ?? null, lon ?? null, qaytishSanasi ?? null, nowIso],
     );
     const oid = Number(ins.rows[0].id);
 
     await client.query(
       `INSERT INTO distribution.field_ops (client_op_id, agent_id, op_type, dokon_id, result_id, created_at)
        VALUES ($1,$2,'nosale',$3,$4,$5)`,
-      [clientOpId, agent.telegramId, dokonId, oid, nowIso],
+      [clientOpId, agentTelegramId, dokonId, oid, nowIso],
     );
 
     await client.query("COMMIT");
-    res.json({ ok: true, duplicate: false, id: oid });
+    return { kind: "ok", id: oid };
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  }
+}
+
+router.post("/field/visits/no-sale", async (req, res) => {
+  const agent = agentOf(req as FieldRequest);
+  const parsed = noSaleSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Noto'g'ri ma'lumot", details: parsed.error.issues });
+    return;
+  }
+  if (!(await dokonInAgentScope(pool, agent, parsed.data.dokonId))) {
+    res.status(404).json({ error: "Do'kon topilmadi" });
+    return;
+  }
+  const client = await pool.connect();
+  try {
+    const result = await performFieldNoSale(client, agent.telegramId, parsed.data);
+    switch (result.kind) {
+      case "duplicate":
+        res.json({ ok: true, duplicate: true, id: result.id });
+        return;
+      case "not_found":
+        res.status(404).json({ error: result.message });
+        return;
+      case "ok":
+        res.json({ ok: true, duplicate: false, id: result.id });
+        return;
+    }
+  } catch (err) {
     if (isUniqueViolation(err)) {
+      // Parallel takror yuborish — birinchi tranzaksiya yutdi
       res.json({ ok: true, duplicate: true, id: null });
       return;
     }

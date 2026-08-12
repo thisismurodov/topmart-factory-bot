@@ -1105,8 +1105,23 @@ function exportDailyVisitsCsv(data: DailyVisits) {
 function DailyVisitsTab({ f, active, onShop }: { f: Filters; active: boolean; onShop: (id: number) => void }) {
   // Ochilgan kartalar holati parent darajasida saqlanadi — refetch paytida yo'qolmaydi
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
+  // Xaritada ajratilgan agent — oxirgi ochilgan karta; yopilganda ochiq qolgan boshqa karta (bo'lsa)
+  const [selectedAgentId, setSelectedAgentId] = useState<number | null>(null);
   const toggleExpanded = (agentId: number) =>
-    setExpanded((prev) => ({ ...prev, [agentId]: !prev[agentId] }));
+    setExpanded((prev) => {
+      const willOpen = !prev[agentId];
+      const next = { ...prev, [agentId]: willOpen };
+      if (willOpen) {
+        setSelectedAgentId(agentId);
+      } else {
+        setSelectedAgentId((cur) => {
+          if (cur !== agentId) return cur;
+          const other = Object.entries(next).find(([, v]) => v);
+          return other ? Number(other[0]) : null;
+        });
+      }
+      return next;
+    });
   const p = new URLSearchParams();
   if (f.agentId) p.set("agentId", f.agentId);
   if (f.viloyat) p.set("viloyat", f.viloyat);
@@ -1207,7 +1222,7 @@ function DailyVisitsTab({ f, active, onShop }: { f: Filters; active: boolean; on
 
       {/* Xarita: kirilgan do'konlar + agent GPS izi */}
       {data && data.agents.length > 0 && (
-        <DailyVisitsMap agents={data.agents} onShop={onShop} />
+        <DailyVisitsMap agents={data.agents} onShop={onShop} selectedAgentId={selectedAgentId} />
       )}
 
       {/* Agent cards */}

@@ -13,7 +13,7 @@ from ..database import (
     create_batch_session, get_worker_chat_id, get_workers,
     get_products, get_product_weight, get_user_role, get_worker_monthly,
     get_product_method, get_containers, get_product_pieces_per_box,
-    get_worker_production_role, WipBalanceError,
+    get_worker_production_role, WipBalanceError, get_line_wip_balance,
 )
 from ..config import calc_earnings, SUPERADMIN_CHAT_ID
 from ..label_generator import generate_batch_session_pdf
@@ -72,8 +72,21 @@ async def choose_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await query.answer()
     product = query.data.split(":", 1)[1]
     context.user_data["product"] = product
+    # Informatsion: liniyaga bog'langan mahsulot uchun bo'limdagi WIP balansi.
+    # Operator qiymatlarni kiritishdan OLDIN ko'radi — WIP guard rad etishining
+    # oldini oladi. Xato bo'lsa jim o'tamiz (bu qat'iy himoya emas).
+    wip_line = ""
+    try:
+        wip = get_line_wip_balance(product)
+        if wip is not None:
+            wip_line = (
+                f"\n🏭 *{wip['line_name']}* bo'limida mavjud: "
+                f"*{wip['wip_kg']:.1f} kg*\n"
+            )
+    except Exception:
+        pass
     await query.edit_message_text(
-        f"📦 *{product}*\n\n🔢 *Necha dona?*",
+        f"📦 *{product}*\n{wip_line}\n🔢 *Necha dona?*",
         parse_mode="Markdown",
         reply_markup=cancel_keyboard(),
     )
@@ -98,8 +111,17 @@ async def enter_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     payroll_method = get_product_method(product)
 
     if rate_type == "kg":
+        # Og'irlik kiritishdan oldin bo'limdagi WIP balansini eslatamiz —
+        # operator limitdan oshiq qiymat kiritib xato olmasin (informatsion).
+        wip_hint = ""
+        try:
+            wip = get_line_wip_balance(product)
+            if wip is not None:
+                wip_hint = f"\n🏭 Bo'limda mavjud: *{wip['wip_kg']:.1f} kg*"
+        except Exception:
+            pass
         await update.message.reply_text(
-            "⚖️ *Jami og'irlik (kg):*\n_Masalan: 205.5_",
+            f"⚖️ *Jami og'irlik (kg):*\n_Masalan: 205.5_{wip_hint}",
             parse_mode="Markdown",
             reply_markup=cancel_keyboard(),
         )

@@ -711,9 +711,33 @@ def get_product_pieces_per_box(name: str) -> int:
         return int(row["pieces_per_box"])
     return 1
 
+def get_line_wip_balance(product: str):
+    """Mahsulot liniyasining joriy WIP balansi (RECEIVE − PRODUCE, kg).
 
-# ── Rolga asoslangan kg maosh (Arqon) ────────────────────────────────────────
-
+    Mahsulot liniyaga (products.line_id) bog'lanmagan bo'lsa None qaytaradi.
+    Aks holda {"line_name": str, "wip_kg": float}. Bu faqat informatsion
+    ko'rsatkich — qat'iy himoya create_batch_session ichida (FOR UPDATE bilan).
+    """
+    with get_conn() as (conn, cur):
+        cur.execute(
+            """SELECT pl.name,
+                      COALESCE((
+                        SELECT SUM(
+                          CASE WHEN movement_type='RECEIVE' THEN weight_kg
+                               WHEN movement_type='PRODUCE' THEN -weight_kg
+                               ELSE 0 END
+                        )
+                        FROM wip_movements WHERE line_id = pl.id
+                      ), 0)::numeric AS wip_kg
+               FROM products p
+               JOIN production_lines pl ON pl.id = p.line_id
+               WHERE p.name = %s""",
+            (product,),
+        )
+        row = cur.fetchone()
+    if not row:
+        return None
+    return {"line_name": row["name"], "wip_kg": float(row["wip_kg"] or 0)}
 def get_product_method(name: str) -> str:
     with get_conn() as (conn, cur):
         cur.execute("SELECT payroll_method FROM products WHERE name=%s", (name,))

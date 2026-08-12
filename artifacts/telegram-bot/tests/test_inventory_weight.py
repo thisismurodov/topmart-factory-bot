@@ -12,37 +12,26 @@ ma'lumotlarga tegmaydi.
 """
 
 import os
+import time
 import unittest
-from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode, quote
 
 import psycopg2
 import psycopg2.extras
 
-SCHEMA = "topmart_kg_bot_test"
+from tests._db_isolation import point_db_to_schema, restore_db_url, schema_url
+from bot import database as db
 
-
-def _test_database_url() -> str:
-    base = os.environ["DATABASE_URL"]
-    u = urlsplit(base)
-    q = dict(parse_qsl(u.query))
-    q["options"] = f"-c search_path={SCHEMA}"
-    return urlunsplit((u.scheme, u.netloc, u.path, urlencode(q, quote_via=quote), u.fragment))
-
-
-# Bot kodi DATABASE_URL'ni import paytida o'qiydi — shuning uchun import'dan
-# OLDIN test sxemasiga yo'naltiramiz.
-os.environ["DATABASE_URL"] = _test_database_url()
-
-from bot import database as db  # noqa: E402
+SCHEMA = f"topmart_kg_bot_test_{os.getpid()}_{int(time.time())}"
 
 
 def _conn():
-    return psycopg2.connect(os.environ["DATABASE_URL"])
+    return psycopg2.connect(schema_url(SCHEMA))
 
 
 class ContainerWeightTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
+        cls._old_url = point_db_to_schema(SCHEMA)
         conn = _conn()
         cur = conn.cursor()
         cur.execute(f"DROP SCHEMA IF EXISTS {SCHEMA} CASCADE")
@@ -61,7 +50,8 @@ class ContainerWeightTest(unittest.TestCase):
                 name TEXT PRIMARY KEY,
                 unit_type TEXT NOT NULL DEFAULT 'dona',
                 payroll_method TEXT NOT NULL DEFAULT 'PRODUCT_RATE',
-                line_id INTEGER
+                line_id INTEGER,
+                weight NUMERIC(12,3) NOT NULL DEFAULT 1
             );
             CREATE TABLE production_line_workers (
                 worker_name TEXT NOT NULL,
@@ -127,12 +117,15 @@ class ContainerWeightTest(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls) -> None:
-        conn = _conn()
-        cur = conn.cursor()
-        cur.execute(f"DROP SCHEMA IF EXISTS {SCHEMA} CASCADE")
-        conn.commit()
-        cur.close()
-        conn.close()
+        try:
+            conn = _conn()
+            cur = conn.cursor()
+            cur.execute(f"DROP SCHEMA IF EXISTS {SCHEMA} CASCADE")
+            conn.commit()
+            cur.close()
+            conn.close()
+        finally:
+            restore_db_url(cls._old_url)
 
     def setUp(self) -> None:
         self.conn = _conn()

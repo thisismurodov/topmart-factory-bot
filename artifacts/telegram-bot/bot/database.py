@@ -2010,14 +2010,30 @@ def get_packer_assigned_products(packer_name: str) -> list[str]:
         return [r["product_name"] for r in cur.fetchall()]
 
 
+def has_packer_assignments(packer_name: str) -> bool:
+    """Packer uchun packer_product_assignments'da yozuv bormi (faol/nofaol farqsiz)."""
+    with get_conn() as (conn, cur):
+        cur.execute(
+            "SELECT 1 FROM packer_product_assignments WHERE packer_name = %s LIMIT 1",
+            (packer_name,),
+        )
+        return cur.fetchone() is not None
+
+
 def get_products_for_packer(packer_name: str) -> list[str]:
     """V3: Packer uchun ko'rsatiladigan mahsulotlar ro'yxati.
 
-    packer_product_assignments'da yozuv bo'lsa — faqat shu mahsulotlar;
-    biriktirilgan mahsulot bo'lmasa — barcha faol mahsulotlar (fallback)."""
+    - Biriktirilgan faol mahsulotlar bo'lsa — faqat shular.
+    - Umuman biriktirilmagan bo'lsa — barcha faol mahsulotlar (fallback).
+    - Biriktirilgan, LEKIN hammasi nofaol bo'lsa — BO'SH ro'yxat. Fallback
+      butun katalogni ochib yubormasligi kerak: admin ataylab cheklagan
+      packer nofaol mahsulot tufayli hamma narsani ko'rmasin (keyboard
+      "Mahsulotlar biriktirilmagan" tugmasini ko'rsatadi)."""
     assigned = get_packer_assigned_products(packer_name)
     if assigned:
         return assigned
+    if has_packer_assignments(packer_name):
+        return []
     return get_product_names()
 
 

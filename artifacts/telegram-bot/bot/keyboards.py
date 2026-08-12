@@ -74,7 +74,9 @@ def products_inline_keyboard(
     from .database import get_product_names, get_products_for_packer
     if packer_name:
         # Packer faqat biriktirilgan mahsulotlarni ko'radi;
-        # biriktirilmagan bo'lsa — barcha faol mahsulotlar (fallback).
+        # umuman biriktirilmagan bo'lsa — barcha faol mahsulotlar (fallback);
+        # biriktirilgan, lekin hammasi nofaol bo'lsa — bo'sh ro'yxat
+        # (pastdagi "Mahsulotlar biriktirilmagan" tugmasi ko'rsatiladi).
         products = get_products_for_packer(packer_name)
     else:
         products = get_product_names()

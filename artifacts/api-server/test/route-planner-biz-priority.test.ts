@@ -384,6 +384,70 @@ describe("planRoutes businessPriority rejimi", () => {
     });
   });
 
+  it("manfiy creditBalance (ortiqcha to'lov) — ball 0 dan pastga tushmaydi", () => {
+    const shops: PlanShop[] = [
+      { id: 1, nomi: "A", hudud: null, lat: 41.0, lng: 71.0, biz: { creditBalance: 1_000_000, salesSum: 0, daysSinceVisit: 0 } },
+      { id: 2, nomi: "B", hudud: null, lat: 41.01, lng: 71.01, biz: { creditBalance: -500_000, salesSum: 0, daysSinceVisit: 0 } },
+      { id: 3, nomi: "C", hudud: null, lat: 41.02, lng: 71.02, biz: { creditBalance: -2_000_000, salesSum: 0, daysSinceVisit: 0 } },
+    ];
+    const scores = computeBusinessScores(shops);
+    for (const [, entry] of scores) {
+      expect(entry.score).toBeGreaterThanOrEqual(0);
+      expect(entry.score).toBeLessThanOrEqual(100);
+    }
+    // Manfiy balansli do'kon "Nasiya" sababini olmaydi
+    expect(scores.get(2)!.reasons.some((r) => r.startsWith("Nasiya"))).toBe(false);
+    expect(scores.get(3)!.score).toBe(0);
+  });
+
+  it("manfiy salesSum — ball 0-100 oralig'ida qoladi", () => {
+    const shops: PlanShop[] = [
+      { id: 1, nomi: "A", hudud: null, lat: 41.0, lng: 71.0, biz: { salesSum: 3_000_000, creditBalance: 0, daysSinceVisit: 0 } },
+      { id: 2, nomi: "B", hudud: null, lat: 41.01, lng: 71.01, biz: { salesSum: -1_000_000, creditBalance: 0, daysSinceVisit: 0 } },
+    ];
+    const scores = computeBusinessScores(shops);
+    expect(scores.get(2)!.score).toBe(0);
+    for (const [, entry] of scores) {
+      expect(entry.score).toBeGreaterThanOrEqual(0);
+      expect(entry.score).toBeLessThanOrEqual(100);
+    }
+  });
+
+  it("manfiy va musbat signallar aralash — barcha ballar 0-100, VIP faqat haqiqiy yuqori savdoga", () => {
+    const shops: PlanShop[] = [
+      { id: 1, nomi: "A", hudud: null, lat: 41.0, lng: 71.0, biz: { salesSum: -5_000_000, creditBalance: -3_000_000, daysSinceVisit: 40 } },
+      { id: 2, nomi: "B", hudud: null, lat: 41.01, lng: 71.01, biz: { salesSum: 2_000_000, creditBalance: 800_000, daysSinceVisit: 5 } },
+    ];
+    const scores = computeBusinessScores(shops);
+    for (const [, entry] of scores) {
+      expect(entry.score).toBeGreaterThanOrEqual(0);
+      expect(entry.score).toBeLessThanOrEqual(100);
+    }
+    expect(scores.get(1)!.reasons).not.toContain("VIP");
+  });
+
+  it("planRoutes: manfiy/musbat balanslar aralash — validatePlan ok va kesishishlar yo'q", () => {
+    const base = makeShops(40);
+    const shopsWithBiz = base.map((s, i) => ({
+      ...s,
+      biz: {
+        creditBalance: i % 3 === 0 ? -700_000 : 400_000 * (i % 5),
+        salesSum: i % 4 === 0 ? -1_000_000 : 500_000 * (i % 3),
+        daysSinceVisit: i % 7,
+      },
+    }));
+    const plan = planRoutes(shopsWithBiz, { days: [1, 2], targetSize: 20, businessPriority: true });
+    for (const r of plan.routes) {
+      expect(r.stats.crossCount).toBe(0);
+      for (const st of r.stops) {
+        expect(st.bizScore ?? 0).toBeGreaterThanOrEqual(0);
+        expect(st.bizScore ?? 0).toBeLessThanOrEqual(100);
+      }
+    }
+    const v = validatePlan(plan, shopsWithBiz);
+    expect(v.ok).toBe(true);
+  });
+
   it("yuqori prioritetli klaster birinchi kunga tushadi", () => {
     // 2 ta aniq alohida klaster yaratamiz: shimoliy (A) va janubiy (B)
     // Shimoliy klasterga katta nasiya beramiz — u birinchi kunga tushishi kerak

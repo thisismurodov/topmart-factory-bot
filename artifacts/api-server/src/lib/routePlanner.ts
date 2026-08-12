@@ -550,7 +550,7 @@ export function computeBusinessScores(shops: PlanShop[], weights?: Partial<BizWe
     const creditNorm = maxCredit > 0 ? (biz.creditBalance   ?? 0) / maxCredit : 0;
     const daysNorm   = maxDays   > 0 ? (biz.daysSinceVisit  ?? 0) / maxDays   : 0;
 
-    const score = Math.min(100, Math.round(creditNorm * w.credit + daysNorm * w.days + salesNorm * w.sales));
+    const score = Math.max(0, Math.min(100, Math.round(creditNorm * w.credit + daysNorm * w.days + salesNorm * w.sales)));
     const reasons: string[] = [];
     if (salesNorm >= 0.7) reasons.push("VIP");
     if ((biz.creditBalance ?? 0) > 0) reasons.push(`Nasiya: ${fmtUzs(biz.creditBalance!)}`);

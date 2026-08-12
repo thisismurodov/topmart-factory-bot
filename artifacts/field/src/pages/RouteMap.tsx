@@ -52,6 +52,24 @@ function nearestNeighborSort(
   return [...sorted, ...noCoords];
 }
 
+/** Umumiy yo'l uzunligi (metr): startdan boshlab do'konlar ketma-ketligi bo'ylab. */
+function totalRouteDistance(
+  shops: RouteShop[],
+  startLat: number,
+  startLon: number
+): number {
+  let total = 0;
+  let curLat = startLat;
+  let curLon = startLon;
+  for (const s of shops) {
+    if (s.latitude == null || s.longitude == null) continue;
+    total += calculateDistance(curLat, curLon, s.latitude, s.longitude);
+    curLat = s.latitude;
+    curLon = s.longitude;
+  }
+  return total;
+}
+
 // Fix for leaflet markers in react — ikonkalar LOKAL bundle'dan (unpkg CDN
 // ba'zi provayderlarda bloklangan, xuddi telegram.org kabi)
 import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
@@ -107,21 +125,40 @@ export default function RouteMap() {
     return () => clearTimeout(t);
   }, [showSaved]);
 
+  // Boshlang'ich nuqta: agent GPS → oxirgi bajarilgan do'kon → Toshkent
+  const startPoint = useMemo(() => {
+    if (location) return { lat: location.lat, lon: location.lon };
+    const lastCompleted = route?.shops
+      .filter(s => s.status !== "pending")
+      .sort((a, b) => b.tartib - a.tartib)
+      .find(s => s.latitude != null && s.longitude != null);
+    if (lastCompleted) return { lat: lastCompleted.latitude!, lon: lastCompleted.longitude! };
+    return { lat: 41.2995, lon: 69.2401 };
+  }, [route, location]);
+
   const pendingShops = useMemo(() => {
     if (!route) return [];
     const pending = route.shops.filter(s => s.status === "pending");
     if (!optimalMode) {
       return pending.sort((a, b) => a.tartib - b.tartib);
     }
-    // Start from agent's current GPS position; fall back to last completed shop or Tashkent
-    const completedSorted = route.shops
-      .filter(s => s.status !== "pending")
-      .sort((a, b) => b.tartib - a.tartib); // last completed first
-    const lastCompleted = completedSorted.find(s => s.latitude != null && s.longitude != null);
-    const startLat = location?.lat ?? lastCompleted?.latitude ?? 41.2995;
-    const startLon = location?.lon ?? lastCompleted?.longitude ?? 69.2401;
-    return nearestNeighborSort(pending, startLat, startLon);
-  }, [route, optimalMode, location]);
+    return nearestNeighborSort(pending, startPoint.lat, startPoint.lon);
+  }, [route, optimalMode, startPoint]);
+
+  // Optimal rejimda tejaladigan masofa (km): asl tartib vs NN tartib, bir xil startdan
+  const savedKm = useMemo(() => {
+    if (!route) return null;
+    const pending = route.shops.filter(s => s.status === "pending");
+    const withCoords = pending.filter(s => s.latitude != null && s.longitude != null);
+    if (withCoords.length < 2) return null;
+    const original = [...pending].sort((a, b) => a.tartib - b.tartib);
+    const optimal = nearestNeighborSort(pending, startPoint.lat, startPoint.lon);
+    const dOrig = totalRouteDistance(original, startPoint.lat, startPoint.lon);
+    const dOpt = totalRouteDistance(optimal, startPoint.lat, startPoint.lon);
+    const savedMeters = dOrig - dOpt;
+    if (savedMeters < 100) return null; // arzimas farq — ko'rsatmaymiz
+    return savedMeters / 1000;
+  }, [route, startPoint]);
 
   // T006 — marshrut hududi plitkalarini fonda oldindan yuklab qo'yamiz
   // (kuniga bir marta): internet yo'q joyda ham xarita ochiladi.
@@ -261,6 +298,13 @@ export default function RouteMap() {
           : <><Shuffle className="w-3.5 h-3.5" /> Optimal tartib</>
         }
       </button>
+
+      {/* Optimal rejimda tejalgan masofa belgisi */}
+      {optimalMode && savedKm !== null && (
+        <div className="absolute top-[11.25rem] right-4 z-[410] bg-green-600 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-md animate-in fade-in slide-in-from-top-1 duration-300">
+          ~{savedKm < 10 ? savedKm.toFixed(1) : Math.round(savedKm)} km tejaysiz
+        </div>
+      )}
 
       <div className="flex-1 z-0 relative">
         <MapContainer center={mapCenter} zoom={13} className="w-full h-full" zoomControl={false}>

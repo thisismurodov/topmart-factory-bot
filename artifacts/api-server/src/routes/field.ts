@@ -146,6 +146,20 @@ export function computeShopRating(
   return Math.min(5, r);
 }
 
+// delivery_routes.biz_reasons — JSON string massivi (bo'lmasa/buzuq bo'lsa null)
+export function parseBizReasons(raw: unknown): string[] | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw as string);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return parsed.filter((x): x is string => typeof x === "string");
+    }
+  } catch {
+    /* buzuq JSON — null */
+  }
+  return null;
+}
+
 // ── GET /field/me — agent profili + bugungi kun ───────────────────────────────
 router.get("/field/me", async (req, res) => {
   const agent = agentOf(req as FieldRequest);
@@ -214,17 +228,7 @@ router.get("/field/route/today", async (req, res) => {
       const avgRepeatDays = Number(r.avg_repeat_days) || 0;
       const lastOrderDate = (r.last_order_date as string) || null;
       // Rejalashtirishda saqlangan biznes ustuvorlik signallari (bo'lmasa null)
-      let bizReasons: string[] | null = null;
-      if (r.biz_reasons) {
-        try {
-          const parsed = JSON.parse(r.biz_reasons as string);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            bizReasons = parsed.filter((x): x is string => typeof x === "string");
-          }
-        } catch {
-          bizReasons = null;
-        }
-      }
+      const bizReasons = parseBizReasons(r.biz_reasons);
       return {
         dokonId: Number(r.dokon_id),
         tartib: Number(r.tartib) || 0,
@@ -1233,7 +1237,7 @@ router.get("/field/shops/:id", async (req, res) => {
       return;
     }
     const d = dokonQ.rows[0];
-    const [salesQ, nosaleQ, nasiyaQ, balansQ, topQ] = await Promise.all([
+    const [salesQ, nosaleQ, nasiyaQ, balansQ, topQ, bizQ] = await Promise.all([
       pool.query(
         `SELECT s.id, s.jami_summa, s.tolov_turi, s.created_at,
                 COALESCE(string_agg(m.nomi || ' ×' || t.miqdor, ', ' ORDER BY t.id), '') AS items
@@ -1266,6 +1270,14 @@ router.get("/field/shops/:id", async (req, res) => {
           WHERE s.dokon_id = $1
           GROUP BY m.nomi ORDER BY jami DESC LIMIT 1`,
         [dokonId],
+      ),
+      // Rejalashtirishda saqlangan ustuvorlik signallari — bugungi kun ustuvor,
+      // bo'lmasa eng so'nggi reja qatori (do'kon boshqa kunda rejada bo'lsa ham ko'rinsin)
+      pool.query(
+        `SELECT biz_score, biz_reasons FROM distribution.delivery_routes
+          WHERE delivery_agent_id = $1 AND dokon_id = $2
+          ORDER BY (kun = $3) DESC, id DESC LIMIT 1`,
+        [agent.id, dokonId, tkIsoWeekday()],
       ),
     ]);
     const totalOrders = Number(d.total_orders) || 0;
@@ -1316,6 +1328,10 @@ router.get("/field/shops/:id", async (req, res) => {
         daysSinceVisit: daysSince,
         rating: computeShopRating(totalOrders, totalSales, avgRepeatDays, lastOrderDate),
       },
+      bizScore: bizQ.rows.length > 0 && bizQ.rows[0].biz_score != null
+        ? Number(bizQ.rows[0].biz_score)
+        : null,
+      bizReasons: bizQ.rows.length > 0 ? parseBizReasons(bizQ.rows[0].biz_reasons) : null,
       nasiyaQoldiq,
       balans: balansQ.rows.length > 0 ? Number(balansQ.rows[0].balans) || 0 : 0,
       topProduct,

@@ -7,6 +7,7 @@ import { useLocation } from "wouter";
 import { useFieldShopDetail } from "@/lib/fieldApi";
 import { formatCurrency } from "@/lib/utils";
 import RatingStars from "@/components/RatingStars";
+import UrgencyBadges from "@/components/UrgencyBadges";
 import { Button } from "@/components/ui/button";
 import { Phone, Store, X, ChevronUp, ChevronDown, Sparkles, TrendingUp } from "lucide-react";
 
@@ -82,6 +83,9 @@ export default function ShopSheet({ dokonId, onClose }: ShopSheetProps) {
                 </div>
               </div>
             </div>
+
+            {/* Ustuvorlik sabablari (nasiya, VIP, uzoq bormagan) */}
+            <UrgencyBadges shop={data} className="mb-4" />
 
             {/* Tez ko'rsatkichlar */}
             <div className="grid grid-cols-2 gap-3 mb-4">

@@ -226,6 +226,10 @@ export interface ShopNoSaleRow {
 
 export interface ShopDetailResponse {
   dokon: ShopDetail;
+  /** Rejalashtirishda hisoblangan ustuvorlik bali (0-100), bo'lmasa null */
+  bizScore: number | null;
+  /** Ustuvorlik sabablari, masalan ["VIP", "Nasiya: 1.2M so'm", "35 kun bormagan"] */
+  bizReasons: string[] | null;
   nasiyaQoldiq: number;
   balans: number;
   topProduct: string | null;

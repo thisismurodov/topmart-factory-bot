@@ -794,3 +794,80 @@ describe("GET /distribution/analytics/export — grafiklar bilan muvofiqlik", ()
     );
   });
 });
+
+// ── /distribution/suggestions — x-internal-key auth devori ──────────────────
+// Prod'da bu router requireAuthOrInternalKey ortida mount qilinadi
+// (routes/index.ts). Bot x-internal-key yuboradi; dashboard Bearer session
+// bilan kiradi. Quyidagi testlar devorning o'zini tekshiradi: to'g'ri kalit
+// 200, kalitsiz/noto'g'ri kalit 401, server kaliti sozlanmagan bo'lsa —
+// kalit yuborilsa ham 401 (bo'sh-kalit bypass yo'q).
+describe("GET /distribution/suggestions — x-internal-key devori", () => {
+  const TEST_KEY = `test-internal-key-${process.pid}-${Date.now()}`;
+  let prevKey: string | undefined;
+  let wallServer: Server;
+  let wallUrl: string;
+
+  beforeAll(async () => {
+    prevKey = process.env.AI_INTERNAL_KEY;
+    process.env.AI_INTERNAL_KEY = TEST_KEY;
+    const routerMod = await import("../src/routes/distribution");
+    const { requireAuthOrInternalKey } = await import(
+      "../src/middleware/requireAuthOrInternalKey"
+    );
+    const app: Express = express();
+    app.use(express.json());
+    // routes/index.ts dagi mount tartibi bilan bir xil
+    app.use(requireAuthOrInternalKey, routerMod.distributionSuggestionsRouter);
+    await new Promise<void>((resolve) => {
+      wallServer = app.listen(0, "127.0.0.1", resolve);
+    });
+    wallUrl = `http://127.0.0.1:${(wallServer.address() as AddressInfo).port}`;
+  });
+
+  afterAll(async () => {
+    if (prevKey === undefined) delete process.env.AI_INTERNAL_KEY;
+    else process.env.AI_INTERNAL_KEY = prevKey;
+    if (wallServer) await new Promise<void>((r) => wallServer.close(() => r()));
+  });
+
+  it("to'g'ri x-internal-key bilan 200 va rule-based maydonlar qaytadi", async () => {
+    // ai=1 YUBORILMAYDI — testda LLM chaqiruvi bo'lmasligi kerak; devor uchun
+    // rule-based javobning o'zi yetarli.
+    const r = await fetch(`${wallUrl}/distribution/suggestions`, {
+      headers: { "x-internal-key": TEST_KEY },
+    });
+    expect(r.status).toBe(200);
+    const body = await r.json();
+    expect(Array.isArray(body.overdue)).toBe(true);
+    expect(Array.isArray(body.qaytish)).toBe(true);
+    expect(typeof body.date).toBe("string");
+  });
+
+  it("kalitsiz so'rov 401 qaytaradi", async () => {
+    const r = await fetch(`${wallUrl}/distribution/suggestions`);
+    expect(r.status).toBe(401);
+  });
+
+  it("noto'g'ri kalit 401 qaytaradi", async () => {
+    const r = await fetch(`${wallUrl}/distribution/suggestions`, {
+      headers: { "x-internal-key": `${TEST_KEY}-wrong` },
+    });
+    expect(r.status).toBe(401);
+  });
+
+  it("server kaliti sozlanmagan bo'lsa — kalit yuborilsa ham 401 (bypass yo'q)", async () => {
+    delete process.env.AI_INTERNAL_KEY;
+    try {
+      const empty = await fetch(`${wallUrl}/distribution/suggestions`, {
+        headers: { "x-internal-key": "" },
+      });
+      expect(empty.status).toBe(401);
+      const any = await fetch(`${wallUrl}/distribution/suggestions`, {
+        headers: { "x-internal-key": "har-qanday-kalit" },
+      });
+      expect(any.status).toBe(401);
+    } finally {
+      process.env.AI_INTERNAL_KEY = TEST_KEY;
+    }
+  });
+});

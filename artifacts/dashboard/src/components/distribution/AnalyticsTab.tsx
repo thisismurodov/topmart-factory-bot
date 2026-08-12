@@ -12,6 +12,9 @@ import {
 // ── Turlar ──────────────────────────────────────────────────────────────────────
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 type AnalyticsData = {
   from: string | null;
   to: string | null;
@@ -91,11 +94,13 @@ function StatCard({
 export default function AnalyticsTab({ qs, active }: { qs: string; active: boolean }) {
   const [exporting, setExporting] = useState(false);
 
-  // Joriy filtr tanlovi bilan CSV (Excel'da ochiladi) yuklab olish
-  async function handleExport() {
+  // Joriy filtr tanlovi bilan XLSX (2 varaq) yoki CSV yuklab olish
+  async function handleExport(format: "xlsx" | "csv") {
     setExporting(true);
     try {
-      const r = await authFetch(`/api/distribution/analytics/export${qs}`);
+      const sep = qs ? "&" : "?";
+      const fq = format === "xlsx" ? `${qs}${sep}format=xlsx` : qs;
+      const r = await authFetch(`/api/distribution/analytics/export${fq}`);
       if (!r.ok) throw new Error("Eksport muvaffaqiyatsiz");
       const cd = r.headers.get("Content-Disposition") ?? "";
       const m = cd.match(/filename="([^"]+)"/);
@@ -103,7 +108,7 @@ export default function AnalyticsTab({ qs, active }: { qs: string; active: boole
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = m?.[1] ?? "tahlil.csv";
+      a.download = m?.[1] ?? `tahlil.${format}`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -153,10 +158,22 @@ export default function AnalyticsTab({ qs, active }: { qs: string; active: boole
     <div className="p-4 space-y-4">
       {/* Eksport */}
       <div className="flex justify-end">
-        <Button variant="outline" size="sm" onClick={handleExport} disabled={exporting}>
-          <Download className="w-4 h-4 mr-1.5" />
-          {exporting ? "Yuklanmoqda…" : "Excel/CSV yuklab olish"}
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" disabled={exporting}>
+              <Download className="w-4 h-4 mr-1.5" />
+              {exporting ? "Yuklanmoqda…" : "Yuklab olish"}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => handleExport("xlsx")}>
+              Excel (.xlsx) — 2 varaq
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => handleExport("csv")}>
+              CSV (.csv)
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       {/* KPI kartalar */}

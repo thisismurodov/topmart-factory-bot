@@ -2274,18 +2274,20 @@ router.get("/distribution/analytics/export", async (req, res): Promise<void> => 
   const dailyVisitMap = new Map<string, number>();
   for (const r of dailyVisitR.rows) dailyVisitMap.set(r.date as string, Number(r.visited_shops));
 
-  const lines: string[] = [];
-  lines.push(`Davr,${csvEsc(fromDate)},${csvEsc(toDate)}`);
-  lines.push("");
-  lines.push("Kunlik hisobot");
-  lines.push("Sana,Tashriflar (do'kon),Savdo soni,Savdo summasi (so'm)");
+  // Kunlik qatorlar (CSV va XLSX uchun umumiy)
+  type DailyRow = { date: string; visits: number; sales: number; salesTotal: number };
+  const dailyRows: DailyRow[] = [];
   const cur = new Date(`${fromDate}T12:00:00`);
   const end = new Date(`${toDate}T12:00:00`);
   while (cur <= end) {
     const dateStr = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}-${String(cur.getDate()).padStart(2, "0")}`;
     const s = dailySMap.get(dateStr);
-    const visits = dailyVisitMap.get(dateStr) ?? 0;
-    lines.push(`${dateStr},${visits},${s?.sales ?? 0},${s?.salesTotal ?? 0}`);
+    dailyRows.push({
+      date: dateStr,
+      visits: dailyVisitMap.get(dateStr) ?? 0,
+      sales: s?.sales ?? 0,
+      salesTotal: s?.salesTotal ?? 0,
+    });
     cur.setDate(cur.getDate() + 1);
   }
 
@@ -2315,16 +2317,76 @@ router.get("/distribution/analytics/export", async (req, res): Promise<void> => 
     if (!agentRows.has(id)) agentRows.set(id, blank(id));
   }
 
+  const sorted = [...agentRows.values()].sort((a, b) => a.name.localeCompare(b.name, "uz"));
+  // Foizlar: hisoblab bo'lmasa null (CSV'da bo'sh katak, XLSX'da bo'sh yacheyka)
+  const agentKpi = sorted.map((a) => ({
+    ...a,
+    conv: a.visited > 0 ? Math.round((a.sold / a.visited) * 100) : null,
+    rep: a.sold > 0 ? Math.round((a.repeat / a.sold) * 100) : null,
+    nas: a.salesCount > 0 ? Math.round((a.nasiya / a.salesCount) * 100) : null,
+  }));
+
+  // ── XLSX format (?format=xlsx) — ikkita varaq, raqamli yacheykalar ────────────
+  if (req.query.format === "xlsx") {
+    // Dynamic import — exceljs katta kutubxona, faqat kerak bo'lganda yuklanadi
+    const ExcelJS = (await import("exceljs")).default;
+    const wb = new ExcelJS.Workbook();
+
+    const SOM_FMT = "#,##0"; // so'm summalari — minglik ajratgich, kasrsiz
+
+    const ws1 = wb.addWorksheet("Kunlik hisobot");
+    ws1.columns = [
+      { header: "Sana", key: "date", width: 12 },
+      { header: "Tashriflar (do'kon)", key: "visits", width: 18 },
+      { header: "Savdo soni", key: "sales", width: 12 },
+      { header: "Savdo summasi (so'm)", key: "salesTotal", width: 20, style: { numFmt: SOM_FMT } },
+    ];
+    ws1.getRow(1).font = { bold: true };
+    for (const r of dailyRows) ws1.addRow(r);
+
+    const ws2 = wb.addWorksheet("Agent KPI");
+    ws2.columns = [
+      { header: "Agent", key: "name", width: 24 },
+      { header: "Kirilgan do'konlar", key: "visited", width: 17 },
+      { header: "Sotib olgan do'konlar", key: "sold", width: 19 },
+      { header: "Konversiya %", key: "conv", width: 13 },
+      { header: "Takroriy %", key: "rep", width: 11 },
+      { header: "Nasiya %", key: "nas", width: 10 },
+      { header: "Savdo soni", key: "salesCount", width: 12 },
+      { header: "Savdo summasi (so'm)", key: "salesTotal", width: 20, style: { numFmt: SOM_FMT } },
+    ];
+    ws2.getRow(1).font = { bold: true };
+    for (const a of agentKpi) ws2.addRow(a);
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="tahlil_${fromDate}_${toDate}.xlsx"`
+    );
+    await wb.xlsx.write(res);
+    res.end();
+    return;
+  }
+
+  // ── CSV format (odatiy) ────────────────────────────────────────────────────────
+  const lines: string[] = [];
+  lines.push(`Davr,${csvEsc(fromDate)},${csvEsc(toDate)}`);
+  lines.push("");
+  lines.push("Kunlik hisobot");
+  lines.push("Sana,Tashriflar (do'kon),Savdo soni,Savdo summasi (so'm)");
+  for (const r of dailyRows) {
+    lines.push(`${r.date},${r.visits},${r.sales},${r.salesTotal}`);
+  }
+
   lines.push("");
   lines.push("Agent KPI");
   lines.push("Agent,Kirilgan do'konlar,Sotib olgan do'konlar,Konversiya %,Takroriy %,Nasiya %,Savdo soni,Savdo summasi (so'm)");
-  const sorted = [...agentRows.values()].sort((a, b) => a.name.localeCompare(b.name, "uz"));
-  for (const a of sorted) {
-    const conv = a.visited > 0 ? Math.round((a.sold / a.visited) * 100) : "";
-    const rep = a.sold > 0 ? Math.round((a.repeat / a.sold) * 100) : "";
-    const nas = a.salesCount > 0 ? Math.round((a.nasiya / a.salesCount) * 100) : "";
+  for (const a of agentKpi) {
     lines.push(
-      `${csvEsc(a.name)},${a.visited},${a.sold},${conv},${rep},${nas},${a.salesCount},${a.salesTotal}`
+      `${csvEsc(a.name)},${a.visited},${a.sold},${a.conv ?? ""},${a.rep ?? ""},${a.nas ?? ""},${a.salesCount},${a.salesTotal}`
     );
   }
 

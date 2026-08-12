@@ -499,8 +499,8 @@ router.post("/ombor/raw-in", async (req, res): Promise<void> => {
     await client.query(
       `INSERT INTO stock_movements
          (product, quantity, movement_type, to_warehouse_id, note, created_by, product_type)
-       VALUES ($1,$2,'IN',NULL,$3,'admin','raw')`,
-      [mat.name, amount, note || `Kirdi: ${amount} ${mat.unit}`],
+       VALUES ($1,$2,'IN',NULL,$3,$4,'raw')`,
+      [mat.name, amount, note || `Kirdi: ${amount} ${mat.unit}`, actingUser(req)],
     );
     await client.query("COMMIT");
     res.json({ ok: true, name: mat.name, newStock: Number(updRes.rows[0].current_stock) });

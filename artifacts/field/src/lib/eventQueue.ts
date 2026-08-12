@@ -293,6 +293,31 @@ export async function updateEvent(
   notifyQueueUpdated();
 }
 
+/** Boot-time tozalash: ilova sync o'rtasida majburan yopilsa (Telegram
+ *  WebView'ni o'ldirsa), hodisa "syncing" holatida tiqilib qoladi. Server
+ *  idempotent (client_op_id UNIQUE) — shuning uchun uni yana "pending" qilib
+ *  darhol qayta yuborish xavfsiz. startSyncEngine() boot'da chaqiradi. */
+export async function resetStaleSyncingEvents(): Promise<number> {
+  try {
+    const db = await openFieldDb();
+    const all = await db.getAll("events");
+    let n = 0;
+    for (const e of all) {
+      if (e.syncStatus !== "syncing") continue;
+      await db.put("events", {
+        ...e,
+        syncStatus: "pending",
+        nextAttemptAt: 0,
+      });
+      n++;
+    }
+    if (n > 0) notifyQueueUpdated();
+    return n;
+  } catch {
+    return 0;
+  }
+}
+
 /** T008 "Retry Failed": failed hodisalarni yana pending qilib qo'yadi. */
 export async function retryFailedEvents(): Promise<number> {
   try {

@@ -198,6 +198,27 @@ describe("syncEngine.triggerSync", () => {
     expect(se.getSyncStatusSnapshot().failedCount).toBe(0);
   });
 
+  it("boot'da tiqilib qolgan 'syncing' hodisa pending'ga qaytadi (majburiy yopilish)", async () => {
+    // 1-sessiya: hodisa "syncing" holatida qoladi (WebView o'ldirilgan)
+    const first = await freshModules();
+    await first.eq.enqueueEvent("SALE", { clientOpId: "stuck-1", dokonId: 1, tolovTuri: "naqd", items: [] } as never);
+    await first.eq.updateEvent("stuck-1", { syncStatus: "syncing", nextAttemptAt: 123 });
+    expect((await first.eq.getAllEvents())[0].syncStatus).toBe("syncing");
+
+    // 2-sessiya (qayta boot): startSyncEngine boot bloki tozalashi kerak.
+    // Tarmoq sync'i aralashmasligi uchun offline qilamiz.
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    const { eq, se } = await freshModules();
+    se.startSyncEngine();
+    await vi.waitFor(async () => {
+      const [ev] = await eq.getAllEvents();
+      expect(ev.syncStatus).toBe("pending");
+      expect(ev.nextAttemptAt).toBe(0);
+    });
+    expect(submitSale).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
   it("flush paytida qo'shilgan element yo'qolmaydi — IDB'da qoladi, keyingi siklda yuboriladi", async () => {
     // Asosiy invariant: enqueueEvent() IDB'ga yozadi → hech narsa yo'qolmaydi.
     // Flush davomida qo'shilgan element joriy siklda yuborilmaydi lekin

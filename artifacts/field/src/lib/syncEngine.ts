@@ -6,6 +6,7 @@ import {
   notifyQueueUpdated,
   removeEvent,
   removeLegacyItem,
+  resetStaleSyncingEvents,
   retryFailedEvents,
   updateEvent,
   QUEUE_UPDATED_EVENT,
@@ -292,6 +293,10 @@ export function startSyncEngine(): void {
   void (async () => {
     const saved = await metaGet<number>("lastSyncAt");
     if (typeof saved === "number") emit({ lastSyncAt: saved });
+    // Oldingi sessiya sync o'rtasida majburan yopilgan bo'lsa, "syncing"
+    // holatida tiqilib qolgan hodisalarni pending'ga qaytaramiz — server
+    // idempotent, qayta yuborish dublikat yaratmaydi.
+    await resetStaleSyncingEvents();
     await migrateLegacyQueue();
     await refreshCounts();
     // Boot sync backoff'ni e'tiborsiz qoldiradi (manual): Mini App qayta

@@ -43,6 +43,9 @@ const DATE_D = "2026-07-15"; // asosiy davr ichida savdo
 let pool: pg.Pool;
 let server: Server;
 let apiUrl: string;
+// mahsulotId filtri testlari uchun mahsulot id'lari
+let prodOlma: number;
+let prodNok: number;
 
 async function dropTmpDb(): Promise<void> {
   const admin = new Client({ connectionString: adminUrl, ssl });
@@ -113,24 +116,44 @@ beforeAll(async () => {
     [`${DATE_A} 08:00:00`],
   ).then((r) => r.rows[0].id as number);
 
+  // Mahsulotlar — savdo_tafsilot (mahsulotId filtri) uchun
+  prodOlma = await pool.query(
+    `INSERT INTO distribution.mahsulotlar (nomi, narx, birlik, faol)
+     VALUES ('Olma sharbati', 10000, 'dona', 1) RETURNING id`,
+  ).then((r) => r.rows[0].id as number);
+  prodNok = await pool.query(
+    `INSERT INTO distribution.mahsulotlar (nomi, narx, birlik, faol)
+     VALUES ('Nok sharbati', 15000, 'dona', 1) RETURNING id`,
+  ).then((r) => r.rows[0].id as number);
+
   // Savdolar
   // Shop A: avvalgi davr savdosi (DATE_A) — takroriy xaridor ifodalash uchun
-  await pool.query(
+  const saleA1 = await pool.query(
     `INSERT INTO distribution.savdolar (dokon_id, agent_id, jami_summa, tolov_turi, created_at)
-     VALUES ($1, 8001, 100000, 'naqd', $2)`,
+     VALUES ($1, 8001, 100000, 'naqd', $2) RETURNING id`,
     [shopA, `${DATE_A} 09:30:00`],
-  );
+  ).then((r) => r.rows[0].id as number);
   // Shop A: asosiy davr savdosi (DATE_D) — nasiya
-  await pool.query(
+  const saleA2 = await pool.query(
     `INSERT INTO distribution.savdolar (dokon_id, agent_id, jami_summa, tolov_turi, created_at)
-     VALUES ($1, 8001, 200000, 'nasiya', $2)`,
+     VALUES ($1, 8001, 200000, 'nasiya', $2) RETURNING id`,
     [shopA, `${DATE_D} 10:00:00`],
-  );
+  ).then((r) => r.rows[0].id as number);
   // Shop B: asosiy davr savdosi — naqd
-  await pool.query(
+  const saleB = await pool.query(
     `INSERT INTO distribution.savdolar (dokon_id, agent_id, jami_summa, tolov_turi, created_at)
-     VALUES ($1, 8002, 150000, 'naqd', $2)`,
+     VALUES ($1, 8002, 150000, 'naqd', $2) RETURNING id`,
     [shopB, `${DATE_B} 11:00:00`],
+  ).then((r) => r.rows[0].id as number);
+
+  // Savdo tafsilotlari: A savdolari — Olma, B savdosi — Nok
+  // (mahsulotId=prodOlma → faqat Shop A savdolari; prodNok → faqat Shop B)
+  await pool.query(
+    `INSERT INTO distribution.savdo_tafsilot (savdo_id, mahsulot_id, miqdor, narx, summa)
+     VALUES ($1, $4, 10, 10000, 100000),
+            ($2, $4, 20, 10000, 200000),
+            ($3, $5, 10, 15000, 150000)`,
+    [saleA1, saleA2, saleB, prodOlma, prodNok],
   );
 
   // Shop D va E: qaytish_sanasi format testlari uchun qo'shimcha do'konlar
@@ -722,6 +745,94 @@ describe("GET /distribution/analytics/export — grafiklar bilan muvofiqlik", ()
         date: d.date, visits: d.visits, sales: d.sales, salesTotal: d.salesTotal,
       }))
     );
+  });
+
+  // Export va analytics'dagi kunlik so'rovlar bir xil filtrga bo'ysunishi kerak —
+  // viloyat/hudud/tolovTuri/mahsulotId/search bo'yicha ikkalasini solishtiramiz.
+  async function expectDailyMatches(query: string): Promise<{
+    daily: Array<{ date: string; visits: number; sales: number; salesTotal: number }>;
+  }> {
+    const [{ raw }, analytics] = await Promise.all([
+      getCsv(`/distribution/analytics/export?${query}`),
+      getJson(`/distribution/analytics?${query}`),
+    ]);
+    const p = parseCsvSections(raw);
+    expect(p.daily).toEqual(
+      analytics.daily.map((d: any) => ({
+        date: d.date, visits: d.visits, sales: d.sales, salesTotal: d.salesTotal,
+      }))
+    );
+    return { daily: p.daily };
+  }
+
+  it("viloyat filtri bilan kunlik bo'lim analytics'ga teng va haqiqatan filtrlaydi", async () => {
+    const { daily } = await expectDailyMatches(`${Q}&viloyat=Andijon`);
+    // Andijonda faqat Shop B (DATE_B, 150000) — DATE_D savdosi chiqarilgan
+    const dayB = daily.find((d) => d.date === DATE_B)!;
+    const dayD = daily.find((d) => d.date === DATE_D)!;
+    expect(dayB.sales).toBe(1);
+    expect(dayB.salesTotal).toBe(150000);
+    expect(dayD.sales).toBe(0);
+  });
+
+  it("hudud filtri bilan kunlik bo'lim analytics'ga teng va haqiqatan filtrlaydi", async () => {
+    const { daily } = await expectDailyMatches(`${Q}&hudud=Shahrixon`);
+    // Shahrixonda faqat Shop B bor
+    const dayB = daily.find((d) => d.date === DATE_B)!;
+    const dayD = daily.find((d) => d.date === DATE_D)!;
+    expect(dayB.sales).toBe(1);
+    expect(dayD.sales).toBe(0);
+    // Olmagan tashriflar ham (barchasi Toshkent hududlarida) chiqarilgan
+    const dayC = daily.find((d) => d.date === DATE_C)!;
+    expect(dayC.visits).toBe(0);
+  });
+
+  it("tolovTuri filtri bilan kunlik bo'lim analytics'ga teng va haqiqatan filtrlaydi", async () => {
+    const { daily } = await expectDailyMatches(`${Q}&tolovTuri=nasiya`);
+    // Nasiya faqat Shop A (DATE_D, 200000)
+    const dayB = daily.find((d) => d.date === DATE_B)!;
+    const dayD = daily.find((d) => d.date === DATE_D)!;
+    expect(dayD.sales).toBe(1);
+    expect(dayD.salesTotal).toBe(200000);
+    expect(dayB.sales).toBe(0);
+  });
+
+  it("mahsulotId filtri bilan kunlik bo'lim analytics'ga teng va haqiqatan filtrlaydi", async () => {
+    // prodOlma faqat Shop A savdolarida bor → DATE_D qoladi, DATE_B chiqadi
+    const { daily } = await expectDailyMatches(`${Q}&mahsulotId=${prodOlma}`);
+    const dayB = daily.find((d) => d.date === DATE_B)!;
+    const dayD = daily.find((d) => d.date === DATE_D)!;
+    expect(dayD.sales).toBe(1);
+    expect(dayD.salesTotal).toBe(200000);
+    expect(dayB.sales).toBe(0);
+
+    // prodNok faqat Shop B savdosida bor → aksincha
+    const { daily: daily2 } = await expectDailyMatches(`${Q}&mahsulotId=${prodNok}`);
+    const dayB2 = daily2.find((d) => d.date === DATE_B)!;
+    const dayD2 = daily2.find((d) => d.date === DATE_D)!;
+    expect(dayB2.sales).toBe(1);
+    expect(dayB2.salesTotal).toBe(150000);
+    expect(dayD2.sales).toBe(0);
+  });
+
+  it("search filtri bilan kunlik bo'lim analytics'ga teng va haqiqatan filtrlaydi", async () => {
+    const { daily } = await expectDailyMatches(`${Q}&search=Shop B`);
+    // Faqat Shop B savdosi (DATE_B) qoladi; DATE_C dagi olmagan tashriflar ham chiqadi
+    const dayB = daily.find((d) => d.date === DATE_B)!;
+    const dayC = daily.find((d) => d.date === DATE_C)!;
+    const dayD = daily.find((d) => d.date === DATE_D)!;
+    expect(dayB.sales).toBe(1);
+    expect(dayD.sales).toBe(0);
+    expect(dayC.visits).toBe(0);
+  });
+
+  it("kombinatsiyalangan filtrlar (viloyat+tolovTuri) bilan ham kunlik bo'lim teng", async () => {
+    // Toshkent + nasiya → faqat Shop A ning DATE_D savdosi
+    const { daily } = await expectDailyMatches(`${Q}&viloyat=Toshkent&tolovTuri=nasiya`);
+    const dayD = daily.find((d) => d.date === DATE_D)!;
+    expect(dayD.sales).toBe(1);
+    expect(dayD.salesTotal).toBe(200000);
+    expect(daily.reduce((s, d) => s + d.sales, 0)).toBe(1);
   });
 
   it("per-agent qatorlar yig'indisi analytics KPI'ga mos (savdo soni/summasi, sold, nasiya)", async () => {

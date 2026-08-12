@@ -191,11 +191,21 @@ function ExportSection() {
 export default function Reports() {
   const [months, setMonths] = useState(6);
   const [sortBy, setSortBy] = useState<"profit" | "margin" | "low_margin" | "sold" | "revenue">("profit");
+  const [pieProduct, setPieProduct] = useState<string>("__avg__");
 
   const { data: profitRows = [], isLoading: profitLoading } = useQuery<ProductProfitRow[]>({
     queryKey: ["product-profitability", sortBy],
     queryFn: async () => {
       const res = await authFetch(`/api/reports/product-profitability?sortBy=${sortBy}`);
+      if (!res.ok) throw new Error("Yuklashda xato");
+      return res.json();
+    },
+  });
+
+  const { data: profitTrend = [] } = useQuery<{ month: string; profitUzs: number; saleCount: number }[]>({
+    queryKey: ["profit-trend", months],
+    queryFn: async () => {
+      const res = await authFetch(`/api/reports/profit-trend?months=${months}`);
       if (!res.ok) throw new Error("Yuklashda xato");
       return res.json();
     },
@@ -251,9 +261,25 @@ export default function Reports() {
   const totalSalary    = salaryFilled.reduce((s, r) => s + r.totalPaid, 0);
 
   // ── Product profitability charts (#8) ──────────────────────────────────────
-  // Cost structure: average each cost component's share of total cost across
-  // products. Using per-product shares keeps it currency-agnostic (USD/UZS mix).
+  // Cost structure pie: per-product breakdown (selected via dropdown), or the
+  // average share across products. Per-product shows real UZS values; average
+  // uses per-product shares to stay currency-agnostic (USD/UZS mix).
   const costStructure = (() => {
+    const mk = (raw: number, salary: number, elec: number, other: number) => {
+      const total = raw + salary + elec + other;
+      if (total <= 0) return [] as { name: string; value: number; amount?: number; fill: string }[];
+      return [
+        { name: "Xom ashyo", value: Math.round((raw    / total) * 1000) / 10, amount: raw,    fill: "#0B5D2A" },
+        { name: "Ish haqi",  value: Math.round((salary / total) * 1000) / 10, amount: salary, fill: "#22c55e" },
+        { name: "Elektr",    value: Math.round((elec   / total) * 1000) / 10, amount: elec,   fill: "#f59e0b" },
+        { name: "Boshqa",    value: Math.round((other  / total) * 1000) / 10, amount: other,  fill: "#94a3b8" },
+      ].filter((d) => d.value > 0);
+    };
+    if (pieProduct !== "__avg__") {
+      const r = profitRows.find((p) => p.name === pieProduct);
+      if (!r) return [];
+      return mk(r.rawMaterialCost, r.salaryCost, r.electricityCost, r.otherCost);
+    }
     let raw = 0, salary = 0, elec = 0, other = 0, n = 0;
     for (const r of profitRows) {
       if (r.totalCost <= 0) continue;
@@ -263,18 +289,13 @@ export default function Reports() {
       other  += r.otherCost       / r.totalCost;
       n++;
     }
-    if (n === 0) return [] as { name: string; value: number; fill: string }[];
-    return [
-      { name: "Xom ashyo", value: Math.round((raw    / n) * 1000) / 10, fill: "#0B5D2A" },
-      { name: "Ish haqi",  value: Math.round((salary / n) * 1000) / 10, fill: "#22c55e" },
-      { name: "Elektr",    value: Math.round((elec   / n) * 1000) / 10, fill: "#f59e0b" },
-      { name: "Boshqa",    value: Math.round((other  / n) * 1000) / 10, fill: "#94a3b8" },
-    ].filter((d) => d.value > 0);
+    if (n === 0) return [];
+    return mk(raw / n, salary / n, elec / n, other / n).map((d) => ({ ...d, amount: undefined }));
   })();
 
-  // Margin% across products (top → bottom), color-coded by health.
+  // Margin% across products (eng past → eng yuqori), color-coded by health.
   const marginData = [...profitRows]
-    .sort((a, b) => b.marginPct - a.marginPct)
+    .sort((a, b) => a.marginPct - b.marginPct)
     .slice(0, 12)
     .map((r) => ({
       name: r.name,
@@ -638,11 +659,23 @@ export default function Reports() {
           {/* Profitability charts (#8) */}
           {profitRows.length > 0 && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-              {/* Cost structure pie */}
+              {/* Cost structure pie — per-product or average */}
               <div className="rounded-xl border bg-card p-5">
-                <p className="text-sm font-semibold mb-4 flex items-center gap-2">
-                  <DollarSign className="w-4 h-4 text-primary" /> O'rtacha xarajat tarkibi
-                </p>
+                <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
+                  <p className="text-sm font-semibold flex items-center gap-2">
+                    <DollarSign className="w-4 h-4 text-primary" /> Xarajat tarkibi
+                  </p>
+                  <select
+                    value={pieProduct}
+                    onChange={(e) => setPieProduct(e.target.value)}
+                    className="h-8 px-2 rounded-md border bg-background text-xs max-w-[180px]"
+                  >
+                    <option value="__avg__">O'rtacha (barcha mahsulotlar)</option>
+                    {profitRows.map((r) => (
+                      <option key={r.name} value={r.name}>{r.name}</option>
+                    ))}
+                  </select>
+                </div>
                 {costStructure.length === 0 ? (
                   <p className="text-sm text-muted-foreground text-center py-10">Ma'lumot yo'q</p>
                 ) : (
@@ -670,6 +703,9 @@ export default function Reports() {
                           <span className="w-2.5 h-2.5 rounded-sm" style={{ background: d.fill }} />
                           <span className="text-muted-foreground">{d.name}</span>
                           <span className="font-semibold">{d.value}%</span>
+                          {d.amount !== undefined && (
+                            <span className="text-muted-foreground">({fmtUzs(Math.round(d.amount))})</span>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -680,7 +716,7 @@ export default function Reports() {
               {/* Margin% horizontal bar */}
               <div className="rounded-xl border bg-card p-5">
                 <p className="text-sm font-semibold mb-4 flex items-center gap-2">
-                  <BarChart2 className="w-4 h-4 text-primary" /> Mahsulotlar margin% (yuqori → past)
+                  <BarChart2 className="w-4 h-4 text-primary" /> Mahsulotlar margin% (eng past → eng yuqori)
                 </p>
                 <ResponsiveContainer width="100%" height={Math.max(220, marginData.length * 34)}>
                   <BarChart data={marginData} layout="vertical" margin={{ left: 8, right: 24 }}>
@@ -694,6 +730,27 @@ export default function Reports() {
                   </BarChart>
                 </ResponsiveContainer>
               </div>
+            </div>
+          )}
+
+          {/* Profit trend by month (#8) */}
+          {profitTrend.length > 0 && (
+            <div className="rounded-xl border bg-card p-5">
+              <p className="text-sm font-semibold mb-4 flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-green-600" /> Foyda trendi (oylar bo'yicha, so'm)
+              </p>
+              <ResponsiveContainer width="100%" height={220}>
+                <LineChart data={profitTrend.map((r) => ({ ...r, label: shortMonth(r.month) }))}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                  <YAxis tickFormatter={(v) => `${(v / 1_000_000).toFixed(1)}M`} tick={{ fontSize: 11 }} width={52} />
+                  <Tooltip content={<ChartTooltip formatter={fmtUzs} />} />
+                  <Line dataKey="profitUzs" name="Foyda" stroke="#16a34a" strokeWidth={2} dot={{ r: 4 }} />
+                </LineChart>
+              </ResponsiveContainer>
+              <p className="text-[10px] text-muted-foreground mt-1">
+                Foyda = sotilgan miqdor × mahsulotning joriy birlik foydasi (USD jonli kursda so'mga o'tkazilgan)
+              </p>
             </div>
           )}
 

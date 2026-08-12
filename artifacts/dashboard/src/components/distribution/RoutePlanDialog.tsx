@@ -56,6 +56,7 @@ type PlanResult = {
   agentId: number;
   agentName: string | null;
   saved: boolean;
+  forceSaved?: boolean; // crossing ogohlantirishiga qaramay majburiy saqlandi
   existing: number;
   totalShops: number;
   totalKm: number;
@@ -358,7 +359,14 @@ export default function RoutePlanDialog({ agents }: { agents: PlanAgent[] }) {
             )}
 
             {plan.saved ? (
-              <div className="text-sm text-green-600 font-medium">✅ Marshrut saqlandi — xaritada ko'rishingiz mumkin</div>
+              <div className="text-sm text-green-600 font-medium">
+                ✅ Marshrut saqlandi — xaritada ko'rishingiz mumkin
+                {plan.forceSaved && (
+                  <div className="text-xs text-amber-700 dark:text-amber-400 font-normal mt-0.5">
+                    ⚠️ Kesishish ogohlantirishiga qaramay majburiy saqlandi — bu marshrut ro'yxatda belgilanadi.
+                  </div>
+                )}
+              </div>
             ) : plan.existing > 0 ? (
               <div className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 rounded-md p-2.5">
                 <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />

@@ -173,6 +173,8 @@ export const deliveryRoutesTable = distribution.table(
     tartib: integer("tartib").default(0),
     createdAt: text("created_at"),
     addedByDlv: integer("added_by_dlv").default(0),
+    // 1 — marshrut crossing ogohlantirishiga qaramay force=true bilan saqlangan (audit)
+    forceSaved: integer("force_saved").default(0),
   },
   (t) => [
     uniqueIndex("uq_routes_agent_kun_dokon").on(t.deliveryAgentId, t.kun, t.dokonId),

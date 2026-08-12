@@ -1312,7 +1312,7 @@ router.get("/distribution/routes", async (req, res): Promise<void> => {
     `SELECT
        da.id AS agent_id, da.name AS agent_name, da.mashina_nomeri,
        r.tartib, d.id AS dokon_id, d.nomi AS dokon_name, d.telefon,
-       d.viloyat, d.hudud,
+       d.viloyat, d.hudud, r.force_saved,
        EXISTS (SELECT 1 FROM distribution.savdolar s
                 WHERE s.dokon_id = d.id AND substr(s.created_at,1,10) = $2) AS visited
      FROM distribution.delivery_routes r
@@ -1337,6 +1337,8 @@ router.get("/distribution/routes", async (req, res): Promise<void> => {
       viloyat: r.viloyat,
       hudud: r.hudud,
       visited: r.visited,
+      // Marshrut crossing ogohlantirishlariga qaramay force bilan saqlangan (audit belgisi)
+      forceSaved: Number(r.force_saved) === 1,
     })),
   });
 });
@@ -1476,6 +1478,7 @@ router.post("/distribution/route-plan", async (req, res): Promise<void> => {
     agentId: run.agentId,
     agentName: run.agentName,
     saved: run.saved,
+    forceSaved: run.forceSaved,
     existing: run.existing,
     lockedElsewhere: run.lockedElsewhere,
     totalShops: run.plan.totalShops,

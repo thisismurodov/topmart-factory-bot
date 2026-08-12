@@ -38,6 +38,7 @@ export type RoutePlanSuccess = {
   existing: number; // agentning saqlashdan oldingi marshrut nuqtalari soni
   lockedElsewhere: number; // boshqa faol agentlar egallagani uchun chiqarilgan do'konlar
   saved: boolean;
+  forceSaved: boolean; // crossing ogohlantirishlariga qaramay force=true bilan saqlandi (audit)
   plan: PlanResult;
   validation: PlanValidation;
   skippedNoCoord: { id: number; nomi: string | null }[];
@@ -199,16 +200,20 @@ export async function runRoutePlan(opts: {
   }
 
   let saved = false;
+  // force_saved auditi: force haqiqatan crossing blokini chetlab o'tgandagina 1 —
+  // ya'ni validatsiya xatolari bor edi, hammasi crossing bilan bog'liq (forceable)
+  // va force=true yuborilgan. Optimizer o'zi muvaffaqiyatli bo'lsa — 0.
+  let forceApplied = false;
   if (opts.save) {
     // force=true bo'lsa crossing bloki chetlab o'tiladi; boshqa xatolar (dublikat,
     // yo'qolgan, tartib, eksklyuzivlik) baribir saqlashni bloklaydi.
     // validation.forceable: validatePlan tomonidan hisoblangan — barcha xatolar
     // faqat crossing bilan bog'liq bo'lsa true.
     const { forceable } = validation;
-    const blockingIssues =
-      opts.force && forceable
-        ? [] // force bilan crossing bloki chetlab o'tiladi
-        : validation.issues;
+    forceApplied = opts.force === true && forceable && validation.issues.length > 0;
+    const blockingIssues = forceApplied
+      ? [] // force bilan crossing bloki chetlab o'tiladi
+      : validation.issues;
     if (blockingIssues.length > 0) {
       return {
         ok: false,
@@ -238,9 +243,9 @@ export async function runRoutePlan(opts: {
       for (const r of plan.routes) {
         for (const st of r.stops) {
           await client.query(
-            `INSERT INTO distribution.delivery_routes (delivery_agent_id, kun, dokon_id, tartib, created_at, added_by_dlv)
-             VALUES ($1, $2, $3, $4, $5, 0)`,
-            [agentId, r.kun, st.id, st.tartib, nowIso]
+            `INSERT INTO distribution.delivery_routes (delivery_agent_id, kun, dokon_id, tartib, created_at, added_by_dlv, force_saved)
+             VALUES ($1, $2, $3, $4, $5, 0, $6)`,
+            [agentId, r.kun, st.id, st.tartib, nowIso, forceApplied ? 1 : 0]
           );
         }
       }
@@ -262,6 +267,7 @@ export async function runRoutePlan(opts: {
     existing,
     lockedElsewhere,
     saved,
+    forceSaved: saved && forceApplied,
     plan,
     validation,
     skippedNoCoord,

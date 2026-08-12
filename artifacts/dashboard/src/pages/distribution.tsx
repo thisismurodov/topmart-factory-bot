@@ -199,6 +199,7 @@ type RoutesData = {
     agentId: number; agentName: string | null; mashinaNomeri: string | null; tartib: number;
     dokonId: number; dokonName: string | null; telefon: string | null;
     viloyat: string | null; hudud: string | null; visited: boolean;
+    forceSaved: boolean; // crossing ogohlantirishlariga qaramay majburiy saqlangan
   }[];
 };
 
@@ -1292,9 +1293,21 @@ function RoutesTab({ f, update, active, onShop }: { f: Filters; update: (p: Part
                         {g.mashinaNomeri && <div className="text-[11px] text-muted-foreground">{g.mashinaNomeri}</div>}
                       </div>
                     </div>
-                    <Badge variant="secondary" className="h-5 text-[10px]">
-                      {done}/{g.stops.length} do'kon
-                    </Badge>
+                    <div className="flex items-center gap-1.5">
+                      {/* Audit belgisi: marshrut kesishish ogohlantirishiga qaramay majburiy saqlangan */}
+                      {g.stops.some((s) => s.forceSaved) && (
+                        <Badge
+                          variant="outline"
+                          className="h-5 text-[10px] border-amber-500 text-amber-700 dark:text-amber-400"
+                          title="Bu marshrut kesishish ogohlantirishiga qaramay majburiy (force) saqlangan"
+                        >
+                          ⚠️ Majburiy saqlangan
+                        </Badge>
+                      )}
+                      <Badge variant="secondary" className="h-5 text-[10px]">
+                        {done}/{g.stops.length} do'kon
+                      </Badge>
+                    </div>
                   </div>
                   <div className="space-y-1">
                     {g.stops.map((s) => (

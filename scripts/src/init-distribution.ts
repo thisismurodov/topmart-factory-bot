@@ -156,8 +156,10 @@ CREATE TABLE IF NOT EXISTS distribution.delivery_routes (
   dokon_id BIGINT NOT NULL,
   tartib INTEGER DEFAULT 0,
   created_at TEXT,
-  added_by_dlv INTEGER DEFAULT 0
+  added_by_dlv INTEGER DEFAULT 0,
+  force_saved INTEGER DEFAULT 0
 );
+ALTER TABLE distribution.delivery_routes ADD COLUMN IF NOT EXISTS force_saved INTEGER DEFAULT 0;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_routes_agent_kun_dokon ON distribution.delivery_routes (delivery_agent_id, kun, dokon_id);
 CREATE INDEX IF NOT EXISTS idx_routes_agent_day ON distribution.delivery_routes (delivery_agent_id, kun);
 

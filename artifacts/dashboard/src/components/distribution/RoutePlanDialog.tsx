@@ -7,6 +7,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Slider } from "@/components/ui/slider";
 import { Sparkles, Loader2, AlertTriangle, MapPin, TrendingUp } from "lucide-react";
 
 // AI marshrut rejalashtirish dialogi: viloyat + agent tanlanadi, avval reja
@@ -99,6 +100,27 @@ const BIZ_PRESETS: BizPreset[] = [
   },
 ];
 
+// "Maxsus" — slayderlar bilan erkin vazn tanlash (backend normalizatsiya qiladi)
+const CUSTOM_PRESET_ID = "maxsus";
+
+type Weights = { credit: number; days: number; sales: number };
+
+// Vaznlarni foizga aylantirish (jami 0 bo'lsa teng taqsimlanadi) — banner uchun
+function toPercents(w: Weights): Weights {
+  const total = w.credit + w.days + w.sales;
+  if (total <= 0) return { credit: 33, days: 33, sales: 34 };
+  return {
+    credit: Math.round((w.credit / total) * 100),
+    days: Math.round((w.days / total) * 100),
+    sales: Math.round((w.sales / total) * 100),
+  };
+}
+
+function customDesc(w: Weights): string {
+  const p = toPercents(w);
+  return `Nasiya ${p.credit}% · Tashrif ${p.days}% · Savdo ${p.sales}%`;
+}
+
 function fmtMin(min: number): string {
   const h = Math.floor(min / 60);
   const m = min % 60;
@@ -129,6 +151,8 @@ export default function RoutePlanDialog({ agents }: { agents: PlanAgent[] }) {
   const [viloyat, setViloyat] = useState("");
   const [agentId, setAgentId] = useState("");
   const [presetId, setPresetId] = useState("muvozanatli");
+  // Maxsus rejim slayder qiymatlari (0–100, backend jamini 100 ga normalizatsiya qiladi)
+  const [customWeights, setCustomWeights] = useState<Weights>({ credit: 40, days: 35, sales: 25 });
   // Reja tuzilgan paytdagi preset — banner shu nomni ko'rsatadi (keyin picker o'zgarsa ham)
   const [planPreset, setPlanPreset] = useState<BizPreset | null>(null);
   const [plan, setPlan] = useState<PlanResult | null>(null);
@@ -160,7 +184,10 @@ export default function RoutePlanDialog({ agents }: { agents: PlanAgent[] }) {
         body: JSON.stringify({
           viloyat,
           agentId: Number(agentId),
-          weights: (BIZ_PRESETS.find((p) => p.id === presetId) ?? BIZ_PRESETS[0]).weights,
+          weights:
+            presetId === CUSTOM_PRESET_ID
+              ? customWeights
+              : (BIZ_PRESETS.find((p) => p.id === presetId) ?? BIZ_PRESETS[0]).weights,
           save,
           // Foydalanuvchi rejani ko'rib bo'lgach saqlaydi — eski marshrut almashtiriladi
           replace: save,
@@ -180,7 +207,11 @@ export default function RoutePlanDialog({ agents }: { agents: PlanAgent[] }) {
         return;
       }
       setPlan(j);
-      setPlanPreset(BIZ_PRESETS.find((p) => p.id === presetId) ?? BIZ_PRESETS[0]);
+      setPlanPreset(
+        presetId === CUSTOM_PRESET_ID
+          ? { id: CUSTOM_PRESET_ID, label: "Maxsus", desc: customDesc(customWeights), weights: customWeights }
+          : (BIZ_PRESETS.find((p) => p.id === presetId) ?? BIZ_PRESETS[0]),
+      );
       if (j.saved) {
         // Xarita va marshrut ro'yxatlarini yangilaymiz
         qc.invalidateQueries({ queryKey: ["distribution", "route-map"] });
@@ -255,8 +286,48 @@ export default function RoutePlanDialog({ agents }: { agents: PlanAgent[] }) {
                   <span className="text-xs text-muted-foreground"> — {p.desc}</span>
                 </SelectItem>
               ))}
+              <SelectItem value={CUSTOM_PRESET_ID}>
+                <span className="font-medium">Maxsus</span>
+                <span className="text-xs text-muted-foreground"> — vaznlarni slayderlar bilan sozlash</span>
+              </SelectItem>
             </SelectContent>
           </Select>
+
+          {/* Maxsus rejim: uchta slayder — nasiya / tashrif oralig'i / savdo */}
+          {presetId === CUSTOM_PRESET_ID && (
+            <div className="rounded-md border p-3 space-y-3 mt-1">
+              {(
+                [
+                  { key: "credit", label: "Nasiya qoldig'i" },
+                  { key: "days", label: "Tashrif oralig'i" },
+                  { key: "sales", label: "Savdo hajmi" },
+                ] as const
+              ).map(({ key, label }) => (
+                <div key={key} className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-medium">{label}</span>
+                    <span className="text-muted-foreground tabular-nums">
+                      {toPercents(customWeights)[key]}%
+                    </span>
+                  </div>
+                  <Slider
+                    value={[customWeights[key]]}
+                    min={0}
+                    max={100}
+                    step={5}
+                    onValueChange={([v]) => {
+                      setCustomWeights((w) => ({ ...w, [key]: v }));
+                      setPlan(null);
+                      setPlanPreset(null);
+                    }}
+                  />
+                </div>
+              ))}
+              <div className="text-[11px] text-muted-foreground">
+                {customDesc(customWeights)} — vaznlar jami 100% ga avtomatik moslashtiriladi.
+              </div>
+            </div>
+          )}
         </div>
 
         {error && (

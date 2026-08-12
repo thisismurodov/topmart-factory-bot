@@ -2632,6 +2632,29 @@ async function rankWithAi(cacheKey: string, candidates: AiCandidate[]): Promise<
   if (candidates.length === 0) return [];
   const cached = aiSuggestCache.get(cacheKey);
   if (cached && Date.now() - cached.at < AI_SUGGEST_TTL_MS) return cached.items;
+  // Xotira keshi bo'sh (masalan, server endi restart bo'ldi yoki boshqa instans
+  // hisoblab qo'ygan) — LLM'ni chaqirishdan OLDIN DB nusxasi tekshiriladi.
+  // TTL bir xil 10 daqiqa; eskirgan sanani ko'rsatmaslik uchun kesh kaliti
+  // tarkibida sana ham bor. Xato bo'lsa jimgina LLM yo'liga o'tiladi.
+  try {
+    const { rows } = await pool.query(
+      `SELECT items, (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS at_ms
+         FROM distribution.ai_suggest_cache
+        WHERE cache_key = $1
+          AND created_at > NOW() - make_interval(secs => $2)`,
+      [cacheKey, AI_SUGGEST_TTL_MS / 1000]
+    );
+    if (rows.length > 0) {
+      const dbItems = JSON.parse(String(rows[0].items)) as unknown;
+      if (Array.isArray(dbItems)) {
+        const items = dbItems as AiSuggestion[];
+        aiSuggestCache.set(cacheKey, { at: Number(rows[0].at_ms), items });
+        return items;
+      }
+    }
+  } catch {
+    // DB keshi ishlamasa ham tavsiya oqimi to'xtamaydi — LLM chaqiriladi
+  }
   try {
     const completion = await openai.chat.completions.create({
       model: AI_SUGGEST_MODEL,
@@ -2662,6 +2685,22 @@ async function rankWithAi(cacheKey: string, candidates: AiCandidate[]): Promise<
       if (items.length >= 10) break;
     }
     aiSuggestCache.set(cacheKey, { at: Date.now(), items });
+    // DB nusxasi — restartdan keyin va boshqa instanslar uchun (best-effort).
+    // Eski kunlarning kalitlari qayta ishlatilmaydi, shuning uchun yozish
+    // paytida 1 kundan eski qatorlar tozalab yuboriladi.
+    try {
+      await pool.query(
+        `INSERT INTO distribution.ai_suggest_cache (cache_key, items, created_at)
+         VALUES ($1, $2, NOW())
+         ON CONFLICT (cache_key) DO UPDATE SET items = EXCLUDED.items, created_at = NOW()`,
+        [cacheKey, JSON.stringify(items)]
+      );
+      await pool.query(
+        `DELETE FROM distribution.ai_suggest_cache WHERE created_at < NOW() - interval '1 day'`
+      );
+    } catch {
+      // Persist xatosi natijaga ta'sir qilmaydi — xotira keshi baribir to'ldi
+    }
     return items;
   } catch {
     // Jimgina fallback — rule-based tavsiyalar baribir ko'rsatiladi

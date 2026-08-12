@@ -471,6 +471,18 @@ export async function initDb(): Promise<void> {
       ON distribution.dokon_location_log (dokon_id, created_at)
   `);
 
+  // ── Distribution: AI tavsiya keshining DB nusxasi ────────────────────────
+  // /distribution/suggestions dagi LLM reytingi restartdan keyin ham qayta
+  // ishlatilishi uchun. Kanonik DDL bot connection.py + init-distribution.ts +
+  // Drizzle mirror bilan bir xil (drift-check nazorati ostida).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS distribution.ai_suggest_cache (
+      cache_key TEXT PRIMARY KEY,
+      items TEXT NOT NULL,
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    )
+  `);
+
   // Admin userni seed qilish (mavjud bo'lmasa)
   const existing = await db.select().from(adminUsersTable).where(eq(adminUsersTable.username, "thisismurodov"));
   if (existing.length === 0) {

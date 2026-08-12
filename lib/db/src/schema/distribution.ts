@@ -250,6 +250,15 @@ export const dokonLocationLogTable = distribution.table(
   (t) => [index("idx_dokon_location_log_dokon").on(t.dokonId, t.createdAt)],
 );
 
+// AI tavsiya reytingi keshi — server restartidan keyin ham LLM chaqirmaslik uchun.
+// cache_key = sana + filtrlar; items — AiSuggestion[] JSON matni; TTL kod tarafda
+// (created_at bo'yicha) tekshiriladi.
+export const aiSuggestCacheTable = distribution.table("ai_suggest_cache", {
+  cacheKey: text("cache_key").primaryKey(),
+  items: text("items").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const insertDokonSchema = createInsertSchema(dokonlarTable).omit({ id: true });
 export type Dokon = typeof dokonlarTable.$inferSelect;
 export type DistSavdo = typeof savdolarTable.$inferSelect;

@@ -12,6 +12,7 @@ import {
 } from "./drift-utils";
 import {
   agentLocationsTable,
+  aiSuggestCacheTable,
   agentPlansTable,
   deliveryAgentsTable,
   deliveryRoutesTable,
@@ -60,6 +61,7 @@ const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 
 const TABLES = {
   agent_locations: agentLocationsTable,
+  ai_suggest_cache: aiSuggestCacheTable,
   agent_plans: agentPlansTable,
   delivery_agents: deliveryAgentsTable,
   delivery_routes: deliveryRoutesTable,

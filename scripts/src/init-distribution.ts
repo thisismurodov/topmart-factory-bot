@@ -200,6 +200,12 @@ CREATE TABLE IF NOT EXISTS distribution.dokon_location_log (
   created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_dokon_location_log_dokon ON distribution.dokon_location_log (dokon_id, created_at);
+
+CREATE TABLE IF NOT EXISTS distribution.ai_suggest_cache (
+  cache_key TEXT PRIMARY KEY,
+  items TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
 CREATE TABLE IF NOT EXISTS distribution.field_route_orders (
   id SERIAL PRIMARY KEY,
   delivery_agent_id BIGINT NOT NULL,

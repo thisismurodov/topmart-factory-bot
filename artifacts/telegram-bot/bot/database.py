@@ -1778,13 +1778,45 @@ def add_sale_product(name: str, code: str = "", unit: str = "dona", currency: st
 
 
 def delete_sale_product(name: str) -> bool:
-    """V3: unified products jadvalida active=false qiladi."""
+    """V3: unified products jadvalida active=false qiladi.
+
+    Mahsulot FAOL holatdan nofaolga o'tsa, biriktirilgan packer'lardan
+    birortasi bo'sh faol ro'yxat bilan qolgan-qolmaganini tekshirib,
+    adminlarga Telegram xabar yuboradi (best-effort, commit'dan keyin)."""
     with get_conn() as (conn, cur):
+        cur.execute("SELECT active FROM products WHERE name = %s", (name,))
+        row = cur.fetchone()
+        was_active = bool(row and row["active"])
         cur.execute(
             "UPDATE products SET active = false WHERE name = %s",
             (name,),
         )
-        return cur.rowcount > 0
+        changed = cur.rowcount > 0
+    if changed and was_active:
+        from bot.packer_alerts import notify_packers_left_without_products
+        notify_packers_left_without_products(name)
+    return changed
+
+
+def get_packers_left_without_products(product_name: str) -> list[str]:
+    """Shu mahsulot biriktirilgan va endi BITTA ham faol biriktirilgan
+    mahsuloti qolmagan packer nomlari (deaktivatsiyadan KEYIN chaqiriladi)."""
+    with get_conn() as (conn, cur):
+        cur.execute(
+            """SELECT DISTINCT pa.packer_name
+               FROM packer_product_assignments pa
+               WHERE pa.product_name = %s
+                 AND NOT EXISTS (
+                   SELECT 1
+                   FROM packer_product_assignments pa2
+                   JOIN products p ON p.name = pa2.product_name
+                   WHERE pa2.packer_name = pa.packer_name
+                     AND p.active = TRUE
+                 )
+               ORDER BY pa.packer_name""",
+            (product_name,),
+        )
+        return [r["packer_name"] for r in cur.fetchall()]
 
 
 # ── Debt / nasiya funksiyalari ─────────────────────────────────────────────

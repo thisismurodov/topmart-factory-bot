@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { pool } from "@workspace/db";
 import { getUsdToUzsRate } from "../lib/exchangeRate";
 import { uniqueProductSku } from "../lib/sku";
+import { notifyPackersLeftWithoutProducts } from "../lib/packerAlerts";
 
 // SKU orqali bog'langan savdo bot mahsulotiga narx/nom o'zgarishini uzatish.
 // narx faqat UZS mahsulotlarda sinxronlanadi (mahsulotlar.narx UZS'da).
@@ -350,6 +351,14 @@ router.patch("/products/:name", async (req, res): Promise<void> => {
 
   if (fields.length === 0) { res.status(400).json({ error: "No fields to update" }); return; }
 
+  // Deaktivatsiya packer'ni bo'sh ro'yxat bilan qoldirishini aniqlash uchun
+  // avvalgi holatni olamiz (takroriy active=false PATCH spam qilmasin).
+  let wasActive = false;
+  if (req.body.active === false) {
+    const prev = await pool.query(`SELECT active FROM products WHERE name=$1`, [productName]);
+    wasActive = prev.rows.length > 0 && prev.rows[0].active === true;
+  }
+
   // Og'irlik ledger himoyasi (izoh yuqorida — weightLedgerConflict).
   if (req.body.weight !== undefined && req.body.confirmWeightChange !== true) {
     const newWeight = Number(req.body.weight) > 0 ? Number(req.body.weight) : 1;
@@ -360,6 +369,13 @@ router.patch("/products/:name", async (req, res): Promise<void> => {
   vals.push(productName);
 
   await pool.query(`UPDATE products SET ${fields.join(",")} WHERE name=$${vals.length}`, vals);
+
+  // Mahsulot ENDI nofaol bo'ldi — biriktirilgan packer'lardan birortasi bo'sh
+  // faol ro'yxat bilan qolgan bo'lsa adminlarga Telegram xabar (best-effort,
+  // fire-and-forget — javobni kechiktirmaydi).
+  if (req.body.active === false && wasActive) {
+    void notifyPackersLeftWithoutProducts(productName);
+  }
   // Savdo katalogi sinxronizatsiyasi:
   //  - in_sales aniq o'zgartirilgan bo'lsa → to'liq sync (faollashtirish/o'chirish)
   //  - aks holda in_sales=TRUE mahsulotlar uchun ham to'liq sync

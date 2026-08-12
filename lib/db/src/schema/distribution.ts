@@ -1,4 +1,4 @@
-import { pgSchema, serial, text, integer, bigint, doublePrecision, uniqueIndex, index } from "drizzle-orm/pg-core";
+import { pgSchema, serial, text, integer, bigint, doublePrecision, timestamp, uniqueIndex, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -214,6 +214,23 @@ export const fieldOpsTable = distribution.table(
     createdAt: text("created_at"),
   },
   (t) => [uniqueIndex("uq_field_ops_client_op").on(t.clientOpId)],
+);
+
+// Do'kon GPS pin ko'chirish audit jurnali: kim, qachon, qayerdan qayerga.
+// Faqat API PATCH /distribution/shops/:id yozadi (dashboard pin drag/edit).
+export const dokonLocationLogTable = distribution.table(
+  "dokon_location_log",
+  {
+    id: serial("id").primaryKey(),
+    dokonId: bigint("dokon_id", { mode: "number" }).notNull(),
+    oldLatitude: doublePrecision("old_latitude"),
+    oldLongitude: doublePrecision("old_longitude"),
+    newLatitude: doublePrecision("new_latitude"),
+    newLongitude: doublePrecision("new_longitude"),
+    changedBy: text("changed_by").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("idx_dokon_location_log_dokon").on(t.dokonId, t.createdAt)],
 );
 
 export const insertDokonSchema = createInsertSchema(dokonlarTable).omit({ id: true });

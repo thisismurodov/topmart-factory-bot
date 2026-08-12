@@ -1024,7 +1024,8 @@ router.patch("/distribution/shops/:id", async (req, res): Promise<void> => {
   const params: unknown[] = [];
 
   if (body.latitude !== undefined || body.lat !== undefined) {
-    const raw = body.latitude ?? body.lat;
+    // ?? emas: null "koordinatani o'chirish" degani, uni yutib yubormaslik kerak
+    const raw = body.latitude !== undefined ? body.latitude : body.lat;
     if (raw === null) {
       params.push(null);
       sets.push(`latitude = $${params.length}`);
@@ -1040,7 +1041,7 @@ router.patch("/distribution/shops/:id", async (req, res): Promise<void> => {
   }
 
   if (body.longitude !== undefined || body.lng !== undefined) {
-    const raw = body.longitude ?? body.lng;
+    const raw = body.longitude !== undefined ? body.longitude : body.lng;
     if (raw === null) {
       params.push(null);
       sets.push(`longitude = $${params.length}`);
@@ -1068,54 +1069,85 @@ router.patch("/distribution/shops/:id", async (req, res): Promise<void> => {
   // o'zgartirib guard'ni chetlab o'tish mumkin bo'lardi.
   const newLatRaw = body.latitude ?? body.lat;
   const newLngRaw = body.longitude ?? body.lng;
-  if (body.confirmOutlier !== true && (newLatRaw != null || newLngRaw != null)) {
-    const shopQ = await pool.query(
-      `SELECT viloyat, latitude, longitude FROM distribution.dokonlar WHERE id = $1`,
+
+  // Butun o'qish→UPDATE→audit INSERT bitta tranzaksiyada, do'kon qatori
+  // FOR UPDATE bilan qulflanadi. Aks holda ikkita parallel PATCH bir xil
+  // "eski" koordinatani o'qib, audit zanjirini buzardi; yoki UPDATE'dan keyin
+  // INSERT yiqilsa pin auditsiz ko'chgan bo'lardi.
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    // Eski koordinata qulf ostida o'qiladi — audit jurnaliga (kim, qayerdan
+    // qayerga) yozish uchun. Outlier tekshiruvi ham shu qatordan foydalanadi.
+    const shopQ = await client.query(
+      `SELECT viloyat, latitude, longitude FROM distribution.dokonlar WHERE id = $1 FOR UPDATE`,
       [id],
     );
     if (shopQ.rows.length === 0) {
+      await client.query("ROLLBACK");
       res.status(404).json({ error: "Do'kon topilmadi" });
       return;
     }
     const row = shopQ.rows[0];
-    const finalLat = newLatRaw != null ? Number(newLatRaw) : (row.latitude != null ? Number(row.latitude) : null);
-    const finalLng = newLngRaw != null ? Number(newLngRaw) : (row.longitude != null ? Number(row.longitude) : null);
-    const distKm = await gpsOutlierKm(
-      pool,
-      row.viloyat as string | null,
-      finalLat,
-      finalLng,
-      id,
-    );
-    if (distKm != null) {
-      res.status(409).json({
-        error: "gps_outlier",
-        message: `Koordinata ${shopQ.rows[0].viloyat} dokonlari markazidan ~${Math.round(distKm)} km uzoqda — xato bo'lishi mumkin. Tasdiqlash uchun confirmOutlier: true bilan qayta yuboring.`,
-        distanceKm: Math.round(distKm),
-        thresholdKm: GPS_OUTLIER_KM,
-      });
-      return;
+    const oldLat = row.latitude != null ? Number(row.latitude) : null;
+    const oldLng = row.longitude != null ? Number(row.longitude) : null;
+    if (body.confirmOutlier !== true && (newLatRaw != null || newLngRaw != null)) {
+      const finalLat = newLatRaw != null ? Number(newLatRaw) : oldLat;
+      const finalLng = newLngRaw != null ? Number(newLngRaw) : oldLng;
+      const distKm = await gpsOutlierKm(
+        client,
+        row.viloyat as string | null,
+        finalLat,
+        finalLng,
+        id,
+      );
+      if (distKm != null) {
+        await client.query("ROLLBACK");
+        res.status(409).json({
+          error: "gps_outlier",
+          message: `Koordinata ${row.viloyat} dokonlari markazidan ~${Math.round(distKm)} km uzoqda — xato bo'lishi mumkin. Tasdiqlash uchun confirmOutlier: true bilan qayta yuboring.`,
+          distanceKm: Math.round(distKm),
+          thresholdKm: GPS_OUTLIER_KM,
+        });
+        return;
+      }
     }
-  }
 
-  params.push(id);
-  const upd = await pool.query(
-    `UPDATE distribution.dokonlar SET ${sets.join(", ")}
-     WHERE id = $${params.length}
-     RETURNING id, nomi, latitude, longitude`,
-    params
-  );
-  if (upd.rows.length === 0) {
-    res.status(404).json({ error: "Do'kon topilmadi" });
-    return;
+    params.push(id);
+    const upd = await client.query(
+      `UPDATE distribution.dokonlar SET ${sets.join(", ")}
+       WHERE id = $${params.length}
+       RETURNING id, nomi, latitude, longitude`,
+      params
+    );
+    const r = upd.rows[0];
+
+    // Audit jurnali: kim pinni ko'chirdi, qayerdan qayerga. Faqat koordinata
+    // haqiqatan o'zgargan bo'lsa yoziladi (bir xil qiymat bilan PATCH — shovqin emas).
+    const savedLat = r.latitude != null ? Number(r.latitude) : null;
+    const savedLng = r.longitude != null ? Number(r.longitude) : null;
+    if (savedLat !== oldLat || savedLng !== oldLng) {
+      await client.query(
+        `INSERT INTO distribution.dokon_location_log
+           (dokon_id, old_latitude, old_longitude, new_latitude, new_longitude, changed_by)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [id, oldLat, oldLng, savedLat, savedLng, req.username ?? "api"],
+      );
+    }
+
+    await client.query("COMMIT");
+    res.json({
+      id: r.id as number,
+      nomi: r.nomi as string | null,
+      latitude: savedLat,
+      longitude: savedLng,
+    });
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw e;
+  } finally {
+    client.release();
   }
-  const r = upd.rows[0];
-  res.json({
-    id: r.id as number,
-    nomi: r.nomi as string | null,
-    latitude: r.latitude != null ? Number(r.latitude) : null,
-    longitude: r.longitude != null ? Number(r.longitude) : null,
-  });
 });
 
 // ── Do'kon tafsiloti (drawer uchun) ─────────────────────────────────────────────
@@ -1145,7 +1177,7 @@ router.get("/distribution/shops/:id", async (req, res): Promise<void> => {
   }
   const s = shopQ.rows[0];
 
-  const [salesQ, paymentsQ, debtsQ, visitsQ] = await Promise.all([
+  const [salesQ, paymentsQ, debtsQ, visitsQ, locLogQ] = await Promise.all([
     pool.query(
       `SELECT s.id, s.created_at, s.jami_summa, s.tolov_turi,
               u.name AS agent_name,
@@ -1184,6 +1216,16 @@ router.get("/distribution/shops/:id", async (req, res): Promise<void> => {
          LEFT JOIN distribution.users u ON u.telegram_id = o.agent_id
         WHERE o.dokon_id = $1
         ORDER BY o.id DESC
+        LIMIT 10`,
+      [id]
+    ),
+    // Pin ko'chirish tarixi (kim, qachon, qayerdan qayerga)
+    pool.query(
+      `SELECT l.id, l.old_latitude, l.old_longitude, l.new_latitude, l.new_longitude,
+              l.changed_by, l.created_at
+         FROM distribution.dokon_location_log l
+        WHERE l.dokon_id = $1
+        ORDER BY l.created_at DESC, l.id DESC
         LIMIT 10`,
       [id]
     ),
@@ -1235,6 +1277,15 @@ router.get("/distribution/shops/:id", async (req, res): Promise<void> => {
       qaytishSanasi: r.qaytish_sanasi,
       bajarildi: r.bajarildi,
       agentName: r.agent_name,
+    })),
+    locationChanges: locLogQ.rows.map((r) => ({
+      id: r.id,
+      oldLatitude: r.old_latitude != null ? Number(r.old_latitude) : null,
+      oldLongitude: r.old_longitude != null ? Number(r.old_longitude) : null,
+      newLatitude: r.new_latitude != null ? Number(r.new_latitude) : null,
+      newLongitude: r.new_longitude != null ? Number(r.new_longitude) : null,
+      changedBy: r.changed_by,
+      createdAt: r.created_at,
     })),
   });
 });

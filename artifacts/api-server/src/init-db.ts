@@ -436,6 +436,29 @@ export async function initDb(): Promise<void> {
     }
   }
 
+  // ── Distribution: do'kon pin ko'chirish audit jurnali ────────────────────
+  // PATCH /distribution/shops/:id shu jadvalga yozadi. Kanonik DDL uch joyda
+  // (bot connection.py, init-distribution.ts, Drizzle mirror) — bu nusxa API
+  // cold-start da (distribution init hali ishlamagan bo'lsa) mavjudligini
+  // kafolatlaydi. Idempotent va drift-check bilan bir xil ta'rif.
+  await pool.query(`CREATE SCHEMA IF NOT EXISTS distribution`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS distribution.dokon_location_log (
+      id SERIAL PRIMARY KEY,
+      dokon_id BIGINT NOT NULL,
+      old_latitude DOUBLE PRECISION,
+      old_longitude DOUBLE PRECISION,
+      new_latitude DOUBLE PRECISION,
+      new_longitude DOUBLE PRECISION,
+      changed_by TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_dokon_location_log_dokon
+      ON distribution.dokon_location_log (dokon_id, created_at)
+  `);
+
   // Admin userni seed qilish (mavjud bo'lmasa)
   const existing = await db.select().from(adminUsersTable).where(eq(adminUsersTable.username, "thisismurodov"));
   if (existing.length === 0) {

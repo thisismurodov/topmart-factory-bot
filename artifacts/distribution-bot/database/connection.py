@@ -265,6 +265,14 @@ CREATE TABLE IF NOT EXISTS distribution.field_ops (
     op_type TEXT NOT NULL, dokon_id BIGINT, result_id BIGINT, created_at TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_field_ops_client_op ON distribution.field_ops (client_op_id);
+CREATE TABLE IF NOT EXISTS distribution.dokon_location_log (
+    id SERIAL PRIMARY KEY, dokon_id BIGINT NOT NULL,
+    old_latitude DOUBLE PRECISION, old_longitude DOUBLE PRECISION,
+    new_latitude DOUBLE PRECISION, new_longitude DOUBLE PRECISION,
+    changed_by TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_dokon_location_log_dokon ON distribution.dokon_location_log (dokon_id, created_at);
 """
 
 

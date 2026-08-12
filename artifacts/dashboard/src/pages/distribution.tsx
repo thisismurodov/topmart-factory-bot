@@ -192,6 +192,11 @@ type ShopDetail = Shop & {
   recentPayments: { id: number; createdAt: string | null; summa: number; agentName: string | null }[];
   openDebts: { id: number; total: number; paid: number; remaining: number; updatedAt: string | null }[];
   recentVisits: { id: number; createdAt: string | null; sabab: string | null; sababText: string | null; qaytishSanasi: string | null; bajarildi: number | null; agentName: string | null }[];
+  locationChanges: {
+    id: number; oldLatitude: number | null; oldLongitude: number | null;
+    newLatitude: number | null; newLongitude: number | null;
+    changedBy: string | null; createdAt: string | null;
+  }[];
 };
 type RoutesData = {
   kun: number; kunlar: string[];
@@ -546,6 +551,34 @@ function ShopDrawer({ shopId, onClose }: { shopId: number | null; onClose: () =>
 
             {/* GPS joylashuv — ko'rish va tahrirlash */}
             <ShopLocationEditor shopId={data.id} latitude={data.latitude} longitude={data.longitude} />
+
+            {/* Joylashuv o'zgarishlari tarixi (kim pinni ko'chirdi) */}
+            {(data.locationChanges ?? []).length > 0 && (
+              <div>
+                <div className="text-sm font-semibold mb-2 flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5" /> Joylashuv o'zgarishlari</div>
+                <div className="space-y-1.5">
+                  {data.locationChanges.map((c) => (
+                    <div key={c.id} className="border rounded-md p-2.5 text-xs space-y-0.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-muted-foreground">{fmtDateTime(c.createdAt)}</span>
+                        <span className="font-medium">{c.changedBy || "—"}</span>
+                      </div>
+                      <div className="text-muted-foreground">
+                        {c.oldLatitude !== null && c.oldLongitude !== null
+                          ? `${c.oldLatitude.toFixed(6)}, ${c.oldLongitude.toFixed(6)}`
+                          : "(koordinata yo'q)"}
+                        {" → "}
+                        <span className="text-foreground font-medium">
+                          {c.newLatitude !== null && c.newLongitude !== null
+                            ? `${c.newLatitude.toFixed(6)}, ${c.newLongitude.toFixed(6)}`
+                            : "(o'chirildi)"}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Yo'l ko'rsatish (navigatsiya) */}
             {data.latitude !== null && data.longitude !== null && (

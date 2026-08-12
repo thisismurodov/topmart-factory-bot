@@ -307,6 +307,17 @@ function ProductsTab({ packer, allProducts }: { packer: Packer; allProducts: Pro
         )}
       </div>
 
+      {selected.size === 0 && (
+        <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+          Hech biri tanlanmasa — cheklov olib tashlanadi va packer botda barcha faol mahsulotlarni ko'radi.
+        </p>
+      )}
+
+      {saveMut.error && (
+        <p className="text-xs text-destructive">{(saveMut.error as Error).message}</p>
+      )}
+
       <div className="flex items-center justify-between pt-1 border-t">
         <p className="text-xs text-muted-foreground">{selected.size} ta tanlangan · {allProducts.length} ta jami</p>
         <Button size="sm" onClick={() => saveMut.mutate({ packerName: packer.packerName, productNames: Array.from(selected) }, { onSuccess: () => setDirty(false) })} disabled={!dirty || saveMut.isPending} className={dirty ? "" : "opacity-50"}>

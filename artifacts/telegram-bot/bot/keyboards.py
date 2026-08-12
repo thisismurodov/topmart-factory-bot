@@ -104,6 +104,14 @@ def weight_confirm_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
+def stock_confirm_keyboard() -> InlineKeyboardMarkup:
+    """Xom ashyo yetishmasa: baribir davom etish yoki bekor qilish."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Baribir davom etish", callback_data="stock_ok")],
+        [InlineKeyboardButton("❌ Bekor qilish",        callback_data="cancel")],
+    ])
+
+
 def batch_cart_keyboard() -> InlineKeyboardMarkup:
     """Har bir mahsulot qo'shilgandan keyingi sessiya tugmalari."""
     return InlineKeyboardMarkup([

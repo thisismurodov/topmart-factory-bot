@@ -17,6 +17,24 @@ class WipBalanceError(Exception):
     """Bo'limda yetarli xom ashyo yo'q (PRODUCE > RECEIVE − PRODUCE)."""
 
 
+class RawStockError(Exception):
+    """Xom ashyo zahirasi (current_stock) BOM talabidan kam.
+
+    shortages: [{"name", "unit", "required", "available"}] — yetishmayotgan
+    xom ashyolar. Operator tasdiqlasa create_batch_session
+    allow_negative_stock=True bilan qayta chaqiriladi.
+    """
+
+    def __init__(self, shortages: list[dict]):
+        self.shortages = shortages
+        lines = "\n".join(
+            f"• {s['name']}: kerak {s['required']:g} {s['unit']}, "
+            f"mavjud {s['available']:g} {s['unit']}"
+            for s in shortages
+        )
+        super().__init__(f"Xom ashyo zahirasi yetarli emas:\n{lines}")
+
+
 def _connect_with_retry() -> psycopg2.extensions.connection:
     """psycopg2.connect + exponential backoff (1 2 4 8 16 s)."""
     delay = 1
@@ -1141,7 +1159,8 @@ def next_batch_code(worker_prefix: str) -> str:
 
 
 def create_batch_session(
-    worker: str, prefix: str, items: list[dict], warehouse_id: int | None = None
+    worker: str, prefix: str, items: list[dict], warehouse_id: int | None = None,
+    allow_negative_stock: bool = False,
 ) -> dict:
     """Bitta sessiya = bitta batch_code ostida bir nechta mahsulot (batch items).
 
@@ -1190,6 +1209,44 @@ def create_batch_session(
         )
         _lrow = cur.fetchone()
         producer_line_id = _lrow["line_id"] if _lrow else None
+
+        # ── Xom ashyo zahirasi tekshiruvi (ayirishdan OLDIN) ─────────────
+        # Sessiya bo'yicha jami BOM talabini xom ashyo kesimida yig'amiz va
+        # current_stock bilan solishtiramiz. Yetmasa RawStockError — hech narsa
+        # yozilmaydi (tranzaksiya bekor). Operator tasdiqlasa
+        # allow_negative_stock=True bilan qayta chaqiriladi.
+        required_by_id: dict[int, float] = {}
+        for it in items:
+            cur.execute(
+                "SELECT raw_material_id, quantity_required FROM product_materials WHERE product_name=%s",
+                (it["product"],),
+            )
+            for req in cur.fetchall():
+                rid = int(req["raw_material_id"])
+                required_by_id[rid] = required_by_id.get(rid, 0.0) + \
+                    float(req["quantity_required"]) * int(it["quantity"])
+        if required_by_id:
+            # Qatorlarni qulflaymiz — parallel sessiya bir vaqtda ayirib,
+            # tekshiruvdan keyin baribir minusga tushirishining oldini oladi.
+            cur.execute(
+                """SELECT id, name, unit, COALESCE(current_stock, 0) AS current_stock
+                   FROM raw_materials WHERE id = ANY(%s)
+                   ORDER BY id FOR UPDATE""",
+                (list(required_by_id.keys()),),
+            )
+            shortages = []
+            for rm in cur.fetchall():
+                need = required_by_id.get(int(rm["id"]), 0.0)
+                have = float(rm["current_stock"] or 0)
+                if need > have + 1e-9:
+                    shortages.append({
+                        "name":      rm["name"],
+                        "unit":      rm["unit"] or "",
+                        "required":  need,
+                        "available": have,
+                    })
+            if shortages and not allow_negative_stock:
+                raise RawStockError(shortages)
 
         line_entries: list[dict] = []  # Xabarnoma uchun: [{worker, role, amount}]
 

@@ -7,18 +7,20 @@ from telegram.ext import (
 from ..keyboards import (
     workers_inline_keyboard, products_inline_keyboard, cancel_keyboard,
     main_menu_keyboard, packer_menu_keyboard, weight_confirm_keyboard,
-    batch_cart_keyboard, containers_inline_keyboard,
+    batch_cart_keyboard, containers_inline_keyboard, stock_confirm_keyboard,
 )
 from ..database import (
     create_batch_session, get_worker_chat_id, get_workers,
     get_products, get_product_weight, get_user_role, get_worker_monthly,
     get_product_method, get_containers, get_product_pieces_per_box,
-    get_worker_production_role, WipBalanceError, get_line_wip_balance,
+    get_worker_production_role, WipBalanceError, RawStockError,
+    get_line_wip_balance,
 )
 from ..config import calc_earnings, SUPERADMIN_CHAT_ID
 from ..label_generator import generate_batch_session_pdf
 
-CHOOSE_WORKER, CHOOSE_PRODUCT, ENTER_QUANTITY, ENTER_WEIGHT, AFTER_ITEM, CHOOSE_CONTAINER = range(6)
+(CHOOSE_WORKER, CHOOSE_PRODUCT, ENTER_QUANTITY, ENTER_WEIGHT,
+ AFTER_ITEM, CHOOSE_CONTAINER, CONFIRM_STOCK) = range(7)
 
 # Profil og'irligidan ruxsat etilgan chetlanish (±kg)
 WEIGHT_TOLERANCE_KG = 0.2
@@ -339,7 +341,26 @@ async def _finalize(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     wh_name      = context.user_data.get("warehouse_name", "")
 
     try:
-        result = create_batch_session(worker, prefix, items, warehouse_id=warehouse_id)
+        result = create_batch_session(
+            worker, prefix, items, warehouse_id=warehouse_id,
+            allow_negative_stock=context.user_data.get("allow_negative_stock", False),
+        )
+    except RawStockError as e:
+        # Zahira yetmasa — ayirish bajarilmadi (tranzaksiya bekor). Operator
+        # ogohlantirishni ko'radi va davom etish yoki bekor qilishni tanlaydi.
+        lines = "\n".join(
+            f"• {s['name']}: kerak *{s['required']:g} {s['unit']}*, "
+            f"mavjud *{s['available']:g} {s['unit']}*"
+            for s in e.shortages
+        )
+        await message.reply_text(
+            f"⚠️ *Xom ashyo zahirasi yetarli emas!*\n\n{lines}\n\n"
+            f"Davom etilsa zahira *minusga* tushadi. "
+            f"Baribir davom etasizmi yoki bekor qilasizmi?",
+            parse_mode="Markdown",
+            reply_markup=stock_confirm_keyboard(),
+        )
+        return CONFIRM_STOCK
     except WipBalanceError as e:
         await message.reply_text(
             f"❌ *Partiya yaratilmadi!*\n\n{e}",
@@ -534,6 +555,18 @@ async def _notify_line_workers(
             pass
 
 
+async def confirm_stock_shortage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """[✅ Baribir davom etish] — zahira minusga tushishiga rozilik bilan saqlash."""
+    query = update.callback_query
+    await query.answer()
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    context.user_data["allow_negative_stock"] = True
+    return await _finalize(update, context)
+
+
 async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -579,6 +612,10 @@ def build_conversation_handler() -> ConversationHandler:
             ],
             CHOOSE_CONTAINER: [
                 CallbackQueryHandler(choose_container, pattern=r"^container:"),
+                CallbackQueryHandler(cancel_callback, pattern=r"^cancel$"),
+            ],
+            CONFIRM_STOCK: [
+                CallbackQueryHandler(confirm_stock_shortage, pattern=r"^stock_ok$"),
                 CallbackQueryHandler(cancel_callback, pattern=r"^cancel$"),
             ],
         },

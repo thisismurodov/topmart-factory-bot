@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import { pool } from "@workspace/db";
+import { actingUser } from "./ombor";
 
 const router: IRouter = Router();
 
@@ -57,7 +58,7 @@ router.get("/inventory/summary", async (_req, res): Promise<void> => {
 
 /* ── POST /inventory/movement  — IN / OUT / TRANSFER ── */
 router.post("/inventory/movement", async (req, res): Promise<void> => {
-  const { product, quantity, movement_type, from_warehouse_id, to_warehouse_id, note, created_by } = req.body ?? {};
+  const { product, quantity, movement_type, from_warehouse_id, to_warehouse_id, note } = req.body ?? {};
 
   if (!product || !quantity || !movement_type) {
     res.status(400).json({ error: "product, quantity, movement_type majburiy" });
@@ -83,7 +84,7 @@ router.post("/inventory/movement", async (req, res): Promise<void> => {
        VALUES ($1,$2,$3,$4,$5,$6,$7)`,
       [product, qty, movement_type,
         from_warehouse_id ?? null, to_warehouse_id ?? null,
-        note ?? "", created_by ?? ""]
+        note ?? "", actingUser(req)]
     );
 
     // Update inventory

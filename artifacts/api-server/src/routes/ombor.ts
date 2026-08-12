@@ -12,7 +12,7 @@ const router: IRouter = Router();
 // so corrections record the real operator instead of the generic "bot".
 // A session user (req.username) always wins, so the body field cannot be used
 // to spoof an authenticated dashboard actor.
-function actingUser(req: { username?: string; body?: { operator?: unknown } }): string {
+export function actingUser(req: { username?: string; body?: { operator?: unknown } }): string {
   if (req.username) return req.username;
   const op = req.body?.operator;
   if (typeof op === "string" && op.trim().length > 0) return op.trim();

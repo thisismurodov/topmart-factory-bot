@@ -263,6 +263,7 @@ beforeAll(async () => {
   app.use(pinoHttp({ logger }));
   app.use(express.json());
   app.use(routerMod.default);
+  app.use(routerMod.distributionSuggestionsRouter);
   await new Promise<void>((resolve) => {
     server = app.listen(0, "127.0.0.1", resolve);
   });

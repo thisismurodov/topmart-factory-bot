@@ -33,6 +33,12 @@ if not FIELD_APP_URL:
     if _dev_domain:
         FIELD_APP_URL = f"https://{_dev_domain}/field/"
 
+# Node API manzili — AI tavsiyalar endpoint'i (GET /distribution/suggestions?ai=1)
+# shu API orqali chaqiriladi (server 10 daqiqalik LLM keshiga ega). Railway'da
+# API_BASE_URL + AI_INTERNAL_KEY env o'rnatiladi; Replit dev'da localhost fallback.
+API_BASE_URL = os.environ.get("API_BASE_URL", "").strip() or "http://localhost:80/api"
+AI_INTERNAL_KEY = os.environ.get("AI_INTERNAL_KEY", "").strip()
+
 import logging
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -1011,6 +1017,66 @@ def mening_rejam(msg):
             text+=f"\n💪 Kuniga kerak: {fmt(int(per_day))}"
     bot.send_message(uid,text)
 
+# ── AI tavsiyalar (agent/supervisor) ───────────────────────────────────────────
+# Node API'dagi GET /distribution/suggestions?ai=1&agentId=... qayta ishlatiladi —
+# server LLM natijasini 10 daqiqa keshlaydi, shuning uchun bot yangi LLM chaqiruvi
+# yaratmaydi. AI xato bo'lsa (ai=null) — javobdagi rule-based ro'yxatlar (overdue,
+# qaytish) ko'rsatiladi. API umuman ishlamasa — to'g'ridan-to'g'ri DB'dan oddiy
+# kechikkanlar ro'yxati (lost dokons hisoboti) yuboriladi.
+def _fetch_ai_suggestions(agent_id):
+    import json as _json
+    import urllib.request
+    url = API_BASE_URL.rstrip("/") + f"/distribution/suggestions?ai=1&agentId={agent_id}"
+    req = urllib.request.Request(url, headers={
+        "Accept": "application/json",
+        **({"x-internal-key": AI_INTERNAL_KEY} if AI_INTERNAL_KEY else {}),
+    })
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        return _json.loads(resp.read().decode("utf-8"))
+
+@bot.message_handler(func=lambda m:m.text=="🤖 AI tavsiyalar")
+def ai_tavsiyalar(msg):
+    uid=msg.from_user.id; user=get_user(uid)
+    if not user or user[3] not in ("agent","supervisor"): return
+    bot.send_message(uid,"🤖 AI tavsiyalar tayyorlanmoqda... (10-20 soniya)")
+    try:
+        body=_fetch_ai_suggestions(uid)
+    except Exception as e:
+        log.warning("AI suggestions API failed for %s: %s", uid, e)
+        # API ishlamasa — jimgina oddiy DB-asosli ro'yxat (yo'qolayotgan dokonlar)
+        text,_=_build_lost_dokons_report(scope_agent_id=uid)
+        bot.send_message(uid,"ℹ️ AI hozircha mavjud emas — oddiy ro'yxat:\n\n"+text)
+        return
+    ai=body.get("ai")
+    if ai:
+        lines=[f"🤖 AI TAVSIYALAR — bugun birinchi kirish kerak\n{'━'*26}"]
+        for i,it in enumerate(ai[:10],1):
+            nomi=it.get("nomi") or "—"
+            hudud=it.get("hudud") or ""
+            score=it.get("score",0)
+            reason=(it.get("reason") or "").strip()
+            loc=f" ({hudud})" if hudud else ""
+            lines.append(f"\n{i}. 🏪 {nomi}{loc} — {score}/100\n   💬 {reason}")
+        bot.send_message(uid,"\n".join(lines))
+        return
+    # AI xato/fallback (ai=null) — rule-based ro'yxatlar (o'sha javobdan)
+    overdue=body.get("overdue") or []
+    qaytish=body.get("qaytish") or []
+    text=f"📋 BUGUNGI TAVSIYALAR (oddiy)\n{'━'*26}\n"
+    if overdue:
+        text+="\n⏰ Kechikkan do'konlar:\n"
+        for o in overdue[:10]:
+            days=o.get("days"); avg=o.get("avgRepeatDays") or 0
+            cad=f", odatda {avg} kunda oladi" if avg else ""
+            text+=f"• {o.get('nomi') or '—'} — {days} kun xarid yo'q{cad}\n"
+    if qaytish:
+        text+="\n📅 Qaytish sanasi kelganlar:\n"
+        for q in qaytish[:10]:
+            text+=f"• {q.get('nomi') or '—'} — va'da: {q.get('qaytishSanasi') or '—'}\n"
+    if not overdue and not qaytish:
+        text+="\n✅ Hozircha shoshilinch do'kon yo'q. Marshrut bo'yicha davom eting!"
+    bot.send_message(uid,text)
+
 @bot.message_handler(func=lambda m:m.text=="🎯 Reja boshqaruv")
 def reja_boshqaruv(msg):
     uid=msg.from_user.id
@@ -1143,7 +1209,7 @@ def main_kb(role):
         kb.add("📋 Qaytib kirish kerak","💳 Nasiya boshqaruv")
         kb.add("🔍 Qidiruv")
     if role in("agent","supervisor"):
-        kb.add("🎯 Mening rejam")
+        kb.add("🎯 Mening rejam","🤖 AI tavsiyalar")
     if role in("supervisor","admin"): kb.add("👥 Agentlar statistikasi")
     if role=="admin":
         kb.add("📈 Umumiy stat","🛍 Mahsulotlar")

@@ -2647,7 +2647,12 @@ async function rankWithAi(cacheKey: string, candidates: AiCandidate[]): Promise<
 //   overdue — oxirgi xariddan beri odatdagidan ko'p vaqt o'tgan do'konlar (30+ kun)
 //   qaytish — olmagan_dokonlar.qaytish_sanasi <= bugun va bajarildi NULL (yoki 0)
 // agentId/viloyat/hudud filtrlari qo'llanadi.
-router.get("/distribution/suggestions", async (req, res): Promise<void> => {
+// ALOHIDA router: bu endpoint dashboard (Bearer session) BILAN BIRGA savdo bot
+// (x-internal-key) tomonidan ham chaqiriladi — index.ts'da requireAuthOrInternalKey
+// bilan auth wall'dan OLDIN mount qilinadi. 10 daqiqalik AI kesh ikkala mijoz
+// uchun umumiy (cacheKey — sana + filtrlar).
+export const distributionSuggestionsRouter: IRouter = Router();
+distributionSuggestionsRouter.get("/distribution/suggestions", async (req, res): Promise<void> => {
   const f = parseFilters(req);
 
   const dQ = await pool.query(

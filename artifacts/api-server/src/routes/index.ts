@@ -24,7 +24,7 @@ import productMaterialsRouter from "./product-materials";
 import packerProductAssignmentsRouter from "./packer-product-assignments";
 import omborRouter from "./ombor";
 import auditRouter from "./audit";
-import distributionRouter from "./distribution";
+import distributionRouter, { distributionSuggestionsRouter } from "./distribution";
 import fieldRouter from "./field";
 
 const router: IRouter = Router();
@@ -46,6 +46,10 @@ router.use(requireAuthOrInternalKey, aiRouter);
 // ── Ombor routes — Bearer session (dashboard) OR x-internal-key (bot) ─────────
 // Bot needs container correction (POST /ombor/adjust); dashboard still uses session.
 router.use(requireAuthOrInternalKey, omborRouter);
+
+// ── Savdo tavsiyalari — Bearer session (dashboard) OR x-internal-key (savdo bot)
+// Savdo bot agentlarga kun boshida AI tavsiyalarni ko'rsatadi (?ai=1&agentId=...).
+router.use(requireAuthOrInternalKey, distributionSuggestionsRouter);
 
 // ── Auth wall: everything below requires a valid session ──────────────────────
 router.use(requireAuth);

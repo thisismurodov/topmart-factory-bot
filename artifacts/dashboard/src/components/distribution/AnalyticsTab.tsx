@@ -46,7 +46,20 @@ type AgentKmData = {
     avgKmPerDay: number | null;
     kmPerSale: number | null;
   }[];
+  daily: {
+    date: string;
+    agentId: string;
+    agentName: string | null;
+    km: number;
+    salesCount: number;
+  }[];
 };
+
+// Agent chiziqlari uchun ranglar (takrorlansa aylanadi)
+const AGENT_COLORS = [
+  "#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#7c3aed",
+  "#0891b2", "#db2777", "#65a30d", "#9333ea", "#ea580c",
+];
 
 const fmtSom = (n: number) => `${Math.round(n).toLocaleString("uz-UZ")} so'm`;
 const fmtKm = (n: number | null) => (n == null ? "—" : `${n.toLocaleString("uz-UZ")} km`);
@@ -153,6 +166,27 @@ export default function AnalyticsTab({ qs, active }: { qs: string; active: boole
 
   const k = data.kpi;
   const chart = data.daily.map((d) => ({ ...d, kun: shortDay(d.date) }));
+
+  // km trend: kunlar bo'yicha pivot — har agent alohida chiziq
+  const kmAgents = (kmData?.agents ?? []).map((a) => ({
+    id: a.agentId,
+    name: a.agentName ?? `ID ${a.agentId}`,
+  }));
+  const kmTrend = (() => {
+    if (!kmData?.daily?.length) return [] as Record<string, unknown>[];
+    const byDate = new Map<string, Record<string, unknown>>();
+    for (const d of kmData.daily) {
+      let row = byDate.get(d.date);
+      if (!row) {
+        row = { date: d.date, kun: shortDay(d.date) };
+        byDate.set(d.date, row);
+      }
+      row[`a${d.agentId}`] = d.km;
+    }
+    return [...byDate.values()].sort((x, y) =>
+      String(x.date).localeCompare(String(y.date))
+    );
+  })();
 
   return (
     <div className="p-4 space-y-4">
@@ -293,6 +327,41 @@ export default function AnalyticsTab({ qs, active }: { qs: string; active: boole
                   <div className="text-lg font-bold">{fmtKm(kmData.summary.kmPerSale)}</div>
                 </div>
               </div>
+              {kmTrend.length > 0 && (
+                <div>
+                  <div className="text-xs text-muted-foreground mb-1.5">
+                    Kunlik km dinamikasi (agent bo'yicha)
+                  </div>
+                  <div className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ComposedChart data={kmTrend} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                        <XAxis dataKey="kun" tick={{ fontSize: 11 }} />
+                        <YAxis tick={{ fontSize: 11 }} unit=" km" width={60} />
+                        <Tooltip
+                          formatter={(value: number | string, name: string) => [
+                            `${Number(value).toLocaleString("uz-UZ")} km`,
+                            name,
+                          ]}
+                        />
+                        <Legend wrapperStyle={{ fontSize: 12 }} />
+                        {kmAgents.map((a, i) => (
+                          <Line
+                            key={a.id}
+                            type="monotone"
+                            dataKey={`a${a.id}`}
+                            name={a.name}
+                            stroke={AGENT_COLORS[i % AGENT_COLORS.length]}
+                            strokeWidth={2}
+                            dot={{ r: 2.5 }}
+                            connectNulls
+                          />
+                        ))}
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              )}
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>

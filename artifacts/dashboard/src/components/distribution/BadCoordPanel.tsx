@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MapPin, AlertTriangle, CheckCircle, ChevronDown, ChevronRight, Loader2, Edit2, X } from "lucide-react";
 import RoutePlanDialog from "@/components/distribution/RoutePlanDialog";
+import LocationMapPicker from "@/components/distribution/LocationMapPicker";
 
 // Koordinatasi yo'q yoki shubhali do'konlar ro'yxati + GPS tahrirlash.
 // "Qayta rejalash" tugmasi RoutePlanDialog'ni ochadi.
@@ -146,6 +147,16 @@ function EditRow({
 
       {editing && (
         <div className="mt-1.5 flex flex-wrap items-start gap-2 pl-5">
+          {/* Mini-xarita: pinni sudrab yoki bosib joyni belgilash */}
+          <LocationMapPicker
+            lat={lat}
+            lng={lng}
+            onChange={(la, ln) => { setLat(la); setLng(ln); }}
+            className="h-48 w-full rounded-md overflow-hidden border z-0"
+          />
+          <p className="w-full text-[11px] text-muted-foreground">
+            Pinni sudrab yoki xaritani bosib joyni belgilang — yoki aniq koordinatani kiriting
+          </p>
           <div className="flex flex-col gap-1">
             <label className="text-[10px] text-muted-foreground">Latitude</label>
             <Input
@@ -208,9 +219,6 @@ function EditRow({
               </div>
             </div>
           )}
-          <div className="w-full text-[10px] text-muted-foreground">
-            Google Maps'da do'kon pinini o'ng bosing → "Bu yerning koordinatlari" → nusxalang
-          </div>
         </div>
       )}
     </div>

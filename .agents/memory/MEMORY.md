@@ -13,7 +13,7 @@
 - [Dashboard touch ergonomics](dashboard-touch-ergonomics.md) — iPad touch tweaks gated on @media (any-pointer: coarse), not pointer:coarse (iPad+trackpad reports fine); inputs need 16px to stop iOS zoom.
 - [gpt-5 empty completion output](gpt5-empty-output.md) — gpt-5* spend max_completion_tokens on reasoning first; small budget → empty content (200 OK). Fix: reasoning_effort:minimal + bigger budget.
 - [Env vars vs secrets](env-vars-vs-secrets.md) — setEnvVars writes to tracked .replit; credentials (incl. self-generated shared keys) must use requestEnvVar→Secrets store, not env.
-- [Container inventory weight derivation](container-inventory-weight.md) — inventory table holds quantity only (no weight); sales never decrement it; derive kg for kg-products via batch ratio SUM(weight_kg)/SUM(quantity).
+- [Container inventory weight](container-inventory-weight.md) — inventory stores quantity+weight_kg; dashboard sales DO decrement it (largest-stock-first, negative fallback); stock = inventory, never batches−sales.
 - [Material Flow two-step WIP](material-flow-wip.md) — dept WIP = SUM(RECEIVE)−SUM(PRODUCE) over wip_movements ledger only; raw-in is the single entry point that syncs container inventory + raw_materials.
 - [Distribution bot integration](distribution-integration.md) — SQLite bot folded into monorepo on central Postgres `distribution` schema via psycopg2 shim; watch SQLite→PG GROUP BY strictness + GROUP_CONCAT.
 - [Dual init schema (bot + API)](dual-init-schema.md) — any table written at runtime must be CREATEd in BOTH bot init_db (py) and API initDb (ts), or fresh DBs crash (sale_items did).

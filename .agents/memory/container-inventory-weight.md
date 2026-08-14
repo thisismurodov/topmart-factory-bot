@@ -38,9 +38,8 @@ or it would overwrite real post-transfer weights with derived values.
 **Not touched:** `/ombor/finished-goods (cross-warehouse aggregate)` never derived weight;
 left as-is to avoid overlapping the separate "stock value correct everywhere" task.
 
-**How to apply:** if exact per-container mass ever becomes business-critical (manual
-adjustments, changing pack weights over time), THEN add `inventory.weight_kg` and update
-all mutation paths. Until then, the batch-ratio derivation is the agreed approach.
+**How to apply:** `weight_kg` is live — any new mutation path (new receive/transfer/sale
+flow) must maintain it alongside `quantity`, or per-container mass goes stale.
 
 ## Current finished-goods stock = inventory table, NOT batches − sales
 
@@ -49,11 +48,16 @@ dashboards, "omborda X" / "ishlab chiqarish kerak" alerts), read the `inventory`
 `SUM(quantity) WHERE quantity > 0` across all warehouses. Do NOT derive it as
 all-time produced (`batches`) minus all-time sold (`sales`).
 
-**Why:** sales never decrement `inventory`, and stock also moves via transfers / manual OUT.
-`batches − sales` therefore diverges badly: it reported many products with real container
-stock (e.g. Qop ip ~9240, Reja ip ~3680) as `omborda 0`, generating false "produce now"
-alerts. The bot (`get_stock_by_warehouse`) and Ombor dashboard both already use
-`inventory` with a `quantity > 0` filter — the AI report must match the same source.
+**Why:** stock moves via transfers / manual OUT / adjustments, and sales made before the
+sale-deduction feature never decremented `inventory` — so `batches − sales` diverges badly
+(reported products with real container stock as `omborda 0`, false "produce now" alerts).
+The bot (`get_stock_by_warehouse`) and Ombor dashboard both read `inventory` with a
+`quantity > 0` filter — every consumer must match that source.
+
+**Update (2026-08):** dashboard sales now DO decrement `inventory`, atomically inside the
+sale transaction — largest-stock warehouse first; any shortfall is written as a negative
+balance on the primary warehouse (overselling stays visible), movement note `Savdo #id`.
+This makes `inventory` more authoritative, not less — the rule stands.
 
 **The `quantity > 0` filter matters:** general warehouses can carry phantom *negative*
 balances (e.g. Arqon −235 in "Namangan Markaziy Ombor" while container C-05 has +50).

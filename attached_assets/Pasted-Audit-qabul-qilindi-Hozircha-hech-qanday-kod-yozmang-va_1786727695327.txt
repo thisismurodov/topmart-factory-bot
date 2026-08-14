@@ -1,0 +1,78 @@
+Audit qabul qilindi.
+
+Hozircha hech qanday kod yozmang va bazaga o‘zgartirish kiritmang.
+
+Audit natijasidagi architecture yo‘nalishini tasdiqlayman:
+
+1. Universal Item/SKU modeli — HA.
+2. Raw / Intermediate / Finished ni mahsulot identitysi emas, inventory/process state sifatida ko‘ramiz.
+3. Xomashyo ham sotilishi mumkin.
+4. Intermediate material ham sotilishi mumkin.
+5. Xomashyo transformation orqali boshqa SKUga aylanishi mumkin.
+6. Bitta material bir nechta BOMda ishlatilishi mumkin.
+7. Hybrid BOM qo‘llab-quvvatlanadi.
+8. Purchased product BOMsiz bo‘lishi mumkin.
+9. Manufactured product active BOMsiz ishlab chiqarilmasligi kerak.
+10. BOM product name bilan emas, immutable SKU ID bilan bog‘lanadi.
+11. SKU va Batch alohida entity bo‘ladi.
+12. Raw container va Finished container mustaqil bo‘ladi.
+13. WIP alohida inventory/process balance sifatida qoladi.
+14. Production transaction atomic bo‘ladi.
+15. Inventory truth ledger/container/WIP movementlar bilan bog‘lanadi.
+
+Hozir P2/P3/P4 ni boshlamang.
+
+Avval P1 bo‘yicha real data qarorlarini yopamiz.
+
+Keyingi ish:
+A) 117 ta productni jadval ko‘rinishida classification qiling:
+- SKU
+- current name
+- current type
+- raw?
+- manufactured?
+- purchased?
+- saleable?
+- intermediate?
+- active BOM?
+- BOM count
+- current inventory
+- container inventory
+- WIP
+- duplicate/similar item
+- recommended canonical item
+
+B) 17 ta raw material uchun:
+- current name
+- current global balance
+- container balance
+- WIP
+- saleable?
+- used in BOM?
+- used in transformation?
+- duplicate?
+- recommended action
+
+C) 62 ta BOM uchun:
+- product
+- current product ID/name
+- raw material
+- quantity
+- unit
+- whether mapping can move safely to SKU
+- possible duplicate/conflict
+
+D) 4 ta dual material bo‘yicha alohida reconciliation report chiqaring.
+
+E) 5 ta negative raw balance bo‘yicha source transaction trail chiqaring. Hozircha hech qanday adjustment qilmang.
+
+F) Sholcha family bo‘yicha real data asosida savolni ochiq qoldiring; taxmin bilan merge qilmang.
+
+G) Inventory architecture diagramini final candidate sifatida ko‘rsating.
+
+H) Migrationdan oldin expected before/after inventory examples bering.
+
+Muhim:
+Hech qanday SKU merge, rename, inventory adjustment, BOM migration yoki schema migration approvalimdan oldin bajarilmasin.
+
+Avval menga data mapping va migration plan ko‘rsating.

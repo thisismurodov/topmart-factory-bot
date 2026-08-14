@@ -3,7 +3,7 @@ name: Canonical item-master (SKU) migration
 description: Target inventory identity model, owner-approval status, and the traps that corrupt stock math if forgotten
 ---
 
-Full audit + phased plan: `docs/canonical-inventory-architecture-audit.md` (2026-08-14). Status: **owner approval pending**; open owner questions in section I (Sholcha family merge, 4 dual items, negative-stock strategy, orphan sold-name mapping). No implementation may start before approval (owner's explicit constraint).
+Full audit + phased plan: `docs/canonical-inventory-architecture-audit.md`; P1 data mapping (A–H tables): `docs/p1-data-mapping.md` (both 2026-08-14). Status: **architecture approved 2026-08-14 (all 15 canonical rules)** but implementation still forbidden until owner closes the P1 data decisions (Q1–Q10 in the mapping doc: Sholcha family, dual merges, negative-stock strategy, duplicate/similar pairs, stocktake date). No merge/rename/adjustment/schema work before that.
 
 ## Decided target model
 One `items` master (immutable id + globally unique SKU + capability flags is_raw/is_manufactured/is_purchased/is_intermediate/is_saleable); `products` and `raw_materials` remain as profile tables. Additive migration only (nullable item_id + backfill + dual-write), never absorb raw_materials into products.
@@ -19,3 +19,5 @@ Global on-hand for a raw item = Σ container inventory **+ Σ WIP balances**. Is
 - Batch output warehouse is unvalidated (any active warehouse; default = first active) — explains finished rows parked in raw containers.
 - WIP line resolves from products.line_id OR the producer worker's line; only when both are missing does a batch bypass WIP accounting.
 - SKU uniqueness helper (`uniqueProductSku`) checks products only — items.sku backfill needs a global allocator across products ∪ raw ∪ distribution.
+- Dual raw↔product copies bridge via a 1:1 self-BOM (product "consumes" 1 kg of its own raw twin); their 4 historic sales bypassed inventory entirely (no rows, no movements). At merge, self-BOMs must be dropped, not migrated.
+- PP 2x1500/OQ carries a 144 kg stock delta not reconstructable from stock_movements (pre-ledger-sync era) — never assume ledger completeness when reconciling.

@@ -1,0 +1,144 @@
+P1 audit va data mapping qabul qilindi.
+
+Audit juda yaxshi bajarilgan. Muhim talab: hozircha hech qanday merge, rename, adjustment, migration yoki mavjud transactionlarga ta'sir qiladigan o'zgarish QILINMASIN.
+
+P2 ni hozircha boshlamang.
+
+Avval Q1–Q10 qarorlarini yopish uchun decision pack tayyorlang.
+
+Quyidagilarni qiling:
+
+1. Q1 — SHOLCHA
+Sholcha, Sholcha Oq va Sholcha Sariq bo'yicha barcha mavjud faktlarni bitta jadvalga chiqaring:
+- current item/product
+- SKU
+- current quantity
+- BOM
+- historical transactions
+- production batches
+- sales
+- current container/WIP balance
+- physical meaning known from database
+- what is NOT known
+
+3 ta variantni alohida ko'rsating:
+A) 3 separate items
+B) 1 item + variants
+C) raw Sholcha → Sholcha Oq/Sariq transformation
+
+Hozircha hech birini merge qilmang.
+
+2. Q2 — MINUS BALANCES
+5 ta minus material uchun:
+- current balance
+- all inbound transactions
+- all outbound transactions
+- calculable balance
+- unexplained difference
+- recommended reconciliation method
+
+Polipropilen 2×1500/OQ'dagi 144 kg farqni alohida ko'rsating.
+
+Hech qanday adjustment qilmang.
+
+3. Q3–Q4 — DUPLICATES
+Har bir duplicate candidate uchun:
+- current names
+- SKU
+- historical usage
+- BOM usage
+- inventory
+- sales
+- whether physically identical is proven or only suspected
+- recommended canonical name
+- merge risk
+
+Ayniqsa:
+- Reja ip PP ... gr ↔ ... gramm
+- Strupa Sari ↔ Strupa Sariq
+- 5 MM GIBRID ↔ 5 mm Gibrid Lenta
+- Shroki 3.5 ↔ Shroki 3.5 Oq
+
+bo'yicha alohida ko'rsating.
+
+Muhim: SKU conflict bo'lgan mahsulotlarni avtomatik merge qilmang.
+
+4. Q5 — 4 DUAL MATERIAL
+Auditdagi dalillarga asoslanib merge qilish uchun migration proposal tayyorlang:
+- old item
+- target item
+- old SKU
+- target SKU
+- affected sales
+- affected BOM
+- inventory impact
+- historical mapping
+
+Hozir merge qilmang.
+
+5. Q6 — BABIN QORA BOM
+"Babin Qora 0.5" BOMida "Babin Sariq 0.5" material ishlatilgani bo'yicha:
+- historical production evidence
+- sales evidence
+- BOM creation/update history mavjud bo'lsa
+- actual inventory
+- possible intended material
+
+ni chiqaring.
+
+Hech qanday BOM correction qilmang.
+
+6. Q7–Q9
+Q7, Q8, Q9 savollarini ham aynan audit hujjatidagi formatda, mavjud data bilan qaror qilishga qulay qilib chiqaring.
+
+7. Q10 — INVENTORY COUNT
+Inventarizatsiya uchun:
+- barcha raw containers
+- finished containers
+- warehouses
+- WIP departments
+- material/product categories
+
+bo'yicha count sheet formatini tayyorlang.
+
+Physical count uchun tizimdagi EXPECTED BALANCE va REAL COUNT alohida ustunlarda bo'lsin.
+
+8. YAKUNIY DECISION TABLE
+Bitta jadval chiqaring:
+
+Question | Current Evidence | Decision Needed | Options | Recommended | Risk | User Decision
+
+9. P2 PRECONDITION
+P2 ni boshlash uchun quyidagi approval checklistni yarating:
+
+[ ] Q1 approved
+[ ] Q2 approved
+[ ] Q3 approved
+[ ] Q4 approved
+[ ] Q5 approved
+[ ] Q6 approved
+[ ] Q7 approved
+[ ] Q8 approved
+[ ] Q9 approved
+[ ] Q10 approved
+[ ] Physical inventory plan approved
+
+Faqat shu checklist yopilgandan keyin P2 boshlanadi.
+
+P2 boshlanganida ham birinchi bosqich faqat:
+- items foundation
+- immutable SKU identity
+- legacy-name mapping
+- dual-write/read compatibility
+
+bo'lsin.
+
+Existing transaction flow, inventory balances, BOM, sales yoki production data'ni P2da o'zgartirmang.
+
+IMPORTANT:
+Hozirgi maqsad "tezroq kod yozish" emas.
+
+Maqsad:
+REAL DATA → DECISION → CANONICAL MODEL → SAFE MIGRATION.
+
+We don't guess. We know.

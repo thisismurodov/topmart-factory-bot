@@ -400,7 +400,7 @@ Jonli ma'lumot:
 Faktlar:
 1. Xomashyo "Sholcha": 25 000 kg, C-01 raw konteynerda, bitta IN bilan kirgan — sof va izli ✓
 2. "Sholcha Oq" (47 000 birlik) va "Sholcha Sariq" (60 000 birlik) — **mahsulot sifatida raw konteynerlarda** turibdi (C-01/03/08/09/13), og'irliklari 0 yozilgan, partiya orqali EMAS — qo'lda IN bilan kirgan (5 harakat).
-3. Ikkala mahsulotning **BOM'i bor: xomashyosi — o'sha "Sholcha"** (birlikka 1.0 kg; 0.6 kg esa "20 METR RANGLI ingichka" BOM'iga tegishli). Ya'ni tizim nazarida bular Sholcha'dan ISHLAB CHIQARILADIGAN mahsulotlar, lekin hech qachon partiya kiritilmagan.
+3. Ikkala mahsulotning **BOM'i bor: xomashyosi — o'sha "Sholcha"** (1 kg'ga 1.0 kg (kg-ga-kg); 0.6 kg esa "20 METR RANGLI ingichka" BOM'iga tegishli). Ya'ni tizim nazarida bular Sholcha'dan ISHLAB CHIQARILADIGAN mahsulotlar, lekin hech qachon partiya kiritilmagan.
 4. Hech biri hali sotilmagan, ikkalasida in_sales o'chirilgan.
 
 **Q1 (egasi qarori) — variantlar:**

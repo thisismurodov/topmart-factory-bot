@@ -1,0 +1,1291 @@
+# Diyor Mahsulotlari ERP — Canonical Inventory, SKU, BOM va Production Architecture
+
+## 0. MUHIM: BU TASKNING MAQSADI
+
+Biz ERP'dagi mahsulot, SKU, xomashyo, BOM, ombor, WIP, ishlab chiqarish, transformation va sotuv arxitekturasini qayta ko‘rib chiqmoqdamiz.
+
+**Hozircha kod yozmang va mavjud ma'lumotlarni o'zgartirmang.**
+
+Avval mavjud tizimni audit qiling va quyidagi biznes modelni ERP uchun canonical architecture sifatida ishlab chiqing.
+
+Sabab:
+
+Biz keyingi bosqichda:
+
+> **bitta mahsulot = bitta universal SKU**
+
+modeliga o'tmoqchimiz.
+
+Lekin buni hozir birdan qilish xavfli, chunki mavjud biznesda:
+
+* xomashyo ham sotiladi;
+* xomashyo boshqa materialga aylantiriladi;
+* bitta xomashyo bir nechta mahsulotda ishlatiladi;
+* bitta material boshqa bo‘limga beriladi;
+* intermediate/semi-finished mahsulot ham sotilishi mumkin;
+* bir mahsulot bir nechta xomashyodan tayyorlanishi mumkin;
+* ayrim mahsulotlar umuman ishlab chiqarilmaydi, tayyor holda sotib olinadi;
+* bir xil mahsulot turli finished-goods konteynerlariga joylanishi mumkin;
+* xomashyo konteyneri bilan finished-goods konteyneri bir-biridan mustaqil;
+* WIP alohida holat sifatida yuradi;
+* production batch bir nechta inventory transactionni bir vaqtda amalga oshiradi.
+
+Shuning uchun **SKU migrationdan oldin canonical modelni aniqlash majburiy.**
+
+---
+
+# 1. HOZIRGI TIZIM HAQIDA MA'LUMOT
+
+Hozir bazada taxminan:
+
+* 17 ta xomashyo
+* 117 ta mahsulot
+* 62 ta BOM yozuvi
+* 6 ta xomashyo konteyneri
+* jami 30 ta konteyner
+* 6 ta viloyat ombori
+
+mavjud.
+
+Bu raqamlar misol sifatida emas, hozirgi tizimdagi mavjud holat sifatida audit qilinishi kerak.
+
+Muhim holat:
+
+Konteynerlar allaqachon yaratilgan. Yangi konteyner yaratish hozirgi migration taskning maqsadi emas.
+
+Hozirgi bazada umumiy xomashyo qoldiqlari bor, lekin konteyner darajasidagi xomashyo qoldig‘i to‘liq emas.
+
+Bu sababli umumiy qoldiq mavjud bo‘lib, konteynerdan bo‘limga berish flow'i ishlamay qolishi mumkin.
+
+---
+
+# 2. HOZIRGI BOM MODELI
+
+Hozir BOM modeli quyidagicha:
+
+Har bir:
+
+> mahsulot ↔ xomashyo
+
+juftligi uchun bitta yozuv bor.
+
+BOM:
+
+> 1 dona mahsulotga qancha xomashyo ketishini bildiradi.
+
+Aniqlik:
+
+> 0.001 kg gacha.
+
+Bitta mahsulotga bir nechta xomashyo biriktirilishi mumkin.
+
+Bir xil xomashyo esa bitta mahsulot BOMida faqat bir marta turadi.
+
+Misol:
+
+## Oddiy BOM
+
+Tulpor:
+
+* 1 dona = 3.000 kg PP 1500D
+
+Agar 50 dona ishlab chiqarilsa:
+
+50 × 3.000 = 150 kg.
+
+## Hybrid BOM
+
+Mahsulot:
+
+* PP CF = 1.700 kg
+* PP BCF = 1.600 kg
+* jami = 3.300 kg / dona
+
+Agar 100 dona ishlab chiqarilsa:
+
+* PP CF = 170 kg
+* PP BCF = 160 kg
+* jami = 330 kg.
+
+---
+
+# 3. MUHIM: 117 TA MAHSULOT = 117 TA BOM DEGANI EMAS
+
+Bu arxitekturaning asosiy qoidalaridan biri.
+
+Bizda 117 ta product bo‘lishi mumkin, lekin faqat 62 tasida BOM bo‘lishi mumkin.
+
+Buning sababi:
+
+### A. Manufactured Product
+
+Mahsulot korxonada ishlab chiqariladi.
+
+BOM kerak.
+
+### B. Purchased / Resale Product
+
+Mahsulot tayyor holda sotib olinadi va sotiladi.
+
+BOM kerak emas.
+
+U to‘g‘ridan-to‘g‘ri inventoryga kiradi va sotilganda inventorydan kamayadi.
+
+### C. Intermediate / Semi-Finished Material
+
+Ishlab chiqarish jarayonida boshqa materialga aylanishi mumkin.
+
+Uning o‘zi ham inventoryda turishi va kerak bo‘lsa sotilishi mumkin.
+
+Shuning uchun:
+
+> **BOM mavjud emasligi avtomatik ravishda data error emas.**
+
+Faqat:
+
+> `Manufactured` product + `Active BOM` yo‘q
+
+bo‘lsa production validation error bo‘lishi kerak.
+
+---
+
+# 4. ENG MUHIM BIZNES MISOLI — PP 1500D
+
+Bizda:
+
+> PP 1500D = 10,000 kg
+
+bor.
+
+Bu oddiy "raw material" deb qaralmasligi kerak.
+
+U bir nechta biznes oqimida qatnashishi mumkin.
+
+## Flow 1 — Direct Sale
+
+PP 1500D ning o‘zini mijozga sotishimiz mumkin.
+
+Demak:
+
+PP 1500D
+
+→ Sale
+
+→ Inventory kamayadi.
+
+## Flow 2 — Transformation
+
+PP 1500D twist jarayoniga beriladi.
+
+Masalan kunlik:
+
+> 800 kg
+
+twist qilinadi.
+
+Transaction:
+
+PP 1500D:
+
+> -800 kg
+
+Twisted Yarn / Eshilgan Ip:
+
+> +800 kg
+
+Bu oddiy inventory deduction emas.
+
+Bu:
+
+> **Material Transformation**
+
+hisoblanadi.
+
+Input material boshqa SKUga aylanadi.
+
+## Flow 3 — Direct Production Consumption
+
+PP 1500D boshqa mahsulotning BOMida to‘g‘ridan-to‘g‘ri ishlatilishi mumkin.
+
+Masalan:
+
+Tulpor:
+
+> PP 1500D → Tulpor
+
+Bu holda BOM orqali sarflanadi.
+
+## Flow 4 — Intermediate Material Production
+
+Twistdan chiqqan eshilgan ip:
+
+* arqon bo‘limiga berilishi mumkin;
+* o‘zi sotilishi mumkin;
+* omborda qolishi mumkin.
+
+Demak:
+
+> bitta material faqat bitta purpose uchun mavjud emas.
+
+---
+
+# 5. SHU SABABLI RAW / WIP / FINISHED TUSHUNCHASI QANDAY BO'LADI
+
+Hozirgi tizimda:
+
+* Raw
+* WIP
+* Finished
+
+bor.
+
+Lekin bularni mahsulotning doimiy identitysi deb qabul qilmaslik kerak.
+
+Masalan:
+
+PP 1500D:
+
+> Raw Material sifatida kiradi.
+
+Twistdan keyin:
+
+> Intermediate / Semi-Finished Material bo‘ladi.
+
+Eshilgan ip keyinchalik:
+
+> Arqon uchun input bo‘lishi mumkin.
+
+Lekin eshilgan ipning o‘zi:
+
+> Saleable Material
+
+ham bo‘lishi mumkin.
+
+Shuning uchun:
+
+**Raw / WIP / Finished — inventory lifecycle/state tushunchasi.**
+
+Bu SKU identity bilan bir xil narsa emas.
+
+---
+
+# 6. CANONICAL MODEL
+
+Tavsiya qilinayotgan asosiy model:
+
+```text
+ITEM / SKU MASTER
+        |
+        +---- Product / Material identity
+        |
+        +---- Unit
+        |
+        +---- Product Type
+        |
+        +---- Saleable?
+        |
+        +---- Manufacturable?
+        |
+        +---- BOM
+        |
+        +---- Inventory
+        |
+        +---- Transformation
+        |
+        +---- Sales
+```
+
+Bitta universal Item/SKU bo‘ladi.
+
+U:
+
+* raw material;
+* intermediate material;
+* finished product;
+* purchased product;
+
+kabi biznes xususiyatlariga ega bo‘lishi mumkin.
+
+Lekin bitta item faqat bitta flow bilan cheklanmasligi kerak.
+
+---
+
+# 7. SKU — UNIVERSAL IDENTITY
+
+Kelajakdagi asosiy prinsip:
+
+> **One Product = One SKU = One Truth**
+
+SKU immutable bo‘lishi kerak.
+
+BOM mahsulot nomiga bog‘lanmasligi kerak.
+
+Hozirgi tizimda BOM product name orqali bog‘langan.
+
+Bu xavfli.
+
+Agar:
+
+> "Tulpor 3 kg"
+
+nomi o‘zgartirilsa, BOM bog‘lanishi uzilib qolishi mumkin.
+
+Yangi canonical modelda:
+
+```text
+Product
+   ↓
+Immutable SKU ID
+   ↓
+BOM
+```
+
+bo‘lishi kerak.
+
+Mahsulot nomi o‘zgarishi mumkin.
+
+SKU identity o‘zgarmaydi.
+
+---
+
+# 8. PRODUCT TYPE / CAPABILITY MODEL
+
+Faqat bitta `type` field bilan cheklanib qolmaslikni ko‘rib chiqing.
+
+Biznesda quyidagi capabilitylar kerak bo‘lishi mumkin:
+
+* `is_raw_material`
+* `is_manufactured`
+* `is_purchased`
+* `is_intermediate`
+* `is_saleable`
+
+Masalan:
+
+## PP 1500D
+
+```text
+is_raw_material = true
+is_purchased = true
+is_saleable = true
+is_manufactured = false
+```
+
+## Twisted Yarn
+
+```text
+is_intermediate = true
+is_saleable = true
+is_manufactured = true
+```
+
+## Tulpor
+
+```text
+is_manufactured = true
+is_saleable = true
+is_intermediate = false
+```
+
+Bu faqat konseptual misol.
+
+Mavjud DBdagi real productlarni audit qilmasdan avtomatik classification qilmang.
+
+---
+
+# 9. INVENTORY MODEL
+
+Inventory:
+
+```text
+ITEM / SKU
+    +
+LOCATION
+    +
+QUANTITY
+```
+
+bo‘yicha yurishi kerak.
+
+Masalan:
+
+```text
+PP-1500D
+C-01
+10,000 kg
+```
+
+Yoki:
+
+```text
+TW-1500D
+C-04
+300 kg
+```
+
+Yoki:
+
+```text
+TULPOR-003
+C-02
+50 dona
+150 kg
+```
+
+Inventory location mustaqil bo‘lishi kerak.
+
+---
+
+# 10. CONTAINER MODEL
+
+Konteynerlar ikki asosiy inventory scopega ega:
+
+### RAW
+
+Xomashyo uchun.
+
+### FINISHED
+
+Tayyor yoki saleable materiallar uchun.
+
+Bitta raw container xomashyo saqlaydi.
+
+Bitta finished container tayyor mahsulot yoki saleable intermediate material saqlashi mumkin.
+
+Muhim:
+
+> Raw material qaysi containerdan olingani finished product qaysi containerga joylanishini belgilamaydi.
+
+Misol:
+
+```text
+PP 1500D
+C-01
+        |
+        | transformation
+        v
+Twisted Yarn
+C-04
+```
+
+Bu to‘g‘ri.
+
+Yoki:
+
+```text
+PP 1500D
+C-01
+        |
+        v
+Tulpor
+C-02
+```
+
+Bu ham to‘g‘ri.
+
+---
+
+# 11. WIP MODEL
+
+WIP:
+
+> Bo‘limga berilgan, hali finished productga aylantirilmagan material.
+
+Misol:
+
+C-01:
+
+> PP 1500D = 5,000 kg
+
+Bo‘limga:
+
+> 300 kg
+
+berildi.
+
+Natija:
+
+```text
+C-01
+PP 1500D = 4,700 kg
+
+Department WIP
+PP 1500D = 300 kg
+```
+
+Keyinchalik 50 dona Tulpor ishlab chiqarildi.
+
+BOM:
+
+> 3 kg / dona
+
+50 × 3 = 150 kg.
+
+Natija:
+
+```text
+WIP
+300 → 150 kg
+
+Finished Goods
+Tulpor
++50 dona
++150 kg
+```
+
+Qolgan 150 kg WIPda qoladi.
+
+---
+
+# 12. PRODUCTION TRANSACTION ATOMIC BO'LISHI KERAK
+
+Partiya yaratish oddiy `insert batch` emas.
+
+Production transaction ichida kerak bo‘lsa:
+
+1. BOM consumption
+2. WIP deduction
+3. Finished Goods addition
+4. Movement history
+5. Batch creation
+
+bir transaction sifatida bajarilishi kerak.
+
+Agar bir qismi xato bo‘lsa:
+
+> hammasi rollback.
+
+Yarim transaction bo‘lmasin.
+
+Masalan:
+
+BOM kamaydi, lekin finished goods qo‘shilmadi.
+
+Bunday holatga yo‘l qo‘yilmasin.
+
+---
+
+# 13. RAW MATERIAL INPUT
+
+Xomashyo kirimi bitta transaction orqali:
+
+```text
+Container + quantity
+        +
+Global raw balance
+        +
+Movement history
+```
+
+ni sinxron yaratishi kerak.
+
+Operator bir joyga umumiy qoldiq yozib, konteynerni bo‘sh qoldira olmasligi kerak.
+
+Hozirgi bazadagi muammo:
+
+> Global raw balance mavjud, container balance yetarli emas.
+
+Bu migration/reconciliation bilan tuzatilishi kerak.
+
+---
+
+# 14. QOLDIQNING YAGONA HAQIQAT MANBAI
+
+Umumiy qoldiqni operator qo‘lda yozadigan mustaqil raqamga aylantirmang.
+
+Ideal model:
+
+```text
+Inventory Ledger
+       ↓
+Container balances
+       ↓
+Global balance = SUM(...)
+```
+
+Agar global raw balance alohida cache sifatida saqlansa ham, u ledger/container movement bilan bir transactionda yangilanishi va reconciliation qilinishi kerak.
+
+Operator oddiy formadan global qoldiqni "o‘zgartirib qo‘yishi" mumkin bo‘lmasin.
+
+Qoldiq o‘zgarishi faqat:
+
+* Purchase/Input
+* Transfer
+* WIP Issue
+* Production Consumption
+* Transformation
+* Sale
+* Adjustment/Reconciliation
+
+orqali amalga oshsin.
+
+Adjustment majburiy izoh va audit bilan bo‘lsin.
+
+---
+
+# 15. MATERIAL TRANSFORMATION
+
+Bu alohida entity/transaction sifatida ko‘rib chiqilsin.
+
+Misol:
+
+```text
+INPUT
+PP-1500D
+800 kg
+
+OUTPUT
+TW-1500D
+800 kg
+```
+
+Lekin kelajakda yield/loss ham bo‘lishi mumkin:
+
+```text
+Input = 800 kg
+Output = 790 kg
+Loss = 10 kg
+```
+
+Shuning uchun transformation model kelajakda:
+
+* input quantity
+* output quantity
+* loss
+* operator
+* department
+* date/time
+* source location
+* destination location
+* source SKU
+* output SKU
+
+ni saqlashga tayyor bo‘lsin.
+
+Hozir biznesda loss bo‘yicha aniq talab tasdiqlanmagan bo‘lsa, uni avtomatik qo‘shmang; faqat architecture extension sifatida ko‘rsating.
+
+---
+
+# 16. BOM VA TRANSFORMATION FARQI
+
+Bu ikkalasini aralashtirmang.
+
+### BOM:
+
+> Mahsulotni ishlab chiqarishda kerak bo‘ladigan materiallar retsepti.
+
+Masalan:
+
+```text
+Tulpor
+↓
+PP 1500D = 3 kg / dona
+```
+
+### Transformation:
+
+> Bir inventory item boshqa inventory itemga aylanganda.
+
+Masalan:
+
+```text
+PP 1500D
+↓
+Twist
+↓
+Twisted Yarn
+```
+
+Shuning uchun barcha production flowni faqat BOM orqali ifodalashga majburlamang.
+
+---
+
+# 17. PURCHASED PRODUCT
+
+Ayrim mahsulotlar tayyor holda sotib olinadi.
+
+Ular:
+
+```text
+Purchase
+↓
+Inventory
+↓
+Sale
+```
+
+bo‘yicha ishlaydi.
+
+BOM kerak emas.
+
+Production batch ham kerak emas.
+
+Lekin ular ham universal SKUga ega bo‘ladi.
+
+---
+
+# 18. SALEABLE RAW / INTERMEDIATE
+
+Bu juda muhim.
+
+Xomashyo yoki intermediate material sotilishi mumkin.
+
+Masalan:
+
+PP 1500D:
+
+```text
+10,000 kg
+│
+├── Direct sale
+├── Twist
+└── Tulpor production
+```
+
+Twisted Yarn:
+
+```text
+800 kg
+│
+├── Arqon bo‘limiga
+├── Direct sale
+└── Stock
+```
+
+Demak:
+
+> `is_saleable = true`
+
+bo‘lishi `is_finished_product = true` degani emas.
+
+---
+
+# 19. INVENTORY LEDGER
+
+Barcha inventory movementlar uchun yagona ledger bo‘lishi kerak.
+
+Har bir movement:
+
+* transaction ID
+* SKU
+* quantity
+* unit
+* source location
+* destination location
+* movement type
+* reference type
+* reference ID
+* user/operator
+* timestamp
+* note
+
+saqlashi kerak.
+
+Movement type misollari:
+
+* PURCHASE
+* RAW_INPUT
+* TRANSFER
+* WIP_ISSUE
+* PRODUCTION_CONSUMPTION
+* TRANSFORMATION_INPUT
+* TRANSFORMATION_OUTPUT
+* PRODUCTION_OUTPUT
+* SALE
+* ADJUSTMENT
+* RETURN
+
+Nomlarni mavjud codebase conventions bilan moslashtiring; yangi enumlarni mavjud tizimni tekshirmasdan yaratmang.
+
+---
+
+# 20. TRACEABILITY
+
+Kelajakdagi SKU tizimining maqsadi:
+
+Bitta SKU/partiyani:
+
+```text
+Raw material
+↓
+Production
+↓
+WIP
+↓
+Finished Goods
+↓
+Warehouse
+↓
+Distribution
+↓
+TopMart
+↓
+Sale
+```
+
+bo‘ylab kuzatish.
+
+Lekin SKU va Batch bir xil tushuncha emas.
+
+### SKU
+
+Mahsulotning identitysi.
+
+### Batch
+
+Muayyan ishlab chiqarish voqeasi.
+
+Masalan:
+
+```text
+SKU:
+TLP-003
+
+Batch:
+TLP-260814-01
+```
+
+Bir SKU ko‘plab batchlarga ega bo‘lishi mumkin.
+
+Bu ikkalasini alohida saqlang.
+
+---
+
+# 21. LABEL / BARCODE BILAN BOG'LANISH
+
+Kelajakda ishlab chiqarish etiketkasida:
+
+* Diyor Mahsulotlari
+* Product name
+* SKU
+* Standard kg
+* Real kg
+* Meter, agar mavjud bo‘lsa
+* Producer
+* Production date/time
+* Barcode
+
+bo‘ladi.
+
+Barcode SKUning o‘zi bo‘lishi shart emas.
+
+Architectureda quyidagilarni alohida ko‘rib chiqing:
+
+```text
+SKU
+Batch
+Barcode / Label ID
+```
+
+Agar barcode batchni identifikatsiya qilsa:
+
+```text
+SKU = TLP-003
+Batch = TLP-260814-01
+Barcode = unique identifier
+```
+
+bo‘lishi mumkin.
+
+Bu keyinchalik warehouse scan va traceability uchun muhim.
+
+---
+
+# 22. STANDARD / TOLERANCE
+
+Dashboard orqali mahsulot uchun:
+
+* standard kg
+* min allowed kg
+* max allowed kg
+
+kiritilishi mumkin.
+
+Partiya kiritilganda bot real kgni tekshiradi.
+
+Misol:
+
+Standard:
+
+> 4.000 kg
+
+Allowed:
+
+> 3.950–4.050 kg
+
+Operator:
+
+> 4.180 kg
+
+kiritsa:
+
+> WARNING / BLOCK
+
+qoidasi ishlaydi.
+
+Lekin tolerance product master/SKU configuration bilan bog‘langan bo‘lishi kerak.
+
+Hard-code qilinmasin.
+
+---
+
+# 23. MAHSULOT NOMI VA SKU
+
+Yakuniy canonical principle:
+
+```text
+Product Name
+     ↓
+Display attribute
+
+SKU
+     ↓
+Immutable identity
+```
+
+BOM, inventory, sales, production, warehouse, reports va AI imkon qadar SKU ID orqali bog‘lanadi.
+
+Product name faqat UI/display uchun ishlatiladi.
+
+---
+
+# 24. MASTER DATA VA TRANSACTION DATA AJRATILSIN
+
+## Master Data
+
+* SKU
+* Product
+* Raw Material
+* Unit
+* Warehouse
+* Container
+* Department
+* BOM
+* Tolerance
+* Product capabilities
+
+## Transaction Data
+
+* Purchase
+* Raw input
+* Transfer
+* WIP issue
+* Production batch
+* Transformation
+* Sale
+* Adjustment
+* Return
+
+Master data bilan transaction data aralashtirilmasin.
+
+---
+
+# 25. HOZIRGI MUAMMOLARNI BIR YO'LA HAL QILISH MAQSAD EMAS
+
+Avval:
+
+1. Audit
+2. Canonical schema
+3. Mapping
+4. Migration plan
+5. Test scenarios
+6. Approval
+7. Implementation
+8. Data migration
+9. Validation
+
+ketma-ketligida ishlang.
+
+**Mavjud production data'ni architecture tasdiqlanmasdan o‘zgartirmang.**
+
+---
+
+# 26. REPLITDAN BIRINCHI BOSQICHDA NIMA KUTILADI
+
+Birinchi javobda kod yozmasin.
+
+Quyidagilarni chiqarsin:
+
+### A. Current schema audit
+
+Qaysi tablelar bor?
+
+Qaysi fieldlar bor?
+
+Qaysi tablelar bir-biriga qanday bog‘langan?
+
+### B. Current data audit
+
+117 productning real turlari.
+
+62 BOMning real mappingi.
+
+17 raw materialning mappingi.
+
+Containerlar.
+
+WIP.
+
+Existing inventory.
+
+Existing batches.
+
+### C. Gap analysis
+
+Current model vs canonical model.
+
+### D. Migration risk
+
+Qaysi data:
+
+* rename talab qiladi;
+* SKU talab qiladi;
+* duplicate;
+* orphan BOM;
+* orphan inventory;
+* missing container balance;
+* missing BOM;
+* inconsistent units
+
+holatida?
+
+### E. Canonical ER diagram
+
+Kamida:
+
+```text
+SKU
+Product
+Material
+BOM
+BOM Items
+Inventory
+Container
+Warehouse
+Department
+WIP
+Production Batch
+Transformation
+Inventory Ledger
+Sale
+```
+
+o‘rtasidagi relationlar ko‘rsatilishi kerak.
+
+### F. Real business scenario tests
+
+Kamida quyidagilar:
+
+#### Scenario 1
+
+PP 1500D → Direct Sale
+
+#### Scenario 2
+
+PP 1500D → Twist → Twisted Yarn
+
+#### Scenario 3
+
+PP 1500D → Tulpor
+
+#### Scenario 4
+
+PP 1500D → Twist → Twisted Yarn → Arqon department
+
+#### Scenario 5
+
+PP 1500D + PP BCF → Hybrid Product
+
+#### Scenario 6
+
+Purchased Product → Inventory → Sale
+
+#### Scenario 7
+
+Production Batch → Finished Goods → C-02
+
+#### Scenario 8
+
+Same SKU → another finished container
+
+#### Scenario 9
+
+Partial WIP consumption
+
+#### Scenario 10
+
+Insufficient raw/WIP balance
+
+Har bir scenario uchun inventory before/after ko‘rsatilishi kerak.
+
+---
+
+# 27. CRITICAL ACCEPTANCE RULES
+
+Canonical architecture quyidagi savollarga aniq javob berishi kerak:
+
+1. Xomashyo sotilishi mumkinmi?
+
+   * Ha.
+
+2. Xomashyo boshqa materialga aylanishi mumkinmi?
+
+   * Ha.
+
+3. Intermediate material sotilishi mumkinmi?
+
+   * Ha.
+
+4. Bitta raw material bir nechta mahsulotda ishlatilishi mumkinmi?
+
+   * Ha.
+
+5. Bitta product bir nechta raw materialdan ishlab chiqarilishi mumkinmi?
+
+   * Ha.
+
+6. Purchased product BOMsiz mavjud bo‘lishi mumkinmi?
+
+   * Ha.
+
+7. Manufactured product BOMsiz production qilinishi mumkinmi?
+
+   * Yo‘q, agar u BOM-based production bo‘lsa.
+
+8. Raw container va finished container mustaqil bo‘lishi kerakmi?
+
+   * Ha.
+
+9. Raw inputdan keyin global va container balance sinxron bo‘lishi kerakmi?
+
+   * Ha.
+
+10. Production transaction atomic bo‘lishi kerakmi?
+
+* Ha.
+
+11. BOM product name bilan bog‘lanishi kerakmi?
+
+* Yo‘q.
+
+12. BOM SKU identity bilan bog‘lanishi kerakmi?
+
+* Ha.
+
+13. SKU va Batch bir xil narsami?
+
+* Yo‘q.
+
+14. Bitta SKU turli finished containersda turishi mumkinmi?
+
+* Ha.
+
+15. Bitta raw material bir vaqtning o‘zida saleable va production input bo‘lishi mumkinmi?
+
+* Ha.
+
+---
+
+# 28. MUHIM CHEKLOV
+
+Bu document asosida mavjud codebase'ni o‘zboshimchalik bilan rewrite qilmang.
+
+Avval mavjud tizim bilan canonical model orasidagi farqni aniqlang.
+
+Agar mavjud architecture canonical modelga qisman mos bo‘lsa:
+
+> minimal migration / refactor
+
+qiling.
+
+To‘liq rewrite faqat texnik jihatdan zarur bo‘lsa tavsiya qilinsin.
+
+---
+
+# 29. FINAL MAQSAD
+
+Biz shunday ERP yaratmoqchimizki:
+
+```text
+ONE SKU
+     ↓
+ONE PRODUCT IDENTITY
+     ↓
+PRODUCTION
+     ↓
+INVENTORY
+     ↓
+WAREHOUSE
+     ↓
+DISTRIBUTION
+     ↓
+TOP MART
+     ↓
+SALES
+     ↓
+DATA
+     ↓
+AI
+```
+
+Lekin inventory flow quyidagilarni ham qo‘llashi kerak:
+
+```text
+Raw → Sale
+Raw → Transformation
+Raw → Production
+Intermediate → Sale
+Intermediate → Production
+Purchased → Sale
+Production → Finished
+Finished → Sale
+```
+
+Bu Diyor Mahsulotlarining real biznes modeliga mos bo‘lishi kerak.
+
+## Eng asosiy prinsip
+
+> **SKU — identity.**
+>
+> **Inventory — quantity + location.**
+>
+> **BOM — recipe.**
+>
+> **Transformation — material conversion.**
+>
+> **WIP — processdagi inventory.**
+>
+> **Batch — production event.**
+>
+> **Ledger — financial/inventory truth.**
+>
+> **Sale — inventory consumption.**
+
+Va eng muhimi:
+
+> **We don't guess. We know.**
+
+ERPdagi har bir qoldiq va har bir harakatni source transaction orqali tushuntirib berish mumkin bo‘lishi kerak.
+
+---
+
+## REPLIT UCHUN BIRINCHI ACTION
+
+**STOP BEFORE CODING.**
+
+Avval:
+
+1. Existing DB schema audit
+2. Existing product/SKU/BOM audit
+3. Existing inventory/container/WIP audit
+4. Existing production/batch flow audit
+5. Existing sales deduction audit
+6. Current vs canonical architecture comparison
+7. ER diagram
+8. Migration plan
+9. 10 ta real scenario bo‘yicha before/after inventory simulation
+10. Risks and unresolved questions
+
+ni chiqar.
+
+**Men architecture approval bermagunimcha migration yoki destructive schema change qilma.**

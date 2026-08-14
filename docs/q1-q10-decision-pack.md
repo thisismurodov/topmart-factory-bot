@@ -2,6 +2,14 @@
 
 *Tayyorlandi: 2026-08-14. Manba: jonli baza (faqat O'QISH — SELECT). Ushbu hujjatni tayyorlashda hech qanday merge, rename, adjustment, migration yoki tranzaksiyaga ta'sir qiluvchi o'zgarish QILINMADI.*
 
+> **HOLAT (2026-08-14): QABUL QILINGAN — egasi tasdiqladi.** Qarorlar implementatsiyaga tayyor holatda saqlanadi, lekin BAJARILMAYDI: merge, rename, SKU migration, inventory adjustment, BOM o'zgartirish taqiqlangan, P2 boshlanmagan.
+>
+> Keyingi bosqich fizik inventarizatsiyaga bog'langan — sanoq varaqlari: `docs/physical-count-sheets.md`.
+>
+> Majburiy tartib: **COUNT → RECONCILIATION → PROPOSAL → USER APPROVAL → ADJUSTMENT** (adjustment'ni tizim o'zi bajarmaydi).
+>
+> Maxsus nazorat: **(1) Sholcha oilasi** — merge/transformation taxmini taqiqlangan (107 000 birlikning kelib chiqishi ham, birligi ham tasdiqlanmagan); **(2) Arqon Bo'lim 3 WIP −8 810.97 kg** — alohida reconciliation case, avtomatik 0 ga tushirish taqiqlangan.
+
 Bog'liq hujjatlar: `docs/canonical-inventory-architecture-audit.md` (arxitektura, 15 qoida — TASDIQLANGAN), `docs/p1-data-mapping.md` (A–H ma'lumot xaritasi).
 
 Maqsad: **REAL DATA → DECISION → CANONICAL MODEL → SAFE MIGRATION.** Taxmin qilmaymiz — bilamiz.

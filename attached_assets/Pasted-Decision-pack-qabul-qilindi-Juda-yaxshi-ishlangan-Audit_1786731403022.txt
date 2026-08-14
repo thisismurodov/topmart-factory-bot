@@ -1,0 +1,87 @@
+Decision pack qabul qilindi.
+
+Juda yaxshi ishlangan. Audit, data mapping va Q1–Q10 decision pack hozircha READ-ONLY holatda qoladi.
+
+Hozircha:
+- merge qilinmasin;
+- rename qilinmasin;
+- SKU migration qilinmasin;
+- inventory adjustment qilinmasin;
+- BOM o‘zgartirilmasin;
+- P2 boshlanmasin.
+
+Decision packdagi yangi topilmalar sababli keyingi bosqichni physical inventory va reconciliationga bog‘laymiz.
+
+Ayniqsa quyidagi ikki masala P2dan oldin alohida nazorat qilinsin:
+
+1. SHOLCHA:
+Sholcha Oq/Sariq 2026-06-24 da paydo bo‘lgan, xom Sholcha esa 2026-06-27 da kirgan.
+107,000 birlikning kelib chiqishi hozircha tasdiqlanmagan.
+Ularning unit/quantity interpretation ham tasdiqlanmagan.
+
+Shuning uchun Sholcha family bo‘yicha hech qanday merge yoki transformation assumption qilinmasin.
+
+2. ARQON BO‘LIM 3 WIP:
+WIP = -8,810.97 kg.
+167 PRODUCE mavjud, RECEIVE mavjud emas.
+Bu alohida reconciliation case sifatida inventarizatsiya va transaction auditga kiritilsin.
+Hech qanday avtomatik 0 ga tushirish yoki adjustment qilinmasin.
+
+Keyingi action:
+
+A) Q1–Q10 decision packdagi qarorlarni implementationga tayyor holatda saqlang.
+
+B) Physical inventory count uchun tayyorlangan 6 varaqni final formatda saqlang:
+- raw containers
+- finished containers
+- warehouses
+- WIP
+- global raw
+- final reconciliation
+
+C) Count vaqtida quyidagilar alohida hisoblanishi shart:
+- container real balance
+- warehouse real balance
+- WIP real balance
+- mahsulot/SKU
+- unit
+- kg
+- dona
+- kerak bo‘lsa metr
+
+D) Count tugamaguncha mavjud inventoryni o‘zgartiradigan migration ishlarini boshlamang.
+
+E) Physical countdan keyin:
+EXPECTED BALANCE vs REAL COUNT
+taqqoslash reportini yarating.
+
+Har bir farq:
+- shortage
+- surplus
+- unexplained
+- historical data issue
+sifatida classification qilinsin.
+
+Shundan keyingina adjustment proposal tayyorlansin.
+
+IMPORTANT:
+Adjustmentni Replit o‘zi bajarmasin.
+Avval:
+COUNT → RECONCILIATION → PROPOSAL → USER APPROVAL → ADJUSTMENT.
+
+P2 uchun esa hozircha faqat precondition tayyor tursin.
+
+P2 boshlanganda birinchi bosqich:
+- immutable SKU identity
+- items foundation
+- legacy-name mapping
+- compatibility layer / dual-read yoki dual-write
+
+bo‘ladi.
+
+Existing production, inventory, sales va BOM transactionlari P2da avtomatik o‘zgartirilmasin.
+
+Maqsad:
+REAL PHYSICAL DATA → RECONCILIATION → CANONICAL SKU → SAFE MIGRATION.
+
+We don't guess. We know.

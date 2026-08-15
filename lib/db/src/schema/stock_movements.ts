@@ -1,4 +1,5 @@
-import { pgTable, serial, text, integer, numeric, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, numeric, timestamp, check } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { warehousesTable } from "./warehouses";
@@ -18,7 +19,13 @@ export const stockMovementsTable = pgTable("stock_movements", {
   createdBy: text("created_by").notNull().default(""),
   productType: text("product_type").notNull().default("finished"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => [
+  // Drift-tuzatish (2026-08-15, egasi buyrug'i): jonli bazadagi
+  // stock_movements_movement_type_check azaldan bor edi, lekin kanonik
+  // manbalar (bot init_db / API initDb / ushbu sxema) uni yaratmasdi.
+  // Endi UCHALA manba bir xil CHECK'ni e'lon qiladi — schema-drift buni qo'riqlaydi.
+  check("stock_movements_movement_type_check", sql`${table.movementType} IN ('IN', 'OUT', 'TRANSFER')`),
+]);
 
 export const insertStockMovementSchema = createInsertSchema(stockMovementsTable).omit({ id: true, createdAt: true });
 export type InsertStockMovement = z.infer<typeof insertStockMovementSchema>;

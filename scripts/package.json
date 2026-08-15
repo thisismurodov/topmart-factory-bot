@@ -6,6 +6,7 @@
   "scripts": {
     "hello": "tsx ./src/hello.ts",
     "check-schema-drift": "tsx ./src/check-schema-drift.ts",
+    "p2-1-dry-run": "tsx ./src/p2-1-dry-run.ts",
     "check-distribution-drift": "tsx ./src/check-distribution-drift.ts",
     "init-distribution": "tsx ./src/init-distribution.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"

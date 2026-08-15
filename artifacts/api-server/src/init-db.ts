@@ -322,7 +322,7 @@ export async function initDb(): Promise<void> {
       id                SERIAL PRIMARY KEY,
       product           TEXT NOT NULL,
       quantity          NUMERIC NOT NULL DEFAULT 0,
-      movement_type     TEXT NOT NULL,
+      movement_type     TEXT NOT NULL CHECK (movement_type IN ('IN', 'OUT', 'TRANSFER')),
       from_warehouse_id INTEGER REFERENCES warehouses(id),
       to_warehouse_id   INTEGER REFERENCES warehouses(id),
       note              TEXT NOT NULL DEFAULT '',
@@ -342,6 +342,33 @@ export async function initDb(): Promise<void> {
   await pool.query(`ALTER TABLE IF EXISTS warehouses ADD COLUMN IF NOT EXISTS capacity_kg NUMERIC DEFAULT 20000`);
   await pool.query(`ALTER TABLE IF EXISTS warehouses ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()`);
   await pool.query(`ALTER TABLE IF EXISTS stock_movements ADD COLUMN IF NOT EXISTS product_type TEXT NOT NULL DEFAULT 'finished'`);
+  // Drift-tuzatish (2026-08-15, egasi buyrug'i): movement_type CHECK jonli
+  // bazada azaldan bor, lekin initializer'lar uni yaratmasdi — yangi (fresh)
+  // baza himoyasiz qolardi. Yangi baza inline CHECK oladi (yuqoridagi CREATE),
+  // eski CHECK'siz baza shu yerda konvergensiya qiladi. Jonli bazada constraint
+  // allaqachon bor → blok hech narsa qilmaydi (faqat katalog o'qiydi).
+  // Agar bazada IN/OUT/TRANSFER'dan boshqa qiymatli satr bo'lsa, ADD CONSTRAINT
+  // ATAYLAB baland ovozda yiqiladi — buzuq satr jim yashirilmasligi kerak.
+  await pool.query(`
+    DO $$ BEGIN
+      IF to_regclass('public.stock_movements') IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+         WHERE conrelid = 'public.stock_movements'::regclass
+           AND conname  = 'stock_movements_movement_type_check'
+      ) THEN
+        BEGIN
+          ALTER TABLE stock_movements
+            ADD CONSTRAINT stock_movements_movement_type_check
+            CHECK (movement_type IN ('IN', 'OUT', 'TRANSFER'));
+        EXCEPTION WHEN duplicate_object THEN
+          -- Parallel boot poygasi (bot + API bir vaqtda): ikkalasi ham "yo'q"
+          -- deb ko'rishi mumkin — yutqazgan tomon jim davom etadi.
+          -- check_violation ATAYIN tutilmaydi: buzuq satr baland ovozda yiqiladi.
+          NULL;
+        END;
+      END IF;
+    END $$;
+  `);
   // Konteynerni xom ashyo ("raw") yoki tayyor mahsulot ("finished") ombori
   // sifatida belgilash uchun. Standart: 'finished' (mavjud xatti-harakat).
   await pool.query(`

@@ -379,7 +379,7 @@ def init_db() -> None:
                 id                SERIAL PRIMARY KEY,
                 product           TEXT NOT NULL,
                 quantity          NUMERIC NOT NULL DEFAULT 0,
-                movement_type     TEXT NOT NULL,
+                movement_type     TEXT NOT NULL CHECK (movement_type IN ('IN', 'OUT', 'TRANSFER')),
                 from_warehouse_id INTEGER REFERENCES warehouses(id),
                 to_warehouse_id   INTEGER REFERENCES warehouses(id),
                 note              TEXT NOT NULL DEFAULT '',
@@ -403,6 +403,33 @@ def init_db() -> None:
               IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='inventory') THEN
                 ALTER TABLE inventory ADD COLUMN IF NOT EXISTS product_type TEXT NOT NULL DEFAULT 'finished';
                 ALTER TABLE inventory ADD COLUMN IF NOT EXISTS weight_kg NUMERIC NOT NULL DEFAULT 0;
+              END IF;
+            END $$;
+        """)
+        # Drift-tuzatish (2026-08-15, egasi buyrug'i): movement_type CHECK jonli
+        # bazada azaldan bor, lekin initializer'lar uni yaratmasdi — yangi baza
+        # himoyasiz qolardi. Yangi baza inline CHECK oladi (yuqoridagi CREATE),
+        # eski CHECK'siz baza shu yerda konvergensiya qiladi; jonli bazada blok
+        # hech narsa qilmaydi (faqat pg_constraint katalogini o'qiydi). Agar
+        # bazada IN/OUT/TRANSFER'dan boshqa qiymatli satr bo'lsa, ADD CONSTRAINT
+        # ATAYLAB baland ovozda yiqiladi — buzuq satr jim yashirilmaydi.
+        cur.execute("""
+            DO $$ BEGIN
+              IF to_regclass('public.stock_movements') IS NOT NULL AND NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                 WHERE conrelid = 'public.stock_movements'::regclass
+                   AND conname  = 'stock_movements_movement_type_check'
+              ) THEN
+                BEGIN
+                  ALTER TABLE stock_movements
+                    ADD CONSTRAINT stock_movements_movement_type_check
+                    CHECK (movement_type IN ('IN', 'OUT', 'TRANSFER'));
+                EXCEPTION WHEN duplicate_object THEN
+                  -- Parallel boot poygasi (bot + API bir vaqtda): yutqazgan
+                  -- tomon jim davom etadi. check_violation ATAYIN tutilmaydi:
+                  -- buzuq satr baland ovozda yiqilishi shart.
+                  NULL;
+                END;
               END IF;
             END $$;
         """)

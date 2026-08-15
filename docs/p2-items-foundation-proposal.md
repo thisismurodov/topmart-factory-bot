@@ -2,6 +2,11 @@
 
 *Sana: 2026-08-15 · Holat: **FAQAT TAKLIF — bazaga hech narsa yozilmadi, hech narsa o’zgartirilmadi.** Asos: tasdiqlangan arxitektura auditi (`docs/canonical-inventory-architecture-audit.md`), P1 xaritasi (`docs/p1-data-mapping.md`), qabul qilingan sanoq hisoboti (`docs/physical-count-reconciliation-2026-08-15.md`) va jonli baza (faqat SELECT).*
 
+> **EGA QARORI (2026-08-15): TASDIQLANDI — SHARTLAR BILAN.**
+> Tasdiq: items modeli, immutable ID, immutable SKU poydevori, raw/finished/intermediate qobiliyat modeli, purchasable/producible/sellable/inventory-tracked bayroqlari, `item_aliases`, orqaga moslik, P2.0→P2.4 alohida darvozali bosqichlar. MAJBURIY: tarixiy ma'lumot himoyasi, no-destructive migratsiya.
+> **Muzlatilgan:** 15 POSSIBLE — TASDIQLANMAGAN (har biri alohida ko'riladi); 65 UNMATCHED — faqat KANDIDAT (avto-yaratish yo'q); 2 EXACT tuzatish — TASDIQLANMAGAN; 48 541 kg — **Fizik Baseline** sifatida muzlatilgan (ERP'ga yozilmaydi). BOM o'zgarishi, rename, merge, SKU-migratsiya, inventory adjustment — YO'Q.
+> **Ijro qoidasi:** P2.0/P2.1 faqat read-only tayyorgarlik; HAR QANDAY yozuvdan oldin aniq reja ko'rsatiladi va alohida aniq ruxsat olinadi — ijro rejasi: `docs/p2-1-execution-runbook.md`. Drift-tuzatish (movement_type CHECK → initializer'lar) egasi buyrug'i bilan 2026-08-15'da bajarildi.
+
 ## 0. Qabul qilingan cheklovlar (sizning buyrug’ingiz)
 
 | # | Cheklov | Holat |

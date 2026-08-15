@@ -28,3 +28,8 @@ The app runs in three places that resolve their database differently:
 - Production URL: `factory-bot-manager.replit.app` (autoscale). The real admin account lives on Railway; token-based login verified working against prod (do NOT store the actual credentials here).
 - `admin` user is a **stale artifact in the Replit dev DB only** (old seed); it does not exist on Railway. Seeing `admin` when querying `DATABASE_URL` directly does NOT mean the app uses that DB.
 - Autoscale cold starts / restarts emit transient 5xx (e.g. `healthcheck ... 500`) and can make a login attempt fail momentarily; the dashboard now retries these (login.tsx + layout.tsx useGetMe) and only logs out on a true 401. Retry after the instance is warm before assuming a real auth bug.
+
+## tsx-watch auto-applies initializer DDL to the live DB (2026-08-15)
+The dev API server (tsx watch) re-runs initDb against RAILWAY_DATABASE_URL on every file save — any DDL added to bot init_db / API initDb hits the LIVE database within seconds; there is no staging gap.
+**Why:** during P2 prep, approval-gated DDL almost entered the boot path — it would have executed before the owner's GO.
+**How to apply:** unapproved/gated DDL lives in standalone manual SQL scripts (scripts/sql/) executed explicitly; initializers only ever contain already-approved, idempotent schema.

@@ -1,0 +1,489 @@
+FINAL TASK
+REAL PHYSICAL COUNT → ERP RECONCILIATION → APPROVED INVENTORY ADJUSTMENT
+
+DATE:
+2026-08-15
+
+PROJECT CONTEXT:
+We are currently cleaning and canonicalizing the Diyor Mahsulotlari ERP inventory system.
+
+A physical inventory count has been completed for 6 of the most inventory-dense containers.
+
+These physical counts are the source of truth for these 6 physical locations as of 2026-08-15.
+
+The goal is to reconcile the current ERP inventory against the physical count and, after verification and approval, bring the ERP inventory into alignment with the real physical inventory.
+
+IMPORTANT:
+This task must preserve historical integrity.
+
+DO NOT:
+- delete historical inventory movements
+- delete sales history
+- delete production batches
+- delete BOM records
+- rename products
+- merge products
+- automatically change SKUs
+- automatically create new SKUs
+- overwrite historical balances
+- silently change inventory
+- silently resolve discrepancies
+- assume two similar names are the same item
+- assume a physical container equals a database container without verification
+
+==================================================
+PHASE 1 — READ CURRENT ERP STATE
+==================================================
+
+First, read the current database state.
+
+For these physical locations:
+
+C-20
+C-19
+C-18
+C-02
+C-04
+C-06
+
+identify the corresponding immutable database location/container IDs.
+
+IMPORTANT:
+Physical labels such as C-20 are physical display labels.
+
+Do not assume the database ID is the same as the physical label.
+
+If the mapping cannot be established with certainty:
+mark it as:
+
+PHYSICAL_MAPPING_PENDING
+
+and do not guess.
+
+Read the current ERP inventory for the mapped locations.
+
+==================================================
+PHASE 2 — PHYSICAL REAL COUNT
+==================================================
+
+The following data is the physical count.
+
+This data MUST be treated as REAL PHYSICAL COUNT.
+
+Do not modify these numbers.
+
+Do not normalize product names before reconciliation.
+
+Do not merge duplicate-looking names.
+
+Use the names exactly as physically recorded.
+
+==================================================
+C-20 — REAL COUNT
+==================================================
+
+1. Neylon 210D / 45 — 80 kg
+2. Neylon 210D / 60 — 1,474 kg
+3. Neylon 210D / 90 — 330 kg
+4. Toshkent Oq 14 mm — Bir qavat — 942.05 kg
+5. FDY Igna Strupa — 4,572.25 kg
+6. Toshkent Qora 14 mm Ichki Sariq — 636.25 kg
+7. 16 mm Alpinist — 520 kg
+8. 14 mm Alpinist — 930 kg
+9. Toshkent Qora 14 mm Ichi Oq PP TWS — 309.6 kg
+10. Toshkent Oq 16 mm Ichi Oq PP TWS — 50 metr — 342.3 kg
+
+C-20 TOTAL:
+10,136.45 kg
+
+==================================================
+C-19 — REAL COUNT
+==================================================
+
+1. Polyamide 144 oq TWS — 552.90 kg
+2. Polyamide Ko‘k 187 TWS — 94.05 kg
+3. Polyamide Qizil 187 TWS — 73.65 kg
+4. Polyamide Sariq 187 TWS — 44.60 kg
+5. Polyamide Oq 187 TWS — 132.15 kg
+6. Qop ip Yashil — 2,244.10 kg
+7. Qop ip Qizil — 728.55 kg
+8. Passport Xom BCF — 646 kg
+9. Yashil PP TWS Strupa 24 talik — 643.40 kg
+10. Passport Strupa 16 talik — 527.65 kg
+11. Passport Strupa 24 talik — 273.75 kg
+12. Yashil PP TWS Strupa 16 talik — 168.60 kg
+13. Sariq Polyester Strupa 16 talik — 2,583.90 kg
+
+C-19 TOTAL:
+8,713.30 kg
+
+==================================================
+C-18 — REAL COUNT
+==================================================
+
+1. Toshkent Arqon 16 mm Ko‘k — 221.60 kg
+2. Toshkent Arqon 16 mm Qora — 332.95 kg
+3. Ustki Gilam Ichki Sariq Polyamide — 317.25 kg
+4. Toshkent Arqon 10 mm Yashil — 171.90 kg
+5. Toshkent Arqon 14 mm Qizil — 451.70 kg
+6. Toshkent Arqon 12 mm Qora Ichki Polyamide Sariq — 866.25 kg
+7. Toshkent Arqon 12 mm Qizil — 61.65 kg
+8. Toshkent Arqon 14 mm Qora — 150 kg
+9. Toshkent Arqon 10 mm Ko‘k — 150.25 kg
+10. FDY Fil Arqon — 497.55 kg
+11. Toshkent Arqon 16 mm Oq — 50 metr — 63.20 kg
+12. Toshkent Arqon 14 mm Oq — 100 metr — 40.05 kg
+13. Toshkent Arqon 16 mm Oq — 61.90 kg
+14. Toshkent Arqon Qora 16 mm Ichki Polyamide Sariq — 717.35 kg
+15. Toshkent Arqon 12 mm Sariq — 389.95 kg
+16. FDY Tros Aralash — 386.75 kg
+17. Rossiya Tros — 531 kg
+18. Usti gilam ichki Sariq Polyamide Arqon — 370.5 kg
+19. Ustki Oq TWS ichki Polyamide Oq Arqon — 1,264.10 kg
+20. Ustki PP xom ichki Polyamide Oq Arqon — 105 kg
+21. Ustki 187 TWS Oq ichki Zubr 16 mm Arqon — 926.4 kg
+22. Ustki 187 TWS Oq ichki Strupa 14 mm Arqon — 520 kg
+23. Kanob Aralash 20 metr — 113.55 kg
+24. Alpinist 12 mm — 450.6 kg
+25. Alpinist 10 mm — 106.20 kg
+26. Alpinist 14 mm — 165.55 kg
+27. Alpinist 16 mm — 199.30 kg
+28. Alpinist 20 mm — 174.5 kg
+29. Alpinist 25 mm — 32.45 kg
+
+C-18 TOTAL:
+9,839.45 kg
+
+==================================================
+C-02 — REAL COUNT
+==================================================
+
+1. Shroki 3.5 sm lenta — 468.35 kg
+2. Rangli 2.5 sm ikki qavat lenta — 863.45 kg
+3. Reels Lenta — 1,352.85 kg
+4. Tulpor Lenta Aralash — 556.40 kg
+5. Tulpor Lenta Yashil — 1,019.35 kg
+6. Tulpor Lenta Oq — 439.20 kg
+7. Tulpor Lenta Ko‘k — 192.05 kg
+8. Tulpor lenta qizil — 287 kg
+9. Shroki 3.5 Oq — 676.55 kg
+10. Tahoe Lenta — 197.80 kg
+
+C-02 TOTAL:
+6,053.00 kg
+
+==================================================
+C-04 — REAL COUNT
+==================================================
+
+1. Polipropilen CF 1500D Qora — 3,250 kg
+2. Polipropilen CF 1000D Yashil — 1,020 kg
+3. Strupa Salafan — 375.8 kg
+4. XB Strupa — 349.90 kg
+5. PP Oq TWS Strupa 12 talik — 875.55 kg
+6. Eshma Xitoy Strupa PP Oq TWS — 230.85 kg
+7. Yashil PP TWS Strupa 16 talik — 261.20 kg
+
+C-04 TOTAL:
+6,363.30 kg
+
+==================================================
+C-06 — REAL COUNT
+==================================================
+
+1. Shlanka Polyamide Yumshoq — 86.30 kg
+2. Shlanka Tortqi PP Oq TWS — 50 metr — 236.25 kg
+3. Shlanka Tortqi PP Yashil TWS — 50 metr — 66.35 kg
+4. Shlanka Polipropilen CF Qora — 618.80 kg
+5. Shlanka Polipropilen CF Yashil — 710.45 kg
+6. Shlanka Polipropilen CF Ko‘k — 506.25 kg
+7. Shlanka Polipropilen CF Qizil — 581.40 kg
+8. Shlanka Polipropilen CF Oq — 874.95 kg
+9. Shlanka Polyester FDY Qora — 433.20 kg
+10. Shlanka Polyester FDY Yashil — 830.40 kg
+11. Shlanka Polyester FDY Ko‘k — 778.15 kg
+12. Shlanka Polyester FDY Qizil — 730.95 kg
+13. Shlanka Polyester FDY Oq — 982.05 kg
+
+C-06 TOTAL:
+7,435.50 kg
+
+==================================================
+PHYSICAL COUNT GRAND TOTAL
+==================================================
+
+C-20 = 10,136.45 kg
+C-19 = 8,713.30 kg
+C-18 = 9,839.45 kg
+C-02 = 6,053.00 kg
+C-04 = 6,363.30 kg
+C-06 = 7,435.50 kg
+
+GRAND TOTAL:
+48,541.00 kg
+
+TOTAL PHYSICAL POSITIONS:
+82
+
+==================================================
+PHASE 3 — RECONCILIATION
+==================================================
+
+For every physical count position, compare:
+
+PHYSICAL REAL COUNT
+vs
+ERP CURRENT BALANCE
+
+Create a reconciliation table with:
+
+- physical container
+- database location ID
+- physical item name
+- matched ERP item
+- SKU
+- ERP current balance
+- physical real count
+- difference
+- unit
+- match status
+- proposed adjustment
+
+Match statuses:
+
+EXACT_MATCH
+POSSIBLE_MATCH
+UNMATCHED
+PHYSICAL_MAPPING_PENDING
+
+IMPORTANT:
+Do not decide that two similar product names are the same product automatically.
+
+Examples of potentially dangerous situations:
+
+"Shroki 3.5"
+vs
+"Shroki 3.5 Oq"
+
+"PP Oq TWS Strupa"
+vs
+"Yashil PP TWS Strupa"
+
+"Ustki Gilam..."
+vs
+"Toshkent Arqon..."
+
+Similar names are NOT proof of identity.
+
+Use existing SKU/item relationships and database evidence where available.
+
+==================================================
+PHASE 4 — SPECIAL CASES
+==================================================
+
+1. Same physical product appearing multiple times in count:
+
+Keep the physical count rows separate until identity is verified.
+
+2. Products with meter specifications:
+
+Do not calculate meters from kg.
+
+If actual meter count was not physically provided, leave physical meters NULL / unknown.
+
+3. Any product name containing "50 metr", "100 metr", etc.:
+
+Treat this as a product specification unless an actual physical meter count was explicitly provided.
+
+4. Do not infer quantity/dona from kg.
+
+5. Do not infer kg from nominal product specifications.
+
+==================================================
+PHASE 5 — ADJUSTMENT PROPOSAL
+==================================================
+
+After reconciliation, generate an adjustment proposal.
+
+For EXACT_MATCH items:
+
+If ERP != REAL:
+
+propose an inventory adjustment.
+
+Adjustment reason:
+
+PHYSICAL INVENTORY COUNT
+
+Reference:
+
+PHYSICAL-COUNT-2026-08-15
+
+Required audit fields:
+
+- location
+- item/SKU
+- old balance
+- physical count
+- difference
+- unit
+- reason
+- reference
+- count date
+- operator
+- timestamp
+
+IMPORTANT:
+
+Do NOT delete historical transactions.
+
+Do NOT rewrite historical balances.
+
+Do NOT overwrite history.
+
+The adjustment must appear as a new auditable inventory movement.
+
+==================================================
+PHASE 6 — UNMATCHED / POSSIBLE MATCH
+==================================================
+
+For POSSIBLE_MATCH:
+
+DO NOT automatically adjust.
+
+For UNMATCHED:
+
+DO NOT automatically create a new SKU.
+
+DO NOT automatically merge into another SKU.
+
+Create an exception report.
+
+The exception report must contain:
+
+- physical name
+- physical location
+- physical quantity
+- possible ERP matches
+- reason for uncertainty
+- recommended next action
+
+==================================================
+PHASE 7 — ERP UPDATE
+==================================================
+
+IMPORTANT:
+
+Do NOT execute destructive UPDATE queries to simply replace inventory balances.
+
+Use the existing inventory movement/adjustment architecture if it supports auditable adjustments.
+
+If the current architecture does NOT safely support this:
+
+STOP BEFORE MUTATING DATA.
+
+Instead provide:
+
+1. required schema/API change
+2. proposed adjustment transaction model
+3. exact implementation plan
+4. rollback strategy
+
+Do not invent a shortcut.
+
+==================================================
+PHASE 8 — POST-ADJUSTMENT VERIFICATION
+==================================================
+
+After approved adjustments are applied:
+
+Re-read inventory.
+
+Verify every EXACT_MATCH item:
+
+ERP AFTER ADJUSTMENT == PHYSICAL REAL COUNT
+
+For every unresolved item:
+
+do not silently change anything.
+
+Generate final verification:
+
+Container
+Item
+REAL COUNT
+ERP BEFORE
+Adjustment
+ERP AFTER
+Status
+
+Status must be:
+
+MATCHED
+UNRESOLVED
+PENDING_MAPPING
+
+==================================================
+PHASE 9 — FINAL REPORT
+==================================================
+
+Produce a final report containing:
+
+1. Physical count summary
+2. Container mapping
+3. Exact matches
+4. Possible matches
+5. Unmatched items
+6. ERP balances before
+7. Proposed adjustments
+8. Applied adjustments
+9. ERP balances after
+10. Remaining discrepancies
+11. Audit references
+12. Verification result
+
+Container summary:
+
+C-20
+C-19
+C-18
+C-02
+C-04
+C-06
+
+Physical grand total:
+48,541.00 kg
+
+Physical positions:
+82
+
+==================================================
+CRITICAL SAFETY RULE
+==================================================
+
+DO NOT GUESS.
+
+DO NOT SILENTLY FIX.
+
+DO NOT DELETE HISTORY.
+
+DO NOT RENAME.
+
+DO NOT MERGE.
+
+DO NOT CHANGE BOM.
+
+DO NOT AUTOMATICALLY CREATE SKUs.
+
+DO NOT TREAT SIMILAR NAMES AS IDENTICAL.
+
+DO NOT MODIFY DATA UNTIL THE RECONCILIATION REPORT AND ADJUSTMENT PLAN ARE READY.
+
+The physical count is the source of truth for these six physical locations as of:
+
+2026-08-15
+
+The objective is to bring the ERP inventory into alignment with physical reality while preserving complete historical and audit integrity.
+
+WE DON'T GUESS.
+WE KNOW.

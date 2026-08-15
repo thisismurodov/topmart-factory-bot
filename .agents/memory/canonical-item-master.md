@@ -45,3 +45,8 @@ Global on-hand for a raw item = Σ container inventory **+ Σ WIP balances**. Is
 - NOT approved / frozen: 15 POSSIBLE (individual review pending), 2 EXACT adjustments, 65 UNMATCHED = candidates only (no auto-create). Counted 48 541 kg = frozen "Physical Baseline" — must NEVER be written into ERP.
 - IMPLEMENTATION RULE: before ANY write show exact migration plan, affected tables/fields, old→new mapping, backward-compat mechanism, rollback; then wait for explicit per-stage GO (e.g. "P2.1 GO").
 - P2.0 read-only prep delivered: gated DDL lives in a standalone manual SQL script + dry-run inspector + runbook, deliberately NOT in initializers (initializers auto-apply to the live DB on boot); items DDL enters initializers/drizzle only at P2.1 GO. Gated psql runs need `-v ON_ERROR_STOP=1` — a BEGIN'd file can "succeed" after a silent rollback.
+
+## C-16/C-17 addendum count (2026-08-15)
+- C-16/C-17 real count recorded as a SEPARATE baseline-candidate set (12 positions, 10 301.20 kg / 126 360 pcs; doc `physical-count-c16-c17-2026-08-15.md`) — NOT folded into the frozen 48 541 kg six-container baseline.
+- Source file's "C-17 TOTAL: 259 bags" contradicts its own line sum (279; its 162+59+58 subtotals also give 279) — kg/pieces totals unaffected; treat line rows as primary until owner confirms the bag-total typo.
+- C-17 naming split: physical "Qop ip N gramm <color>" vs ERP "Reja ip N gr / <color>" (identical gram+color grid) — mapping deferred to item_aliases stage; ERP also holds "Reja ip PP / 50 gr" absent from the physical count. ERP rows there are dona-based (weight_kg=0), and the container was still moving on count day.

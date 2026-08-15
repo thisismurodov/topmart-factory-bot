@@ -1,0 +1,197 @@
+REAL COUNT CONTEXT — C-16 AND C-17
+DATE: 2026-08-15
+
+IMPORTANT:
+This is PHYSICAL REAL COUNT data only.
+
+Do NOT write anything to the database.
+Do NOT create SKUs.
+Do NOT create items.
+Do NOT merge products.
+Do NOT rename products.
+Do NOT create inventory adjustments.
+Do NOT modify TopMart sales data.
+Do NOT modify production inventory.
+
+Only record this data as VERIFIED PHYSICAL COUNT / BASELINE CANDIDATE.
+
+==================================================
+C-16 — REAL PHYSICAL COUNT
+==================================================
+
+1. Qop ip 100 talik
+   - 552 boxes
+   - 100 pieces per box
+   - 1 piece = 115 grams
+   - Total pieces = 55,200
+   - Calculated total weight = 6,348.00 kg
+
+2. Qop ip 120 talik
+   - 21 boxes
+   - 120 pieces per box
+   - 1 piece = 90 grams
+   - Total pieces = 2,520
+   - Calculated total weight = 226.80 kg
+
+3. Qop ip 80 talik
+   - 42 boxes
+   - 80 pieces per box
+   - 1 piece = 140 grams
+   - Total pieces = 3,360
+   - Calculated total weight = 470.40 kg
+
+C-16 TOTAL:
+- 615 boxes
+- 61,080 pieces
+- 7,045.20 kg
+
+Calculation:
+
+100 talik:
+552 × 100 × 0.115 = 6,348.00 kg
+
+120 talik:
+21 × 120 × 0.090 = 226.80 kg
+
+80 talik:
+42 × 80 × 0.140 = 470.40 kg
+
+==================================================
+C-17 — REAL PHYSICAL COUNT
+==================================================
+
+1. Qop ip 50 gramm Qora
+   - 60 bags
+   - 200 pieces per bag
+   - 1 piece = 50 grams
+   - Total pieces = 12,000
+   - Total weight = 600.00 kg
+
+2. Qop ip 50 gramm Sariq
+   - 64 bags
+   - 200 pieces per bag
+   - 1 piece = 50 grams
+   - Total pieces = 12,800
+   - Total weight = 640.00 kg
+
+3. Qop ip 50 gramm Oq
+   - 38 bags
+   - 200 pieces per bag
+   - 1 piece = 50 grams
+   - Total pieces = 7,600
+   - Total weight = 380.00 kg
+
+4. Qop ip 30 gramm Qora
+   - 12 bags
+   - 400 pieces per bag
+   - 1 piece = 30 grams
+   - Total pieces = 4,800
+   - Total weight = 144.00 kg
+
+5. Qop ip 30 gramm Sariq
+   - 26 bags
+   - 400 pieces per bag
+   - 1 piece = 30 grams
+   - Total pieces = 10,400
+   - Total weight = 312.00 kg
+
+6. Qop ip 30 gramm Oq
+   - 21 bags
+   - 400 pieces per bag
+   - 1 piece = 30 grams
+   - Total pieces = 8,400
+   - Total weight = 252.00 kg
+
+7. Qop ip 100 gramm Qora
+   - 13 bags
+   - 160 pieces per bag
+   - 1 piece = 100 grams
+   - Total pieces = 2,080
+   - Total weight = 208.00 kg
+
+8. Qop ip 100 gramm Sariq
+   - 18 bags
+   - 160 pieces per bag
+   - 1 piece = 100 grams
+   - Total pieces = 2,880
+   - Total weight = 288.00 kg
+
+9. Qop ip 100 gramm Oq
+   - 27 bags
+   - 160 pieces per bag
+   - 1 piece = 100 grams
+   - Total pieces = 4,320
+   - Total weight = 432.00 kg
+
+C-17 TOTAL:
+- 259 bags
+- 65,280 pieces
+- 3,256.00 kg
+
+Breakdown:
+
+50 gramm:
+162 bags
+32,400 pieces
+1,620.00 kg
+
+30 gramm:
+59 bags
+23,600 pieces
+708.00 kg
+
+100 gramm:
+58 bags
+9,280 pieces
+928.00 kg
+
+TOTAL:
+259 bags
+65,280 pieces
+3,256.00 kg
+
+==================================================
+C-16 + C-17 VERIFIED PHYSICAL COUNT
+==================================================
+
+C-16 = 7,045.20 kg
+C-17 = 3,256.00 kg
+
+COMBINED TOTAL:
+10,301.20 kg
+
+COMBINED PIECES:
+126,360 pieces
+
+IMPORTANT DATA RULE:
+
+The calculated kg values above are derived directly from the physical package counts and stated unit weights.
+
+Do not replace them with ERP values.
+
+Do not infer different weights.
+
+Do not merge:
+- Qop ip 80 talik
+- Qop ip 100 talik
+- Qop ip 120 talik
+- Qop ip 30 gramm
+- Qop ip 50 gramm
+- Qop ip 100 gramm
+
+until canonical SKU/item mapping is explicitly decided.
+
+Colors must remain separate.
+
+For now, this is only PHYSICAL REAL COUNT data.
+
+Store/record it in the P2 physical-count candidate context if your documentation layer supports it.
+
+DATABASE WRITE: NO
+SKU CREATION: NO
+ITEM CREATION: NO
+INVENTORY ADJUSTMENT: NO
+MERGE: NO
+RENAME: NO
+
+Acknowledge only that C-16 and C-17 have been received and recorded as physical baseline candidates.

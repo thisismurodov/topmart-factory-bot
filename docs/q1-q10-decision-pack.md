@@ -9,6 +9,8 @@
 > Majburiy tartib: **COUNT → RECONCILIATION → PROPOSAL → USER APPROVAL → ADJUSTMENT** (adjustment'ni tizim o'zi bajarmaydi).
 >
 > Maxsus nazorat: **(1) Sholcha oilasi** — merge/transformation taxmini taqiqlangan (107 000 birlikning kelib chiqishi ham, birligi ham tasdiqlanmagan); **(2) Arqon Bo'lim 3 WIP −8 810.97 kg** — alohida reconciliation case, avtomatik 0 ga tushirish taqiqlangan.
+>
+> **2026-08-15:** 6 konteyner (C-20, C-19, C-18, C-02, C-04, C-06) bo'yicha REAL FIZIK SANOQ keldi — solishtiruv hisoboti: `docs/physical-count-reconciliation-2026-08-15.md` (82 pozitsiya, 48 541 kg; ERP bu konteynerlarni bo'sh deb bilardi).
 
 Bog'liq hujjatlar: `docs/canonical-inventory-architecture-audit.md` (arxitektura, 15 qoida — TASDIQLANGAN), `docs/p1-data-mapping.md` (A–H ma'lumot xaritasi).
 

@@ -1,0 +1,386 @@
+IMPORTANT — NEW PRODUCTION INVENTORY RESET STRATEGY
+
+We are changing the immediate implementation strategy based on the real business situation.
+
+The current production inventory/product balances in ERP are NOT considered reliable physical truth.
+
+Production operations were historically recorded manually and the production bot/workflow was not ready, therefore the current ERP production inventory does not represent the actual warehouse state.
+
+DO NOT attempt to reconcile the old production balances as if they were accurate.
+
+==================================================
+1. LEGACY PRODUCTION INVENTORY
+==================================================
+
+Archive the CURRENT production inventory/product state as:
+
+LEGACY PRODUCTION INVENTORY
+
+Important:
+
+- DO NOT DELETE historical data.
+- DO NOT destroy historical movements.
+- DO NOT overwrite the legacy records.
+- Preserve them for audit/history.
+- Clearly separate LEGACY from CURRENT production inventory.
+
+The legacy state answers:
+
+"What did the old ERP contain?"
+
+It must NOT be used as the current physical opening balance.
+
+==================================================
+2. NEW CURRENT PRODUCTION INVENTORY
+==================================================
+
+The following 9 physical locations are the CURRENT VERIFIED PHYSICAL BASELINE:
+
+C-20 = 10,136.45 kg
+C-19 = 8,713.30 kg
+C-18 = 9,839.45 kg
+C-02 = 6,053.00 kg
+C-04 = 6,363.30 kg
+C-06 = 7,435.50 kg
+C-16 = 7,045.20 kg
+C-17 = 3,256.00 kg
+C-15 = 13,020.00 kg
+
+TOTAL:
+71,862.20 kg
+
+TOTAL VERIFIED PHYSICAL POSITIONS:
+97
+
+These 97 physical positions are the initial CURRENT production inventory dataset.
+
+The remaining containers/ayvons will be added later as additional verified physical inventory.
+
+DO NOT wait for the remaining locations before preparing these 9.
+
+==================================================
+3. PRODUCT CREATION FROM PHYSICAL COUNT
+==================================================
+
+Create NEW CURRENT production items/products from the verified physical-count positions.
+
+Each distinct real physical product/material must become a canonical item.
+
+Do NOT automatically merge similar names.
+
+Do NOT assume that:
+
+"Qop ip" = "Reja ip"
+
+Do NOT assume similar products are identical.
+
+Do NOT merge products based only on name similarity.
+
+Where the physical count gives a distinct product name/specification/color/size, preserve it as a distinct candidate item until explicitly mapped.
+
+==================================================
+4. AUTOMATIC SKU
+==================================================
+
+For every NEW canonical current item, automatically generate an immutable SKU.
+
+SKU must:
+
+- be unique
+- never depend on the product name
+- never change when the product name changes
+- remain stable forever
+- be suitable for future barcode/QR use
+
+Example format may be:
+
+TM-000001
+TM-000002
+TM-000003
+
+Use the project's existing SKU convention if one already exists and is compatible.
+
+IMPORTANT:
+Do not overwrite historical SKUs.
+
+New current items receive new canonical SKUs.
+
+==================================================
+5. PRODUCT MASTER DATA
+==================================================
+
+Create the items/products with the information known from physical count.
+
+Do NOT invent missing business attributes.
+
+The following fields can remain editable/empty until I complete them from the dashboard:
+
+- product type
+- unit
+- price
+- currency
+- material
+- color
+- size
+- length
+- weight specification
+- purchasable
+- producible
+- sellable
+- inventory tracked
+- raw / intermediate / finished classification
+- other required product attributes
+
+I will complete these through the Dashboard Product section.
+
+The system must make these fields editable without changing the immutable SKU.
+
+==================================================
+6. RAW MATERIAL SEPARATION
+==================================================
+
+Raw materials must become a separate canonical inventory category.
+
+Do NOT mix raw materials with finished products.
+
+The architecture must support:
+
+RAW MATERIAL
+→ PRODUCTION DEPARTMENT / WIP
+→ FINISHED PRODUCT
+→ FINISHED GOODS CONTAINER
+→ SALES
+
+==================================================
+7. CONTAINER ARCHITECTURE
+==================================================
+
+Every physical container is a LOCATION.
+
+The item is WHAT.
+
+The container is WHERE.
+
+Example:
+
+C-15
+  PP CF 1000D Qizil = 3,720 kg
+  PP CF 1000D Ko‘k = 3,840 kg
+  PP CF 1000D Sariq = 5,460 kg
+
+Do not duplicate the item just because it exists in different containers.
+
+One canonical item can exist in multiple locations.
+
+==================================================
+8. PRODUCTION DEPARTMENT / WIP
+==================================================
+
+Production departments must be treated as inventory/process locations.
+
+Example:
+
+C-15
+  PP CF 1000D
+      ↓
+CF LENTA DEPARTMENT / WIP
+      ↓
+Tulpor production
+      ↓
+C-02
+
+The WIP location must contain its own item balances.
+
+When raw material moves from container to department:
+
+Container:
+- quantity decreases
+
+Department WIP:
+- quantity increases
+
+This is a LOCATION TRANSFER, not a global inventory decrease.
+
+==================================================
+9. FINISHED GOODS OUTPUT
+==================================================
+
+When a production batch is completed:
+
+WIP/material consumption
+→ production output
+→ selected FINISHED GOODS CONTAINER
+
+The system must verify that the destination container is allowed for finished goods.
+
+Example:
+
+CF Lenta
+→ Tulpor
+→ C-02
+
+==================================================
+10. VISUAL PRODUCTION FLOW
+==================================================
+
+The Dashboard should eventually visualize:
+
+CONTAINER
+   ↓
+DEPARTMENT / WIP
+   ↓
+FINISHED PRODUCT
+   ↓
+FINISHED GOODS CONTAINER
+   ↓
+SALES
+
+Use visual connection lines/arrows.
+
+Each connection must eventually be clickable.
+
+Clicking a container:
+→ inventory + history
+
+Clicking a department/WIP:
+→ raw materials
+→ WIP balances
+→ produced products
+→ batches
+→ workers
+→ production performance
+→ salary information
+
+Clicking a flow line:
+→ source
+→ destination
+→ item
+→ quantity
+→ timestamp
+→ operator
+→ reference
+
+The visual line must represent a real inventory movement, not decorative graphics.
+
+==================================================
+11. TOPMART SALES DATA
+==================================================
+
+DO NOT archive, delete, rename or modify the existing TopMart sales-bot catalog or sales history.
+
+This reset applies to the unreliable CURRENT PRODUCTION inventory.
+
+Sales remains separate and protected.
+
+Later, finished-product inventory can be connected to sales.
+
+==================================================
+12. CURRENT PHYSICAL COUNT DATA MUST REMAIN IMMUTABLE
+==================================================
+
+The 97 physical positions are source evidence.
+
+Do not alter their original values.
+
+Create a physical-count record / baseline record that preserves:
+
+- location
+- original product name
+- original quantity
+- original unit
+- calculated kg
+- count date
+- source
+- operator
+
+Do not silently change physical-count values during SKU mapping.
+
+==================================================
+13. IMPORTANT — NO GUESSING
+==================================================
+
+If a physical product does not exist in the current catalog:
+
+DO NOT attach it to a similar product automatically.
+
+Create a NEW candidate canonical item.
+
+Example:
+
+Polipropilen CF 1000D Qizil
+
+is currently NOT found in the old raw-material catalog.
+
+Therefore do NOT map it automatically to "Polipropilen ip" or another similar item.
+
+Create it as a new candidate/current item and let me define its final attributes in the Dashboard.
+
+==================================================
+14. IMPLEMENTATION SAFETY
+==================================================
+
+Before executing database changes:
+
+1. Show the exact affected tables.
+2. Show how legacy data will be isolated.
+3. Show how 97 physical positions become current inventory.
+4. Show the generated SKUs.
+5. Show the old → new relationship.
+6. Show rollback/storno strategy.
+7. Show that TopMart sales data is untouched.
+8. Show that no historical movements are deleted.
+9. Show the exact number of new items to be created.
+10. Provide a dry-run report.
+
+Do NOT execute the migration until explicit GO.
+
+==================================================
+15. CURRENT STATUS
+==================================================
+
+P2.0:
+READY
+
+P2.1:
+READY BUT NOT YET APPROVED FOR WRITE
+
+Current verified physical baseline:
+97 positions
+71,862.20 kg
+
+Legacy production inventory:
+ARCHIVE CANDIDATE
+
+New current production inventory:
+TO BE CREATED FROM VERIFIED PHYSICAL COUNT
+
+Remaining physical locations:
+WILL BE ADDED LATER
+
+==================================================
+FINAL BUSINESS RULE
+==================================================
+
+From the new verified production baseline onward:
+
+PHYSICAL REALITY
+→ CANONICAL ITEM
+→ IMMUTABLE SKU
+→ LOCATION
+→ INVENTORY
+→ WIP
+→ PRODUCTION
+→ FINISHED GOODS
+→ SALES
+
+The old production inventory is HISTORY.
+
+The verified physical count is the NEW CURRENT BASELINE.
+
+Do not mix the two.
+
+READ/DRY-RUN FIRST.
+NO FINAL WRITE UNTIL EXPLICIT APPROVAL.
+
+WE DON'T GUESS.
+WE KNOW.

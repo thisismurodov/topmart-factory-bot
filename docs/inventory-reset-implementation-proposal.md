@@ -2,6 +2,8 @@
 
 *Sana: 2026-08-16 · Holat: **FAQAT TAKLIF — bazaga hech narsa yozilmadi.** Manba topshiriq: `attached_assets/Pasted-TOPMART-ERP-INVENTORY-RESET-PRODUCTION-WAREHOUSE-ARCHIT_1786905730862.txt` (egasining 17 bo'limlik arxitektura brifi, 14 bandlik taklif talabi bilan).*
 
+**🔄 v2 YANGILANISH (2026-08-17):** egasining yangi strategiyasi (`attached_assets/Pasted-IMPORTANT-NEW-PRODUCTION-INVENTORY-RESET-STRATEGY-We-ar_1786907653533.txt`) qabul qilindi: eski ishlab chiqarish qoldiqlari ISHONCHSIZ (moslashtirilmaydi, faqat LEGACY arxiv); fizik pozitsiyalardan YANGI kanonik itemlar ochiladi; **avto-SKU (`TM-NNNNNN`) endi RUXSAT ETILGAN**; atributlarni egasi keyin dashboardda to'ldiradi. To'liq quruq sinov: `docs/inventory-reset-dry-run-report.md` (§2.3, §3 va §16 shu hujjatda yangilangan).
+
 > **DARVOZA:** Ushbu hujjatdagi HAR BIR yozuv bosqichi egasining alohida, aniq GO buyrug'ini kutadi.
 > Ungacha ruxsat etilgan yagona ish — read-only tahlil va hujjatlashtirish. Bu talab brifning
 > §15/§17 bandlariga to'g'ridan-to'g'ri javob: NO DATABASE WRITE YET · FIRST PRODUCE THE PROPOSAL.
@@ -74,25 +76,25 @@ Arxiv YARATADI, hech narsani O'ZGARTIRMAYDI: jonli jadvallarga 0 UPDATE/DELETE. 
    - `physical_baseline_positions` — 97 pozitsiya AYNAN yozilganidek: nom (verbatim), karobka/qop soni, dona, birlik og'irlik, kg; keyin `item_id` (mapping bosqichida to'ldiriladi)
    Bu brifning «physical-count source data saqlansin» talabini hujjat + DB darajasida bajaradi.
 2. **Ochilish qoldig'i:** har pozitsiya uchun bitta `BASELINE` turidagi harakat (yangi movement_type, §12) + `inventory` qatori. Hech qanday «silent» qiymat o'rnatish yo'q — har kg/dona harakat yozuvi bilan kiradi, reference = sanoq hujjati.
-3. **C-16/C-17 maxsus holati (ERP bo'sh emas):** bu yerda ikki tushunchani qat'iy ajratamiz:
+3. **C-16/C-17 maxsus holati (ERP bo'sh emas, 13 legacy qator):** bu yerda ikki tushunchani qat'iy ajratamiz:
    - **Tarixiy YOZUV** (eski ERP nimaga ishongan: 90 180 / 149 980 dona) — `legacy` sxemada + baseline'dan oldingi harakatlar tarixida ABADIY, O'ZGARMAS saqlanadi. U hech qachon yangilanmaydi, o'chirilmaydi, «tiklanmaydi».
-   - **Joriy balans qatori** (`inventory`) — bu tarixiy hujjat emas, joriy holat ko'rsatkichi; u kelajakda ham har bir IN/OUT bilan o'zgarib turadi. Baseline kunida u FAQAT auditli BASELINE harakati orqali (harakat + balans bitta tranzaksiyada) fizik qiymatga keladi; harakatning `reference` = sanoq hujjati, `reason` = eski ERP qiymati.
-   Ya'ni tarixiy balans QAYTA YOZILMAYDI — u arxivda qoladi; joriy balans esa faqat harakat-hujjat bilan o'zgaradi (kelajakdagi barcha o'zgarishlar kabi). Qatorni harakatsiz «to'g'irlab qo'yish» MUTLAQO TAQIQLANADI. *(Muqobil variant — legacy'ni OUT harakati bilan nolga tushirish — RAD ETILADI: soxta chiqim tarixini yaratadi, brif §17 taqiqiga zid.)*
+   - **Joriy balans qatorlari** (`inventory`) — tarixiy hujjat emas, joriy holat ko'rsatkichi. v2'da fizik pozitsiyalar YANGI itemlarga yozilgani uchun R-D'da: (a) 13 eski qator auditli BASELINE harakati bilan NOLLANADI (`reason` = eski ERP qiymati, `reference` = v2 strategiya hujjati) — eski qoldiq «joriy» maqomini yo'qotadi, arxivda qoladi; (b) 12 yangi pozitsiya o'z BASELINE harakatlari bilan kiradi. Harakat + balans — bitta tranzaksiyada. **Qattiq shartlar:** (1) nollashdan OLDIN R-A yakunlangan va `legacy.*` nusxasi (13 qator alohida sanab) TEKSHIRILGAN bo'lishi SHART — aks holda arxivga nol tushish xavfi; pg_dump bu shartni almashtirmaydi; (2) tranzaksiyada qator `SELECT … FOR UPDATE` bilan qulflanadi va joriy qiymat legacy arxiv qiymati bilan solishtiriladi — mos kelmasa STOP (parallel o'zgarish belgisi).
+   Ya'ni tarixiy balans QAYTA YOZILMAYDI — u arxivda qoladi; joriy balans esa faqat harakat-hujjat bilan o'zgaradi. Qatorni harakatsiz «to'g'irlab qo'yish» MUTLAQO TAQIQLANADI. *(OUT harakati bilan nollash RAD ETILADI — soxta chiqim tarixi; BASELINE turi aynan shu maqsadga xizmat qiladi: «bu chiqim emas, qayta asoslash» degan oshkora belgi.)*
 4. Yuklash KONTEYNER-KESIMDA, har biriga alohida GO (masalan «R-D GO C-20»). Hammasi birdan emas.
 
-## 3. Kanonik item / SKU mapping (brif §5, §9)
+## 3. Kanonik item / SKU strategiyasi (v2, 2026-08-17 yangilangan)
 
 Tasdiqlangan P2 modeli o'zgarishsiz qo'llanadi: immutable `items.id` + immutable SKU + qobiliyat bayroqlari (`is_raw/is_intermediate/is_finished/is_purchasable/is_producible/is_sellable/inventory_tracked` — brif §9 «capability flags» talabiga aynan javob) + `item_aliases` (rename o'rniga).
 
+**v2 siyosati (egasi strategiyasi §3, §4, §13):** fizik pozitsiya katalogda AYNAN topilmasa — DEFAULT endi «YANGI kanonik item» (avto-ulash TAQIQ). Har yangi itemga **avto-SKU `TM-NNNNNN`** (unikal, nomdan mustaqil, immutable — trigger himoyasida, barcode/QR-tayyor; jonli tekshiruv 2026-08-17: katalogda `TM-` prefiksli SKU 0 ta, tizimli konventsiya mavjud emas — TM- yangi toza nomfazo). Tarixiy SKUlar qayta yozilmaydi. Atributlar sanoqdan ma'lum bo'lganicha yoziladi, qolganini egasi dashboardda to'ldiradi (SKU o'zgarmaydi).
+
 | Manba | Soni | Qoida |
 |---|---|---|
-| Mavjud mahsulotlar | 117 | 1:1 backfill, SKU aynan ko'chiriladi, MERGE YO'Q |
+| Mavjud mahsulotlar | 117 | 1:1 backfill, tarixiy SKU aynan ko'chiriladi, MERGE YO'Q |
 | Mavjud xomashyolar | 17 | 1:1 backfill, `RM-…` SKU taklifi |
-| Fizik pozitsiyalar (C-20…C-06) | 82 | EXACT 2 · POSSIBLE 15 · UNMATCHED 65 — har biri EGASI qarori bilan: mavjud itemga ulash YOKI yangi item (source_kind='physical_count') |
-| Fizik pozitsiyalar (C-16/C-17) | 12 | C-16 nomlari ERP bilan bir oila; C-17'da **«Qop ip N gramm RANG» ↔ ERP «Reja ip N gr / RANG»** — to'r bir xil, nom oilasi har xil → egasi qarori (Q-jadval №3) |
-| C-15 pozitsiyalari (2026-08-16) | 3 | «Polipropilen CF 1000D Qizil/Ko'k/Sariq» — 17 xomashyo nomida EXACT mos YO'Q (jonli tekshirildi); yangi item YOKI mavjud PP oilasiga ulash — egasi qarori (SKU hozircha yaratilmaydi) |
+| Fizik pozitsiyalar | 97 → 96 distinct nom | **94 YANGI item (`TM-000001…TM-000094`)** + 2 EXACT nom («Rossiya Tros», «Shroki 3.5 Oq») mavjud katalog itemiga ulash — egasi tasdig'i bilan (rad etilsa TM-000095/096) |
 
-Avto-merge, avto-SKU, avto-rename — MUTLAQO YO'Q. Dublikat juftliklar (QP100↔QOP-IP-100-TALIK va h.k.), dual egizaklar (4), Sholcha oilasi — Q1–Q10 paketidagi qarorlar bilan birga hal qilinadi.
+Muhim chegara: «bitta item ko'p joyda» (strategiya §7) faqat **verbatim-AYNAN bir xil nom**ga qo'llanadi — yagona holat: «Yashil PP TWS Strupa 16 talik» (C-19 168.6 kg + C-04 261.2 kg) = bitta item `TM-000022`, ikki joy balansi. O'xshash-nom merge haliyam MUTLAQO TAQIQ: «Qop ip» ≠ «Reja ip» (strategiya §3 aynan), «16 mm Alpinist» ≠ «Alpinist 16 mm», CF 1000D hech narsaga ulanmaydi — hammasi alohida itemlar; keyinchalik egasi xohlasa `item_aliases` orqali OSHKORA bog'laydi. To'liq SKU ro'yxati: `docs/inventory-reset-dry-run-report.md` §4. Dublikat juftliklar (QP100↔QOP-IP-100-TALIK va h.k.), dual egizaklar (4), Sholcha oilasi — legacy katalog masalalari, endi baselineni bloklamaydi (Q1–Q10, dashboard-era).
 
 ## 4. Konteyner / joy mapping (brif §5)
 
@@ -199,32 +201,33 @@ O'tish davri qoidasi: sanalmagan joylarda joriy operatsiyalar ODATDAGIDEK davom 
 | # | Bosqich | Nima yoziladi | GO formulasi |
 |---|---|---|---|
 | P2.1 | Items poydevor DDL | 2 jadval + 2 trigger + 10 nullable ustun (TAYYOR: runbook + SQL) | «P2.1 GO» |
-| R-A | Legacy arxiv | pg_dump + `legacy` sxema nusxalari | «R-A GO» |
+| R-A | Legacy arxiv | pg_dump + `legacy` sxema nusxalari + yakun tekshiruvi (qator soni/yig'indilar) | «R-A GO» — **R-D'dan oldin MAJBURIY** |
 | R-B | Sanoq registri | `physical_baselines` + `positions` (97 satr — barcha 9 joy pozitsiyali) | «R-B GO» |
 | P2.2–2.3 | Katalog backfill | 134 item + mavjud qatorlarga item_id | «P2.2 GO» / «P2.3 GO» |
-| R-C | Baseline DDL + mapping | `BASELINE` turi, `weight_kg`/`reference`/`reason` ustunlari; pozitsiya↔item qarorlari (egasi bilan) | «R-C GO» |
-| R-D | Baseline yuklash | konteyner-kesim BASELINE harakatlar + inventar | «R-D GO C-20» … har biri alohida |
+| R-C | Baseline DDL + item yaratish | `BASELINE` turi, `weight_kg`/`reference`/`reason` ustunlari; **94 yangi item (TM-000001…094)** + 97 pozitsiyaga item_id; 2 EXACT ulash — shu GO ichida alohida tasdiq | «R-C GO» |
+| R-D | Baseline yuklash — **SHART: tekshirilgan R-A** | konteyner-kesim BASELINE harakatlar + inventar (C-16/C-17'da 13 legacy qator ham auditli BASELINE bilan nollanadi) | «R-D GO C-20» … har biri alohida |
 | R-E | Jonli oqimlar | ISSUE/RECEIVE, chiqish-joyi tanlovi, purpose nazorati, global VIEW, transformations | «R-E GO» (alohida texnik reja bilan) |
 | P6 | Sotuv ulanishi | sale_items item-bog'lam o'qish yo'li | keyinroq, alohida taklif |
 
-Tartib qat'iy emas faqat bitta joyda: R-A istalgan payt (hatto P2.1'dan oldin) bajarilishi mumkin — u faqat nusxa oladi.
+Tartib qat'iy emas faqat bitta joyda: R-A istalgan payt (hatto P2.1'dan oldin) bajarilishi mumkin — u faqat nusxa oladi. Lekin TESKARISI QAT'IY: R-D (ayniqsa C-16/C-17 nollashi) tekshirilgan R-A'siz BOSHLANMAYDI (§2.3 qattiq shartlari).
 
 ## 16. Egasi qarorlari kutilmoqda
 
-**Hal qilindi (2026-08-16):** ✅ C-15 pozitsiya tafsiloti keldi va tasdiqlandi (3 pozitsiya = 13 020.00 kg ✓) · ✅ C-17 qop jami = **279** tasdiqlandi (qator ma'lumotlari to'g'ri edi, «259» — manba fayldagi yozuv xatosi).
+**Hal qilindi (2026-08-16):** ✅ C-15 pozitsiya tafsiloti tasdiqlandi (3 pozitsiya = 13 020.00 kg ✓) · ✅ C-17 qop jami = **279** («259» — manba fayldagi yozuv xatosi).
+**Hal qilindi (2026-08-17, v2 strategiya bilan):** ✅ Qop ip ↔ Reja ip — ULANMAYDI, alohida yangi itemlar (xohlasa egasi keyin alias bilan bog'laydi) · ✅ CF 1000D — YANGI itemlar (`TM-000092…094`) · ✅ avto-SKU taqiqi BEKOR — `TM-NNNNNN` tasdiqlandi · ✅ katalogda yo'q pozitsiyalar uchun DEFAULT = yangi item.
 
 | № | Savol | Bloklaydi |
 |---|---|---|
-| 1 | C-17 nomlari: fizik «Qop ip N gramm» ERP'dagi «Reja ip N gr» itemlariga ULANADIMI yoki YANGI itemlar ochiladimi? | R-C mapping |
-| 2 | C-15 pozitsiyalari «Polipropilen CF 1000D (Qizil/Ko'k/Sariq)» xomashyo katalogida aynan mosi yo'q: YANGI itemlar ochiladimi yoki mavjud PP oilasiga ulanadimi? | R-C mapping |
+| 1 | 2 EXACT nom («Rossiya Tros» 531 kg, «Shroki 3.5 Oq» 676.55 kg): mavjud katalog itemiga ULANADIMI (tarixiy SKU saqlanadi) yoki ular ham YANGI item (TM-000095/096)? | R-C |
+| 2 | C-16/C-17'dagi 13 legacy inventar qatori R-D'da auditli BASELINE harakati bilan NOLLANADI (arxiv nusxasi legacy sxemada; shu jumladan fizikda topilmagan «Reja ip PP / 50 gr» 100 dona) — tasdiqlaysizmi? | R-D GO C-16/C-17 |
 | 3 | C-15 konteyner maqsadi hozir `finished`, ichidagi mol esa sof xomashyo — maqsadi `raw`ga o'zgartirilsinmi? | R-E purpose nazorati (baseline yuklashni bloklamaydi) |
 | 4 | Baseline kunida liniyalardagi WIP: sanaladimi yoki liniyalar bo'sh holda kesiladimi? | R-D to'liq yakuni |
-| 5 | kg-itemlarda `quantity` maydoni semantikasi: o'ram/karobka soni yoki 0? (C-15 uchun ayniqsa dolzarb — faqat kg berilgan) | R-D yozish formati |
-| 6 | Baseline harakatlarining `created_by` operatori kim bo'lsin? | R-D |
-| 7 | Eski Q1–Q10 paketi javoblari (Sholcha, manfiy globallar, dublikat juftliklar…) | R-C'dagi tegishli pozitsiyalar |
+| 5 | kg-only pozitsiyalarda (85 ta) `inventory.quantity` = 0 + `weight_kg` = sanoq kg konvensiyasi ma'qulmi? (dona-pozitsiyalarda quantity = dona) | R-D yozish formati |
+| 6 | Sanoq operatori (`counted_by`) va baseline harakatlarining `created_by` qiymati kim bo'lsin? | R-B / R-D |
+| 7 | Eski Q1–Q10 paketi javoblari (Sholcha, manfiy globallar, dublikat juftliklar…) — endi baselineni BLOKLAMAYDI, legacy katalog tozaligi uchun | dashboard-era |
 
 ---
 
-*Hech narsa bajarilmadi. Barcha 9 joy pozitsiya darajasida to'liq — tavsiya etiladigan birinchi qadamlar: «P2.1 GO» va «R-A GO» (ikkalasi ham eng past xavfli, qaytariladigan bosqichlar).*
+*Hech narsa bajarilmadi. Quruq sinov hisoboti tayyor: `docs/inventory-reset-dry-run-report.md` — tavsiya etiladigan birinchi qadamlar: «P2.1 GO» va «R-A GO» (ikkalasi ham eng past xavfli, qaytariladigan bosqichlar).*
 
 *Biz taxmin qilmaymiz. Biz bilamiz.*

@@ -46,9 +46,9 @@ Asos hujjatlar (barchasi kuchda qoladi, bu taklif ULARNI BEKOR QILMAYDI, kengayt
 |---|---|---|---|
 | C-20, C-19, C-18, C-02, C-04, C-06 | 48 541.00 | ✓ 82 pozitsiya (muzlatilgan hisobot) | 6 joyda ham BO'SH (0 qator) |
 | C-16, C-17 | 10 301.20 | ✓ 12 pozitsiya (qo'shimcha hujjat) | **BO'SH EMAS**: C-16 3 qator / 90 180 dona; C-17 10 qator / 149 980 dona |
-| C-15 | 13 020.00 | ⚠️ **YO'Q — faqat jami kg kelgan** | BO'SH (0 qator, DB ID 21 tasdiqlandi) |
+| C-15 | 13 020.00 | ✓ 3 pozitsiya (egasi 2026-08-16 tasdiqladi) | BO'SH (0 qator, DB ID 21 tasdiqlandi) |
 
-⚠️ **C-15 blokeri:** pozitsiya-darajadagi ro'yxatsiz C-15 uchun item mapping ham, baseline yuklash ham MUMKIN EMAS. Jami summa registrga yoziladi, yuklash uchun tafsilot varag'i kutiladi.
+✅ **C-15 blokeri YOPILDI (2026-08-16):** egasi 3 pozitsiyani tasdiqladi — Polipropilen CF 1000D: Qizil 3 720.00 + Ko'k 3 840.00 + Sariq 5 460.00 = **13 020.00 kg** ✓ (tafsilot: `docs/physical-count-c15-2026-08-16.md`). Endi barcha 9 joy pozitsiya darajasida to'liq — jami **97 pozitsiya** (82 + 12 + 3). Shu kuni C-17 qop jami ham tasdiqlandi: **279** («259» manba fayldagi yozuv xatosi edi; kg/dona jamlariga ta'sir yo'q).
 
 ---
 
@@ -71,7 +71,7 @@ Arxiv YARATADI, hech narsani O'ZGARTIRMAYDI: jonli jadvallarga 0 UPDATE/DELETE. 
 
 1. **Sanoq registri (DB ichida, manba-ma'lumot sifatida):** 2 yangi jadval:
    - `physical_baselines` — har konteyner-sanoq: warehouse_id, sanoq sanasi, jami kg, manba hujjat, holat (`RECORDED` / `TOTAL_ONLY` / `MAPPED` / `LOADED`)
-   - `physical_baseline_positions` — 94 pozitsiya AYNAN yozilganidek: nom (verbatim), karobka/qop soni, dona, birlik og'irlik, kg; keyin `item_id` (mapping bosqichida to'ldiriladi)
+   - `physical_baseline_positions` — 97 pozitsiya AYNAN yozilganidek: nom (verbatim), karobka/qop soni, dona, birlik og'irlik, kg; keyin `item_id` (mapping bosqichida to'ldiriladi)
    Bu brifning «physical-count source data saqlansin» talabini hujjat + DB darajasida bajaradi.
 2. **Ochilish qoldig'i:** har pozitsiya uchun bitta `BASELINE` turidagi harakat (yangi movement_type, §12) + `inventory` qatori. Hech qanday «silent» qiymat o'rnatish yo'q — har kg/dona harakat yozuvi bilan kiradi, reference = sanoq hujjati.
 3. **C-16/C-17 maxsus holati (ERP bo'sh emas):** bu yerda ikki tushunchani qat'iy ajratamiz:
@@ -90,7 +90,7 @@ Tasdiqlangan P2 modeli o'zgarishsiz qo'llanadi: immutable `items.id` + immutable
 | Mavjud xomashyolar | 17 | 1:1 backfill, `RM-…` SKU taklifi |
 | Fizik pozitsiyalar (C-20…C-06) | 82 | EXACT 2 · POSSIBLE 15 · UNMATCHED 65 — har biri EGASI qarori bilan: mavjud itemga ulash YOKI yangi item (source_kind='physical_count') |
 | Fizik pozitsiyalar (C-16/C-17) | 12 | C-16 nomlari ERP bilan bir oila; C-17'da **«Qop ip N gramm RANG» ↔ ERP «Reja ip N gr / RANG»** — to'r bir xil, nom oilasi har xil → egasi qarori (Q-jadval №3) |
-| C-15 pozitsiyalari | ? | tafsilot kelmaguncha mapping YO'Q |
+| C-15 pozitsiyalari (2026-08-16) | 3 | «Polipropilen CF 1000D Qizil/Ko'k/Sariq» — 17 xomashyo nomida EXACT mos YO'Q (jonli tekshirildi); yangi item YOKI mavjud PP oilasiga ulash — egasi qarori (SKU hozircha yaratilmaydi) |
 
 Avto-merge, avto-SKU, avto-rename — MUTLAQO YO'Q. Dublikat juftliklar (QP100↔QOP-IP-100-TALIK va h.k.), dual egizaklar (4), Sholcha oilasi — Q1–Q10 paketidagi qarorlar bilan birga hal qilinadi.
 
@@ -200,7 +200,7 @@ O'tish davri qoidasi: sanalmagan joylarda joriy operatsiyalar ODATDAGIDEK davom 
 |---|---|---|---|
 | P2.1 | Items poydevor DDL | 2 jadval + 2 trigger + 10 nullable ustun (TAYYOR: runbook + SQL) | «P2.1 GO» |
 | R-A | Legacy arxiv | pg_dump + `legacy` sxema nusxalari | «R-A GO» |
-| R-B | Sanoq registri | `physical_baselines` + `positions` (94 satr + C-15 TOTAL_ONLY) | «R-B GO» |
+| R-B | Sanoq registri | `physical_baselines` + `positions` (97 satr — barcha 9 joy pozitsiyali) | «R-B GO» |
 | P2.2–2.3 | Katalog backfill | 134 item + mavjud qatorlarga item_id | «P2.2 GO» / «P2.3 GO» |
 | R-C | Baseline DDL + mapping | `BASELINE` turi, `weight_kg`/`reference`/`reason` ustunlari; pozitsiya↔item qarorlari (egasi bilan) | «R-C GO» |
 | R-D | Baseline yuklash | konteyner-kesim BASELINE harakatlar + inventar | «R-D GO C-20» … har biri alohida |
@@ -211,18 +211,20 @@ Tartib qat'iy emas faqat bitta joyda: R-A istalgan payt (hatto P2.1'dan oldin) b
 
 ## 16. Egasi qarorlari kutilmoqda
 
+**Hal qilindi (2026-08-16):** ✅ C-15 pozitsiya tafsiloti keldi va tasdiqlandi (3 pozitsiya = 13 020.00 kg ✓) · ✅ C-17 qop jami = **279** tasdiqlandi (qator ma'lumotlari to'g'ri edi, «259» — manba fayldagi yozuv xatosi).
+
 | № | Savol | Bloklaydi |
 |---|---|---|
-| 1 | **C-15 pozitsiya tafsiloti** (13 020 kg nima­lardan iborat?) | C-15 mapping + yuklash |
-| 2 | C-17 qop jami: fayllardagi 259 ↔ qatorlar yig'indisi 279 — qaysi to'g'ri? | faqat hujjat aniqligi (kg/dona ta'sirlanmaydi) |
-| 3 | C-17 nomlari: fizik «Qop ip N gramm» ERP'dagi «Reja ip N gr» itemlariga ULANADIMI yoki YANGI itemlar ochiladimi? | R-C mapping |
+| 1 | C-17 nomlari: fizik «Qop ip N gramm» ERP'dagi «Reja ip N gr» itemlariga ULANADIMI yoki YANGI itemlar ochiladimi? | R-C mapping |
+| 2 | C-15 pozitsiyalari «Polipropilen CF 1000D (Qizil/Ko'k/Sariq)» xomashyo katalogida aynan mosi yo'q: YANGI itemlar ochiladimi yoki mavjud PP oilasiga ulanadimi? | R-C mapping |
+| 3 | C-15 konteyner maqsadi hozir `finished`, ichidagi mol esa sof xomashyo — maqsadi `raw`ga o'zgartirilsinmi? | R-E purpose nazorati (baseline yuklashni bloklamaydi) |
 | 4 | Baseline kunida liniyalardagi WIP: sanaladimi yoki liniyalar bo'sh holda kesiladimi? | R-D to'liq yakuni |
-| 5 | kg-itemlarda `quantity` maydoni semantikasi: o'ram/karobka soni (C-16/C-17 kabi dona+kg birga) yoki 0? | R-D yozish formati |
+| 5 | kg-itemlarda `quantity` maydoni semantikasi: o'ram/karobka soni yoki 0? (C-15 uchun ayniqsa dolzarb — faqat kg berilgan) | R-D yozish formati |
 | 6 | Baseline harakatlarining `created_by` operatori kim bo'lsin? | R-D |
 | 7 | Eski Q1–Q10 paketi javoblari (Sholcha, manfiy globallar, dublikat juftliklar…) | R-C'dagi tegishli pozitsiyalar |
 
 ---
 
-*Hech narsa bajarilmadi. Tavsiya etiladigan birinchi qadamlar: №1 savolga javob (C-15 tafsiloti) + «P2.1 GO» va «R-A GO» — ikkalasi ham eng past xavfli, qaytariladigan bosqichlar.*
+*Hech narsa bajarilmadi. Barcha 9 joy pozitsiya darajasida to'liq — tavsiya etiladigan birinchi qadamlar: «P2.1 GO» va «R-A GO» (ikkalasi ham eng past xavfli, qaytariladigan bosqichlar).*
 
 *Biz taxmin qilmaymiz. Biz bilamiz.*

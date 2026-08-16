@@ -71,6 +71,7 @@ Oraliq yig'indilar (fayldagi bilan mos):
 - 12/12 qator qayta hisoblandi (karobka/qop × dona × birlik og'irlik) — **hammasi mos** ✓
 - C-16 jamlari (615 / 61 080 / 7 045.20) ✓ · C-17 dona va kg jamlari (65 280 / 3 256.00) ✓ · Birlashgan (126 360 / 10 301.20) ✓
 - ⚠️ **BITTA ICHKI ZIDDIYAT (manba faylning o'zida):** faylda «C-17 TOTAL: 259 bags» deb yozilgan, lekin qatorlar yig'indisi 60+64+38+12+26+21+13+18+27 = **279 qop**; faylning o'z oraliq yig'indilari ham (162+59+58) = **279**. kg va dona jamlariga ta'sir qilmaydi. Talqin: jami satrdagi yozuv xatosi ehtimoli yuqori (259 → 279), lekin **egasi tasdiqlamaguncha qaror qilinmaydi** — qator ma'lumotlari birlamchi hisoblanadi.
+- ✅ **HAL QILINDI (2026-08-16):** egasi tasdiqladi — to'g'ri jami **279 qop** (50 g: 60+64+38=162 · 30 g: 12+26+21=59 · 100 g: 13+18+27=58). «Qator ma'lumotlari birlamchi» talqini to'g'ri chiqdi; «259» manba fayldagi yozuv xatosi. Jami dona **65 280** va **3 256.00 kg** o'zgarishsiz qayta tasdiqlandi ✓.
 
 ---
 

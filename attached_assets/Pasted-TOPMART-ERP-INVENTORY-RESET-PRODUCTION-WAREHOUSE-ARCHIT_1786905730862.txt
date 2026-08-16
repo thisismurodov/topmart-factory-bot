@@ -1,0 +1,430 @@
+TOPMART ERP — INVENTORY RESET / PRODUCTION WAREHOUSE ARCHITECTURE
+IMPORTANT BUSINESS CONTEXT
+
+We are now rebuilding the production inventory foundation based on REAL PHYSICAL COUNT.
+
+The objective is NOT to repair the old inventory numbers transaction-by-transaction.
+
+The old production inventory is unreliable because production operations were historically recorded manually in notebooks and were not consistently entered into ERP.
+
+Therefore we need a clean transition:
+
+LEGACY PRODUCTION INVENTORY
+        ↓
+ARCHIVE / PRESERVE
+        ↓
+VERIFIED PHYSICAL BASELINE
+        ↓
+CANONICAL ITEMS / SKU
+        ↓
+LIVE PRODUCTION INVENTORY
+        ↓
+FUTURE BOT OPERATIONS
+
+==================================================
+1. TOPMART SALES SYSTEM MUST REMAIN UNTOUCHED
+==================================================
+
+Do NOT modify or delete:
+
+- TopMart sales catalog
+- sales-bot products
+- customer data
+- sales history
+- sales transactions
+- sales pricing
+- sales logic
+
+The current sales side must continue working.
+
+This task is primarily for:
+
+- production inventory
+- raw materials
+- WIP
+- finished production
+- production containers
+- production warehouse balances
+
+==================================================
+2. LEGACY PRODUCTION DATA
+==================================================
+
+Existing production inventory data cannot be treated as the current physical truth.
+
+Historical production operations were sometimes recorded manually in notebooks because the production bot/workflow was not yet ready.
+
+Therefore:
+
+DO NOT invent missing historical transactions.
+
+DO NOT reconstruct transactions from guesses.
+
+DO NOT delete historical records.
+
+DO NOT overwrite historical balances.
+
+Instead, preserve the old state as:
+
+LEGACY / ARCHIVED PRODUCTION INVENTORY
+
+The archive must remain readable and auditable.
+
+==================================================
+3. REAL PHYSICAL BASELINE
+==================================================
+
+Physical counting is being performed container-by-container.
+
+The following 9 locations have been physically counted:
+
+C20 = 10,136.45 kg
+C19 = 8,713.30 kg
+C18 = 9,839.45 kg
+C02 = 6,053.00 kg
+C04 = 6,363.30 kg
+C06 = 7,435.50 kg
+C16 = 7,045.20 kg
+C17 = 3,256.00 kg
+C15 = 13,020.00 kg
+
+Current verified physical baseline:
+
+71,862.20 kg
+
+IMPORTANT:
+These are PHYSICAL REAL COUNT values.
+
+They are NOT ERP balances.
+
+They must be preserved as physical-count source data.
+
+The remaining warehouse locations will be added later.
+
+==================================================
+4. PHYSICAL COUNT IS THE SOURCE OF TRUTH FOR THE NEW BASELINE
+==================================================
+
+Once physical counting is complete, the verified physical count becomes the opening inventory baseline for the new production inventory system.
+
+Do NOT calculate the new opening balance as:
+
+old ERP balance + adjustment
+
+unless explicitly approved later.
+
+Instead:
+
+VERIFIED PHYSICAL COUNT
+→ NEW OPENING / BASELINE INVENTORY
+
+The old ERP state remains archived.
+
+==================================================
+5. CONTAINER-LEVEL INVENTORY
+==================================================
+
+Every physical production container/location must have its own inventory balance.
+
+Example:
+
+C-20
+  → Item A = X kg
+  → Item B = Y kg
+  → Item C = Z kg
+
+C-19
+  → Item A = X kg
+  → Item D = Y kg
+
+The same item may exist in multiple containers.
+
+Therefore:
+
+ITEM ≠ CONTAINER
+
+The canonical item identifies WHAT the material/product is.
+
+The container identifies WHERE it physically exists.
+
+==================================================
+6. GLOBAL INVENTORY
+==================================================
+
+Global inventory must NOT be manually maintained as an independent truth.
+
+For production inventory:
+
+GLOBAL BALANCE
+=
+SUM(container balances)
++
+SUM(WIP balances)
+
+This must be enforceable by the system.
+
+If a material moves:
+
+Container → WIP
+
+global inventory does NOT decrease.
+
+It only changes location.
+
+If WIP → Finished Product:
+
+the relevant material decreases according to BOM/transformation
+and finished product increases.
+
+==================================================
+7. RAW MATERIAL → WIP → FINISHED PRODUCT
+==================================================
+
+The system must support the real manufacturing flow.
+
+Example:
+
+C-01
+PP 1500D = 5,000 kg
+
+300 kg is issued to production.
+
+After issue:
+
+C-01 = 4,700 kg
+WIP = +300 kg
+
+Later production creates:
+
+50 units of Tulpor
+3 kg each
+
+Finished product:
+
+Tulpor = +150 kg
+
+WIP:
+
+300 - 150 = 150 kg
+
+The system must preserve this movement history.
+
+==================================================
+8. TRANSFORMATION MUST BE SUPPORTED
+==================================================
+
+Some raw materials become intermediate materials before becoming final products.
+
+Example:
+
+PP 1500D
+→ twisting
+→ twisted PP yarn
+→ rope production
+→ rope
+
+The intermediate product may itself be:
+
+- sold
+- used in another production process
+- transferred to another department
+- used as BOM material
+
+Therefore the model must support:
+
+RAW
+→ INTERMEDIATE
+→ FINISHED
+
+and also:
+
+RAW / INTERMEDIATE
+→ SALE
+
+==================================================
+9. ONE ITEM MAY HAVE MULTIPLE CAPABILITIES
+==================================================
+
+Do NOT force every item into exactly one category.
+
+For example PP 1500D can be:
+
+- purchasable
+- sellable
+- usable as BOM material
+- transformable
+- inventory-tracked
+
+The canonical item architecture must support capability flags.
+
+==================================================
+10. BOM
+==================================================
+
+BOM is per one unit of the produced item.
+
+Example:
+
+Tulpor 1 unit
+→ 3.000 kg PP 1500D
+
+Hybrid product:
+
+1 finished unit = 3.300 kg
+
+BOM:
+PP CF = 1.700 kg
+PP BCF = 1.600 kg
+
+The system must allow multiple raw materials in one BOM.
+
+The same raw material can be used by many different products.
+
+BOM must use canonical item IDs, not product names.
+
+==================================================
+11. PRODUCTION OUTPUT LOCATION
+==================================================
+
+When a production batch is completed, the operator must select a valid finished-goods container/location.
+
+The system must NOT allow a finished product to be accidentally placed into a raw-material-only location.
+
+Container purpose must be enforced.
+
+==================================================
+12. SALES MUST CONSUME FINISHED INVENTORY
+==================================================
+
+TopMart sales will consume finished-product inventory.
+
+For now, do not redesign the sales system.
+
+The inventory architecture must eventually connect:
+
+SALES
+→ FINISHED GOODS INVENTORY
+→ CONTAINER BALANCE
+
+without changing existing sales history.
+
+==================================================
+13. INVENTORY MOVEMENT AUDIT
+==================================================
+
+Every future inventory movement must record:
+
+- item ID
+- SKU
+- quantity
+- unit
+- source location
+- destination location
+- movement type
+- user/operator
+- timestamp
+- reference
+- reason where applicable
+
+No silent balance changes.
+
+==================================================
+14. ARCHIVE RULE
+==================================================
+
+Legacy inventory must be archived, NOT deleted.
+
+The archive must allow us to answer:
+
+“What did the old ERP believe before the physical baseline?”
+
+The new inventory must answer:
+
+“What is physically verified as of the baseline date?”
+
+These are two different datasets.
+
+==================================================
+15. CURRENT STATE
+==================================================
+
+P2.0 preparation is complete.
+
+450/450 tests are passing.
+
+Schema drift protection has been fixed.
+
+P2.1 foundation proposal and runbook are prepared.
+
+BUT:
+
+P2.1 GO HAS NOT BEEN GIVEN.
+
+Therefore:
+
+NO DATABASE WRITE YET.
+
+==================================================
+16. CURRENT PHYSICAL COUNT STATUS
+==================================================
+
+Counted:
+
+C20
+C19
+C18
+C02
+C04
+C06
+C16
+C17
+C15
+
+Current total:
+71,862.20 kg
+
+Still waiting for the remaining physical locations.
+
+Do not assume that the remaining locations are empty.
+
+Do not create inventory for them until their physical count is provided.
+
+==================================================
+17. REQUIRED NEXT STEP
+==================================================
+
+Before implementing anything, prepare an implementation proposal showing:
+
+1. Legacy production inventory archive strategy
+2. New verified physical baseline strategy
+3. Canonical item/SKU mapping
+4. Container/location mapping
+5. WIP architecture
+6. BOM architecture
+7. Transformation architecture
+8. Production batch flow
+9. Finished goods flow
+10. Raw material flow
+11. Future sales connection
+12. Audit trail
+13. Rollback strategy
+14. Treatment of remaining physical-count locations
+
+DO NOT WRITE TO PRODUCTION DATABASE.
+
+DO NOT DELETE.
+
+DO NOT OVERWRITE.
+
+DO NOT CREATE ADJUSTMENTS.
+
+DO NOT CREATE FAKE HISTORICAL MOVEMENTS.
+
+DO NOT TOUCH TOPMART SALES DATA.
+
+FIRST PRODUCE THE IMPLEMENTATION PROPOSAL.
+
+WAIT FOR EXPLICIT APPROVAL BEFORE ANY WRITE OPERATION.
+
+WE DON'T GUESS.
+WE KNOW.

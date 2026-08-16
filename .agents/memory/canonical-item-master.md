@@ -50,3 +50,8 @@ Global on-hand for a raw item = Σ container inventory **+ Σ WIP balances**. Is
 - C-16/C-17 real count recorded as a SEPARATE baseline-candidate set (12 positions, 10 301.20 kg / 126 360 pcs; doc `physical-count-c16-c17-2026-08-15.md`) — NOT folded into the frozen 48 541 kg six-container baseline.
 - Source file's "C-17 TOTAL: 259 bags" contradicts its own line sum (279; its 162+59+58 subtotals also give 279) — kg/pieces totals unaffected; treat line rows as primary until owner confirms the bag-total typo.
 - C-17 naming split: physical "Qop ip N gramm <color>" vs ERP "Reja ip N gr / <color>" (identical gram+color grid) — mapping deferred to item_aliases stage; ERP also holds "Reja ip PP / 50 gr" absent from the physical count. ERP rows there are dona-based (weight_kg=0), and the container was still moving on count day.
+
+## Inventory-reset architecture (2026-08-16)
+- Baseline now 9 locations = 71 862.20 kg; C-15 is TOTAL-ONLY (no position detail → its mapping/load stays blocked). Proposal doc: `docs/inventory-reset-implementation-proposal.md` — R-A…R-E gates layered onto approved P2.x, per-container «R-D GO C-xx» loads, no GO given yet.
+- **Durable rule (survived architect review): rollback of any baseline/ledger write must be STORNO (reversing movement), never DELETE of movements; archives are append-only (no DROP of legacy schema). Owner brief forbids delete/overwrite even inside rollback paths.**
+- Historical record vs current balance: "what old ERP believed" lives immutable in legacy schema + pre-baseline movements; the live inventory row is current-state and may change ONLY inside an audited movement transaction — never a bare UPDATE. Zeroing legacy via fake OUT movements is rejected (fabricated history).

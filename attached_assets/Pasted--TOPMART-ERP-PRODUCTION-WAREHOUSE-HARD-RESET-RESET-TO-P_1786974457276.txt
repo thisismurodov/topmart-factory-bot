@@ -1,0 +1,472 @@
+# TOPMART ERP — PRODUCTION / WAREHOUSE HARD RESET
+# RESET TO PHYSICAL REALITY — DRY RUN ONLY
+
+MUHIM:
+
+Biz hozirgi Ombor + Production tizimini patch qilishni davom ettirmaymiz.
+
+Qaror:
+
+TOPMART ERP ishlab chiqarish va ombor qismini 0 dan qayta boshlaymiz.
+
+Asosiy manba:
+
+2026-08-15 / 2026-08-16 fizik sanoq bilan tasdiqlangan 9 ta real konteyner.
+
+Maqsad:
+
+OLD WAREHOUSE / PRODUCTION DATA
+→ ARCHIVE
+→ CLEAN RESET
+→ 9 REAL CONTAINER COUNT
+→ NEW INVENTORY
+→ PRODUCTION 0 DAN BOSHLAYDI.
+
+LEKIN SALES BOT VA SALES TARIXI MUTLAQO DAXLSIZ.
+
+==================================================
+1. HOZIRCHA FAQAT DRY-RUN
+==================================================
+
+BU XABARDA:
+
+INSERT = 0
+UPDATE = 0
+DELETE = 0
+TRUNCATE = 0
+DROP = 0
+
+Faqat SELECT / dependency analysis / dry-run.
+
+Haqiqiy database o'zgarmasin.
+
+==================================================
+2. NIMALARNI RESET QILISHNI ANIQLANG
+==================================================
+
+Jonli bazadan quyidagilarni aniqlang:
+
+- inventory
+- products
+- batches / partiyalar
+- stock_movements
+- wip_movements
+- production-related tables
+- raw_materials
+- warehouse/container-related tables
+- production_lines
+- BOM
+- item mapping
+- boshqa production/warehouse dependent tables
+
+Har bir jadval uchun:
+
+TABLE
+ROW COUNT
+FOREIGN KEYS
+DEPENDENCIES
+SALES BILAN BOG'LIQLIGI
+PRODUCTION BILAN BOG'LIQLIGI
+RESET KERAKMI?
+RESETDAN KEYIN NIMA BO'LADI?
+
+jadvalini chiqaring.
+
+==================================================
+3. SALES BOT — MUTLAQO DAXLSIZ
+==================================================
+
+Sales botga tegmang.
+
+Quyidagilarni alohida aniqlang:
+
+- sales
+- sale_items
+- sales users
+- sales products/catalog
+- customer/order data
+- payment/history
+- Telegram bot data
+
+Sales tarixini o'chirmang.
+
+Sales uchun ishlayotgan product ma'lumotlarini ham
+avval dependency bilan tekshirmasdan o'chirmang.
+
+Agar warehouse products va sales products bir xil table bo'lsa:
+
+STOP.
+
+Ularni shunchaki DELETE qilish mumkin emas.
+
+Avval:
+
+"sales dependency mavjud"
+
+deb ko'rsating.
+
+Menga aniq schema dependency chiqaring.
+
+==================================================
+4. "PRODUCTS HAMMASI O'CHIRILSIN" TALABI
+==================================================
+
+Production/warehouse uchun yaratilgan eski product catalog
+alohida bo'lsa — reset scopega kiradi.
+
+Lekin sales bot foydalanadigan productlar:
+
+DAXLSIZ.
+
+Agar bitta `products` jadvali ham warehouse,
+ham sales tomonidan ishlatilsa:
+
+DELETE QILMANG.
+
+DRY-RUNDA STOP FLAG qo'ying.
+
+Sales tarixini buzmaydigan yangi architecture
+kerak bo'ladi.
+
+==================================================
+5. PARTIYALAR / BATCHES
+==================================================
+
+Shu kungacha kiritilgan production partiyalarining barchasi
+reset scopega kiradi.
+
+Aniqlang:
+
+- batches
+- batch items
+- batch-product links
+- batch WIP links
+- batch inventory links
+
+Har birini resetdan keyin 0 dan boshlash mumkinligini tekshiring.
+
+Ammo hozir DELETE QILMANG.
+
+==================================================
+6. OLD INVENTORY
+==================================================
+
+Hozirgi inventory:
+
+140 satr
+
+ekanligi ma'lum.
+
+Resetdan keyin eski warehouse inventory
+qayta ishlatilmaydi.
+
+Dry-run quyidagilarni ko'rsatsin:
+
+OLD INVENTORY
+→ qaysi satrlar o'chiriladi
+→ qaysi 9 konteyner qayta yaratiladi/yuklanadi
+→ expected final inventory
+
+==================================================
+7. STOCK MOVEMENTS
+==================================================
+
+Eski warehouse/production movementsni ham reset qilish
+kerakmi yoki audit arxivida saqlash kerakligini dependency bilan aniqlang.
+
+MUHIM:
+
+Sales tarixini buzadigan movementlarni o'chirmang.
+
+Agar movementlar sales bilan bog'liq bo'lsa:
+
+STOP.
+
+Agar faqat warehouse/production movementlar bo'lsa:
+
+RESET SCOPEga nomzod sifatida ko'rsating.
+
+==================================================
+8. WIP
+==================================================
+
+Ishlab chiqarishni 0 dan boshlaymiz.
+
+Shuning uchun eski WIP / production history
+operatsion hisobdan chiqarilishi kerak.
+
+Lekin:
+
+OLD HISTORY ARCHIVE
+
+sifatida backup/dump saqlansin.
+
+Production WIP resetdan keyin:
+
+0
+
+dan boshlanadi.
+
+Hozircha hech narsa o'chirmang.
+
+==================================================
+9. 9 TA REAL KONTEYNER — YANGI SOURCE OF TRUTH
+==================================================
+
+Resetdan keyin warehouse inventory uchun
+faqat biz tasdiqlagan 9 ta fizik sanoq source of truth bo'ladi.
+
+Tasdiqlangan jami:
+
+9 containers
+97 physical positions
+94 canonical TM items
+2 EXACT existing catalog products
+71,862.20 kg
+126,360 dona
+
+9 konteyner:
+
+C-20
+C-19
+C-18
+C-02
+C-04
+C-06
+C-16
+C-17
+C-15
+
+C-15:
+13,020.00 kg RAW
+
+C-16:
+61,080 dona
+7,045.20 kg
+
+C-17:
+65,280 dona
+3,256.00 kg
+
+Qolgan konteynerlar ham muhrlangan
+2026-08-16 physical count registridan olinadi.
+
+Qo'lda qayta yozmang.
+
+R-B physical count registry
+asosiy manba bo'lsin.
+
+==================================================
+10. MUHIM: 94 TM SKU
+==================================================
+
+TM-000001 ... TM-000094
+allaqachon yaratilgan.
+
+Ularni o'chirib qayta yaratmang.
+
+Agar reset architecture buni talab qilsa,
+avval dependency tahlil qiling.
+
+SKU identity saqlanishi kerak.
+
+==================================================
+11. 2 EXACT
+==================================================
+
+Mavjud katalogga biriktirilgan:
+
+Rossiya Tros
+531 kg
+C-18
+
+Shroki 3.5 Oq
+676.55 kg
+C-02
+
+Yangi SKU yaratmang.
+
+Agar sales dependency sabab product catalog
+o'zgartirilsa:
+
+STOP va menga ko'rsating.
+
+==================================================
+12. FINAL RESETDAN KEYIN KUTILAYOTGAN HOLAT
+==================================================
+
+Warehouse:
+
+FAQAT 9 TA REAL KONTEYNER
+FAQAT REAL PHYSICAL COUNT
+
+Production:
+
+0
+
+WIP:
+
+0
+
+Old batches:
+
+0 operational records
+
+Old warehouse inventory:
+
+0 operational records
+
+Old production movements:
+
+0 operational records
+
+KEYIN:
+
+9 physical containers
+→ 97 positions
+→ 94 TM SKU + 2 EXACT
+→ 71,862.20 kg
+→ 126,360 dona
+
+==================================================
+13. ARCHIVE
+==================================================
+
+RESETDAN OLDIN:
+
+1. Full PostgreSQL dump
+2. SQL checksum
+3. Reset-scope table snapshot
+4. Sales invariant snapshot
+5. Sales dependency graph
+6. Warehouse old-state report
+7. Production old-state report
+
+yarating.
+
+Old data yo'qolib ketmasin.
+
+Archive immutable/read-only bo'lsin.
+
+==================================================
+14. SALES INVARIANTS
+==================================================
+
+Resetdan oldin va keyin quyidagilar
+o'zgarmaganini isbotlash kerak:
+
+sales count
+sale_items count
+sales totals
+customer/order history
+payment history
+sales bot users
+sales bot dependencies
+
+Agar bularning birortasi reset sabab o'zgarishi kerak bo'lsa:
+
+STOP.
+
+==================================================
+15. RESET DEPENDENCY GRAPH
+==================================================
+
+Menga quyidagi formatda chiqar:
+
+TABLE | ROWS | RESET? | SALES DEPENDENCY? | FK BLOCK? | ACTION
+
+Masalan:
+
+inventory | 140 | YES | NO | ... | RESET
+
+sales | 45 | NO | YES | ... | NEVER TOUCH
+
+products | 117 | ??? | YES/NO | ... | ...
+
+batches | 280 | YES | NO | ... | RESET CANDIDATE
+
+==================================================
+16. IMPORTANT — NO CASCADE DELETE
+==================================================
+
+CASCADE DELETEni o'zboshimchalik bilan ishlatmang.
+
+TRUNCATE CASCADE ham ishlatmang.
+
+Avval dependency graph.
+
+Har bir reset action explicit bo'lsin.
+
+==================================================
+17. RESET ORDER
+==================================================
+
+Dry-run faqat quyidagi kelajakdagi tartibni taklif qilsin:
+
+PHASE 0
+Full backup
+
+PHASE 1
+Sales freeze/invariant verification
+
+PHASE 2
+Archive old warehouse/production state
+
+PHASE 3
+Reset warehouse/production data
+
+PHASE 4
+Reset production state
+
+PHASE 5
+Load 9 physical-count containers
+
+PHASE 6
+Verify 71,862.20 kg / 126,360 units
+
+PHASE 7
+Production starts from zero
+
+Hech bir phase hozir bajarilmasin.
+
+==================================================
+18. SUCCESS CONDITION
+==================================================
+
+Dry-run yakunida quyidagilar aniq bo'lishi kerak:
+
+1. Nima o'chadi
+2. Nima saqlanadi
+3. Nima archive qilinadi
+4. Sales nimadan himoyalangan
+5. Qaysi tablelarda FK muammo bor
+6. Qaysi productlar salesga bog'langan
+7. Qaysi production data reset qilinadi
+8. 9 physical count qanday qayta yuklanadi
+9. Final expected state
+10. Rollback strategy
+
+==================================================
+19. ABSOLUTE STOP
+==================================================
+
+BU TASKDAN KEYIN:
+
+DATABASE WRITE = 0.
+
+Hech qanday DELETE/UPDATE/TRUNCATE qilinmasin.
+
+Menga faqat:
+
+RESET DRY-RUN REPORT
+
+berilsin.
+
+Keyingi bosqich faqat men:
+
+"RESET GO"
+
+deb aniq tasdiqlaganimdan keyin boshlanadi.
+
+WE DON'T GUESS.
+WE KNOW.

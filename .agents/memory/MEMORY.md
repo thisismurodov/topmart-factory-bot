@@ -36,4 +36,4 @@
 - [Audit-log writes must be transactional](audit-log-writes.md) — read→UPDATE→audit INSERT need one txn + FOR UPDATE or parallel edits corrupt the chain; `??` swallows explicit null in PATCH bodies.
 - [Two product catalogs (ERP vs savdo bot)](two-product-catalogs.md) — public.products ≠ distribution.mahsulotlar (by design); bridge = dashboard section + sync-to-erp; normalize apostrophe variants when matching names.
 - [Last-write-wins sync needs server-side versioning](lww-sync-versioning.md) — client seq guards alone fail review; use op_seq conditional upsert + tombstone (no DELETE) so late PUTs can't resurrect resets.
-- [Canonical item-master migration](canonical-item-master.md) — P2.1+R-A+R-C+R-B LIVE 2026-08-17; registry frozen (9+97, gated-SQL-only tables); 2 EXACT open; R-D frozen.
+- [Canonical item-master migration](canonical-item-master.md) — P2.1+R-A+R-C+R-B+R-D(C-15 LOADED) LIVE 2026-08-17; 8 konteyner frozen; 2 EXACT open; gated scripts: LOCK before snapshot.

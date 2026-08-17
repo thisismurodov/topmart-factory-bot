@@ -36,7 +36,7 @@
 - [Audit-log writes must be transactional](audit-log-writes.md) — read→UPDATE→audit INSERT need one txn + FOR UPDATE or parallel edits corrupt the chain; `??` swallows explicit null in PATCH bodies.
 - [Two product catalogs (ERP vs savdo bot)](two-product-catalogs.md) — public.products ≠ distribution.mahsulotlar (by design); bridge = dashboard section + sync-to-erp; normalize apostrophe variants when matching names.
 - [Last-write-wins sync needs server-side versioning](lww-sync-versioning.md) — client seq guards alone fail review; use op_seq conditional upsert + tombstone (no DELETE) so late PUTs can't resurrect resets.
-- [Canonical item-master migration](canonical-item-master.md) — v2 reset COMPLETE 2026-08-17: 9/9 LOADED, inventory=physical count (71 862.20 kg/126 360 dona); lock ALL claimed-untouched tables; scope reason-prefix counts by warehouse.
+- [Canonical item-master migration](canonical-item-master.md) — v2 reset + legacy purge EXECUTED 2026-08-17 on prod; baseline-9=physical count; archives legacy.*_pre_reset_20260817 (no-touch, recovery path); never re-run GO.
 - [Production Flow graph](production-flow-graph.md) — F2 API + F3 /flow-map page (xyflow) live; groups nested under nodes.*; READ ONLY txn + static-scan test (no English write-words); no polling — manual refresh + 5-min staleTime.
 - [xyflow canvas testing & layout](xyflow-edge-testing.md) — e2e edge clicks must target the LABEL chip (bbox-center misses stroke); canvas needs min-h-[360px] md:min-h-0 or #004 height-0 on mobile.
 - [Test schema must mirror prod columns](test-schema-prod-mirror.md) — generate test CREATEs from information_schema, never assumptions; an assumed column passed all tests but 500'd live.

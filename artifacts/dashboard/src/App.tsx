@@ -14,6 +14,7 @@ import Customers from "@/pages/customers";
 import Sales from "@/pages/sales";
 import Inventory from "@/pages/inventory";
 import IshJarayoni from "@/pages/ish-jarayoni";
+import FlowMapPage from "@/pages/flow-map";
 import Debts from "@/pages/debts";
 import Reports from "@/pages/reports";
 import AiPage from "@/pages/ai";
@@ -79,6 +80,7 @@ function Router() {
             <Route path="/sales" component={Sales} />
             <Route path="/inventory" component={Inventory} />
             <Route path="/ish-jarayoni" component={IshJarayoni} />
+            <Route path="/flow-map" component={FlowMapPage} />
             <Route path="/debts" component={Debts} />
             <Route path="/packers" component={Packers} />
             <Route path="/raw-materials" component={RawMaterials} />

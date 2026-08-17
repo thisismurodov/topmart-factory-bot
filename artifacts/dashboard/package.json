@@ -79,5 +79,8 @@
     "vitest": "^4.1.9",
     "wouter": "^3.3.5",
     "zod": "catalog:"
+  },
+  "dependencies": {
+    "@xyflow/react": "^12.11.3"
   }
 }

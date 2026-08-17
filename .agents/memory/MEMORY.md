@@ -37,4 +37,5 @@
 - [Two product catalogs (ERP vs savdo bot)](two-product-catalogs.md) — public.products ≠ distribution.mahsulotlar (by design); bridge = dashboard section + sync-to-erp; normalize apostrophe variants when matching names.
 - [Last-write-wins sync needs server-side versioning](lww-sync-versioning.md) — client seq guards alone fail review; use op_seq conditional upsert + tombstone (no DELETE) so late PUTs can't resurrect resets.
 - [Canonical item-master migration](canonical-item-master.md) — v2 reset COMPLETE 2026-08-17: 9/9 LOADED, inventory=physical count (71 862.20 kg/126 360 dona); lock ALL claimed-untouched tables; scope reason-prefix counts by warehouse.
-- [Production Flow graph](production-flow-graph.md) — F2 /ombor/flow/graph live: groups nested under nodes.* (F1 fixture FLAT — F3 adds prefix); READ ONLY txn + static-scan test (no English write-words in file); RECEIVE=0, text-name joins..
+- [Production Flow graph](production-flow-graph.md) — F2 API + F3 /flow-map page (xyflow) live; groups nested under nodes.*; READ ONLY txn + static-scan test (no English write-words); no polling — manual refresh + 5-min staleTime.
+- [xyflow canvas testing & layout](xyflow-edge-testing.md) — e2e edge clicks must target the LABEL chip (bbox-center misses stroke); canvas needs min-h-[360px] md:min-h-0 or #004 height-0 on mobile.

@@ -1,0 +1,654 @@
+# TOPMART ERP — F3 GO
+# PRODUCTION FLOW MAP — DASHBOARD INTEGRATION
+
+F1 = APPROVED
+F2 = COMPLETE
+F3 = GO
+
+F1 visual mockup tasdiqlangan.
+F2 real read-only API tasdiqlangan:
+
+GET /api/ombor/flow/graph
+
+F2:
+- real production DB
+- READ ONLY
+- 10/10 tests PASS
+- WRITE = 0
+- DDL = 0
+
+Endi F3 vazifa:
+F1 visual Production Flow Map'ni real F2 API bilan dashboardga integratsiya qilish.
+
+==================================================
+1. QAT'IY SAFETY SCOPE
+==================================================
+
+F3 davomida:
+
+NO inventory write
+NO stock movement write
+NO BASELINE
+NO R-D
+NO R-B modification
+NO legacy modification
+NO sales modification
+NO item mapping
+NO RECEIVE creation
+NO WIP backfill
+NO purpose correction
+NO database schema change
+
+F3 — UI + READ-ONLY API integration.
+
+Mavjud real ma'lumotlarni o'zgartirmang.
+
+==================================================
+2. NEW PAGE
+==================================================
+
+Dashboardga yangi:
+
+/flow-map
+
+sahifasini qo'shing.
+
+Mavjud "Ish jarayoni" sahifasini buzmaslik va o'zgartirmaslik.
+
+Flow Map alohida production-flow visual page bo'ladi.
+
+==================================================
+3. TECHNOLOGY
+==================================================
+
+F1da tasdiqlangan:
+
+@xyflow/react
+
+kutubxonasidan foydalaning.
+
+Custom SVG'ga o'tmang.
+
+F1dagi visual language saqlansin.
+
+==================================================
+4. API INTEGRATION
+==================================================
+
+Frontend:
+
+GET /api/ombor/flow/graph
+
+endpointidan real data oladi.
+
+API contract:
+
+{
+  nodes: [...],
+  edges: [...],
+  supplyEdges: [...],
+  gaps: [...],
+  meta: {...}
+}
+
+F1 mockupdagi fixture data o'rniga real API data ishlatiladi.
+
+Mock data production UIda ishlatilmasin.
+
+==================================================
+5. GRAPH LAYERS
+==================================================
+
+Graph 5 asosiy qatlamdan iborat:
+
+RAW CONTAINER
+↓
+DEPARTMENT
+↓
+WIP
+↓
+PRODUCT
+↓
+FINISHED CONTAINER
+
+Chapdan o'ngga yoki yuqoridan pastga layout — F1dagi ko'rinishga maksimal mos.
+
+Node'lar orasidagi real relationshiplar API'dan olinadi.
+
+==================================================
+6. CONTAINER NODE
+==================================================
+
+Container card:
+
+- Container name
+- Location
+- Content type
+- RAW / PRE-FINISHED / FINISHED / MIXED badge
+- product count
+- weight/quantity summary
+
+Container click:
+
+o'ng tomonda detail drawer ochilsin.
+
+Drawer:
+
+Container
+Location
+Purpose
+Content classification
+Products
+SKU
+Quantity
+Weight
+Connections
+Warnings
+
+Agar purpose va content mos kelmasa warning ko'rsating.
+
+Masalan F2 aniqlagan:
+
+C-03
+C-04
+C-08
+C-09
+C-13
+C-15
+
+uchun mismatch warning ko'rsatilishi mumkin.
+
+BU WARNINGNI ko'rsatish mumkin.
+
+DATABASE'DAGI PURPOSENI O'ZGARTIRMANG.
+
+==================================================
+7. DEPARTMENT NODE
+==================================================
+
+Department = mavjud production_lines.
+
+Alohida departments table yaratmang.
+
+Department card:
+
+- Name
+- active/inactive
+- employee count
+- role count
+- salary summary (agar API real data bersa)
+
+Click:
+
+Department detail drawer:
+
+- Department name
+- Employees
+- Roles
+- Salary
+- WIP
+- Inputs
+- Outputs
+- Related products
+
+Fake data ko'rsatmang.
+
+==================================================
+8. WIP NODE
+==================================================
+
+WIP node:
+
+- line
+- balance
+- status
+- input/output
+- weight
+- timestamp
+
+Agar WIP manfiy bo'lsa:
+
+QIZIL WARNING.
+
+Masalan:
+
+Arqon Bo'lim 3
+−8,964.77 kg
+
+qiymatini yashirmang yoki 0 qilib qo'ymang.
+
+Drawer ichida:
+
+"Negative WIP"
+
+warning ko'rsating.
+
+==================================================
+9. PRODUCT NODE
+==================================================
+
+Product card:
+
+- Name
+- SKU
+- product_type
+- quantity
+- weight
+- location
+
+Agar SKU mavjud bo'lmasa:
+
+"SKU biriktirilmagan"
+
+deb ko'rsating.
+
+SKU'ni nomga qarab taxminan yaratmang.
+
+==================================================
+10. CONNECTIONS
+==================================================
+
+F1da tasdiqlangan connection semantics:
+
+DEPARTMENT → WIP
+= wip_movements
+
+WIP → PRODUCT
+= PRODUCE
+
+DEPARTMENT → PRODUCT
+= batches
+
+PRODUCT → CONTAINER
+= inventory / stock_movements
+
+Container → Department
+= faqat real RECEIVE relationship mavjud bo'lsa.
+
+Hozir RECEIVE = 0.
+
+Shuning uchun:
+
+SOXTA CHIZIQ CHIZMANG.
+
+Gap card:
+
+"RECEIVE: 0 yozuv — Flow data mavjud emas"
+
+ko'rsatilishi kerak.
+
+==================================================
+11. EDGE CLICK
+==================================================
+
+Connection ustiga bosilganda detail panel:
+
+- relationship type
+- source
+- destination
+- database source
+- quantity
+- weight
+- period
+- status
+
+ko'rsinsin.
+
+Masalan:
+
+Relationship:
+Department → WIP
+
+Source:
+wip_movements
+
+Weight:
+X kg
+
+Period:
+...
+
+==================================================
+12. SEARCH
+==================================================
+
+Search bar:
+
+- SKU
+- Product
+- Container
+- Department
+- WIP
+
+bo'yicha ishlasin.
+
+Masalan:
+
+TM-000080
+
+qidirilganda:
+
+TM-000080
+↓
+Product
+↓
+Container
+
+va unga bog'liq path highlight qilinsin.
+
+Qolgan graph biroz xiralashsin.
+
+==================================================
+13. FILTERS
+==================================================
+
+F1da tasdiqlangan filterlar:
+
+- Container
+- Department
+- WIP
+- Product
+- Raw
+- Pre-finished
+- Finished
+
+Filterlar bir-biriga mos ishlasin.
+
+Masalan:
+
+PRE-FINISHED
+
+tanlansa faqat tegishli node/pathlar ko'rinsin.
+
+==================================================
+14. GAPS / DATA QUALITY
+==================================================
+
+API'dagi gaps UI'da alohida ko'rsatiladi.
+
+Known gaps:
+
+NO_RECEIVE_DATA
+NEGATIVE_WIP
+ITEM_LINKS_EMPTY
+PURPOSE_MISMATCH
+UNATTRIBUTED_BATCHES
+
+F2 ma'lumotlariga ko'ra:
+
+- RECEIVE = 0
+- Negative WIP mavjud
+- SKU linkage juda kam
+- 71 ta batch line_id NULL
+- 6 ta container purpose/content mismatch
+
+Bularni yashirmang.
+
+Graph foydalanuvchiga:
+
+"System doesn't know"
+
+degan joylarni halol ko'rsatishi kerak.
+
+==================================================
+15. UNASSIGNED DATA
+==================================================
+
+71 ta batch:
+
+line_id = NULL
+
+bo'lsa:
+
+departmentga fake connection yaratmang.
+
+UI'da:
+
+"Unassigned batches"
+
+gap/card sifatida ko'rsating.
+
+User ustiga bosib:
+
+- batch count
+- product
+- quantity
+- weight
+
+ko'rishi mumkin.
+
+==================================================
+16. LOADING STATE
+==================================================
+
+F2 endpoint taxminan 6 sekund javob berishi mumkin.
+
+Shuning uchun professional loading state:
+
+"Production Flow yuklanmoqda..."
+
+skeleton / spinner
+
+ko'rsating.
+
+6 sekundlik API javobda UI muzlab qolmasin.
+
+==================================================
+17. ERROR STATE
+==================================================
+
+API:
+
+401
+403
+500
+timeout
+network error
+
+holatlariga mos UI bo'lsin.
+
+Masalan:
+
+"Production Flow ma'lumotlarini yuklab bo'lmadi."
+
+Retry tugmasi bo'lsin.
+
+==================================================
+18. EMPTY STATE
+==================================================
+
+Agar filter natijasida hech narsa qolmasa:
+
+"Hech qanday ma'lumot topilmadi."
+
+ko'rsating.
+
+==================================================
+19. PERFORMANCE
+==================================================
+
+Graph katta bo'lishi mumkin.
+
+Shuning uchun:
+
+- default faqat relevant/active node
+- empty containers collapsed
+- aggregate warehouses collapsed
+- unnecessary rerender yo'q
+- API faqat kerakli paytda fetch
+- search/filter frontendda efficient
+
+bo'lsin.
+
+==================================================
+20. RESPONSIVE
+==================================================
+
+iPad-first.
+
+Desktop ham yaxshi ishlashi kerak.
+
+Mobile uchun ham kamida usable bo'lsin.
+
+Graph:
+
+zoom
+pan
+fit view
+
+qilishni qo'llab-quvvatlasin.
+
+==================================================
+21. VISUAL STYLE
+==================================================
+
+F1 mockupdagi visual hierarchy saqlansin.
+
+TopMart dashboard bilan bir xil design language:
+
+- clean
+- professional
+- minimal
+- information dense, lekin chalkash emas
+- statuslar aniq
+- warninglar ko'zga tashlanadi
+- node'lar bir-biridan oson ajraladi
+
+Yangi random design system yaratmang.
+
+==================================================
+22. DETAIL DRAWER
+==================================================
+
+Drawer desktopda right-side panel.
+
+iPadda ham qulay ochilsin.
+
+Node click:
+
+Graph qoladi.
+Drawer ustidan ochiladi.
+
+User drawerni yopganda graph holati saqlansin.
+
+==================================================
+23. SECURITY
+==================================================
+
+F2 endpoint authentication qanday ishlayotgan bo'lsa, o'sha session/auth mexanizmidan foydalaning.
+
+Frontend API key yoki secretni hardcode qilmang.
+
+Unauthorized request:
+
+401
+
+bo'lib qolishi kerak.
+
+==================================================
+24. TESTING
+==================================================
+
+F3 uchun testlar:
+
+1. /flow-map route
+2. API fetch
+3. authenticated fetch
+4. unauthorized state
+5. node rendering
+6. edge rendering
+7. drawer
+8. search
+9. filter
+10. gap rendering
+11. negative WIP warning
+12. SKU=null rendering
+13. unassigned batches
+14. purpose/content warning
+15. loading
+16. error
+17. empty state
+18. responsive basics
+
+F1 visual contract buzilmasin.
+
+==================================================
+25. DATABASE INVARIANT
+==================================================
+
+F3 oldin/keyin:
+
+inventory
+stock_movements
+sales
+sale_items
+legacy
+R-B registry
+items
+wip_movements
+batches
+
+snapshotlari bir xil bo'lishi kerak.
+
+DATABASE WRITE = 0.
+
+Agar tasodifiy write aniqlansa:
+
+STOP.
+
+==================================================
+26. SCOPE DISCIPLINE
+==================================================
+
+F3 davomida quyidagilarni "yaxshilab qo'yish" bahonasida o'zgartirmang:
+
+- RECEIVE
+- item_id
+- WIP
+- purpose
+- product catalog
+- inventory
+- legacy
+- sales
+- BOM
+- salary logic
+
+Ularning ayrimlari kelajakdagi alohida tasklar.
+
+Hozir faqat VISUALIZATION.
+
+==================================================
+27. COMPLETION REPORT
+==================================================
+
+F3 tugagach menga:
+
+1. /flow-map screenshot/preview
+2. real API bilan ishlayotganini
+3. node count
+4. edge count
+5. gap count
+6. tests
+7. before/after DB snapshot
+8. WRITE=0 isboti
+9. performance
+10. responsive test
+11. bugs/issues
+12. F4 uchun tavsiya
+
+ni bering.
+
+==================================================
+28. STOP CONDITION
+==================================================
+
+F3 tugagach avtomatik F4 boshlanmang.
+
+F4 — Department panel / Employees / Salary / WIP detail — alohida GO.
+
+F3 faqat dashboard integration.
+
+WAIT FOR F4 GO.
+
+WE DON'T GUESS.
+WE KNOW.

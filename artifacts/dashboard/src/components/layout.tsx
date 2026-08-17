@@ -22,6 +22,7 @@ import {
   Bot,
   Activity,
   Truck,
+  Waypoints,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -41,6 +42,7 @@ const NAV_ITEMS = [
   { href: "/ai",         label: "AI tahlil",   icon: Bot },
   { href: "/inventory",  label: "Ombor",       icon: Warehouse },
   { href: "/ish-jarayoni", label: "Ish jarayoni", icon: Activity },
+  { href: "/flow-map",   label: "Oqim xaritasi", icon: Waypoints },
   { href: "/distribution", label: "Distribyutsiya", icon: Truck },
   { href: "/audit",      label: "Audit log",   icon: ClipboardList },
 ];
@@ -182,11 +184,17 @@ export function Layout({ children }: { children: ReactNode }) {
             {NAV_ITEMS.find(i => location.startsWith(i.href))?.label || "Bosh sahifa"}
           </h1>
         </div>
-        <div className="flex-1 overflow-y-auto p-8">
-          <div className="max-w-7xl mx-auto">
-            {children}
+        {location.startsWith("/flow-map") ? (
+          // Flow Map to'liq kenglik/balandlik talab qiladi (graf kanvas) —
+          // odatiy padding/max-width o'ramisiz chiziladi.
+          <div className="flex-1 min-h-0">{children}</div>
+        ) : (
+          <div className="flex-1 overflow-y-auto p-8">
+            <div className="max-w-7xl mx-auto">
+              {children}
+            </div>
           </div>
-        </div>
+        )}
       </main>
     </div>
   );

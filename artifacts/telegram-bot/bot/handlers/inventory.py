@@ -3,6 +3,8 @@ Ombor (Inventory) handlers for Telegram bot.
 Menu: ➕ Kirim | ➖ Chiqim | 🔄 O'tkazish | 📋 Qoldiqlar | 📜 Tarix
 Kirimda kategoriya tanlanadi: 📦 Tayyor mahsulot | 🧵 Xom ashyo
 """
+import re
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.ext import (
     ContextTypes, ConversationHandler, MessageHandler,
@@ -15,6 +17,7 @@ from ..database import (
     get_sale_products, get_raw_material_names,
     get_containers, get_inventory_line,
     get_raw_materials_full, get_raw_material_by_id,
+    get_stock_locations, get_unit_for_item,
 )
 from ..api_client import adjust_inventory, adjust_raw_material
 
@@ -68,6 +71,34 @@ def _product_inline(products: list[str], prefix: str) -> InlineKeyboardMarkup:
 def _is_allowed(chat_id: int) -> bool:
     row = get_user_role(chat_id)
     return row is not None and row["role"] in ("admin", "packer")
+
+
+def _fmt_amt(v) -> str:
+    """837.7 → '837.7', 61080 → '61 080', 4572.25 → '4 572.3'."""
+    s = f"{float(v):,.1f}".replace(",", " ")
+    return s[:-2] if s.endswith(".0") else s
+
+
+def _stock_line(r: dict) -> str:
+    """Inventar qatori uchun 'X dona · Y kg' ko'rinishidagi matn."""
+    parts = []
+    if float(r.get("quantity") or 0) > 0:
+        parts.append(f"{_fmt_amt(r['quantity'])} dona")
+    if float(r.get("weight_kg") or 0) > 0:
+        parts.append(f"{_fmt_amt(r['weight_kg'])} kg")
+    return " · ".join(parts) if parts else "0"
+
+
+def _md(s) -> str:
+    """Telegram legacy-Markdown maxsus belgilarini ekranlash (_ * ` [)."""
+    return re.sub(r"([_*`\[])", r"\\\1", str(s))
+
+
+def _stock_list_text(items: list[dict], key: str = "product", max_lines: int = 25) -> str:
+    lines = [f"  • {_md(i[key])} — {_stock_line(i)}" for i in items[:max_lines]]
+    if len(items) > max_lines:
+        lines.append(f"  … yana {len(items) - max_lines} ta")
+    return "\n".join(lines)
 
 
 # ── Entry ──────────────────────────────────────────────────────────────────────
@@ -152,8 +183,14 @@ async def kirim_product_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> in
         await q.edit_message_text("❌ Bekor qilindi.")
         return INV_MAIN
     ctx.user_data["inv_product"] = q.data.split(":", 1)[1]
+    unit = get_unit_for_item(
+        ctx.user_data["inv_product"],
+        ctx.user_data.get("inv_product_type", "finished"),
+    )
+    ctx.user_data["inv_unit"] = unit
+    prompt = "⚖️ Og'irlikni kiriting (kg):" if unit == "kg" else "📊 Miqdorni kiriting (dona):"
     await q.edit_message_text(
-        f"📦 Mahsulot: *{ctx.user_data['inv_product']}*\n\nMiqdor kiriting:",
+        f"📦 Mahsulot: *{_md(ctx.user_data['inv_product'])}*\n\n{prompt}",
         parse_mode="Markdown",
     )
     return INV_IN_QTY
@@ -171,8 +208,19 @@ async def kirim_qty(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         return INV_IN_QTY
     ctx.user_data["inv_qty"] = qty
     warehouses = get_warehouses()
+    product = ctx.user_data["inv_product"]
+    locs = get_stock_locations(product)
+    if locs:
+        stock_txt = (
+            f"📍 *{_md(product)}* hozir skladlarda:\n"
+            + _stock_list_text(locs, key="warehouse")
+            + "\n\n"
+        )
+    else:
+        stock_txt = f"📍 *{_md(product)}* hozircha hech bir skladda yo'q.\n\n"
     await update.message.reply_text(
-        "🏬 Qaysi skladga kiritiladi?",
+        stock_txt + "🏬 Qaysi skladga kiritiladi?",
+        parse_mode="Markdown",
         reply_markup=_warehouse_inline(warehouses, "kw"),
     )
     return INV_IN_WAREHOUSE
@@ -193,13 +241,18 @@ async def kirim_warehouse_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
     qty = ctx.user_data["inv_qty"]
     wh  = ctx.user_data["inv_wh_name"]
     cat = ctx.user_data.get("inv_product_type", "finished")
+    unit = ctx.user_data.get("inv_unit", "dona")
     cat_label = "📦 Tayyor mahsulot" if cat == "finished" else "🧵 Xom ashyo"
+    amt_line = (
+        f"⚖️ Og'irlik: *{_fmt_amt(qty)} kg*" if unit == "kg"
+        else f"📊 Miqdor: *{_fmt_amt(qty)} dona*"
+    )
     await q.edit_message_text(
         f"✅ *Tasdiqlang:*\n\n"
         f"Kategoriya: *{cat_label}*\n"
-        f"📦 Mahsulot: *{p}*\n"
-        f"📊 Miqdor: *{qty}*\n"
-        f"🏬 Sklad: *{wh}*",
+        f"📦 Mahsulot: *{_md(p)}*\n"
+        f"{amt_line}\n"
+        f"🏬 Sklad: *{_md(wh)}*",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton("✅ Tasdiqlash", callback_data="kconfirm:yes"),
@@ -220,22 +273,38 @@ async def kirim_confirm_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> in
     user       = get_user_role(update.effective_chat.id)
     created_by = user["worker_name"] if user else str(update.effective_chat.id)
     cat        = ctx.user_data.get("inv_product_type", "finished")
-    ok = record_movement(
-        product=ctx.user_data["inv_product"],
-        quantity=ctx.user_data["inv_qty"],
-        movement_type="IN",
-        from_warehouse_id=None,
-        to_warehouse_id=ctx.user_data["inv_wh_id"],
-        created_by=created_by,
-        product_type=cat,
-    )
+    unit       = ctx.user_data.get("inv_unit", "dona")
+    qty        = ctx.user_data["inv_qty"]
+    if unit == "kg":
+        ok = record_movement(
+            product=ctx.user_data["inv_product"],
+            quantity=0,
+            movement_type="IN",
+            from_warehouse_id=None,
+            to_warehouse_id=ctx.user_data["inv_wh_id"],
+            note=f"Bot kirim: {qty} kg",
+            created_by=created_by,
+            product_type=cat,
+            weight_kg=qty,
+        )
+    else:
+        ok = record_movement(
+            product=ctx.user_data["inv_product"],
+            quantity=qty,
+            movement_type="IN",
+            from_warehouse_id=None,
+            to_warehouse_id=ctx.user_data["inv_wh_id"],
+            note=f"Bot kirim: {qty} dona",
+            created_by=created_by,
+            product_type=cat,
+        )
     cat_label = "📦 Tayyor mahsulot" if cat == "finished" else "🧵 Xom ashyo"
     if ok:
         await q.edit_message_text(
             f"✅ *Kirim qabul qilindi!*\n\n"
             f"{cat_label}\n"
-            f"📦 {ctx.user_data['inv_product']} — {ctx.user_data['inv_qty']}\n"
-            f"🏬 {ctx.user_data['inv_wh_name']}",
+            f"📦 {_md(ctx.user_data['inv_product'])} — {_fmt_amt(qty)} {unit}\n"
+            f"🏬 {_md(ctx.user_data['inv_wh_name'])}",
             parse_mode="Markdown",
         )
     else:
@@ -272,7 +341,7 @@ async def chiqim_warehouse_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
         return INV_MAIN
     products = [i["product"] for i in items]
     await q.edit_message_text(
-        f"🏬 Sklad: *{parts[2]}*\n\nMahsulotni tanlang:",
+        f"🏬 Sklad: *{_md(parts[2])}*\n\n{_stock_list_text(items)}\n\nMahsulotni tanlang:",
         parse_mode="Markdown",
         reply_markup=_product_inline(products, "cp"),
     )
@@ -286,8 +355,18 @@ async def chiqim_product_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
         await q.edit_message_text("❌ Bekor.")
         return INV_MAIN
     ctx.user_data["inv_product"] = q.data.split(":", 1)[1]
+    line = get_inventory_line(ctx.user_data["inv_from_id"], ctx.user_data["inv_product"])
+    qty_av = float(line["quantity"] or 0) if line else 0.0
+    w_av   = float(line["weight_kg"] or 0) if line else 0.0
+    unit = "kg" if (line and (line["unit_type"] == "kg" or (qty_av <= 0 and w_av > 0))) else "dona"
+    ctx.user_data["inv_unit"]  = unit
+    ctx.user_data["inv_avail"] = w_av if unit == "kg" else qty_av
+    prompt = (
+        f"⚖️ Og'irlik kiriting (bor: {_fmt_amt(w_av)} kg):" if unit == "kg"
+        else f"📊 Miqdor kiriting (bor: {_fmt_amt(qty_av)} dona):"
+    )
     await q.edit_message_text(
-        f"📦 *{ctx.user_data['inv_product']}*\n\nMiqdor kiriting:",
+        f"📦 *{_md(ctx.user_data['inv_product'])}*\n\n{prompt}",
         parse_mode="Markdown",
     )
     return INV_OUT_QTY
@@ -301,11 +380,18 @@ async def chiqim_qty(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     except ValueError:
         await update.message.reply_text("⚠️ Musbat son kiriting:")
         return INV_OUT_QTY
+    unit  = ctx.user_data.get("inv_unit", "dona")
+    avail = float(ctx.user_data.get("inv_avail") or 0)
+    if qty > avail + 1e-9:
+        await update.message.reply_text(
+            f"⚠️ Skladda faqat {_fmt_amt(avail)} {unit} bor. Qaytadan kiriting:"
+        )
+        return INV_OUT_QTY
     ctx.user_data["inv_qty"] = qty
     p  = ctx.user_data["inv_product"]
     wh = ctx.user_data["inv_from_name"]
     await update.message.reply_text(
-        f"✅ *Tasdiqlang:*\n\n📦 {p}\n📊 {qty}\n🏬 {wh} dan chiqim",
+        f"✅ *Tasdiqlang:*\n\n📦 {_md(p)}\n📊 {_fmt_amt(qty)} {unit}\n🏬 {_md(wh)} dan chiqim",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton("✅ Tasdiqlash", callback_data="cconfirm:yes"),
@@ -330,24 +416,48 @@ async def chiqim_confirm_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
         if i["product"] == ctx.user_data["inv_product"]:
             pt = i.get("product_type", "finished")
             break
-    ok = record_movement(
-        product=ctx.user_data["inv_product"],
-        quantity=ctx.user_data["inv_qty"],
-        movement_type="OUT",
-        from_warehouse_id=ctx.user_data["inv_from_id"],
-        to_warehouse_id=None,
-        created_by=created_by,
-        product_type=pt,
-    )
+    unit = ctx.user_data.get("inv_unit", "dona")
+    qty  = ctx.user_data["inv_qty"]
+    if unit == "kg":
+        ok = record_movement(
+            product=ctx.user_data["inv_product"],
+            quantity=0,
+            movement_type="OUT",
+            from_warehouse_id=ctx.user_data["inv_from_id"],
+            to_warehouse_id=None,
+            note=f"Bot chiqim: {qty} kg",
+            created_by=created_by,
+            product_type=pt,
+            weight_kg=qty,
+        )
+    else:
+        ok = record_movement(
+            product=ctx.user_data["inv_product"],
+            quantity=qty,
+            movement_type="OUT",
+            from_warehouse_id=ctx.user_data["inv_from_id"],
+            to_warehouse_id=None,
+            note=f"Bot chiqim: {qty} dona",
+            created_by=created_by,
+            product_type=pt,
+        )
     if ok:
         await q.edit_message_text(
             f"✅ *Chiqim amalga oshirildi!*\n\n"
-            f"📦 {ctx.user_data['inv_product']} — {ctx.user_data['inv_qty']}\n"
-            f"🏬 {ctx.user_data['inv_from_name']}",
+            f"📦 {_md(ctx.user_data['inv_product'])} — {_fmt_amt(qty)} {unit}\n"
+            f"🏬 {_md(ctx.user_data['inv_from_name'])}",
             parse_mode="Markdown",
         )
     else:
-        await q.edit_message_text("❌ Xatolik.")
+        line = get_inventory_line(ctx.user_data["inv_from_id"], ctx.user_data["inv_product"])
+        avail_now = 0.0
+        if line:
+            avail_now = float(line["weight_kg"] or 0) if unit == "kg" else float(line["quantity"] or 0)
+        await q.edit_message_text(
+            f"❌ Bajarilmadi: skladda yetarli qoldiq yo'q.\n"
+            f"Hozir bor: {_fmt_amt(avail_now)} {unit}, so'ralgan: {_fmt_amt(qty)} {unit}.\n"
+            f"Qoldiq boshqa amal bilan o'zgargan bo'lishi mumkin — qaytadan urinib ko'ring."
+        )
     return INV_MAIN
 
 
@@ -376,11 +486,11 @@ async def transfer_from_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> in
     ctx.user_data["inv_from_name"] = parts[2]
     items = get_stock_for_warehouse(int(parts[1]))
     if not items:
-        await q.edit_message_text(f"⚠️ *{parts[2]}* da mahsulot yo'q.", parse_mode="Markdown")
+        await q.edit_message_text(f"⚠️ *{_md(parts[2])}* da mahsulot yo'q.", parse_mode="Markdown")
         return INV_MAIN
     products = [i["product"] for i in items]
     await q.edit_message_text(
-        f"🏬 Dan: *{parts[2]}*\n\nMahsulot tanlang:",
+        f"🏬 Dan: *{_md(parts[2])}*\n\n{_stock_list_text(items)}\n\nMahsulot tanlang:",
         parse_mode="Markdown",
         reply_markup=_product_inline(products, "tp"),
     )
@@ -394,8 +504,18 @@ async def transfer_product_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
         await q.edit_message_text("❌ Bekor.")
         return INV_MAIN
     ctx.user_data["inv_product"] = q.data.split(":", 1)[1]
+    line = get_inventory_line(ctx.user_data["inv_from_id"], ctx.user_data["inv_product"])
+    qty_av = float(line["quantity"] or 0) if line else 0.0
+    w_av   = float(line["weight_kg"] or 0) if line else 0.0
+    unit = "kg" if (line and (line["unit_type"] == "kg" or (qty_av <= 0 and w_av > 0))) else "dona"
+    ctx.user_data["inv_unit"]  = unit
+    ctx.user_data["inv_avail"] = w_av if unit == "kg" else qty_av
+    prompt = (
+        f"⚖️ Og'irlik kiriting (bor: {_fmt_amt(w_av)} kg):" if unit == "kg"
+        else f"📊 Miqdor kiriting (bor: {_fmt_amt(qty_av)} dona):"
+    )
     await q.edit_message_text(
-        f"📦 *{ctx.user_data['inv_product']}*\n\nMiqdor kiriting:",
+        f"📦 *{_md(ctx.user_data['inv_product'])}*\n\n{prompt}",
         parse_mode="Markdown",
     )
     return INV_TR_QTY
@@ -408,6 +528,13 @@ async def transfer_qty(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
             raise ValueError
     except ValueError:
         await update.message.reply_text("⚠️ Musbat son kiriting:")
+        return INV_TR_QTY
+    unit  = ctx.user_data.get("inv_unit", "dona")
+    avail = float(ctx.user_data.get("inv_avail") or 0)
+    if qty > avail + 1e-9:
+        await update.message.reply_text(
+            f"⚠️ Skladda faqat {_fmt_amt(avail)} {unit} bor. Qaytadan kiriting:"
+        )
         return INV_TR_QTY
     ctx.user_data["inv_qty"] = qty
     warehouses = [w for w in get_warehouses() if w["id"] != ctx.user_data.get("inv_from_id")]
@@ -431,8 +558,9 @@ async def transfer_to_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     qty = ctx.user_data["inv_qty"]
     frm = ctx.user_data["inv_from_name"]
     to  = ctx.user_data["inv_to_name"]
+    unit = ctx.user_data.get("inv_unit", "dona")
     await q.edit_message_text(
-        f"✅ *Tasdiqlang:*\n\n📦 {p}\n📊 {qty}\n🏬 {frm} → {to}",
+        f"✅ *Tasdiqlang:*\n\n📦 {_md(p)}\n📊 {_fmt_amt(qty)} {unit}\n🏬 {_md(frm)} → {_md(to)}",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton("✅ Tasdiqlash", callback_data="tconfirm:yes"),
@@ -456,24 +584,48 @@ async def transfer_confirm_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
         if i["product"] == ctx.user_data["inv_product"]:
             pt = i.get("product_type", "finished")
             break
-    ok = record_movement(
-        product=ctx.user_data["inv_product"],
-        quantity=ctx.user_data["inv_qty"],
-        movement_type="TRANSFER",
-        from_warehouse_id=ctx.user_data["inv_from_id"],
-        to_warehouse_id=ctx.user_data["inv_to_id"],
-        created_by=created_by,
-        product_type=pt,
-    )
+    unit = ctx.user_data.get("inv_unit", "dona")
+    qty  = ctx.user_data["inv_qty"]
+    if unit == "kg":
+        ok = record_movement(
+            product=ctx.user_data["inv_product"],
+            quantity=0,
+            movement_type="TRANSFER",
+            from_warehouse_id=ctx.user_data["inv_from_id"],
+            to_warehouse_id=ctx.user_data["inv_to_id"],
+            note=f"Bot o'tkazma: {qty} kg",
+            created_by=created_by,
+            product_type=pt,
+            weight_kg=qty,
+        )
+    else:
+        ok = record_movement(
+            product=ctx.user_data["inv_product"],
+            quantity=qty,
+            movement_type="TRANSFER",
+            from_warehouse_id=ctx.user_data["inv_from_id"],
+            to_warehouse_id=ctx.user_data["inv_to_id"],
+            note=f"Bot o'tkazma: {qty} dona",
+            created_by=created_by,
+            product_type=pt,
+        )
     if ok:
         await q.edit_message_text(
             f"✅ *O'tkazma amalga oshirildi!*\n\n"
-            f"📦 {ctx.user_data['inv_product']} — {ctx.user_data['inv_qty']}\n"
-            f"🏬 {ctx.user_data['inv_from_name']} → {ctx.user_data['inv_to_name']}",
+            f"📦 {_md(ctx.user_data['inv_product'])} — {_fmt_amt(qty)} {unit}\n"
+            f"🏬 {_md(ctx.user_data['inv_from_name'])} → {_md(ctx.user_data['inv_to_name'])}",
             parse_mode="Markdown",
         )
     else:
-        await q.edit_message_text("❌ Xatolik.")
+        line = get_inventory_line(ctx.user_data["inv_from_id"], ctx.user_data["inv_product"])
+        avail_now = 0.0
+        if line:
+            avail_now = float(line["weight_kg"] or 0) if unit == "kg" else float(line["quantity"] or 0)
+        await q.edit_message_text(
+            f"❌ Bajarilmadi: skladda yetarli qoldiq yo'q.\n"
+            f"Hozir bor: {_fmt_amt(avail_now)} {unit}, so'ralgan: {_fmt_amt(qty)} {unit}.\n"
+            f"Qoldiq boshqa amal bilan o'zgargan bo'lishi mumkin — qaytadan urinib ko'ring."
+        )
     return INV_MAIN
 
 
@@ -761,7 +913,7 @@ async def qoldiqlar(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         for wh, items in groups.items():
             lines.append(f"  🏬 {wh}")
             for i in items:
-                lines.append(f"    • {i['product']} — {float(i['quantity']):.1f}")
+                lines.append(f"    • {i['product']} — {_stock_line(i)}")
         lines.append("")
 
     # Xom ashyo
@@ -774,7 +926,7 @@ async def qoldiqlar(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         for wh, items in groups2.items():
             lines.append(f"  🏬 {wh}")
             for i in items:
-                lines.append(f"    • {i['product']} — {float(i['quantity']):.1f}")
+                lines.append(f"    • {i['product']} — {_stock_line(i)}")
 
     await update.message.reply_text(
         "\n".join(lines),
@@ -807,7 +959,17 @@ async def tarix(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
             where = f"← {r['from_wh']}"
         else:
             where = f"{r['from_wh']} → {r['to_wh']}"
-        lines.append(f"{icon}{pt_icon} `{time_str}` | *{r['product']}* {r['quantity']} | {where}")
+        qty_v = float(r["quantity"] or 0)
+        w_v   = float(r.get("weight_kg") or 0)
+        if r.get("product_type") == "raw":
+            amount = f"{_fmt_amt(qty_v if qty_v > 0 else w_v)} kg"
+        elif qty_v > 0:
+            amount = f"{_fmt_amt(qty_v)} dona"
+        elif w_v > 0:
+            amount = f"{_fmt_amt(w_v)} kg"
+        else:
+            amount = "0"
+        lines.append(f"{icon}{pt_icon} `{time_str}` | *{r['product']}* {amount} | {where}")
 
     await update.message.reply_text(
         "\n".join(lines),

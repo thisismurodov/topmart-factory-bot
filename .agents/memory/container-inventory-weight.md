@@ -27,7 +27,22 @@ approximation kept only as fallback.
 
 ## Mutation paths that maintain weight_kg
 
-- Bot `create_batch` adds batch weight; bot manual IN/OUT/TRANSFER move proportional weight.
+- Bot `record_movement` is **dual-mode**: dona-mode (weight_kg=0 → old proportional
+  heuristics, unchanged) vs kg-mode (weight_kg>0, quantity=0 → ONLY weight moves).
+  Movement-row convention: raw kg → `quantity=kg` (raw ledger counts quantity);
+  finished/pre-finished kg → `quantity=0` + weight_kg (API transfer convention).
+  Bot raw movements sync `raw_materials.current_stock` in the SAME txn per reconcile
+  semantics (IN → +, OUT-from-NULL → −, OUT-from-warehouse/TRANSFER → 0) — tests pin a
+  "reconcile gap unchanged" invariant.
+- **OUT/TRANSFER availability must be enforced INSIDE the write txn** (conditional
+  UPDATE `WHERE qty/weight >= X` + rowcount check → rollback, movement row written only
+  after source deduction succeeds). GREATEST(0,…) clamps alone are a corruption vector:
+  under a selection↔confirmation race the movement claims the full amount while
+  inventory loses less. Handler pre-checks are UX only, never the guard.
+- Bot unit resolution: `get_unit_for_item` (products.unit_type → raw_materials.unit_type
+  → raw default kg, finished default dona); chiqim/transfer additionally treat
+  qty<=0 & weight>0 rows as kg (non-catalog container SKUs).
+- Bot `create_batch` adds batch weight (unchanged).
 - API `/ombor/transfer`: two modes, **mutually exclusive** (qty>0 XOR explicit weightKg;
   kg mode = qty:0 + weightKg). Source row read `FOR UPDATE` (parallel transfers otherwise
   double-move via GREATEST(0,...) clamp). Movement rows carry weight_kg; kg-mode note
@@ -39,7 +54,8 @@ approximation kept only as fallback.
   decrement, unchanged otherwise.
 - API `/ombor/finished-in` (optional weightKg, ratio fallback) and `/ombor/adjust`
   (absolute values; kg products MUST send weight) as before.
-- Raw-material paths always set qty>0 — OR-predicate not needed there.
+- Raw rows can be weight-only too (bot kg kirim → qty=0, weight>0) — the OR-existence
+  predicate applies to ALL product types, raw included.
 
 ## Current finished-goods stock = inventory table, NOT batches − sales
 

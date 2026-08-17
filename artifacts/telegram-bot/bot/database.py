@@ -2021,12 +2021,49 @@ def get_stock_by_warehouse() -> list[dict]:
 
 
 def get_stock_for_warehouse(warehouse_id: int) -> list[dict]:
+    """Skladdagi mavjud pozitsiyalar. Mavjudlik = dona (quantity>0) YOKI
+    og'irlik (weight_kg>0) — kg-qatorlar (qty=0, faqat og'irlik) ham ko'rinadi."""
     with get_conn() as (conn, cur):
         cur.execute(
-            "SELECT product, quantity FROM inventory WHERE warehouse_id=%s AND quantity>0 ORDER BY product",
+            """SELECT product, quantity, COALESCE(weight_kg, 0) AS weight_kg, product_type
+               FROM inventory
+               WHERE warehouse_id=%s AND (quantity>0 OR COALESCE(weight_kg,0)>0)
+               ORDER BY product""",
             (warehouse_id,),
         )
         return cur.fetchall()
+
+
+def get_stock_locations(product: str) -> list[dict]:
+    """Tovar qaysi skladlarda va qancha borligi (kirimda ko'rsatish uchun)."""
+    with get_conn() as (conn, cur):
+        cur.execute(
+            """SELECT w.name AS warehouse, i.quantity, COALESCE(i.weight_kg,0) AS weight_kg
+               FROM inventory i
+               JOIN warehouses w ON w.id = i.warehouse_id
+               WHERE i.product=%s AND (i.quantity>0 OR COALESCE(i.weight_kg,0)>0)
+               ORDER BY w.name""",
+            (product,),
+        )
+        return cur.fetchall()
+
+
+def get_unit_for_item(name: str, category: str) -> str:
+    """'kg' yoki 'dona' — kirim/chiqim rejimini aniqlash uchun.
+    category='raw' → raw_materials.unit_type, aks holda products.unit_type."""
+    with get_conn() as (conn, cur):
+        if category == "raw":
+            cur.execute(
+                "SELECT COALESCE(unit_type, unit, 'kg') AS u FROM raw_materials WHERE name=%s",
+                (name,),
+            )
+        else:
+            cur.execute("SELECT unit_type AS u FROM products WHERE name=%s", (name,))
+        row = cur.fetchone()
+    if not row:
+        return "kg" if category == "raw" else "dona"
+    u = str(row.get("u") or "").strip().lower()
+    return "kg" if u.startswith("kg") else "dona"
 
 
 def get_inventory_line(warehouse_id: int, product: str) -> dict | None:
@@ -2035,9 +2072,10 @@ def get_inventory_line(warehouse_id: int, product: str) -> dict | None:
         cur.execute(
             """SELECT i.quantity,
                       COALESCE(i.weight_kg, 0)            AS weight_kg,
-                      LOWER(COALESCE(p.unit_type, 'dona')) AS unit_type
+                      LOWER(COALESCE(p.unit_type, rm.unit_type, 'dona')) AS unit_type
                FROM inventory i
                LEFT JOIN products p ON p.name = i.product
+               LEFT JOIN raw_materials rm ON rm.name = i.product
                WHERE i.warehouse_id = %s AND i.product = %s""",
             (warehouse_id, product),
         )
@@ -2053,26 +2091,27 @@ def record_movement(
     note: str = "",
     created_by: str = "",
     product_type: str = "finished",
+    weight_kg: float = 0.0,
 ) -> bool:
-    """movement_type: IN | OUT | TRANSFER; product_type: finished | raw
+    """movement_type: IN | OUT | TRANSFER; product_type: finished | raw | pre-finished
 
-    Inventory og'irligini (weight_kg) ham yangilaymiz:
-      • OUT/TRANSFER manbadan — joriy saqlangan og'irlikdan proporsional ayiramiz
-        (weight_kg * qty / quantity), shunda qisman chiqim aniq qoladi.
-      • IN/TRANSFER qabul — kg-mahsulot bo'lsa partiya nisbati bo'yicha og'irlik
-        qo'shamiz; aks holda 0 (dona mahsulotlar uchun og'irlik ahamiyatsiz).
+    Ikki rejim:
+      • DONA rejimi (weight_kg=0): quantity dona sifatida yoziladi; og'irlik
+        evristikasi eskicha — kirimda partiya nisbati, chiqimda proporsional.
+      • KG rejimi (weight_kg>0, quantity=0): inventarda FAQAT weight_kg o'zgaradi,
+        dona ustuni tegilmaydi. Harakat yozuvi:
+          - raw uchun quantity=weight_kg (global xom ashyo ledgeri quantity'ni
+            sanaydi — dashboard bilan bir xil konventsiya) va weight_kg ham to'ladi;
+          - finished/pre-finished uchun quantity=0, weight_kg to'ladi.
+
+    Xom ashyo globali (raw_materials.current_stock) ledger semantikasiga mos
+    sinxronlanadi: IN → +miqdor; OUT skladdan (bo'limga berish) → global
+    o'zgarmaydi; OUT skladsiz → −miqdor; TRANSFER → o'zgarmaydi.
     """
+    kg_mode = float(weight_kg or 0) > 0
+    amount = float(weight_kg) if kg_mode else float(quantity)
     try:
         with get_conn() as (conn, cur):
-            cur.execute(
-                """INSERT INTO stock_movements
-                     (product, quantity, movement_type, from_warehouse_id, to_warehouse_id,
-                      note, created_by, product_type)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
-                (product, quantity, movement_type, from_warehouse_id,
-                 to_warehouse_id, note, created_by, product_type),
-            )
-
             def _incoming_weight() -> float:
                 """Kirim uchun og'irlik — kg-mahsulot bo'lsa partiya nisbati bo'yicha."""
                 cur.execute("SELECT unit_type FROM products WHERE name=%s", (product,))
@@ -2091,9 +2130,11 @@ def record_movement(
                 return quantity * kg_per_unit
 
             def _outgoing_weight(wh_id: int) -> float:
-                """Chiqim uchun og'irlik — joriy saqlangan nisbatdan proporsional."""
+                """Chiqim uchun og'irlik — joriy saqlangan nisbatdan proporsional.
+                FOR UPDATE: nisbat hisoblanayotgan qator tranzaksiya oxirigacha
+                qulflanadi (parallel chiqimlar nisbatni buzmasin)."""
                 cur.execute(
-                    "SELECT quantity, weight_kg FROM inventory WHERE warehouse_id=%s AND product=%s",
+                    "SELECT quantity, weight_kg FROM inventory WHERE warehouse_id=%s AND product=%s FOR UPDATE",
                     (wh_id, product),
                 )
                 row = cur.fetchone()
@@ -2105,44 +2146,93 @@ def record_movement(
                     return 0.0
                 return min(cur_w, cur_w * quantity / cur_qty)
 
+            # KG rejimida dona ustuni tegilmaydi; DONA rejimida eski evristika.
+            in_qty = 0.0 if kg_mode else quantity
+
+            # 1) MANBA (chiqim/o'tkazish skladdan) — yetarlilik SHARTI bilan
+            #    atomar ayirish. Tanlash va tasdiqlash orasida boshqa foydalanuvchi
+            #    qoldiqni kamaytirgan bo'lsa, shart bajarilmaydi va HECH NARSA
+            #    yozilmaydi (harakat yozuvi ham) — yolg'on harakat qolmaydi.
+            deduct_src = (
+                (movement_type == "OUT" and from_warehouse_id)
+                or (movement_type == "TRANSFER" and from_warehouse_id and to_warehouse_id)
+            )
+            src_w = 0.0
+            if deduct_src:
+                if kg_mode:
+                    src_w = amount
+                    cur.execute(
+                        """UPDATE inventory
+                              SET weight_kg = GREATEST(0, weight_kg - %s), updated_at = NOW()
+                            WHERE warehouse_id=%s AND product=%s
+                              AND COALESCE(weight_kg, 0) >= %s - 0.005""",
+                        (amount, from_warehouse_id, product, amount),
+                    )
+                else:
+                    src_w = _outgoing_weight(from_warehouse_id)
+                    cur.execute(
+                        """UPDATE inventory
+                              SET quantity = GREATEST(0, quantity - %s),
+                                  weight_kg = GREATEST(0, weight_kg - %s),
+                                  updated_at = NOW()
+                            WHERE warehouse_id=%s AND product=%s
+                              AND quantity >= %s - 0.005""",
+                        (quantity, src_w, from_warehouse_id, product, quantity),
+                    )
+                if cur.rowcount == 0:
+                    conn.rollback()
+                    return False
+
+            # 2) Harakat yozuvi — manba tekshiruvidan KEYIN.
+            move_qty = (
+                amount if (kg_mode and product_type == "raw")
+                else (0.0 if kg_mode else quantity)
+            )
+            cur.execute(
+                """INSERT INTO stock_movements
+                     (product, quantity, movement_type, from_warehouse_id, to_warehouse_id,
+                      note, created_by, product_type, weight_kg)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (product, move_qty, movement_type, from_warehouse_id,
+                 to_warehouse_id, note, created_by, product_type,
+                 amount if kg_mode else None),
+            )
+
+            # 3) QABUL tomoni (kirim / o'tkazish qabul).
             if movement_type == "IN" and to_warehouse_id:
-                w_in = _incoming_weight()
+                w_in = amount if kg_mode else _incoming_weight()
                 cur.execute(
                     """INSERT INTO inventory (warehouse_id, product, quantity, weight_kg, product_type, updated_at)
                        VALUES (%s,%s,%s,%s,%s,NOW())
                        ON CONFLICT (warehouse_id, product)
                        DO UPDATE SET quantity=inventory.quantity+%s,
                                      weight_kg=inventory.weight_kg+%s, updated_at=NOW()""",
-                    (to_warehouse_id, product, quantity, w_in, product_type, quantity, w_in),
-                )
-            elif movement_type == "OUT" and from_warehouse_id:
-                w_out = _outgoing_weight(from_warehouse_id)
-                cur.execute(
-                    """INSERT INTO inventory (warehouse_id, product, quantity, weight_kg, product_type, updated_at)
-                       VALUES (%s,%s,0,0,%s,NOW())
-                       ON CONFLICT (warehouse_id, product)
-                       DO UPDATE SET quantity=GREATEST(0,inventory.quantity-%s),
-                                     weight_kg=GREATEST(0,inventory.weight_kg-%s), updated_at=NOW()""",
-                    (from_warehouse_id, product, product_type, quantity, w_out),
+                    (to_warehouse_id, product, in_qty, w_in, product_type, in_qty, w_in),
                 )
             elif movement_type == "TRANSFER" and from_warehouse_id and to_warehouse_id:
-                w_move = _outgoing_weight(from_warehouse_id)
-                cur.execute(
-                    """INSERT INTO inventory (warehouse_id, product, quantity, weight_kg, product_type, updated_at)
-                       VALUES (%s,%s,0,0,%s,NOW())
-                       ON CONFLICT (warehouse_id, product)
-                       DO UPDATE SET quantity=GREATEST(0,inventory.quantity-%s),
-                                     weight_kg=GREATEST(0,inventory.weight_kg-%s), updated_at=NOW()""",
-                    (from_warehouse_id, product, product_type, quantity, w_move),
-                )
+                w_move = amount if kg_mode else src_w
                 cur.execute(
                     """INSERT INTO inventory (warehouse_id, product, quantity, weight_kg, product_type, updated_at)
                        VALUES (%s,%s,%s,%s,%s,NOW())
                        ON CONFLICT (warehouse_id, product)
                        DO UPDATE SET quantity=inventory.quantity+%s,
                                      weight_kg=inventory.weight_kg+%s, updated_at=NOW()""",
-                    (to_warehouse_id, product, quantity, w_move, product_type, quantity, w_move),
+                    (to_warehouse_id, product, in_qty, w_move, product_type, in_qty, w_move),
                 )
+
+            # 4) Xom ashyo globalini ledger semantikasiga mos sinxronlash:
+            # IN → +miqdor; OUT skladdan → 0; OUT skladsiz → −miqdor; TRANSFER → 0.
+            if product_type == "raw":
+                if movement_type == "IN":
+                    cur.execute(
+                        "UPDATE raw_materials SET current_stock = current_stock + %s WHERE name = %s",
+                        (amount, product),
+                    )
+                elif movement_type == "OUT" and from_warehouse_id is None:
+                    cur.execute(
+                        "UPDATE raw_materials SET current_stock = current_stock - %s WHERE name = %s",
+                        (amount, product),
+                    )
         return True
     except Exception as e:
         return False
@@ -2151,7 +2241,8 @@ def record_movement(
 def get_recent_movements(limit: int = 10) -> list[dict]:
     with get_conn() as (conn, cur):
         cur.execute(
-            """SELECT m.product, m.quantity, m.movement_type,
+            """SELECT m.product, m.quantity, m.movement_type, m.product_type,
+                      COALESCE(m.weight_kg, 0) AS weight_kg,
                       fw.name AS from_wh, tw.name AS to_wh,
                       m.created_by, m.created_at
                FROM stock_movements m
@@ -2301,10 +2392,11 @@ def get_stock_by_warehouse_typed() -> dict:
     """Returns {'finished': [...], 'raw': [...]} grouped by product_type."""
     with get_conn() as (conn, cur):
         cur.execute(
-            """SELECT w.name AS warehouse_name, i.product, i.quantity, i.product_type
+            """SELECT w.name AS warehouse_name, i.product, i.quantity,
+                      COALESCE(i.weight_kg, 0) AS weight_kg, i.product_type
                FROM inventory i
                JOIN warehouses w ON w.id = i.warehouse_id
-               WHERE i.quantity > 0
+               WHERE i.quantity > 0 OR COALESCE(i.weight_kg, 0) > 0
                ORDER BY i.product_type, w.id, i.product"""
         )
         rows = cur.fetchall()

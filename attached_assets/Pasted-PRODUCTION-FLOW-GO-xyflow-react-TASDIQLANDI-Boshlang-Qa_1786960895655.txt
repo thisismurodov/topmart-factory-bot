@@ -1,0 +1,163 @@
+PRODUCTION FLOW GO
+
+@xyflow/react — TASDIQLANDI.
+
+Boshlang.
+
+Qat'iy scope:
+
+1. F1 — avval interaktiv sandbox/mockup tayyorlang.
+2. Mockup quyidagi 5 qatlamni ko'rsatsin:
+
+RAW CONTAINER
+↓
+PRODUCTION DEPARTMENT
+↓
+WIP
+↓
+PRODUCT
+↓
+FINISHED CONTAINER
+
+3. Container ustiga bosilganda:
+   - container
+   - location
+   - products
+   - SKU
+   - quantity
+   - weight
+   - product_type
+   ko'rinsin.
+
+4. Department ustiga bosilganda:
+   - department/production line
+   - WIP
+   - input
+   - output
+   - employees
+   - salary
+   ko'rinsin.
+
+5. WIP ustiga bosilganda:
+   - input
+   - output
+   - weight
+   - status
+   - production line
+   - timestamp
+   ko'rinsin.
+
+6. Product ustiga bosilganda:
+   - SKU
+   - name
+   - type
+   - quantity
+   - weight
+   - location/container
+   ko'rinsin.
+
+7. Chiziqlar interaktiv bo'lsin.
+   Connection ustiga bosilganda mavjud database'dagi real relationship ko'rsatilsin.
+
+8. Mavjud data bo'lmagan relationshipni O'YLAB TOPMANG.
+
+Masalan:
+Container → Department RECEIVE yozuvlari hozir yo'q.
+Shuning uchun bunday connectionni fake qilmang.
+
+Buning o'rniga:
+"Flow data mavjud emas"
+yoki tegishli aniq status ko'rsatilsin.
+
+9. WIP manfiy bo'lsa, yashirmang.
+Masalan hozir Arqon Bo'lim 3:
+- WIP = −8,964.77 kg
+
+Bu real database holati sifatida ko'rinsin va vizual warning bo'lsin.
+
+10. C-15 purpose hozir `finished`, lekin fizik ichidagi materiallar RAW.
+Grafikda content-based classificationdan foydalaning.
+C-15ni RAW material manbai sifatida ko'rsatish mumkin.
+Lekin database'dagi `purpose` qiymatini o'zgartirmang.
+
+11. Yangi database table YARATMANG.
+
+12. Yangi DDL YARATMANG.
+
+13. Inventoryga tegmang.
+
+14. R-Dga tegmang.
+
+15. R-Bga tegmang.
+
+16. Legacyga tegmang.
+
+17. Salesga tegmang.
+
+18. Faqat read-only architecture/UI ishlari.
+
+19. `GET /ombor/flow/graph` endpointi kerak bo'lsa read-only bo'lsin.
+
+20. `/flow-map` yangi sahifa bo'lsin.
+Mavjud "Ish jarayoni" sahifasini o'zgartirmang.
+
+21. iPad-first responsive dizayn.
+
+22. Search/filter:
+   - Container
+   - Department
+   - Product
+   - Raw
+   - Pre-finished
+   - Finished
+   - WIP
+   - SKU
+
+23. Search qilinganda tegishli node va butun connected path highlight qilinsin.
+
+24. Graph default holatda haddan tashqari zich bo'lmasin:
+   faol node + aggregate ko'rinishdan boshlang.
+   Kerak bo'lsa expand qilinsin.
+
+25. Text-based relationshiplar hozircha mavjud database ma'lumotlari asosida ishlasin.
+Apostrof/nom variantlari bo'yicha ehtiyotkor normalizatsiya qiling, lekin ma'lumotni o'zgartirmang.
+
+26. Department sifatida mavjud `production_lines` modelidan foydalaning.
+Alohida `departments` table yaratmang.
+
+27. Hozirgi real production lines:
+   - Arqon Bo'lim 3
+   - Qop Ip
+   - Lenta 1
+
+"CF Lenta"ni mavjud real department sifatida yaratmang.
+U faqat kelajakdagi misol.
+
+28. Employees va Salary mavjud real relationshiplardan olinadi.
+Fake employee yoki salary yaratmang.
+
+29. BOM mavjud bo'lsa ko'rsating.
+Hozirgi BOM relationshiplarini o'zgartirmang.
+
+30. F1 tugagach menga:
+   - screenshot/mockup
+   - graph structure
+   - node types
+   - connection types
+   - click drawer
+   - search/filter
+   - mavjud data vs mavjud bo'lmagan data
+   - endpoint response structure
+   ko'rsating.
+
+F1 MOCKUPNI KO'RMASDAN F2/F3GA O'TMANG.
+
+PRODUCTION FLOW GO faqat visual/read-only implementation uchun berildi.
+
+DATABASE WRITE = 0.
+DDL = 0.
+
+Avtomatik keyingi data-cleanup yoki RECEIVE/backfill/R-E bosqichlariga o'tmang.
+
+WE DON'T GUESS.
+WE KNOW.

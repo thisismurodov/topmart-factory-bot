@@ -202,7 +202,7 @@ O'tish davri qoidasi: sanalmagan joylarda joriy operatsiyalar ODATDAGIDEK davom 
 |---|---|---|---|
 | P2.1 | Items poydevor DDL | 2 jadval + 2 trigger + 10 nullable ustun | ✅ **BAJARILDI 2026-08-17** (items bo'sh — 94 item R-C'da) |
 | R-A | Legacy arxiv | pg_dump + `legacy` sxema nusxalari + yakun tekshiruvi (qator soni/yig'indilar) | ✅ **BAJARILDI 2026-08-17**, 12/12 PASS — R-D'ning majburiy sharti qondirildi |
-| R-B | Sanoq registri | `physical_baselines` + `positions` (97 satr — barcha 9 joy pozitsiyali) | «R-B GO» |
+| R-B | Sanoq registri | `physical_baselines` + `positions` (97 satr — barcha 9 joy pozitsiyali) | ✅ **BAJARILDI 2026-08-17** (9 baseline + 97 pozitsiya, 9.1–9.10 PASS; 95 satrda item_id, 2 EXACT NULL; TM-000022 = 2 lokatsiya; muzlatish triggerlari; jadvallar atayin faqat prod'da — items pretsedenti; hisobot: `docs/r-b-execution-report-2026-08-17.md`) |
 | P2.2–2.3 | Katalog backfill | 134 item + mavjud qatorlarga item_id | «P2.2 GO» / «P2.3 GO» |
 | R-C | Baseline DDL + item yaratish | `BASELINE` turi, `weight_kg`/`reference`/`reason` ustunlari; **94 yangi item (TM-000001…094)** | ✅ **BAJARILDI 2026-08-17** (id 2–95; pozitsiya→item_id YO'Q — R-B'dan keyin; 2 EXACT yaratilmadi — alohida kandidat; hisobot: `docs/r-c-execution-report-2026-08-17.md`) |
 | R-D | Baseline yuklash — **SHART: tekshirilgan R-A** | konteyner-kesim BASELINE harakatlar + inventar (C-16/C-17'da 13 legacy qator ham auditli BASELINE bilan nollanadi) | «R-D GO C-20» … har biri alohida |
@@ -224,11 +224,11 @@ Tartib qat'iy emas faqat bitta joyda: R-A istalgan payt (hatto P2.1'dan oldin) b
 | 3 | C-15 konteyner maqsadi hozir `finished`, ichidagi mol esa sof xomashyo — maqsadi `raw`ga o'zgartirilsinmi? | R-E purpose nazorati (baseline yuklashni bloklamaydi) |
 | 4 | Baseline kunida liniyalardagi WIP: sanaladimi yoki liniyalar bo'sh holda kesiladimi? | R-D to'liq yakuni |
 | 5 | kg-only pozitsiyalarda (85 ta) `inventory.quantity` = 0 + `weight_kg` = sanoq kg konvensiyasi ma'qulmi? (dona-pozitsiyalarda quantity = dona) | R-D yozish formati |
-| 6 | Sanoq operatori (`counted_by`) va baseline harakatlarining `created_by` qiymati kim bo'lsin? **R-C qismi HAL QILINDI (2026-08-17): `items.created_by = 'thisismurodov'` — egasi tasdiqladi (`docs/r-c-final-preview-2026-08-17.md` §3). R-B (`counted_by`) va R-D (harakatlar `created_by`) qismi hali ochiq.** | R-B / R-D (R-C qismi hal) |
+| 6 | Sanoq operatori (`counted_by`) va baseline harakatlarining `created_by` qiymati kim bo'lsin? **R-C qismi HAL QILINDI (2026-08-17): `items.created_by = 'thisismurodov'`. R-B qismi HAL QILINDI (2026-08-17): `counted_by = 'thisismurodov'` — egasi «R-B GO» bilan tasdiqladi; registr shu qiymat bilan yozildi. R-D (harakatlar `created_by`) qismi hali ochiq.** | R-D (R-B/R-C qismlari hal) |
 | 7 | Eski Q1–Q10 paketi javoblari (Sholcha, manfiy globallar, dublikat juftliklar…) — endi baselineni BLOKLAMAYDI, legacy katalog tozaligi uchun | dashboard-era |
 
 ---
 
-*Holat 2026-08-17 (kechqurun): «R-C GO» BAJARILDI — 94 neytral item (TM-000001…094, id 2–95, `created_by='thisismurodov'`) + §6 DDL (CHECK'ka BASELINE, `weight_kg`/`reference`/`reason` ustunlari) bitta tranzaksiyada, 8.1–8.9 tekshiruvlar PASS, uch manba lockstep yangilandi, drift-parity yashil. Hisobot: `docs/r-c-execution-report-2026-08-17.md`. Chegara qat'iy saqlandi: pozitsiya→item_id mapping YO'Q (R-B'dan keyin), 2 EXACT yaratilmadi (alohida kandidat), R-D MUZLATILGAN (baseline harakatlar yozilmadi, legacy qoldiqlar tegilmadi). Keyingi darvozalar: R-B «R-B GO» kutmoqda, R-D konteyner-boshiga alohida GO, №2–№5/№7 savollar ochiq.*
+*Holat 2026-08-17 (kech): «R-C GO» va «R-B GO» BAJARILDI. R-C: 94 neytral item (TM-000001…094, id 2–95, `created_by='thisismurodov'`) + §6 DDL, 8.1–8.9 PASS (`docs/r-c-execution-report-2026-08-17.md`). R-B: sanoq registri `physical_baselines` (9) + `physical_baseline_positions` (97: 95 satrda item_id, 2 EXACT NULL, TM-000022 = 2 lokatsiya, jami 71 862.20 kg, `counted_by='thisismurodov'`), 9.1–9.10 PASS, satrlar muzlatish triggerlari bilan qotirilgan (`docs/r-b-execution-report-2026-08-17.md`). Registr jadvallari atayin faqat prod'da (items pretsedenti) — initializer/Drizzle/drift xaritasiga kirmaydi. Chegara qat'iy: 2 EXACT kandidat ochiq (№1), R-D MUZLATILGAN (BASELINE harakatlar 0, inventar/legacy/sotuvlar tegilmadi), keyingi bosqichga avto-o'tish yo'q. Keyingi darvozalar: R-D konteyner-boshiga alohida GO (№2/№4/№5 savollar bilan), №3/№7 ochiq.*
 
 *Biz taxmin qilmaymiz. Biz bilamiz.*

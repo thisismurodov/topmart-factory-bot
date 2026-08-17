@@ -1,6 +1,6 @@
 # R-C YAKUNIY PREVIEW — EGASI TASDIG'I UCHUN (2026-08-17)
 
-*Holat: **R-C GO KUTILMOQDA — bazaga HECH NARSA yozilmadi** (bu turda ham faqat SELECT: `admin_users`, `user_roles`, `items`/`stock_movements` katalog tekshiruvlari) · Asos: egasining «R-C PREPARATION — DECISIONS» xabari (2026-08-17) · Manba jadval: `docs/r-c-dry-run-2026-08-17.md` §3 (SKU/nom/birlik/sanoq/joy O'ZGARMAGAN) · Muzlatilgan sanoq hujjatlari: `physical-count-reconciliation-2026-08-15.md`, `physical-count-c16-c17-2026-08-15.md`, `physical-count-c15-2026-08-16.md`*
+*Holat: **R-C GO KUTILMOQDA — bazaga HECH NARSA yozilmadi** (bu turda ham faqat SELECT: `admin_users`, `user_roles`, `items`/`stock_movements` katalog tekshiruvlari) · **`created_by` TASDIQLANDI: `thisismurodov` (egasi tanlovi, 2026-08-17) — preview YAKUNIY, ochiq katak qolmadi** · Asos: egasining «R-C PREPARATION — DECISIONS» xabari (2026-08-17) · Manba jadval: `docs/r-c-dry-run-2026-08-17.md` §3 (SKU/nom/birlik/sanoq/joy O'ZGARMAGAN) · Muzlatilgan sanoq hujjatlari: `physical-count-reconciliation-2026-08-15.md`, `physical-count-c16-c17-2026-08-15.md`, `physical-count-c15-2026-08-16.md`*
 
 ---
 
@@ -9,7 +9,7 @@
 | № | Qaror | Bu hujjatda |
 |---|---|---|
 | 1 | 2 EXACT (Rossiya Tros 531 kg, Shroki 3.5 Oq 676.55 kg) avto-mapping QILINMASIN — alohida kandidat | §5 — R-C ko'lamidan CHIQARILDI; mapping ham, TM-000095/096 ham yo'q |
-| 2 | `created_by` uchun mavjud admin/user variantlari ko'rsatilsin, taxmin yo'q | §3 — jonli bazadan to'liq ro'yxat, tanlov egasida |
+| 2 | `created_by` uchun mavjud admin/user variantlari ko'rsatilsin, taxmin yo'q | §3 — jonli bazadan to'liq ro'yxat; **egasi tanladi: `thisismurodov` (2026-08-17)** |
 | 3 | Final classification R-C'da qotirilmasin; faqat nom/SKU/birlik/sanoq/joy saqlansin | §4 — barcha 94 item NEYTRAL INSERT (bayroqlar yozilmaydi), sanoq+joy `note`da |
 | 4 | 97 pozitsiya → item_id bog'lash R-B registridan OLDIN bajarilmasin | §2 — R-C ko'lamidan chiqarildi, R-B'dan keyinga |
 | 5 | R-D boshlanmasin, hech qanday eski qoldiq nollanmasin | §2 — R-D muzlatilgan; 13 legacy qator va 43 inventar satriga tegilmaydi |
@@ -28,7 +28,7 @@
 - ❌ R-D: nollash YO'Q, inventarga yuklash YO'Q, 13 legacy qatorga tegilmaydi;
 - ❌ alias, narx, BOM, klassifikatsiya bayroqlari — hammasi dashboard-era (egasi belgilaydi).
 
-## 3. `created_by` — mavjud variantlar (EGASI TANLAYDI, men tanlamayman)
+## 3. `created_by` — TASDIQLANGAN: `thisismurodov` (egasi qarori, 2026-08-17)
 
 **Fakt (jonli katalog):** `items.created_by` — `TEXT NOT NULL`, **FK YO'Q** — istalgan matn identifikator qabul qilinadi; DB darajasida userga bog'lanish talab etilmaydi.
 
@@ -42,7 +42,7 @@
 
 **Bazadagi mavjud `created_by` konvensiyalari (`stock_movements`):** ishchi ismlari (Risolat 142, Aziza 141, Gullola 134, Shohida 127, Husnida 16, Muxtasarxon 2) · `system` 37 · `admin` 20 · `thisismurodov` 1.
 
-**Variantlar:** (a) `thisismurodov` — yagona dashboard admin; (b) `system`; (c) `admin`; (d) `Superadmin`; (e) boshqa istalgan matn (masalan shaxsiy ism). **Tanlov kiritilmaguncha R-C INSERT skripti yakunlanmaydi.** Eslatma: №6 savolning `counted_by`/R-D qismi alohida — bu tanlov faqat R-C itemlari uchun.
+**Ko'rsatilgan variantlar:** (a) `thisismurodov` — yagona dashboard admin; (b) `system`; (c) `admin`; (d) `Superadmin`; (e) boshqa istalgan matn. **EGASI QARORI (2026-08-17, «CREATED_BY CONFIRMED»): barcha 94 INSERT `created_by = 'thisismurodov'` bilan ketadi — INSERT shabloni yakunlandi (§4).** Eslatma: №6 savolning `counted_by`/R-D qismi alohida ochiq — bu tanlov faqat R-C itemlari uchun.
 
 ## 4. 94 item — yakuniy INSERT preview
 
@@ -52,12 +52,12 @@
 - 2-joyli TM-000022: `Sanoq 2026-08-15 · C-19 168.6 kg + C-04 261.2 kg = 429.8 kg`
 - C-15 (sanoq 2026-08-16): `Sanoq 2026-08-16 · C-15 · 3 720.00 kg`
 
-**INSERT shabloni (GO'da tanlangan `created_by` bilan materiallashadi):**
+**INSERT shabloni (YAKUNIY — `created_by = 'thisismurodov'`, egasi tasdiqlagan):**
 
 ```sql
 INSERT INTO items (sku, display_name, unit, source_kind, note, created_by) VALUES
   ('TM-000001', 'Neylon 210D / 45', 'kg', 'physical_count',
-   'Sanoq 2026-08-15 · C-20 · 80 kg', :'created_by'),
+   'Sanoq 2026-08-15 · C-20 · 80 kg', 'thisismurodov'),
   -- ... jami 94 qator, quyidagi jadval bo'yicha
 ;
 -- Bayroqlar atayin YOZILMAYDI (№3 qaror) → DB defaultlari ishlaydi.
@@ -210,7 +210,28 @@ Joy kesimida: C-20 10 ta/10 136.45 kg · C-19 13/8 713.30 · C-18 28/9 308.45 ·
 4. `item_aliases` = 0 (o'zgarmagan);
 5. `note` tasodifiy 5 satrda format tekshiruvi (jumladan TM-000022 2-joyli va C-15 sanasi);
 6. boshqa jadval invariantlari o'zgarmagan: sales 45 · sale_items 143 · stock_movements 620 (yangi 3 ustun hammasi NULL) · inventory 43 · products 117;
-7. mismatch → ROLLBACK + hisobot.
+7. mismatch → ROLLBACK + hisobot;
+8. qo'shimcha: `created_by='thisismurodov'` bo'lgan satrlar = 94.
+
+## 9. «R-C GO» CHECKLIST — GO aytilganda aynan shu tartibda bajariladi
+
+**Oldindan bajarilgan shartlar (2026-08-17 holatiga ✓):**
+- [x] P2.1 LIVE — `items`/`item_aliases` bo'sh, SKU-immutable + no-delete triggerlar ishlaydi;
+- [x] R-A arxiv tekshirilgan — `legacy.*` 12/12 PASS + gitignored insurance dump;
+- [x] 94-qator yakuniy jadval muhrlangan (§4); 2 EXACT tashqarida (§5); raqamlash C-20→C-19→C-18→C-02→C-04→C-06→C-16→C-17→C-15;
+- [x] `created_by = 'thisismurodov'` tasdiqlangan (egasi, 2026-08-17);
+- [x] §6 DDL jonli katalog bilan solishtirilgan (joriy CHECK = IN/OUT/TRANSFER; 3 ustun hali yo'q — toza qo'llanadi).
+
+**Qolgan yagona shart:**
+- [ ] Egasidan aniq **«R-C GO»** xabari.
+
+**GO kelganda (ketma-ketlik qat'iy):**
+1. Kod lockstep diffi tayyorlanadi (bot `init_db` + API `initDb`/Drizzle: BASELINE + `weight_kg`/`reference`/`reason`) — **hali qo'llanmaydi, workflow restart yo'q**;
+2. Railway prod'da **BITTA tranzaksiya**: invariant snapshot (§8.6 «oldin») → §6 DDL → 94 INSERT (§4, `created_by='thisismurodov'`) → §8 tekshiruvlari 1–8 «keyin» — birorta mismatch → **ROLLBACK** + hisobot, COMMIT yo'q;
+3. Faqat COMMIT muvaffaqiyatli bo'lgach kod diffi qo'llanadi va workflowlar restart qilinadi (DDL allaqachon bazada — init kodlarining avto-ALTERi idempotent no-op bo'ladi);
+4. Bajarilish hisoboti yoziladi: `docs/r-c-execution-report-<sana>.md` (oldin/keyin raqamlar, §8 natijalari, tranzaksiya vaqti).
+
+**GO tarkibiga KIRMAYDI (yana bir bor):** 2 EXACT kandidat (№1 alohida qaror) · pozitsiya→item_id bog'lash (R-B registri GO'idan keyin) · R-D nollash/yuklash (muzlatilgan) · alias/narx/BOM/klassifikatsiya bayroqlari (dashboard-era, egasi belgilaydi) · sales/legacy/sanoq qiymatlariga har qanday tegish.
 
 ---
 

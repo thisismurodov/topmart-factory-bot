@@ -224,11 +224,11 @@ Tartib qat'iy emas faqat bitta joyda: R-A istalgan payt (hatto P2.1'dan oldin) b
 | 3 | C-15 konteyner maqsadi hozir `finished`, ichidagi mol esa sof xomashyo — maqsadi `raw`ga o'zgartirilsinmi? | R-E purpose nazorati (baseline yuklashni bloklamaydi) |
 | 4 | Baseline kunida liniyalardagi WIP: sanaladimi yoki liniyalar bo'sh holda kesiladimi? | R-D to'liq yakuni |
 | 5 | kg-only pozitsiyalarda (85 ta) `inventory.quantity` = 0 + `weight_kg` = sanoq kg konvensiyasi ma'qulmi? (dona-pozitsiyalarda quantity = dona) | R-D yozish formati |
-| 6 | Sanoq operatori (`counted_by`) va baseline harakatlarining `created_by` qiymati kim bo'lsin? **2026-08-17: R-C itemlari uchun mavjud variantlar ko'rsatildi (`docs/r-c-final-preview-2026-08-17.md` §3; `items.created_by` — TEXT NOT NULL, FK yo'q) — egasi tanlovi kutilmoqda.** | R-C (items.created_by) / R-B / R-D |
+| 6 | Sanoq operatori (`counted_by`) va baseline harakatlarining `created_by` qiymati kim bo'lsin? **R-C qismi HAL QILINDI (2026-08-17): `items.created_by = 'thisismurodov'` — egasi tasdiqladi (`docs/r-c-final-preview-2026-08-17.md` §3). R-B (`counted_by`) va R-D (harakatlar `created_by`) qismi hali ochiq.** | R-B / R-D (R-C qismi hal) |
 | 7 | Eski Q1–Q10 paketi javoblari (Sholcha, manfiy globallar, dublikat juftliklar…) — endi baselineni BLOKLAMAYDI, legacy katalog tozaligi uchun | dashboard-era |
 
 ---
 
-*Holat 2026-08-17 (kech): «P2.1 GO + R-A GO» bajarilgan va tekshirilgan (`docs/p2.1-r-a-execution-report-2026-08-17.md`); shundan keyin bazaga 0 yozuv. Egasining R-C PREP qarorlari qabul qilindi: R-C = §6 DDL + 94 NEYTRAL INSERT xolos (klassifikatsiyasiz), 2 EXACT alohida kandidat, pozitsiya→item_id R-B'dan keyin, R-D muzlatilgan. Yakuniy preview: `docs/r-c-final-preview-2026-08-17.md` — «R-C GO» = tanlangan `created_by` bilan aynan shu hujjatni bajarish. Ochiq: created_by tanlovi (№6ning R-C qismi).*
+*Holat 2026-08-17 (kech): «P2.1 GO + R-A GO» bajarilgan va tekshirilgan (`docs/p2.1-r-a-execution-report-2026-08-17.md`); shundan keyin bazaga 0 yozuv. Egasining R-C PREP qarorlari qabul qilindi: R-C = §6 DDL + 94 NEYTRAL INSERT xolos (klassifikatsiyasiz), 2 EXACT alohida kandidat, pozitsiya→item_id R-B'dan keyin, R-D muzlatilgan. Yakuniy preview: `docs/r-c-final-preview-2026-08-17.md` — «R-C GO» = aynan shu hujjatni bajarish. `created_by='thisismurodov'` tasdiqlandi (2026-08-17); R-C to'liq spetsifikatsiyalangan, GO checklist preview §9da. Ochiq katak yo'q — faqat egasining «R-C GO» so'zi kutilmoqda.*
 
 *Biz taxmin qilmaymiz. Biz bilamiz.*

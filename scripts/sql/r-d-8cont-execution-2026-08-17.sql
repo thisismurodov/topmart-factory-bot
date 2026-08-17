@@ -1,24 +1,25 @@
 -- ============================================================================
--- R-D GO — QOLGAN 8 KONTEYNER (C-20, C-19, C-18, C-02, C-04, C-06, C-16, C-17)
--- Sana: 2026-08-17 · Egasi GO: attached_assets/Pasted-R-D-GO-REMAINING-8-...txt
--- Dry-run asosi: docs/r-d-dryrun-8-containers-2026-08-17.md (8/8 PASS)
--- Andoza: scripts/sql/r-d-c15-execution-2026-08-17.sql (isbotlangan, qulf-avval)
+-- R-D FINAL — QOLGAN 8 KONTEYNER + 2 EXACT + №2 NOLLASH (bitta atomik tranzaksiya)
+-- Sana: 2026-08-17 · Asos: FINAL MASTER PROMPT (attached_assets/Pasted--TOPMART-
+-- ERP-FINAL-MASTER-PROMPT-...txt) + docs/r-d-dryrun-8-containers-2026-08-17.md
+-- Andoza: scripts/sql/r-d-c15-execution-2026-08-17.sql (qulf-avval, isbotlangan)
 --
--- QAMROV (bitta atomik tranzaksiya, egasi sharti №11):
---   1) 92 MAPPED pozitsiya → 92 BASELINE harakat + 92 inventar satri (registrdan derivativ)
---   2) №2: C-16/C-17'dagi 13 legacy satr auditli NOLLANADI (DELETE YO'Q):
---      arxiv bilan bayt-solishtiruv → mos bo'lmasa EXCEPTION (to'liq ROLLBACK)
---   3) physical_baselines id 1..8: MAPPED → LOADED (trigger-ruxsatli yagona o'tish)
--- TAQIQLAR: C-15 (id=9, wid=21) daxlsiz; 2 EXACT yuklanmaydi; sales/sale_items,
---   legacy arxiv, R-B pozitsiyalari o'zgarmaydi; hech qanday DELETE yo'q.
+-- QAMROV:
+--   4a/5a) 92 MAPPED pozitsiya → BASELINE harakat + inventar (registrdan derivativ)
+--          product_type: egasi §21 — raw: TM-000018/61/62 · pre-finished:
+--          TM-000005/16/17 · qolgani finished (TM-000022 ikkala lokatsiyada finished)
+--   4b/5b) 2 EXACT (egasi §5/§15: finished): «Rossiya Tros» 531.00 → C-18,
+--          «Shroki 3.5 Oq» 676.55 → C-02. Mavjud katalog mahsulotiga biriktiriladi
+--          (products id=46 ROSSIYATROS, id=108 SHROKI-3-5-OQ), YANGI SKU YARATILMAYDI,
+--          item_id=NULL. Rekonsiliatsiya GATE0.14: joriy balans=0, arxiv=0, harakat=0.
+--   6)     №2: C-16/C-17'dagi 13 legacy satr auditli NOLLANADI (DELETE YO'Q):
+--          jonli=pin=arxiv bayt-solishtiruv → mos bo'lmasa EXCEPTION (to'liq ROLLBACK)
+--   7)     physical_baselines id 1..8: MAPPED → LOADED
+-- TAQIQLAR: C-15 (id=9, wid=21) daxlsiz; sales/sale_items, legacy arxiv,
+--   R-B pozitsiyalari, products katalogi o'zgarmaydi; hech qanday DELETE yo'q.
+-- KUTILMA: +94 inventar (46→140), +107 harakat (623→730), BASELINE 3→110,
+--   9 joy jami 71,862.20 kg / 126,360 dona (mustaqil qayta hisob bilan).
 -- ============================================================================
-
--- ############################################################################
--- ###  QORALAMA-QULF: EGASI product_type RO'YXATI KELMAGUNCHA ISHLAMAYDI  ###
--- ###  Ro'yxat kelgach: (1) quyidagi DO blok O'CHIRILADI,                 ###
--- ###  (2) §OWNER-LIST bo'limi to'ldiriladi, (3) N_RAW pin yangilanadi.   ###
-DO $$ BEGIN RAISE EXCEPTION 'QORALAMA: OWNER-LIST (raw SKU ro''yxati) hali kiritilmagan — ijro taqiqlangan'; END $$;
--- ############################################################################
 
 \set ON_ERROR_STOP on
 
@@ -30,24 +31,30 @@ SET LOCAL statement_timeout = '180s';
 -- 0. QULFLAR — BIRINCHI SELECT'DAN OLDIN (C-15 arxitektor saboqi)
 -- ----------------------------------------------------------------------------
 LOCK TABLE physical_baselines, physical_baseline_positions, items, warehouses,
-           inventory, stock_movements, legacy.inventory_baseline_pre
+           inventory, stock_movements, products, sales, sale_items, raw_materials,
+           legacy.inventory_baseline_pre
   IN SHARE ROW EXCLUSIVE MODE;
+-- Izoh (arxitektor topilmasi): sales/sale_items/raw_materials ham qulflanadi —
+-- aks holda REPEATABLE READ snapshot ostida parallel yozuv GATE0.13/9.9 uchun
+-- ko'rinmay, «o'zgarmagan» degan da'vo yolg'on chiqishi mumkin edi (§20 STOP).
 
 -- ----------------------------------------------------------------------------
--- §OWNER-LIST: 'raw' bo'ladigan SKU'lar (egasi ro'yxati; qolganlari 'finished')
--- Eslatma: TM-000022 ikki lokatsiyada (C-19+C-04) — SKU bo'yicha bitta qaror
--- ikkala satrga qo'llanadi. Bo'sh ro'yxat = hammasi finished.
+-- TASNIF (egasi §21, FINAL): 6 istisno; ro'yxatda yo'q barcha SKU = finished
 -- ----------------------------------------------------------------------------
-CREATE TEMP TABLE rd_raw_skus (sku text PRIMARY KEY) ON COMMIT DROP;
--- INSERT INTO rd_raw_skus VALUES              -- <<< §OWNER-LIST to'ldiriladi
---   ('TM-0000XX'), ('TM-0000YY');
+CREATE TEMP TABLE rd_class (sku text PRIMARY KEY, ptype text NOT NULL, expected_name text NOT NULL) ON COMMIT DROP;
+INSERT INTO rd_class VALUES
+  ('TM-000018','raw','Passport Xom BCF'),
+  ('TM-000061','raw','Polipropilen CF 1500D Qora'),
+  ('TM-000062','raw','Polipropilen CF 1000D Yashil'),
+  ('TM-000005','pre-finished','FDY Igna Strupa'),
+  ('TM-000016','pre-finished','Qop ip Yashil'),
+  ('TM-000017','pre-finished','Qop ip Qizil');
 
 -- ----------------------------------------------------------------------------
--- 1. GATE-0: GLOBAL PINLAR (birortasi mos kelmasa — EXCEPTION, hech narsa yozilmaydi)
+-- 1. GATE-0: PINLAR (birortasi mos kelmasa — EXCEPTION, hech narsa yozilmaydi)
 -- ----------------------------------------------------------------------------
 DO $$
 DECLARE v bigint; v2 bigint; v3 numeric; bad bigint;
-        n_raw_expected int := -1;  -- <<< §OWNER-LIST bilan yangilanadi (>=0)
 BEGIN
   -- 1.1 Items katalogi
   SELECT count(*) INTO v FROM items;
@@ -116,9 +123,9 @@ BEGIN
           OR (p.unit='dona' AND (p.quantity <= 0 OR p.weight_kg <= 0)));
   IF bad <> 0 THEN RAISE EXCEPTION 'GATE0.5: pozitsiya-item bog''i buzilgan (%)', bad; END IF;
 
-  -- 1.6 Global before-holat
+  -- 1.6 Global before-holat (preview-paytdagi pinlar; drift = STOP + qayta-pin)
   SELECT count(*) INTO v FROM inventory;
-  IF v <> 46 THEN RAISE EXCEPTION 'GATE0.6: inventory=% (46 emas — drift, qayta dry-run)', v; END IF;
+  IF v <> 46 THEN RAISE EXCEPTION 'GATE0.6: inventory=% (46 emas — drift, qayta preview)', v; END IF;
   SELECT count(*) INTO v FROM stock_movements;
   IF v <> 623 THEN RAISE EXCEPTION 'GATE0.6b: movements=% (623 emas — drift)', v; END IF;
   SELECT count(*) INTO v FROM stock_movements WHERE movement_type='BASELINE';
@@ -135,6 +142,9 @@ BEGIN
   SELECT count(*) INTO v FROM stock_movements
    WHERE (from_warehouse_id=21 OR to_warehouse_id=21);
   IF v <> 3 THEN RAISE EXCEPTION 'GATE0.7c: C-15 harakatlari % (3 emas)', v; END IF;
+  SELECT count(*) INTO v FROM inventory inv JOIN items i ON i.id=inv.item_id
+   WHERE inv.warehouse_id=21 AND i.sku IN ('TM-000092','TM-000093','TM-000094') AND inv.product_type='raw';
+  IF v <> 3 THEN RAISE EXCEPTION 'GATE0.7d: C-15 raw tasnifi buzilgan (%)', v; END IF;
 
   -- 1.8 6 kg-konteyner tozaligi (inventar=0, harakat=0)
   SELECT count(*) INTO v FROM inventory WHERE warehouse_id IN (26,25,24,8,10,12);
@@ -143,7 +153,7 @@ BEGIN
    WHERE from_warehouse_id IN (26,25,24,8,10,12) OR to_warehouse_id IN (26,25,24,8,10,12);
   IF v <> 0 THEN RAISE EXCEPTION 'GATE0.8b: kg-konteynerlarda harakat bor (%)', v; END IF;
 
-  -- 1.9 C-16/C-17 before-pin: aynan 13 legacy satr + 5/83 harakat
+  -- 1.9 C-16/C-17 before-pin: aynan 13 legacy satr + 5/83 harakat, BASELINE=0
   SELECT count(*) INTO v FROM inventory WHERE warehouse_id=22;
   IF v <> 3 THEN RAISE EXCEPTION 'GATE0.9: C-16 inventar=% (3 emas)', v; END IF;
   SELECT count(*) INTO v FROM inventory WHERE warehouse_id=23;
@@ -184,7 +194,7 @@ BEGIN
   SELECT count(*) INTO v FROM legacy.inventory_baseline_pre WHERE warehouse_id IN (22,23);
   IF v <> 13 THEN RAISE EXCEPTION 'GATE0.10c: arxivda C-16/17 satrlari=% (13 emas)', v; END IF;
 
-  -- 1.11 Iz yo'qligi: 92 item/nom hech qayerda yo'q
+  -- 1.11 Iz yo'qligi: 92 item/nom inventar+harakatlarda hech qayerda yo'q
   SELECT count(*) INTO v FROM inventory inv WHERE inv.item_id IN (
     SELECT p.item_id FROM physical_baseline_positions p WHERE p.baseline_id BETWEEN 1 AND 8 AND p.mapping_status='MAPPED');
   IF v <> 0 THEN RAISE EXCEPTION 'GATE0.11: inventarda item izi bor (%)', v; END IF;
@@ -197,22 +207,38 @@ BEGIN
     SELECT p.name FROM physical_baseline_positions p WHERE p.baseline_id BETWEEN 1 AND 8 AND p.mapping_status='MAPPED');
   IF v <> 0 THEN RAISE EXCEPTION 'GATE0.11c: harakatlarda iz bor (%)', v; END IF;
 
-  -- 1.12 OWNER-LIST validatsiyasi (raw SKU'lar)
-  SELECT count(*) INTO v FROM rd_raw_skus;
-  IF n_raw_expected < 0 THEN RAISE EXCEPTION 'GATE0.12: N_RAW pin hali o''rnatilmagan (QORALAMA)'; END IF;
-  IF v <> n_raw_expected THEN RAISE EXCEPTION 'GATE0.12b: rd_raw_skus=% (kutilgan %)', v, n_raw_expected; END IF;
-  SELECT count(*) INTO bad FROM rd_raw_skus r WHERE NOT EXISTS (
-    SELECT 1 FROM physical_baseline_positions p JOIN items i ON i.id=p.item_id
-     WHERE p.baseline_id BETWEEN 1 AND 8 AND p.mapping_status='MAPPED' AND i.sku=r.sku);
-  IF bad <> 0 THEN RAISE EXCEPTION 'GATE0.12c: ro''yxatdagi % SKU 92 orasida topilmadi', bad; END IF;
+  -- 1.12 TASNIF validatsiyasi (egasi §21): 6 istisno SKU mavjud, nomlar bayt-teng
+  SELECT count(*) INTO v FROM rd_class;
+  IF v <> 6 THEN RAISE EXCEPTION 'GATE0.12: rd_class=% (6 emas)', v; END IF;
+  SELECT count(*) FILTER (WHERE ptype='raw'), count(*) FILTER (WHERE ptype='pre-finished')
+    INTO v, v2 FROM rd_class;
+  IF v <> 3 OR v2 <> 3 THEN RAISE EXCEPTION 'GATE0.12b: raw=%/pre=% (3/3 emas)', v, v2; END IF;
+  SELECT count(*) INTO bad FROM rd_class r
+   LEFT JOIN items i ON i.sku=r.sku
+   WHERE i.id IS NULL OR i.display_name IS DISTINCT FROM r.expected_name
+      OR NOT EXISTS (SELECT 1 FROM physical_baseline_positions p
+                      WHERE p.item_id=i.id AND p.baseline_id BETWEEN 1 AND 8 AND p.mapping_status='MAPPED');
+  IF bad <> 0 THEN RAISE EXCEPTION 'GATE0.12c: tasnif SKU/nom mos emas (%) — classification mismatch STOP', bad; END IF;
 
-  -- 1.13 Daxlsizlar before-pin
+  -- 1.13 Daxlsizlar before-pin (preview-paytdagi; drift = STOP + qayta-pin)
   SELECT count(*) INTO v FROM sales;       IF v <> 45  THEN RAISE EXCEPTION 'GATE0.13: sales=%', v; END IF;
   SELECT count(*) INTO v FROM sale_items;  IF v <> 143 THEN RAISE EXCEPTION 'GATE0.13b: sale_items=%', v; END IF;
   SELECT count(*) INTO v FROM legacy.inventory_baseline_pre; IF v <> 43 THEN RAISE EXCEPTION 'GATE0.13c: arxiv=%', v; END IF;
   SELECT count(*) INTO v FROM raw_materials; IF v <> 17 THEN RAISE EXCEPTION 'GATE0.13d: raw_materials=%', v; END IF;
 
-  RAISE NOTICE 'GATE-0: BARCHA PINLAR PASS';
+  -- 1.14 EXACT rekonsiliatsiya (egasi §5/§15): katalog pinlari + dublikat=0 isboti
+  PERFORM 1 FROM products WHERE id=46  AND name='Rossiya Tros'  AND sku='ROSSIYATROS'   AND active;
+  IF NOT FOUND THEN RAISE EXCEPTION 'GATE0.14: products id=46 ROSSIYATROS pin mos emas'; END IF;
+  PERFORM 1 FROM products WHERE id=108 AND name='Shroki 3.5 Oq' AND sku='SHROKI-3-5-OQ' AND active;
+  IF NOT FOUND THEN RAISE EXCEPTION 'GATE0.14b: products id=108 SHROKI-3-5-OQ pin mos emas'; END IF;
+  SELECT count(*) INTO v FROM inventory WHERE product IN ('Rossiya Tros','Shroki 3.5 Oq');
+  IF v <> 0 THEN RAISE EXCEPTION 'GATE0.14c: EXACT nomlarda joriy balans bor (%) — double-count xavfi, STOP', v; END IF;
+  SELECT count(*) INTO v FROM legacy.inventory_baseline_pre WHERE product IN ('Rossiya Tros','Shroki 3.5 Oq');
+  IF v <> 0 THEN RAISE EXCEPTION 'GATE0.14d: EXACT nomlar arxivda bor (%) — rekonsiliatsiya buzildi', v; END IF;
+  SELECT count(*) INTO v FROM stock_movements WHERE product IN ('Rossiya Tros','Shroki 3.5 Oq');
+  IF v <> 0 THEN RAISE EXCEPTION 'GATE0.14e: EXACT nomlarda harakat tarixi bor (%) — kutilmagan', v; END IF;
+
+  RAISE NOTICE 'GATE-0: BARCHA PINLAR PASS (1.1–1.14)';
 END $$;
 
 -- ----------------------------------------------------------------------------
@@ -236,7 +262,7 @@ CREATE TEMP TABLE rd_other_wh_before ON COMMIT DROP AS
    GROUP BY 1;
 
 -- ----------------------------------------------------------------------------
--- 4. YUKLASH: 92 BASELINE harakat (registrdan derivativ — transkripsiya yo'q)
+-- 4a. YUKLASH: 92 TM BASELINE harakat (registrdan derivativ — transkripsiya yo'q)
 -- ----------------------------------------------------------------------------
 INSERT INTO stock_movements
       (product, quantity, movement_type, from_warehouse_id, to_warehouse_id,
@@ -249,10 +275,10 @@ SELECT i.display_name,
               THEN p.quantity::bigint||' dona / '||p.weight_kg||' kg'
               ELSE p.weight_kg||' kg' END,
        'thisismurodov',
-       CASE WHEN EXISTS (SELECT 1 FROM rd_raw_skus r WHERE r.sku=i.sku) THEN 'raw' ELSE 'finished' END,
+       COALESCE((SELECT c.ptype FROM rd_class c WHERE c.sku=i.sku), 'finished'),
        p.item_id, p.weight_kg,
        'R-B: physical_baseline_positions pos='||p.position_no||' · docs/r-b-mapping-preview-2026-08-17.md',
-       'R-D baseline yuklash '||b.container_label||' — fizik sanoq 2026-08-15 — GO 2026-08-17'
+       'R-D baseline yuklash '||b.container_label||' — fizik sanoq 2026-08-15 — FINAL GO 2026-08-17'
   FROM physical_baseline_positions p
   JOIN physical_baselines b ON b.id=p.baseline_id
   JOIN items i ON i.id=p.item_id
@@ -260,18 +286,43 @@ SELECT i.display_name,
  ORDER BY b.id, p.position_no;
 
 -- ----------------------------------------------------------------------------
--- 5. YUKLASH: 92 inventar satri (xuddi shu manbadan)
+-- 4b. YUKLASH: 2 EXACT BASELINE harakat (egasi §5/§15 — finished, dublikat SKU yo'q)
+-- ----------------------------------------------------------------------------
+INSERT INTO stock_movements
+      (product, quantity, movement_type, from_warehouse_id, to_warehouse_id,
+       note, created_by, product_type, item_id, weight_kg, reference, reason)
+VALUES
+  ('Rossiya Tros', 0, 'BASELINE', NULL, 24,
+   'R-D EXACT C-18 · Rossiya Tros · 531.00 kg (mavjud katalog: products.id=46 ROSSIYATROS)',
+   'thisismurodov', 'finished', NULL, 531.00,
+   'R-B: physical_baseline_positions pos=40 (EXCLUDED_EXACT_CANDIDATE) · products.id=46 · FINAL MASTER PROMPT §5/§15/§21',
+   'R-D EXACT yuklash C-18 — egasi yakuniy qarori: finished; joriy balans=0 isbotlangan, dublikat SKU yaratilmadi — FINAL GO 2026-08-17'),
+  ('Shroki 3.5 Oq', 0, 'BASELINE', NULL, 8,
+   'R-D EXACT C-02 · Shroki 3.5 Oq · 676.55 kg (mavjud katalog: products.id=108 SHROKI-3-5-OQ)',
+   'thisismurodov', 'finished', NULL, 676.55,
+   'R-B: physical_baseline_positions pos=61 (EXCLUDED_EXACT_CANDIDATE) · products.id=108 · FINAL MASTER PROMPT §5/§15/§21',
+   'R-D EXACT yuklash C-02 — egasi yakuniy qarori: finished; joriy balans=0 isbotlangan, dublikat SKU yaratilmadi — FINAL GO 2026-08-17');
+
+-- ----------------------------------------------------------------------------
+-- 5a. YUKLASH: 92 TM inventar satri (xuddi shu manbadan)
 -- ----------------------------------------------------------------------------
 INSERT INTO inventory (warehouse_id, product, quantity, product_type, weight_kg, item_id)
 SELECT b.warehouse_id, i.display_name,
        CASE WHEN p.unit='dona' THEN p.quantity ELSE 0 END,
-       CASE WHEN EXISTS (SELECT 1 FROM rd_raw_skus r WHERE r.sku=i.sku) THEN 'raw' ELSE 'finished' END,
+       COALESCE((SELECT c.ptype FROM rd_class c WHERE c.sku=i.sku), 'finished'),
        p.weight_kg, p.item_id
   FROM physical_baseline_positions p
   JOIN physical_baselines b ON b.id=p.baseline_id
   JOIN items i ON i.id=p.item_id
  WHERE b.id BETWEEN 1 AND 8 AND p.mapping_status='MAPPED'
  ORDER BY b.id, p.position_no;
+
+-- ----------------------------------------------------------------------------
+-- 5b. YUKLASH: 2 EXACT inventar satri (item_id NULL — TM SKU yaratilmadi)
+-- ----------------------------------------------------------------------------
+INSERT INTO inventory (warehouse_id, product, quantity, product_type, weight_kg, item_id) VALUES
+  (24, 'Rossiya Tros',  0, 'finished', 531.00, NULL),
+  ( 8, 'Shroki 3.5 Oq', 0, 'finished', 676.55, NULL);
 
 -- ----------------------------------------------------------------------------
 -- 6. №2 NOLLASH: 13 legacy satr — FOR UPDATE + arxiv bilan qayta solishtiruv,
@@ -311,8 +362,8 @@ BEGIN
     VALUES (live.product, live.quantity, 'BASELINE', live.warehouse_id, NULL,
            'R-D NOLLASH '||lbl||' · '||live.product||' · eski qiymat '||live.quantity::bigint||' dona (arxiv bilan MOS tasdiqlandi)',
            'thisismurodov', live.product_type, NULL, live.weight_kg,
-           'legacy.inventory_baseline_pre inventory_id='||r.inv_id||' · №2 qaror — R-D GO 2026-08-17',
-           'R-D legacy nollash '||lbl||' — eski ERP qoldig''i R-A arxivida muhrlangan; joriy balansdan auditli chiqarish (DELETE emas)');
+           'legacy.inventory_baseline_pre inventory_id='||r.inv_id||' · №2 qaror — FINAL MASTER PROMPT §6',
+           'R-D legacy nollash '||lbl||' — eski ERP qoldig''i R-A arxivida muhrlangan; joriy balansdan auditli chiqarish (DELETE emas) — FINAL GO 2026-08-17');
     UPDATE inventory SET quantity=0, updated_at=now() WHERE id=r.inv_id;
     zcount := zcount + 1;
   END LOOP;
@@ -336,48 +387,55 @@ END $$;
 -- 8. COMMIT'DAN OLDINGI VERIFIKATSIYA (9.x — birortasi yiqilsa ROLLBACK)
 -- ----------------------------------------------------------------------------
 DO $$
-DECLARE v bigint; v2 bigint; kg numeric; dona numeric; bad bigint;
+DECLARE v bigint; v2 bigint; v3 bigint; kg numeric; kg2 numeric; dona numeric; bad bigint;
 BEGIN
-  -- 9.1 Global BASELINE = 108 (3 C-15 + 92 yuk + 13 nollash)
+  -- 9.1 Global BASELINE = 110 (3 C-15 + 92 TM + 2 EXACT + 13 nollash)
   SELECT count(*) INTO v FROM stock_movements WHERE movement_type='BASELINE';
-  IF v <> 108 THEN RAISE EXCEPTION '9.1: BASELINE=% (108 emas)', v; END IF;
+  IF v <> 110 THEN RAISE EXCEPTION '9.1: BASELINE=% (110 emas)', v; END IF;
 
-  -- 9.2 Yangi yuk harakatlari: 92; nollash harakatlari: 13
-  SELECT count(*) INTO v FROM stock_movements WHERE reason LIKE 'R-D baseline yuklash %GO 2026-08-17';
-  IF v <> 92 THEN RAISE EXCEPTION '9.2: yuk harakatlari=% (92 emas)', v; END IF;
+  -- 9.2 Yangi harakatlar: 92 TM + 2 EXACT + 13 nollash
+  SELECT count(*) INTO v FROM stock_movements WHERE reason LIKE 'R-D baseline yuklash %FINAL GO 2026-08-17';
+  IF v <> 92 THEN RAISE EXCEPTION '9.2: TM yuk harakatlari=% (92 emas)', v; END IF;
+  SELECT count(*) INTO v FROM stock_movements WHERE reason LIKE 'R-D EXACT yuklash %';
+  IF v <> 2 THEN RAISE EXCEPTION '9.2b: EXACT harakatlari=% (2 emas)', v; END IF;
   SELECT count(*) INTO v FROM stock_movements WHERE reason LIKE 'R-D legacy nollash %';
-  IF v <> 13 THEN RAISE EXCEPTION '9.2b: nollash harakatlari=% (13 emas)', v; END IF;
+  IF v <> 13 THEN RAISE EXCEPTION '9.2c: nollash harakatlari=% (13 emas)', v; END IF;
 
-  -- 9.3 Global sonlar: inventar 138, harakatlar 728
-  SELECT count(*) INTO v FROM inventory;        IF v <> 138 THEN RAISE EXCEPTION '9.3: inventory=% (138 emas)', v; END IF;
-  SELECT count(*) INTO v FROM stock_movements;  IF v <> 728 THEN RAISE EXCEPTION '9.3b: movements=% (728 emas)', v; END IF;
+  -- 9.3 Global sonlar: inventar 140, harakatlar 730
+  SELECT count(*) INTO v FROM inventory;        IF v <> 140 THEN RAISE EXCEPTION '9.3: inventory=% (140 emas)', v; END IF;
+  SELECT count(*) INTO v FROM stock_movements;  IF v <> 730 THEN RAISE EXCEPTION '9.3b: movements=% (730 emas)', v; END IF;
 
-  -- 9.4 Konteyner-kesim yangi satrlar (item_id NOT NULL): son/kg/dona pinlari
+  -- 9.4 Konteyner-kesim (BARCHA satrlar: yangi + nollangan legacy): son/kg/dona
   SELECT count(*) INTO bad FROM (
     SELECT inv.warehouse_id wid, count(*) c, sum(inv.weight_kg) kg, sum(inv.quantity) dona
       FROM inventory inv
-     WHERE inv.warehouse_id IN (26,25,24,8,10,12,22,23) AND inv.item_id IS NOT NULL
+     WHERE inv.warehouse_id IN (26,25,24,8,10,12,22,23)
      GROUP BY 1
   ) x FULL JOIN (VALUES
-      (26,10,10136.45,0), (25,13,8713.30,0), (24,28,9308.45,0), (8, 9,5376.45,0),
-      (10, 7,6363.30,0), (12,13,7435.50,0), (22, 3,7045.20,61080), (23, 9,3256.00,65280)
+      (26,10,10136.45,0), (25,13,8713.30,0), (24,29,9839.45,0), (8,10,6053.00,0),
+      (10, 7,6363.30,0), (12,13,7435.50,0), (22, 6,7045.20,61080), (23,19,3256.00,65280)
   ) e(wid,c,kg,dona)
     ON x.wid=e.wid AND x.c=e.c AND x.kg=e.kg::numeric AND x.dona=e.dona::numeric
   WHERE x.wid IS NULL OR e.wid IS NULL;
   IF bad <> 0 THEN RAISE EXCEPTION '9.4: konteyner-kesim pin mos emas (%)', bad; END IF;
 
-  -- 9.5 13 legacy satr: hammasi quantity=0, satrlar o'chirilmagan
+  -- 9.5 13 legacy satr: saqlangan, hammasi quantity=0
   SELECT count(*), COALESCE(sum(quantity),0) INTO v, dona
     FROM inventory WHERE warehouse_id IN (22,23) AND item_id IS NULL;
   IF v <> 13 OR dona <> 0 THEN RAISE EXCEPTION '9.5: legacy satrlar %/% (13/0 emas)', v, dona; END IF;
 
-  -- 9.6 9-joy jami: 70,654.65 kg / 126,360 dona (EXACT 1,207.55 kg chetda)
+  -- 9.6 YAKUNIY NAZORAT (egasi §16): 9 joy = 71,862.20 kg / 126,360 dona.
+  --     MUSTAQIL QAYTA HISOB: inventar yig'indisi ↔ registr yig'indisi ↔ literal.
   SELECT COALESCE(sum(weight_kg),0), COALESCE(sum(quantity),0) INTO kg, dona
     FROM inventory WHERE warehouse_id IN (21,26,25,24,8,10,12,22,23);
-  IF kg <> 70654.65 THEN RAISE EXCEPTION '9.6: jami kg=% (70654.65 emas)', kg; END IF;
-  IF dona <> 126360 THEN RAISE EXCEPTION '9.6b: jami dona=% (126360 emas)', dona; END IF;
+  SELECT COALESCE(sum(weight_kg),0) INTO kg2 FROM physical_baseline_positions;  -- 97 pozitsiya, mustaqil manba
+  IF kg <> kg2 THEN RAISE EXCEPTION '9.6: inventar kg=% ≠ registr kg=% — MUSTAQIL HISOB MOS EMAS', kg, kg2; END IF;
+  IF kg <> 71862.20 THEN RAISE EXCEPTION '9.6b: jami kg=% (71862.20 emas)', kg; END IF;
+  SELECT COALESCE(sum(quantity),0) INTO v FROM physical_baseline_positions WHERE unit='dona';
+  IF dona <> v THEN RAISE EXCEPTION '9.6c: inventar dona=% ≠ registr dona=%', dona, v; END IF;
+  IF dona <> 126360 THEN RAISE EXCEPTION '9.6d: jami dona=% (126360 emas)', dona; END IF;
 
-  -- 9.7 C-15 daxlsiz: 3 satr / 13,020 kg / 3 harakat
+  -- 9.7 C-15 daxlsiz: 3 satr / 13,020 kg / 3 harakat / raw
   SELECT count(*), COALESCE(sum(weight_kg),0) INTO v, kg FROM inventory WHERE warehouse_id=21;
   IF v <> 3 OR kg <> 13020.00 THEN RAISE EXCEPTION '9.7: C-15 buzilgan (%/%)', v, kg; END IF;
   SELECT count(*) INTO v FROM stock_movements WHERE from_warehouse_id=21 OR to_warehouse_id=21;
@@ -392,29 +450,38 @@ BEGIN
   WHERE now_.warehouse_id IS NULL OR b.warehouse_id IS NULL;
   IF bad <> 0 THEN RAISE EXCEPTION '9.8: boshqa omborlar o''zgargan (%)', bad; END IF;
 
-  -- 9.9 Daxlsizlar: sales/arxiv/raw_materials/pozitsiyalar/items
+  -- 9.9 Daxlsizlar: sales/arxiv/raw_materials/pozitsiyalar/items/products
   SELECT count(*) INTO v FROM sales;      IF v <> 45  THEN RAISE EXCEPTION '9.9: sales=%', v; END IF;
   SELECT count(*) INTO v FROM sale_items; IF v <> 143 THEN RAISE EXCEPTION '9.9b: sale_items=%', v; END IF;
   SELECT count(*) INTO v FROM legacy.inventory_baseline_pre; IF v <> 43 THEN RAISE EXCEPTION '9.9c: arxiv=%', v; END IF;
   SELECT count(*) INTO v FROM raw_materials; IF v <> 17 THEN RAISE EXCEPTION '9.9d: raw_materials=%', v; END IF;
   SELECT count(*) INTO v FROM physical_baseline_positions; IF v <> 97 THEN RAISE EXCEPTION '9.9e: positions=%', v; END IF;
   SELECT count(*) INTO v FROM physical_baseline_positions WHERE mapping_status='EXCLUDED_EXACT_CANDIDATE';
-  IF v <> 2 THEN RAISE EXCEPTION '9.9f: EXACT=% (2 emas)', v; END IF;
-  SELECT count(*) INTO v FROM items; IF v <> 94 THEN RAISE EXCEPTION '9.9g: items=%', v; END IF;
+  IF v <> 2 THEN RAISE EXCEPTION '9.9f: EXACT holati o''zgargan (%)', v; END IF;
+  SELECT count(*) INTO v FROM items; IF v <> 94 THEN RAISE EXCEPTION '9.9g: items=% — yangi SKU yaratilgan!', v; END IF;
+  SELECT count(*) INTO v FROM products; IF v NOT BETWEEN 1 AND 100000 THEN RAISE EXCEPTION '9.9h: products anomaliya'; END IF;
+  PERFORM 1 FROM products WHERE id=46 AND name='Rossiya Tros' AND sku='ROSSIYATROS';
+  IF NOT FOUND THEN RAISE EXCEPTION '9.9i: products id=46 o''zgargan'; END IF;
+  PERFORM 1 FROM products WHERE id=108 AND name='Shroki 3.5 Oq' AND sku='SHROKI-3-5-OQ';
+  IF NOT FOUND THEN RAISE EXCEPTION '9.9j: products id=108 o''zgargan'; END IF;
 
   -- 9.10 Statuslar: 9/9 LOADED
   SELECT count(*) INTO v FROM physical_baselines WHERE status='LOADED';
   IF v <> 9 THEN RAISE EXCEPTION '9.10: LOADED=% (9 emas)', v; END IF;
 
-  -- 9.11 2 EXACT inventarda YO'Q
+  -- 9.11 2 EXACT inventarda AYNAN pinlangan ko'rinishda
+  SELECT count(*) INTO v FROM inventory
+   WHERE (warehouse_id=24 AND product='Rossiya Tros'  AND quantity=0 AND weight_kg=531.00  AND product_type='finished' AND item_id IS NULL)
+      OR (warehouse_id= 8 AND product='Shroki 3.5 Oq' AND quantity=0 AND weight_kg=676.55 AND product_type='finished' AND item_id IS NULL);
+  IF v <> 2 THEN RAISE EXCEPTION '9.11: EXACT satrlari=% (2 emas)', v; END IF;
   SELECT count(*) INTO v FROM inventory WHERE product IN ('Rossiya Tros','Shroki 3.5 Oq');
-  IF v <> 0 THEN RAISE EXCEPTION '9.11: EXACT inventarga kirib qolgan (%)', v; END IF;
+  IF v <> 2 THEN RAISE EXCEPTION '9.11b: EXACT nomlarda % satr (dublikat!)', v; END IF;
 
-  -- 9.12 Harakat↔inventar o'zaro tenglik (yangi 92 satr uchun)
+  -- 9.12 Harakat↔inventar o'zaro tenglik: TM (item_id orqali) + EXACT ((wid,product) orqali)
   SELECT count(*) INTO bad FROM (
     SELECT m.to_warehouse_id wid, m.item_id, sum(m.quantity) q, sum(m.weight_kg) kg
       FROM stock_movements m
-     WHERE m.reason LIKE 'R-D baseline yuklash %GO 2026-08-17'
+     WHERE m.reason LIKE 'R-D baseline yuklash %FINAL GO 2026-08-17'
      GROUP BY 1,2
   ) mv FULL JOIN (
     SELECT inv.warehouse_id wid, inv.item_id, inv.quantity q, inv.weight_kg kg
@@ -422,13 +489,34 @@ BEGIN
      WHERE inv.warehouse_id IN (26,25,24,8,10,12,22,23) AND inv.item_id IS NOT NULL
   ) iv ON mv.wid=iv.wid AND mv.item_id=iv.item_id AND mv.q=iv.q AND mv.kg=iv.kg
   WHERE mv.wid IS NULL OR iv.wid IS NULL;
-  IF bad <> 0 THEN RAISE EXCEPTION '9.12: harakat≠inventar (%)', bad; END IF;
+  IF bad <> 0 THEN RAISE EXCEPTION '9.12: TM harakat≠inventar (%)', bad; END IF;
+  SELECT count(*) INTO bad FROM (
+    SELECT m.to_warehouse_id wid, m.product, m.weight_kg kg
+      FROM stock_movements m WHERE m.reason LIKE 'R-D EXACT yuklash %'
+  ) mv FULL JOIN (
+    SELECT inv.warehouse_id wid, inv.product, inv.weight_kg kg
+      FROM inventory inv WHERE inv.product IN ('Rossiya Tros','Shroki 3.5 Oq')
+  ) iv ON mv.wid=iv.wid AND mv.product=iv.product AND mv.kg=iv.kg
+  WHERE mv.wid IS NULL OR iv.wid IS NULL;
+  IF bad <> 0 THEN RAISE EXCEPTION '9.12b: EXACT harakat≠inventar (%)', bad; END IF;
 
-  -- 9.13 product_type taqsimoti pin (OWNER-LIST bilan yangilanadi)
-  -- <<< §OWNER-LIST: quyidagi kutilgan sonlar ro'yxat kelgach yangilanadi
-  -- SELECT count(*) FILTER (WHERE product_type='raw'), count(*) FILTER (WHERE product_type='finished')
-  --   INTO v, v2 FROM inventory WHERE warehouse_id IN (26,25,24,8,10,12,22,23) AND item_id IS NOT NULL;
-  -- IF v <> N_RAW_ROWS OR v2 <> (92 - N_RAW_ROWS) THEN RAISE EXCEPTION '9.13: raw/finished %/%', v, v2; END IF;
+  -- 9.13 Tasnif taqsimoti (egasi §21): yangi 94 satr = 3 raw + 3 pre-finished + 88 finished
+  SELECT count(*) FILTER (WHERE product_type='raw'),
+         count(*) FILTER (WHERE product_type='pre-finished'),
+         count(*) FILTER (WHERE product_type='finished')
+    INTO v, v2, v3
+    FROM inventory
+   WHERE warehouse_id IN (26,25,24,8,10,12,22,23)
+     AND (item_id IS NOT NULL OR product IN ('Rossiya Tros','Shroki 3.5 Oq'));
+  IF v <> 3 OR v2 <> 3 OR v3 <> 88 THEN RAISE EXCEPTION '9.13: tasnif %/%/% (3/3/88 emas)', v, v2, v3; END IF;
+  SELECT count(*) INTO v FROM inventory inv JOIN items i ON i.id=inv.item_id
+   WHERE i.sku='TM-000022' AND inv.product_type='finished';
+  IF v <> 2 THEN RAISE EXCEPTION '9.13b: TM-000022 ikkala lokatsiyada finished emas (%)', v; END IF;
+  SELECT count(*) INTO bad FROM inventory inv
+    JOIN items i ON i.id=inv.item_id
+    JOIN rd_class c ON c.sku=i.sku
+   WHERE inv.warehouse_id IN (26,25,24,8,10,12,22,23) AND inv.product_type <> c.ptype;
+  IF bad <> 0 THEN RAISE EXCEPTION '9.13c: istisno tasnif mos emas (%)', bad; END IF;
 
   RAISE NOTICE '9.x: BARCHA VERIFIKATSIYA PASS — COMMIT xavfsiz';
 END $$;
@@ -436,6 +524,6 @@ END $$;
 COMMIT;
 
 \echo '=============================================================='
-\echo 'R-D GO 8-KONTEYNER: COMMIT BAJARILDI'
+\echo 'R-D FINAL: COMMIT BAJARILDI (94 yuk + 13 nollash + 8 LOADED)'
 \echo 'Keyingi qadam: mustaqil read-only post-verify (alohida sessiya)'
 \echo '=============================================================='

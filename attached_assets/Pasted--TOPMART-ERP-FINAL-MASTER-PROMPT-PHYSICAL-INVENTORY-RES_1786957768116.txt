@@ -1,0 +1,800 @@
+# TOPMART ERP — FINAL MASTER PROMPT
+# PHYSICAL INVENTORY RESET → CURRENT REAL WAREHOUSE
+# FINAL EXECUTION CONTEXT
+
+WE DON'T GUESS. WE KNOW.
+
+Maqsad:
+TopMart ERP'dagi eski, real fizik holatni aks ettirmaydigan ishlab chiqarish inventory qoldiqlarini legacy tarix sifatida saqlab, 2026-08-15/16 fizik sanoqlarida tasdiqlangan real omborni CURRENT INVENTORY sifatida ishga tushirish.
+
+BU PROMPT — avvalgi P2.1 + R-A + R-C + R-B + C-15 R-D execution va qolgan 8 konteyner dry-run natijalarining FINAL CONTEXTidir.
+
+==================================================
+1. QAT'IY SOURCE OF TRUTH
+==================================================
+
+Physical Count / R-B frozen registry — real current warehouse uchun authoritative source.
+
+Eski ERP inventory:
+- real fizik holat emas;
+- R-A orqali legacy archive'da saqlangan;
+- current inventory uchun source of truth EMAS.
+
+R-B registry:
+- 97 physical positions
+- 94 canonical TM SKU
+- 2 EXACT candidate
+- jami physical count = 71,862.20 kg
+- 126,360 dona
+
+C-15 allaqachon R-D orqali LOADED.
+
+==================================================
+2. ALL LOCATIONS
+==================================================
+
+Physical count mavjud joylar:
+
+C-20
+C-19
+C-18
+C-02
+C-04
+C-06
+C-16
+C-17
+C-15
+
+Jami:
+9 location
+97 physical positions
+71,862.20 kg
+126,360 dona
+
+==================================================
+3. ALREADY LOADED — C-15
+==================================================
+
+C-15 allaqachon production current inventoryga yuklangan.
+
+TM-000092
+Polipropilen CF 1000D Qizil
+3,720.00 kg
+product_type = raw
+
+TM-000093
+Polipropilen CF 1000D Ko‘k
+3,840.00 kg
+product_type = raw
+
+TM-000094
+Polipropilen CF 1000D Sariq
+5,460.00 kg
+product_type = raw
+
+C-15 total:
+13,020.00 kg
+
+C-15 status = LOADED.
+
+C-15ga qayta write QILINMASIN.
+
+==================================================
+4. REMAINING 8 LOCATIONS
+==================================================
+
+Current inventoryga endi quyidagilar yuklanadi:
+
+C-20
+C-19
+C-18
+C-02
+C-04
+C-06
+C-16
+C-17
+
+8-container dry-run:
+8/8 PASS.
+
+92 MAPPED physical positions current inventoryga yuklanishi kerak.
+
+==================================================
+5. CLASSIFICATION — FINAL USER DECISION
+==================================================
+
+product_type qiymatini taxmin qilmang.
+
+Faqat quyidagi user-confirmed classificationdan foydalaning.
+
+------------------------------------------
+RAW
+------------------------------------------
+
+TM-000018
+Passport Xom BCF
+
+TM-000061
+Polipropilen CF 1500D Qora
+
+TM-000062
+Polipropilen CF 1000D Yashil
+
+TM-000092
+Polipropilen CF 1000D Qizil
+
+TM-000093
+Polipropilen CF 1000D Ko‘k
+
+TM-000094
+Polipropilen CF 1000D Sariq
+
+C-15dagi 092/093/094 allaqachon raw sifatida LOADED.
+
+------------------------------------------
+PRE-FINISHED
+------------------------------------------
+
+TM-000005
+FDY Igna Strupa
+
+Izoh:
+FDY xom toladan Strupa qilib to'qiladi.
+Keyinchalik arqon ichiga qo'yilib tayyor mahsulotga aylanadi.
+Shuning uchun pre-finished.
+
+TM-000016
+Qop ip Yashil
+
+Izoh:
+Sotilishi ham mumkin, ishlab chiqarishda ishlatilishi ham mumkin.
+pre-finished.
+
+TM-000017
+Qop ip Qizil
+
+pre-finished.
+
+------------------------------------------
+FINISHED
+------------------------------------------
+
+TM-000001
+TM-000002
+TM-000003
+TM-000004
+
+TM-000006
+TM-000007
+TM-000008
+TM-000009
+TM-000010
+
+TM-000011
+TM-000012
+TM-000013
+TM-000014
+TM-000015
+
+TM-000019
+TM-000020
+TM-000021
+TM-000022
+TM-000023
+
+TM-000024
+TM-000025
+TM-000026
+TM-000027
+TM-000028
+TM-000029
+TM-000030
+TM-000031
+TM-000032
+TM-000033
+TM-000034
+TM-000035
+TM-000036
+TM-000037
+TM-000038
+TM-000039
+TM-000040
+TM-000041
+TM-000042
+TM-000043
+TM-000044
+TM-000045
+TM-000046
+TM-000047
+TM-000048
+TM-000049
+TM-000050
+TM-000051
+
+TM-000052
+TM-000053
+TM-000054
+TM-000055
+TM-000056
+TM-000057
+TM-000058
+TM-000059
+TM-000060
+
+TM-000063
+TM-000064
+TM-000065
+TM-000066
+
+TM-000067
+TM-000068
+TM-000069
+TM-000070
+TM-000071
+TM-000072
+TM-000073
+TM-000074
+TM-000075
+TM-000076
+TM-000077
+TM-000078
+TM-000079
+
+TM-000080
+TM-000081
+TM-000082
+
+TM-000083
+TM-000084
+TM-000085
+TM-000086
+TM-000087
+TM-000088
+TM-000089
+TM-000090
+TM-000091
+
+TM-000022 is finished in BOTH locations:
+C-19
+C-04
+
+------------------------------------------
+EXACT — FINAL USER DECISION
+------------------------------------------
+
+These two physical-count products are ALSO FINISHED:
+
+Rossiya Tros
+531 kg
+C-18
+product_type = finished
+
+Shroki 3.5 Oq
+676.55 kg
+C-02
+product_type = finished
+
+IMPORTANT:
+
+These two were previously excluded from R-C because they matched existing ERP items.
+
+The user has now explicitly confirmed:
+BOTH ARE FINISHED and must be represented in the real current warehouse.
+
+DO NOT blindly create duplicate items.
+
+Before loading each EXACT:
+1. Identify the existing canonical item.
+2. Check current inventory balance.
+3. Check whether that current balance belongs to old/non-real ERP state.
+4. Compare against R-A legacy archive.
+5. Prevent double counting.
+6. If safe, attach the physical count to the existing item.
+7. If the existing item cannot safely represent today's physical count without mixing old and new state, STOP and report the exact conflict.
+8. Do NOT silently create a duplicate SKU.
+9. Do NOT silently merge unrelated items.
+
+No guessing.
+
+==================================================
+6. C-16 / C-17 LEGACY RESET
+==================================================
+
+C-16:
+3 new physical positions.
+
+C-17:
+9 new physical positions.
+
+Old current inventory:
+C-16 = 3 legacy rows
+C-17 = 10 legacy rows
+
+Total:
+13 legacy rows.
+
+These 13 old rows MUST NOT remain mixed with the new physical count.
+
+Rules:
+
+- R-A legacy archive must remain untouched.
+- Compare current legacy value against R-A archive before zeroing.
+- If mismatch → STOP + ROLLBACK.
+- If exact match → create audit BASELINE zeroing/storno-style movement.
+- NEVER DELETE.
+- NEVER destroy historical information.
+- Old values remain available in legacy archive.
+- Current inventory after execution must represent today's physical count only.
+
+==================================================
+7. INVENTORY LOADING MODEL
+==================================================
+
+For kg-only products:
+
+quantity = 0
+weight_kg = physical count kg
+
+For dona-based products:
+
+Preserve the physical count quantity exactly.
+
+C-16:
+
+TM-000080
+Qop ip 100 talik
+55,200 dona
+6,348.00 kg
+
+TM-000081
+Qop ip 120 talik
+2,520 dona
+226.80 kg
+
+TM-000082
+Qop ip 80 talik
+3,360 dona
+470.40 kg
+
+C-16:
+61,080 dona
+7,045.20 kg
+
+C-17:
+
+TM-000083
+12,000 dona
+600 kg
+
+TM-000084
+12,800 dona
+640 kg
+
+TM-000085
+7,600 dona
+380 kg
+
+TM-000086
+4,800 dona
+144 kg
+
+TM-000087
+10,400 dona
+312 kg
+
+TM-000088
+8,400 dona
+252 kg
+
+TM-000089
+2,080 dona
+208 kg
+
+TM-000090
+2,880 dona
+288 kg
+
+TM-000091
+4,320 dona
+432 kg
+
+C-17:
+65,280 dona
+3,256 kg
+
+==================================================
+8. MOVEMENT MODEL
+==================================================
+
+Every physical baseline load must create an auditable BASELINE movement.
+
+Required:
+
+movement_type = BASELINE
+created_by = 'thisismurodov'
+reference = physical-count registry position
+reason = clear R-D baseline explanation
+weight_kg = physical kg where applicable
+
+No silent inventory updates.
+
+Current inventory and movement history must agree.
+
+==================================================
+9. ATOMIC EXECUTION
+==================================================
+
+The execution must be atomic.
+
+Before execution:
+
+1. Create fresh production backup.
+2. Verify backup.
+3. Verify R-B registry.
+4. Verify all SKU mappings.
+5. Verify classification pins.
+6. Verify C-15 already LOADED.
+7. Verify 13 legacy rows against R-A.
+8. Verify EXACT candidates.
+9. Verify no duplicate/double-count risk.
+
+Then:
+
+BEGIN
+LOCK required tables BEFORE first read
+run all gates
+perform writes
+run all post-write verification
+COMMIT only if EVERY gate passes.
+
+Any failure:
+ROLLBACK EVERYTHING.
+
+==================================================
+10. NO DELETE
+==================================================
+
+Never use DELETE to remove old inventory history.
+
+Never DROP business data.
+
+Never overwrite historical values.
+
+Rollback after COMMIT must be through audited STORNO/reversal movements.
+
+==================================================
+11. SALES PROTECTION
+==================================================
+
+DO NOT modify:
+
+sales
+sale_items
+sales history
+customer data
+distribution history
+
+Physical inventory reset must not alter historical sales.
+
+==================================================
+12. LEGACY PROTECTION
+==================================================
+
+DO NOT modify:
+
+legacy.inventory
+legacy.raw_materials
+legacy.wip
+legacy.locations
+
+Legacy is historical evidence.
+
+==================================================
+13. R-B PROTECTION
+==================================================
+
+R-B physical count registry is frozen.
+
+DO NOT modify it.
+
+R-B remains the immutable source document for the physical count.
+
+==================================================
+14. EXPECTED FINAL STATE
+==================================================
+
+After successful execution:
+
+C-15:
+LOADED
+13,020.00 kg
+
+Remaining 8:
+LOADED
+
+All 9 physical locations represented.
+
+Expected physical total:
+
+71,862.20 kg
+126,360 dona
+
+This includes:
+
+94 canonical TM items
++
+2 EXACT finished items
+
+No physical count should disappear.
+
+No physical count should be duplicated.
+
+==================================================
+15. EXACT FINAL CONTROL
+==================================================
+
+Expected EXACT:
+
+Rossiya Tros
+531 kg
+C-18
+finished
+
+Shroki 3.5 Oq
+676.55 kg
+C-02
+finished
+
+These must be included in final physical inventory totals.
+
+However, because they map to pre-existing ERP items:
+
+DO NOT create duplicate SKU automatically.
+
+First reconcile old current balance against R-A legacy.
+
+If old balance is nonzero and would cause double counting:
+perform the same audited legacy-to-current reset logic before applying today's physical count.
+
+If reconciliation cannot be proven:
+STOP and report.
+
+==================================================
+16. FINAL TOTAL CONTROL
+==================================================
+
+Final current physical inventory must equal:
+
+71,862.20 kg
+
+and
+
+126,360 dona
+
+with the understanding that the dona items also have their corresponding weight_kg values.
+
+Control breakdown:
+
+C-15:
+13,020.00 kg
+
+Other 6 kg-based containers:
+C-20
+C-19
+C-18
+C-02
+C-04
+C-06
+
+Frozen physical count:
+48,541.00 kg
+
+C-16:
+7,045.20 kg
+
+C-17:
+3,256.00 kg
+
+Plus the two EXACT:
+1,207.55 kg
+
+The final reconciliation must independently calculate the totals from the actual registry/inventory rows.
+Do not hard-code the result as proof.
+
+==================================================
+17. DASHBOARD / PRODUCT TYPE
+==================================================
+
+Do not create additional classification guesses.
+
+The classification is:
+
+raw
+pre-finished
+finished
+
+The user will later complete additional dashboard attributes:
+
+- price
+- sale price
+- purchase price
+- category
+- material
+- color
+- dimensions
+- barcode
+- minimum stock
+- supplier
+- BOM
+- WIP relationships
+- production department
+- other business attributes
+
+Do NOT invent these now.
+
+==================================================
+18. FUTURE WIP MODEL — DO NOT EXECUTE NOW
+==================================================
+
+The next architectural phase will connect:
+
+RAW MATERIAL
+↓
+PRODUCTION DEPARTMENT / WIP
+↓
+PRE-FINISHED
+↓
+FINISHED PRODUCT
+↓
+CONTAINER / LOCATION
+
+Example:
+
+C-15
+PP raw material
+↓
+CF Lenta Department
+↓
+Tulpor
+↓
+C-02
+
+Future dashboard should visually show these flows with lines.
+
+When clicking:
+
+CONTAINER
+→ inventory
+
+WIP / DEPARTMENT
+→ raw materials
+→ output
+→ employees
+→ production
+→ salary
+
+But DO NOT implement this in the current R-D execution.
+
+R-D is ONLY inventory reset/loading.
+
+==================================================
+19. FINAL EXECUTION SAFETY
+==================================================
+
+Before production write:
+
+Run independent architect review.
+
+Run throwaway database rehearsal.
+
+Intentionally test one broken row.
+
+Prove:
+
+broken validation
+→ STOP
+→ ROLLBACK
+→ zero partial writes.
+
+Then backup production.
+
+Then execute.
+
+Then independent read-only post-verification.
+
+Create final report:
+
+docs/r-d-final-execution-report-2026-08-17.md
+
+==================================================
+20. ABSOLUTE STOP CONDITIONS
+==================================================
+
+STOP immediately if:
+
+- SKU mismatch
+- name mismatch
+- quantity mismatch
+- weight mismatch
+- duplicate item
+- duplicate location balance
+- EXACT reconciliation cannot be proven
+- legacy archive mismatch
+- R-B registry mismatch
+- C-15 unexpected change
+- sales change
+- legacy archive change
+- unexpected inventory row
+- unexpected movement
+- classification mismatch
+- total mismatch
+- concurrency protection failure
+- backup verification failure
+
+NO GUESSING.
+
+NO SILENT FIXES.
+
+NO AUTOMATIC NEXT PHASE.
+
+==================================================
+21. FINAL USER AUTHORITY
+==================================================
+
+All business classification decisions in this prompt come directly from the owner.
+
+Do not replace them with previous recommendations.
+
+Current final decisions:
+
+RAW:
+TM-000018
+TM-000061
+TM-000062
+TM-000092
+TM-000093
+TM-000094
+
+PRE-FINISHED:
+TM-000005
+TM-000016
+TM-000017
+
+FINISHED:
+all remaining TM-000001…TM-000094 except the 6 RAW and 3 PRE-FINISHED,
+plus:
+
+Rossiya Tros — finished
+Shroki 3.5 Oq — finished
+
+C-15:
+already LOADED.
+
+==================================================
+22. EXECUTION GATE
+==================================================
+
+Do NOT execute immediately just because this context was received.
+
+First:
+
+1. Reconcile the final context against the frozen R-B registry.
+2. Produce a final execution preview.
+3. Verify 94 TM items + 2 EXACT.
+4. Verify 97 physical positions.
+5. Verify all classifications.
+6. Verify C-15 is already LOADED.
+7. Verify C-16/C-17 legacy reset.
+8. Verify final totals.
+9. Run architect review.
+10. Run rehearsal.
+11. Report PASS/FAIL.
+
+If all PASS, stop and wait for explicit:
+
+R-D FINAL GO
+
+Only then execute production.
+
+WE DON'T GUESS.
+WE KNOW.

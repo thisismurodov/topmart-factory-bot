@@ -1,0 +1,748 @@
+# TOPMART ERP — PRODUCTION / WAREHOUSE VISUAL FLOW
+# VISUAL CONTAINER + DEPARTMENT + WIP ARCHITECTURE
+
+WE DON'T GUESS. WE KNOW.
+
+Inventory Reset yakunlandi.
+
+Hozirgi current inventory real physical count bilan mos:
+- 9 location
+- 97 physical positions
+- 94 canonical TM SKU
+- 2 EXACT
+- 71,862.20 kg
+- 126,360 dona
+- 110 BASELINE
+- C-15 LOADED
+- qolgan barcha konteynerlar LOADED
+
+MUHIM:
+BU BOSQICHDA INVENTORY MA'LUMOTLARINI O'ZGARTIRMANG.
+R-D ga tegmang.
+R-B ga tegmang.
+legacyga tegmang.
+salesga tegmang.
+
+Hozirgi vazifa — dashboardda ishlab chiqarish jarayonini VISUAL ko'rinishga olib chiqish.
+
+==================================================
+1. ASOSIY G'OYA
+==================================================
+
+Biz TopMart ERP'da shunchaki:
+
+Container → Product list
+
+ko'rinishida qolishni xohlamaymiz.
+
+Biz quyidagilar o'rtasidagi real biznes oqimini ko'rishni xohlaymiz:
+
+RAW MATERIAL
+↓
+PRODUCTION DEPARTMENT
+↓
+WIP
+↓
+OUTPUT / PRE-FINISHED
+↓
+FINISHED PRODUCT
+↓
+CONTAINER / WAREHOUSE
+
+Bu oqim dashboardda vizual CHIZIQLAR / CONNECTIONS bilan ko'rinishi kerak.
+
+Foydalanuvchi omborni ochganda, qaysi xomashyo qaysi bo'limga ketayotganini, bo'lim nima ishlab chiqarayotganini va tayyor mahsulot qayerga tushayotganini tushuna olishi kerak.
+
+==================================================
+2. CONTAINER CARD
+==================================================
+
+Hozir dashboardda konteynerlar mavjud.
+
+Masalan:
+
+C-15
+C-16
+C-17
+C-18
+C-19
+C-20
+C-02
+C-04
+C-06
+
+Konteyner ustiga bosilganda hozirgidek uning ichidagi ma'lumotlar ko'rinsin:
+
+Container:
+C-15
+
+Location:
+C-15
+
+Type:
+Raw Material / Finished / Mixed
+
+Products:
+- product 1
+- product 2
+- product 3
+
+Quantity
+Weight
+Product type
+SKU
+
+va boshqa mavjud inventory ma'lumotlari.
+
+LEKIN endi bu card faqat ma'lumot ko'rsatmasin.
+
+U boshqa objectlar bilan CONNECTION ko'rsatish imkoniga ega bo'lsin.
+
+==================================================
+3. CONTAINER → DEPARTMENT CONNECTION
+==================================================
+
+Misol:
+
+C-15
+│
+│ PP Raw Material
+↓
+CF LENTA DEPARTMENT
+
+Dashboardda bu oddiy text emas.
+
+Vizual node:
+
+[C-15]
+  │
+  │ PP
+  ▼
+[CF LENTA]
+
+Chiziq ustida material nomi yoki asosiy oqim ko'rinishi mumkin.
+
+Masalan:
+
+C-15
+↓
+Polipropilen CF 1000D
+↓
+CF Lenta
+
+Foydalanuvchi chiziq yoki connection ustiga bosganda:
+
+- qaysi material
+- qancha kg
+- qaysi SKU
+- qaysi department
+- qachon yuborilgan
+- qancha ishlatilgan
+- qancha qolgan
+
+ko'rinishi kerak.
+
+HOZIRCHA bularning hammasini hisoblaydigan yangi production engine yaratmang.
+
+Avval VISUAL ARCHITECTURE va data modelni tayyorlang.
+
+==================================================
+4. DEPARTMENT NODE
+==================================================
+
+Department alohida visual node bo'lishi kerak.
+
+Masalan:
+
+[CF LENTA]
+
+Ustiga bosilganda:
+
+Department:
+CF Lenta
+
+Input:
+- PP raw
+- boshqa materiallar
+
+WIP:
+- mavjud WIP
+
+Output:
+- Tulpor
+- boshqa ishlab chiqarilgan mahsulotlar
+
+Employees:
+- shu bo'limdagi xodimlar
+
+Production:
+- ishlab chiqarish hajmi
+- ishlab chiqarilgan mahsulot
+- vaqt
+
+Salary:
+- department employees salary information
+
+MUHIM:
+Salary ma'lumotlari mavjud ERP ma'lumotlariga asoslanishi kerak.
+Agar hozir database'da kerakli relationship mavjud bo'lmasa, UI'da FAKE data ko'rsatmang.
+
+==================================================
+5. DEPARTMENT → WIP
+==================================================
+
+Department ichida WIP alohida node sifatida ko'rinsin.
+
+Misol:
+
+[C-15]
+  │
+  │ PP
+  ▼
+[CF LENTA]
+  │
+  │ production
+  ▼
+[WIP]
+  │
+  ▼
+[TULPOR]
+
+WIP node ustiga bosilganda:
+
+WIP:
+- material
+- quantity
+- weight
+- input
+- output
+- status
+- department
+- timestamp
+
+ko'rinishi kerak.
+
+Agar hozirgi WIP database modeli bularning hammasini bermasa, mavjud data bilan ko'rsating va yetishmayotgan relationshipni clearly belgilang.
+
+Taxminiy ma'lumot yaratmang.
+
+==================================================
+6. WIP → FINISHED PRODUCT
+==================================================
+
+Misol:
+
+[CF LENTA]
+      │
+      ▼
+     [WIP]
+      │
+      ▼
+[TULPOR LENTA]
+      │
+      ▼
+[C-02]
+
+Bu yerda:
+
+Input:
+PP raw
+
+Production:
+CF Lenta department
+
+Intermediate:
+WIP / pre-finished
+
+Output:
+Tulpor Lenta
+
+Storage:
+C-02
+
+Dashboard foydalanuvchiga shu zanjirni ko'rsatishi kerak.
+
+==================================================
+7. PRODUCT → CONTAINER
+==================================================
+
+Finished product qayerda turganini ham ko'rsatish kerak.
+
+Misol:
+
+[TULPOR LENTA YASHIL]
+        │
+        ▼
+      [C-02]
+
+Product ustiga bosilganda:
+
+SKU
+Name
+Product type
+Current weight
+Current quantity
+Location
+Container
+
+ko'rinsin.
+
+Container ustiga bosilganda esa shu productning container ichidagi positioni ko'rinsin.
+
+==================================================
+8. GLOBAL VISUAL MAP
+==================================================
+
+Dashboardda alohida:
+
+## PRODUCTION FLOW
+
+yoki
+
+## MATERIAL FLOW
+
+section/tab bo'lishi mumkin.
+
+Unda barcha asosiy node'lar graph ko'rinishida joylashadi:
+
+┌─────────────┐
+│   C-15      │
+│ RAW         │
+└──────┬──────┘
+       │
+       │ PP
+       ▼
+┌─────────────┐
+│ CF LENTA    │
+│ DEPARTMENT  │
+└──────┬──────┘
+       │
+       ▼
+┌─────────────┐
+│    WIP      │
+└──────┬──────┘
+       │
+       ▼
+┌─────────────┐
+│   TULPOR    │
+│ PRE/FINISH  │
+└──────┬──────┘
+       │
+       ▼
+┌─────────────┐
+│    C-02     │
+│  WAREHOUSE  │
+└─────────────┘
+
+Bu faqat bitta misol.
+
+Keyinchalik boshqa departments va materiallar ham shu architecture orqali ulanadi.
+
+==================================================
+9. INTERACTIVE GRAPH
+==================================================
+
+Graph static rasm bo'lmasin.
+
+Interactive bo'lsin.
+
+User:
+
+Container → click
+Department → click
+WIP → click
+Product → click
+Connection → click
+
+qila olsin.
+
+Har bir click tegishli detail panel/drawer/modal ochsin.
+
+Masalan:
+
+C-15 → click
+
+Right panel:
+
+C-15
+----------------
+13,020 kg
+
+3 products
+
+Polipropilen CF 1000D Qizil
+3,720 kg
+
+Polipropilen CF 1000D Ko'k
+3,840 kg
+
+Polipropilen CF 1000D Sariq
+5,460 kg
+
+Connections:
+→ CF Lenta
+
+==================================================
+10. CONNECTION SEMANTICS
+==================================================
+
+Har bir connection ma'noga ega bo'lishi kerak.
+
+Masalan:
+
+RAW → DEPARTMENT
+"Material supply"
+
+DEPARTMENT → WIP
+"Production"
+
+WIP → PRODUCT
+"Output"
+
+PRODUCT → CONTAINER
+"Storage"
+
+CONTAINER → DEPARTMENT
+"Material source"
+
+Connection ustiga hover/click:
+
+Material:
+PP CF 1000D
+
+Weight:
+3,720 kg
+
+From:
+C-15
+
+To:
+CF Lenta
+
+Status:
+Available / Consumed / Partial
+
+Ammo statusni faqat real database data asosida ko'rsating.
+
+==================================================
+11. CONTAINER VISUAL STATUS
+==================================================
+
+Container node o'zining holatini ham ko'rsatishi mumkin:
+
+RAW
+PRE-FINISHED
+FINISHED
+MIXED
+
+Masalan:
+
+C-15
+RAW
+
+C-02
+FINISHED
+
+Agar container ichida turli type bo'lsa:
+
+MIXED
+
+deb ko'rsatish mumkin.
+
+==================================================
+12. SEARCH / FILTER
+==================================================
+
+Graph katta bo'lib ketadi.
+
+Shuning uchun filter kerak:
+
+- Container
+- Department
+- Product
+- Raw material
+- Pre-finished
+- Finished
+- WIP
+- SKU
+
+Search:
+
+"TM-000092"
+
+qidirilganda:
+
+TM-000092
+↓
+C-15
+↓
+CF Lenta
+
+kabi tegishli graph highlight qilinsin.
+
+==================================================
+13. PRODUCT TYPE INTEGRATION
+==================================================
+
+Current classification:
+
+RAW:
+TM-000018
+TM-000061
+TM-000062
+TM-000092
+TM-000093
+TM-000094
+
+PRE-FINISHED:
+TM-000005
+TM-000016
+TM-000017
+
+FINISHED:
+qolgan TM SKUlar + 2 EXACT
+
+Graph ushbu classificationdan foydalanishi mumkin.
+
+Masalan:
+
+RAW → input node
+PRE-FINISHED → intermediate node
+FINISHED → output node
+
+Lekin classificationni avtomatik o'zgartirmang.
+
+==================================================
+14. EMPLOYEES
+==================================================
+
+Department detail ichida:
+
+Employees
+
+bo'limi bo'lishi kerak.
+
+Masalan:
+
+CF Lenta
+----------------
+Employees: 8
+
+Employee:
+Name
+Role
+Production
+Salary
+
+Agar employee → department relationship hozir database'da mavjud bo'lmasa:
+
+FAKE relationship yaratmang.
+
+Avval data model taklifini ko'rsating.
+
+==================================================
+15. SALARY
+==================================================
+
+Department → Employees → Salary
+
+relationshipni keyinchalik production dashboard bilan bog'lash kerak.
+
+Masalan:
+
+CF Lenta
+↓
+Employees
+↓
+Salary
+
+Lekin hozirgi inventory resetga salary calculationni qo'shmang.
+
+Bu architecture uchun future-ready relationship bo'lsin.
+
+==================================================
+16. DATA MODEL
+==================================================
+
+Avval mavjud database modelini o'rganing.
+
+Qaysi jadvallar mavjud:
+
+items
+inventory
+stock_movements
+warehouses
+WIP tables
+workers
+salary
+departments
+products
+raw_materials
+
+va boshqalar.
+
+Mavjud data relationshiplarini aniqlang.
+
+Yangi table yaratishdan oldin:
+
+1. Existing schema
+2. Existing relationships
+3. Existing IDs
+4. Existing business logic
+
+tekshirilsin.
+
+Keraksiz duplicate table yaratmang.
+
+==================================================
+17. CRITICAL SAFETY
+==================================================
+
+BU BOSQICHDA:
+
+NO inventory reset
+NO R-D
+NO R-B modification
+NO legacy modification
+NO sales modification
+NO stock quantity modification
+NO BASELINE creation
+NO product deletion
+NO historical data modification
+
+Avval faqat:
+
+READ
+ANALYZE
+DESIGN
+PREVIEW
+
+qiling.
+
+==================================================
+18. UI FIRST
+==================================================
+
+Birinchi qadam:
+
+Existing dashboardni o'rganing.
+
+Keyin:
+
+1. Visual architecture proposal
+2. Node design
+3. Connection design
+4. Detail drawer design
+5. Filter/search
+6. Responsive behavior
+7. Existing dashboard bilan integration
+
+tayyorlang.
+
+Avval preview/dry-run.
+
+Men ko'rmasdan turib production DBga yozmang.
+
+==================================================
+19. EXAMPLE BUSINESS FLOW
+==================================================
+
+Quyidagi real biznes scenario dashboardda ishlashi kerak:
+
+C-15
+↓
+Polipropilen CF 1000D
+↓
+CF Lenta Department
+↓
+Production
+↓
+WIP
+↓
+Tulpor
+↓
+Finished Product
+↓
+C-02
+
+Foydalanuvchi C-15ni bosadi.
+
+C-15dagi raw materiallarni ko'radi.
+
+Material connectionni bosadi.
+
+Qaysi departmentga material borishini ko'radi.
+
+Departmentni bosadi.
+
+Departmentdagi WIP va outputlarni ko'radi.
+
+WIPni bosadi.
+
+Qaysi productga aylanishini ko'radi.
+
+Productni bosadi.
+
+Qaysi containerga joylashtirilganini ko'radi.
+
+Shu bilan butun material lifecycle ko'rinadi.
+
+==================================================
+20. MUHIM BUSINESS PRINCIPLE
+==================================================
+
+TopMart ERP faqat:
+
+"omborda qancha bor?"
+
+degan savolga javob bermasligi kerak.
+
+Kelajakdagi asosiy savol:
+
+"Bu mahsulot QAYERDAN KELDI,
+QAYERGA KETDI,
+QAYSI BO'LIM ISHLATDI,
+NIMAGA AYLANDI,
+QAYERDA TURIBDI,
+KIM ISHLAB CHIQARDI?"
+
+bo'lishi kerak.
+
+Visual graph shu tizimning asosiy ko'rinishi bo'ladi.
+
+==================================================
+21. EXECUTION GATE
+==================================================
+
+Hozircha production implementationni boshlamang.
+
+Menga quyidagilarni qaytaring:
+
+1. Existing schema analysis
+2. Existing relevant tables
+3. Existing relationships
+4. Qaysi relationshiplar allaqachon mavjud
+5. Qaysi relationshiplar yo'q
+6. Visual architecture proposal
+7. UI mock/preview plan
+8. Minimal required schema changes
+9. Risklar
+10. Implementation phases
+
+VA ENG MUHIMI:
+
+Bazaga hech narsa yozilmaganini isbotlang.
+
+Agar architecture mavjud schema bilan amalga oshsa,
+yangi table yaratishni majburiy deb hisoblamang.
+
+Agar yangi relationship kerak bo'lsa,
+avval proposal bering.
+
+GO hali berilmadi.
+
+WAIT FOR EXPLICIT:
+"PRODUCTION FLOW GO"
+
+WE DON'T GUESS.
+WE KNOW.

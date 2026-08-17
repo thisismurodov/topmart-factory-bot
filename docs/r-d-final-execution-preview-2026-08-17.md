@@ -98,6 +98,8 @@ Konteyner-kesim (satrlar / kg / dona): C-20 10/10 136,45/0 · C-19 13/8 713,30/0
 
 **Qo'shimcha topilma (himoyani kuchaytiradi):** `legacy.inventory_baseline_pre` APPEND-ONLY trigger bilan qo'riqlanadi (`legacy.no_touch_fn`) — arxivni UPDATE qilib bo'lmaydi; demak jonli≠arxiv nomuvofiqligi faqat inventar buzilishidan kelib chiqishi mumkin, GATE0.10 buni ushlaydi.
 
+**PROD IJRO 2026-08-17:** egasining «R-D FINAL GO» buyrug'i bilan bajarildi — COMMIT + mustaqil post-verify 13/13 PASS: `docs/r-d-final-execution-report-2026-08-17.md`.
+
 ---
 
 **STOP shartlari (§20)** skriptda GATE0.1–0.14, LATCH, NOLLASH-MISMATCH va 9.1–9.13 sifatida kodlangan: SKU/nom/miqdor/og'irlik nomuvofiqligi, dublikat, EXACT isbotsizligi, arxiv/registr/C-15/sales o'zgarishi, kutilmagan satr/harakat, tasnif nomuvofiqligi, jami nomuvofiqlik, konkurensiya — har biri EXCEPTION → to'liq ROLLBACK.

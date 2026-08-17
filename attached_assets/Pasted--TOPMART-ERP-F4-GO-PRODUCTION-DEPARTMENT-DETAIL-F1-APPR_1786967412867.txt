@@ -1,0 +1,584 @@
+# TOPMART ERP — F4 GO
+# PRODUCTION DEPARTMENT DETAIL
+
+F1 = APPROVED
+F2 = COMPLETE
+F3 = COMPLETE
+F4 = GO
+
+F4 vazifasi:
+Production Flow Map ichidagi DEPARTMENT node'larini chuqur ko'rish uchun
+real database ma'lumotlariga asoslangan Department Detail panelini yaratish.
+
+==================================================
+1. QAT'IY SCOPE
+==================================================
+
+F4 — READ-ONLY UI + mavjud real data integration.
+
+HECH QANDAY database write qilinmasin.
+
+NO:
+- inventory write
+- stock movement write
+- BASELINE
+- RECEIVE yaratish
+- WIP backfill
+- item mapping
+- purpose correction
+- legacy modification
+- sales modification
+- BOM modification
+- salary/payment modification
+- yangi database table
+- yangi DDL
+
+Faqat mavjud ma'lumotni o'qish va ko'rsatish.
+
+DATABASE WRITE = 0.
+
+==================================================
+2. DEPARTMENT = production_lines
+==================================================
+
+Alohida departments table yaratmang.
+
+Mavjud production_lines jadvalidan foydalaning.
+
+Hozir real production lines:
+
+- Arqon Bo'lim 3
+- Qop Ip
+- Lenta 1
+
+Nofaol liniyalarni ham ma'lumot sifatida ko'rsatish mumkin,
+lekin ularni fake faol production departmentga aylantirmang.
+
+"CF Lenta"ni database'da mavjud department sifatida yaratmang.
+
+==================================================
+3. FLOW MAPDAN KIRISH
+==================================================
+
+F3dagi:
+
+/flow-map
+
+sahifasida Department node ustiga bosilganda:
+
+Department Detail Drawer / Panel ochilsin.
+
+Graph orqada qoladi.
+
+Drawer ochilganda graph yo'qolmasin.
+
+User drawer'ni yopsa graphdagi holat saqlansin.
+
+==================================================
+4. DEPARTMENT HEADER
+==================================================
+
+Drawer yuqorisida:
+
+DEPARTMENT NAME
+
+Status:
+Active / Inactive
+
+Employee count
+
+Role count
+
+WIP status
+
+Warning count
+
+ko'rsatilsin.
+
+Masalan:
+
+ARQON BO'LIM 3
+
+Active
+11 employees
+3 roles
+WIP: -8,964.77 kg
+Warning: Negative WIP
+
+==================================================
+5. EMPLOYEES
+==================================================
+
+Departmentga real bog'langan xodimlarni ko'rsating.
+
+Har bir xodim uchun mavjud database ma'lumotlari asosida:
+
+- Name
+- Role
+- Status
+- Salary/pay information mavjud bo'lsa
+- boshqa mavjud relevant fieldlar
+
+ko'rsatilishi mumkin.
+
+FAKE employee yaratmang.
+
+Agar ma'lumot mavjud bo'lmasa:
+
+"Ma'lumot mavjud emas"
+
+deb ko'rsating.
+
+==================================================
+6. SALARY
+==================================================
+
+Departmentga real bog'langan salary/payroll ma'lumotlarini ko'rsating.
+
+Ko'rsatish:
+
+- employee
+- salary/payment
+- period/date
+- status
+
+Faqat mavjud database ma'lumotlari.
+
+Muhim:
+
+SALARY PAYMENT YOZMANG.
+
+Hech qanday hisob-kitob bilan yangi salary yaratmang.
+
+Agar mavjud ma'lumot line/employee bilan aniq bog'lanmasa,
+taxminan departmentga taqsimlamang.
+
+==================================================
+7. WIP
+==================================================
+
+Department panelining asosiy qismlaridan biri WIP.
+
+Ko'rsating:
+
+- current WIP
+- input
+- output
+- PRODUCE movements
+- weight
+- quantity
+- date/time
+- status
+
+Mavjud wip_movements ma'lumotlaridan foydalaning.
+
+Agar WIP manfiy bo'lsa:
+
+QIZIL WARNING.
+
+Masalan:
+
+Arqon Bo'lim 3
+WIP = -8,964.77 kg
+
+Qiymatni 0 ga aylantirmang.
+
+"Negative WIP" deb ochiq ko'rsating.
+
+==================================================
+8. INPUT / RAW MATERIAL
+==================================================
+
+Departmentga kirgan xomashyoni ko'rsating.
+
+Ammo juda muhim:
+
+Hozir Container → Department RECEIVE = 0.
+
+Shuning uchun RECEIVE ma'lumotini UYDIRMANG.
+
+Agar RECEIVE mavjud bo'lmasa:
+
+INPUT
+
+"RECEIVE ma'lumotlari mavjud emas"
+
+deb ko'rsatilsin.
+
+Fake container → department connection yaratmang.
+
+Kelajakda RECEIVE yozuvlari paydo bo'lsa,
+panel ularni avtomatik ko'rsatishga tayyor bo'lsin.
+
+==================================================
+9. OUTPUT / PRODUCTION
+==================================================
+
+Departmentdan chiqqan real production outputlarni ko'rsating.
+
+Mavjud:
+
+wip_movements
+batches
+stock_movements
+inventory
+
+relationshiplaridan foydalaning.
+
+Agar relationship aniq bo'lmasa,
+uni taxmin qilib bog'lamang.
+
+Ko'rsatish mumkin:
+
+Product
+Quantity
+Weight
+Date
+Destination
+
+faqat real ma'lumot mavjud bo'lsa.
+
+==================================================
+10. PRODUCTS
+==================================================
+
+Department bilan real bog'langan mahsulotlarni ko'rsating.
+
+Har bir product:
+
+- Name
+- SKU
+- Product type
+- Quantity
+- Weight
+- Destination/container
+- Status
+
+Agar SKU mavjud bo'lmasa:
+
+"SKU biriktirilmagan"
+
+deb ko'rsating.
+
+Nomga qarab SKU yaratmang.
+
+==================================================
+11. PRODUCTION → PRODUCT
+==================================================
+
+F3dagi mavjud real relationshiplardan foydalaning:
+
+Department → WIP
+WIP → Product
+Department → Product
+
+Masalan:
+
+wip_movements
+PRODUCE
+batches
+
+relationshiplari.
+
+Har bir relationship qayerdan kelganini detailda ko'rsatish mumkin.
+
+Masalan:
+
+Source:
+wip_movements
+
+Type:
+PRODUCE
+
+==================================================
+12. PRODUCT → CONTAINER
+==================================================
+
+Agar product inventory orqali container bilan bog'langan bo'lsa:
+
+Destination Container
+
+ko'rsatiladi.
+
+Agar bog'lanish mavjud bo'lmasa:
+
+"Destination aniqlanmagan"
+
+deb ko'rsating.
+
+Taxmin qilmang.
+
+==================================================
+13. EMPLOYEE → PRODUCTION CONTEXT
+==================================================
+
+Department panelida:
+
+Employees
+↓
+Roles
+↓
+Salary
+↓
+Production/WIP
+
+bir kontekstda ko'rinsin.
+
+Lekin employee'ni mahsulotga yoki production outputga
+faqat database'da aniq relationship bo'lsa bog'lang.
+
+Aks holda alohida bloklarda ko'rsating.
+
+==================================================
+14. SECTIONS
+==================================================
+
+Drawer quyidagi tartibda bo'lsin:
+
+1. Department Overview
+
+2. Employees
+
+3. Salary / Payments
+
+4. WIP
+
+5. Inputs
+
+6. Production Outputs
+
+7. Products
+
+8. Destinations
+
+9. Data Quality / Warnings
+
+UI haddan tashqari uzun bo'lsa accordion/tab ishlatish mumkin.
+
+==================================================
+15. DATA QUALITY
+==================================================
+
+Department panelida mavjud muammolarni yashirmang.
+
+Masalan:
+
+NEGATIVE_WIP
+NO_RECEIVE_DATA
+UNATTRIBUTED_BATCHES
+ITEM_LINKS_EMPTY
+
+Agar aynan shu departmentga tegishli bo'lsa ko'rsating.
+
+Global gaplarni departmentga tegishli bo'lmasa chiqarib tashlang.
+
+==================================================
+16. NO FAKE RELATIONSHIPS
+==================================================
+
+Eng muhim qoida:
+
+DATABASE'DA BOR NARSA = KO'RSATISH.
+
+DATABASE'DA YO'Q NARSA = "MA'LUMOT MAVJUD EMAS".
+
+Taxmin qilish mumkin emas.
+
+Masalan:
+
+C-15 → Arqon Bo'lim 3
+
+agar RECEIVE yo'q bo'lsa,
+shu relationshipni chizmang va drawerda
+"C-15dan kirim qayd etilmagan" deb ko'rsating.
+
+==================================================
+17. VISUAL
+==================================================
+
+F1/F3 design language saqlansin.
+
+Premium, clean, minimal.
+
+TopMart ERP green visual language saqlansin.
+
+Department header aniq.
+
+WIP katta raqam bilan.
+
+Negative WIP qizil.
+
+Warnings alohida.
+
+Employees va salary information tartibli.
+
+==================================================
+18. RESPONSIVE
+==================================================
+
+Desktop
+iPad
+Mobile
+
+uchalasida ishlasin.
+
+iPadda drawer qulay bo'lsin.
+
+Mobileda drawer full-screen yoki almost full-screen bo'lishi mumkin.
+
+==================================================
+19. PERFORMANCE
+==================================================
+
+F3 API'dan mavjud data qayta ishlatilishi mumkin,
+lekin department detail uchun kerakli qo'shimcha read-only querylar
+kerak bo'lsa alohida endpoint yaratish mumkin.
+
+Masalan:
+
+GET /api/ombor/flow/department/:id
+
+Agar yangi endpoint kerak bo'lsa:
+
+READ ONLY.
+
+POST/PUT/PATCH/DELETE yaratmang.
+
+==================================================
+20. SECURITY
+==================================================
+
+F2dagi mavjud authentication/session mexanizmini saqlang.
+
+Unauthorized user:
+
+401/403
+
+olishi kerak.
+
+Secret/key frontendga hardcode qilinmasin.
+
+==================================================
+21. TESTING
+==================================================
+
+F4 uchun testlar:
+
+1. Department node click
+2. Department drawer open
+3. Department data
+4. Employee list
+5. Salary data
+6. WIP data
+7. Negative WIP warning
+8. Input/RECEIVE empty state
+9. Production outputs
+10. Products
+11. SKU null state
+12. Destination
+13. Data quality warnings
+14. Fake relationship protection
+15. Auth
+16. Mobile
+17. iPad
+18. Desktop
+19. API error
+20. Empty department
+
+Kamida 20 test.
+
+==================================================
+22. DATABASE SAFETY
+==================================================
+
+F4 oldin/keyin invariant snapshot:
+
+inventory
+stock_movements
+sales
+sale_items
+legacy
+R-B registry
+items
+wip_movements
+batches
+production_lines
+employees
+salary/payment tables
+
+o'zgarmagan bo'lishi kerak.
+
+DATABASE WRITE = 0.
+
+Agar write aniqlansa:
+
+STOP.
+
+==================================================
+23. DO NOT FIX DATA
+==================================================
+
+F4 davomida quyidagilarni tuzatmang:
+
+- negative WIP
+- RECEIVE absence
+- item_id NULL
+- line_id NULL
+- purpose mismatch
+- SKU missing
+- legacy data
+- salary data
+
+Bularni faqat UI'da halol ko'rsating.
+
+Data correction — keyingi alohida task.
+
+==================================================
+24. COMPLETION REPORT
+==================================================
+
+F4 tugagach menga:
+
+1. Screenshot / preview
+2. Department drawer
+3. Employee section
+4. Salary section
+5. WIP section
+6. Input section
+7. Output section
+8. Product section
+9. Destination section
+10. Warning section
+11. API endpoint
+12. Test results
+13. before/after DB snapshot
+14. WRITE=0 proof
+15. performance
+16. responsive result
+17. bugs/issues
+
+ni bering.
+
+==================================================
+25. STOP CONDITION
+==================================================
+
+F4 tugagach TO'XTANG.
+
+Avtomatik:
+
+- F5
+- RECEIVE implementation
+- production transaction system
+- WIP backfill
+- item mapping
+- data cleanup
+
+boshlamang.
+
+F4 faqat Department Detail.
+
+Keyingi bosqich alohida GO bilan belgilanadi.
+
+WE DON'T GUESS.
+WE KNOW.

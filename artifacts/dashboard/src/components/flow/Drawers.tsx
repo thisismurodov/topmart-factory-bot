@@ -1,5 +1,7 @@
 // Production Flow Map — detal panellari (o'ng sheet). Har bir raqam API'dan
 // (real DB holati) — hech narsa o'ylab topilmaydi. Graf holati yopilganda saqlanadi.
+// F4: bo'lim (dept) tanlanganda DepartmentPanel ochiladi — alohida read-only
+// endpoint (GET /api/ombor/flow/department/:id) dan to'liq tafsilot.
 import type { ReactNode } from "react";
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
@@ -8,10 +10,11 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { AlertTriangle, Ban } from "lucide-react";
 import {
-  CLASS_BADGE, CLASS_LABEL, PTYPE_BADGE, fmtInt, fmtKg, fmtMoney,
-  type ContainerData, type DeptData, type FlowEdgeData, type FlowGraphResponse,
+  CLASS_BADGE, CLASS_LABEL, PTYPE_BADGE, fmtInt, fmtKg,
+  type ContainerData, type FlowEdgeData, type FlowGraphResponse,
   type ProductData, type Selection, type WipData,
 } from "./types";
+import { DepartmentPanel } from "./DepartmentPanel";
 
 const Row = ({ k, v, warn }: { k: string; v: ReactNode; warn?: boolean }) => (
   <div className="flex items-start justify-between gap-3 py-1 text-[13px]">
@@ -87,112 +90,6 @@ function ContainerBody({ c }: { c: ContainerData }) {
           </tbody>
         </table>
       </div>
-    </>
-  );
-}
-
-function DeptBody({ d, graph }: { d: DeptData; graph: FlowGraphResponse }) {
-  const w = graph.nodes.wip.find((x) => x.lineId === d.id);
-  const roleLabel = (rk: string) => d.roles.find((r) => r.roleKey === rk)?.label ?? rk;
-  const byRole = new Map<string, string[]>();
-  for (const x of d.workers) {
-    if (!byRole.has(x.role)) byRole.set(x.role, []);
-    byRole.get(x.role)!.push(x.worker);
-  }
-  return (
-    <>
-      <SectionTitle>WIP holati</SectionTitle>
-      {w && w.rows > 0 ? (
-        <>
-          <Row k="Balans" v={`${fmtKg(w.balanceKg)} kg`} warn={w.balanceKg < 0} />
-          <Row k="Kirim (RECEIVE)" v={w.receiveKg > 0 ? `${fmtKg(w.receiveKg)} kg` : "0 kg — yozuv yo'q"} warn={w.receiveKg <= 0} />
-          <Row k="Chiqim (PRODUCE)" v={`${fmtKg(w.produceKg)} kg · ${w.rows} yozuv`} />
-        </>
-      ) : (
-        <NoData text="WIP ledger yozuvi yo'q (wip_movements: 0 ta)" />
-      )}
-      <SectionTitle>Kirim (input)</SectionTitle>
-      {graph.supplyEdges.some((e) => e.target === `d-${d.id}`) ? (
-        graph.supplyEdges.filter((e) => e.target === `d-${d.id}`).map((e, i) => (
-          <Row key={i} k={e.source} v={`${fmtKg(e.kg ?? 0)} kg · ${e.rows ?? 0} yozuv`} />
-        ))
-      ) : (
-        <NoData text="Konteyner → bo'lim RECEIVE yozuvlari yo'q — flow data mavjud emas" />
-      )}
-      {d.bomInputs.length > 0 && (
-        <>
-          <div className="mt-2 text-[11px] text-zinc-500">Retsept bo'yicha kutiladigan materiallar (BOM, {d.bomInputs.length} ta):</div>
-          <div className="mt-1 overflow-hidden rounded-md border">
-            <table className="w-full text-[12px]">
-              <thead className="bg-zinc-50 text-zinc-500">
-                <tr>
-                  <th className="px-2 py-1.5 text-left font-medium">Material</th>
-                  <th className="px-2 py-1.5 text-left font-medium">Mahsulot</th>
-                  <th className="px-2 py-1.5 text-right font-medium">Birlikka</th>
-                </tr>
-              </thead>
-              <tbody>
-                {d.bomInputs.map((b, i) => (
-                  <tr key={i} className="border-t">
-                    <td className="px-2 py-1.5">{b.material}</td>
-                    <td className="px-2 py-1.5 text-zinc-500">{b.product}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums">{b.perUnit}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
-      <SectionTitle>Chiqim (output)</SectionTitle>
-      {d.produce.length === 0 && d.batches.length === 0 && <NoData text="Chiqim ma'lumoti yo'q" />}
-      {d.produce.map((p, i) => (
-        <Row key={`p${i}`} k={p.product} v={`${fmtKg(p.kg)} kg · ${p.n} yozuv (${p.first} → ${p.last})`} />
-      ))}
-      {d.batches.length > 0 && (
-        <>
-          <div className="mt-1 text-[11px] text-zinc-500">Partiyalar (batches):</div>
-          {d.batches.map((b, i) => (
-            <Row key={`b${i}`} k={b.product} v={`${fmtKg(b.kg)} kg / ${fmtInt(b.dona)} dona · ${b.n} partiya`} />
-          ))}
-        </>
-      )}
-      <SectionTitle>Ishchilar ({d.workers.length})</SectionTitle>
-      {d.workers.length === 0 && <NoData text="Ishchi biriktirilmagan" />}
-      {[...byRole.entries()].map(([role, names]) => (
-        <div key={role} className="py-1">
-          <div className="text-[12px] font-semibold text-zinc-700">
-            {roleLabel(role)} <span className="font-normal text-zinc-400">({names.length})</span>
-          </div>
-          <div className="text-[12px] text-zinc-600">{names.join(", ")}</div>
-        </div>
-      ))}
-      {d.roles.length > 0 && (
-        <>
-          <div className="mt-1 text-[11px] text-zinc-500">Rol stavkalari:</div>
-          {d.roles.map((r, i) => (
-            <Row key={i} k={r.label} v={`${fmtMoney(r.rate)} (${r.payMode})${r.maxWorkers ? ` · max ${r.maxWorkers}` : ""}`} />
-          ))}
-        </>
-      )}
-      <SectionTitle>Oylik (salary)</SectionTitle>
-      {d.salary.entries === 0 ? (
-        <NoData text="Yopilgan kun yozuvlari yo'q" />
-      ) : (
-        <>
-          <Row k="Jami hisoblangan" v={fmtMoney(d.salary.total)} />
-          <Row k="Yozuvlar / ishchilar" v={`${d.salary.entries} ta / ${d.salary.workers} kishi`} />
-          <Row k="Oxirgi sana" v={d.salary.lastDate ?? "—"} />
-          {d.salaryByWorker.length > 0 && (
-            <>
-              <div className="mt-1 text-[11px] text-zinc-500">Ishchilar kesimida:</div>
-              {d.salaryByWorker.map((s, i) => (
-                <Row key={i} k={s.worker} v={`${fmtMoney(s.total)} · ${s.entries} yozuv · ${s.last}`} />
-              ))}
-            </>
-          )}
-        </>
-      )}
     </>
   );
 }
@@ -366,8 +263,15 @@ export function DetailSheet({ graph, sel, onClose }: { graph: FlowGraphResponse;
         </>
       );
     } else if (sel.kind === "dept") {
+      // F4: to'liq bo'lim tafsiloti — alohida read-only endpoint'dan.
       const d = N.departments.find((x) => x.id === sel.id);
-      if (d) { title = d.name; desc = "Bo'lim (production_lines) — real ma'lumot"; body = <DeptBody d={d} graph={graph} />; }
+      const inactive = !d ? N.inactiveDepartments.find((x) => x.id === sel.id) : undefined;
+      const name = d?.name ?? inactive?.name;
+      if (name != null) {
+        title = name;
+        desc = "Bo'lim tafsiloti (production_lines) — real DB, read-only";
+        body = <DepartmentPanel id={sel.id} />;
+      }
     } else if (sel.kind === "wip") {
       const w = N.wip.find((x) => x.lineId === sel.id);
       if (w) { title = `WIP — ${w.lineName}`; desc = "wip_movements ledgeri"; body = <WipBody w={w} />; }
@@ -383,9 +287,16 @@ export function DetailSheet({ graph, sel, onClose }: { graph: FlowGraphResponse;
     }
   }
 
+  // F4 §18: bo'lim paneli kengroq (iPad qulay), mobilda deyarli to'liq ekran.
+  const wide = sel != null && sel.kind === "dept";
+
   return (
     <Sheet open={sel != null} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <SheetContent side="right" className="w-[92vw] sm:max-w-[440px] p-0" data-testid="flow-drawer">
+      <SheetContent
+        side="right"
+        className={`p-0 ${wide ? "w-[96vw] sm:max-w-[620px]" : "w-[92vw] sm:max-w-[440px]"}`}
+        data-testid="flow-drawer"
+      >
         <SheetHeader className="border-b px-5 py-4">
           <SheetTitle className="text-[16px]">{title}</SheetTitle>
           <SheetDescription className="text-[12px]">{desc}</SheetDescription>

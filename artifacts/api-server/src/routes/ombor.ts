@@ -3,6 +3,7 @@ import { pool } from "@workspace/db";
 import { getUsdToUzsRate } from "../lib/exchangeRate";
 import { notifyNegativeWip, NEGATIVE_WIP_EPS } from "../lib/wipAlerts";
 import { buildFlowGraph } from "../lib/flowGraph";
+import { buildDepartmentDetail } from "../lib/departmentDetail";
 
 const router: IRouter = Router();
 
@@ -957,6 +958,29 @@ router.get("/ombor/flow/graph", async (_req, res): Promise<void> => {
   } catch (e) {
     console.error("flow/graph yig'ishda xatolik:", e);
     res.status(500).json({ error: "Flow graph yig'ishda xatolik" });
+  }
+});
+
+// ── GET /api/ombor/flow/department/:id ────────────────────────────────────────
+// F4: bo'lim (production_lines) tafsiloti — ishchilar, oylik, WIP, kirim/chiqim,
+// mahsulotlar, destination'lar. Butun yig'ish READ ONLY tranzaksiyada
+// (src/lib/departmentDetail.ts); hech narsa yozilmaydi.
+router.get("/ombor/flow/department/:id", async (req, res): Promise<void> => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: "id butun musbat son bo'lishi kerak" });
+    return;
+  }
+  try {
+    const detail = await buildDepartmentDetail(pool, id);
+    if (!detail) {
+      res.status(404).json({ error: "Bo'lim topilmadi" });
+      return;
+    }
+    res.json(detail);
+  } catch (e) {
+    console.error("flow/department yig'ishda xatolik:", e);
+    res.status(500).json({ error: "Bo'lim tafsilotini yig'ishda xatolik" });
   }
 });
 

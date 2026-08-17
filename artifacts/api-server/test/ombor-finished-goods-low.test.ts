@@ -155,7 +155,7 @@ describe("GET /ombor/finished-goods — low-stock flag", () => {
     expect(goods[0]).toMatchObject({ product: "Bo'lingan zahira", stockQty: 35, low: false });
   });
 
-  it("excludes zero-stock rows and keeps low flag for USD products (kg unit)", async () => {
+  it("excludes zero-stock rows; kg unit uses WEIGHT as the low-stock basis", async () => {
     await seedProduct("Sotilib bo'lgan", 10);
     await seedStock("Sotilib bo'lgan", 0);
     await seedProduct("USD kg mahsulot", 5, { unitType: "kg", currency: "USD", price: 2 });
@@ -163,8 +163,21 @@ describe("GET /ombor/finished-goods — low-stock flag", () => {
 
     const goods = await getGoods();
     expect(goods.map((g: any) => g.product)).toEqual(["USD kg mahsulot"]);
-    // qty (4) ≤ min (5) → low; value uses weight × price × rate for kg/USD.
-    expect(goods[0]).toMatchObject({ low: true, stockQty: 4 });
+    // kg mahsulotda zahira asosi — o'lchangan og'irlik: 20 kg > min (5) → low emas.
+    // (qty-asos bo'lsa resetdan keyingi qty=0 qatorlar doim "low" bo'lib qolardi.)
+    expect(goods[0]).toMatchObject({ low: false, stockQty: 4, stockWeightKg: 20 });
     expect(goods[0].totalValueUzs).toBe(20 * 2 * 12000);
+  });
+
+  it("kg unit: low compares measured weight even when qty=0 (post-reset rows)", async () => {
+    await seedProduct("Kg past zahira", 25, { unitType: "kg" });
+    await seedStock("Kg past zahira", 0, 20);   // 20 kg ≤ 25 → low
+    await seedProduct("Kg yetarli", 25, { unitType: "kg" });
+    await seedStock("Kg yetarli", 0, 26);       // 26 kg > 25 → low emas
+
+    const goods = await getGoods();
+    const byName = Object.fromEntries(goods.map((g: any) => [g.product, g]));
+    expect(byName["Kg past zahira"]).toMatchObject({ low: true, stockQty: 0, stockWeightKg: 20 });
+    expect(byName["Kg yetarli"]).toMatchObject({ low: false, stockWeightKg: 26 });
   });
 });

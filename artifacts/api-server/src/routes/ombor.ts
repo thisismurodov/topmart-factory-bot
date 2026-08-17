@@ -50,7 +50,7 @@ router.get("/ombor/summary", async (_req, res): Promise<void> => {
           * p.default_sale_price
           * CASE WHEN p.currency_type = 'USD' THEN $1::numeric ELSE 1 END
         ), 0)::numeric AS value_uzs,
-        COUNT(DISTINCT i.product) FILTER (WHERE i.quantity > 0)::int AS sku_count
+        COUNT(DISTINCT i.product) FILTER (WHERE i.quantity > 0 OR COALESCE(i.weight_kg, 0) > 0)::int AS sku_count
       FROM inventory i
       JOIN products p ON p.name = i.product
     `, [rate ?? 0]),
@@ -59,7 +59,7 @@ router.get("/ombor/summary", async (_req, res): Promise<void> => {
       SELECT
         COUNT(*)::int AS total,
         COUNT(*) FILTER (
-          WHERE id IN (SELECT DISTINCT warehouse_id FROM inventory WHERE quantity > 0)
+          WHERE id IN (SELECT DISTINCT warehouse_id FROM inventory WHERE quantity > 0 OR COALESCE(weight_kg, 0) > 0)
         )::int AS occupied
       FROM warehouses
       WHERE location_type = 'container'
@@ -96,8 +96,9 @@ router.get("/ombor/containers", async (_req, res): Promise<void> => {
       w.name,
       w.capacity_kg,
       w.active,
-      COUNT(DISTINCT i.product) FILTER (WHERE i.quantity > 0)::int        AS sku_count,
+      COUNT(DISTINCT i.product) FILTER (WHERE i.quantity > 0 OR COALESCE(i.weight_kg, 0) > 0)::int AS sku_count,
       COALESCE(SUM(i.quantity) FILTER (WHERE i.quantity > 0), 0)::numeric AS total_qty,
+      COALESCE(SUM(i.weight_kg) FILTER (WHERE i.weight_kg > 0), 0)::numeric AS total_weight_kg,
       COALESCE(SUM(
         (CASE WHEN LOWER(p.unit_type) = 'kg' AND COALESCE(i.weight_kg, 0) > 0
               THEN i.weight_kg
@@ -105,7 +106,7 @@ router.get("/ombor/containers", async (_req, res): Promise<void> => {
          END)
         * p.default_sale_price
         * CASE WHEN p.currency_type = 'USD' THEN $1::numeric ELSE 1 END
-      ) FILTER (WHERE i.quantity > 0), 0)::numeric AS total_value_uzs
+      ) FILTER (WHERE i.quantity > 0 OR COALESCE(i.weight_kg, 0) > 0), 0)::numeric AS total_value_uzs
     FROM warehouses w
     LEFT JOIN inventory i ON i.warehouse_id = w.id
     LEFT JOIN products p  ON p.name = i.product
@@ -117,6 +118,9 @@ router.get("/ombor/containers", async (_req, res): Promise<void> => {
   res.json(rows.map((r) => {
     const cap = Number(r.capacity_kg) || 20000;
     const qty = Number(r.total_qty);
+    const weightKg = Number(r.total_weight_kg) || 0;
+    // Bandlik kg asosida (sig'im kg da); kg ma'lumoti bo'lmasa dona bo'yicha.
+    const basis = weightKg > 0 ? weightKg : qty;
     return {
       id:            r.id,
       name:          r.name,
@@ -124,8 +128,9 @@ router.get("/ombor/containers", async (_req, res): Promise<void> => {
       active:        r.active,
       skuCount:      Number(r.sku_count),
       totalQty:      qty,
+      totalWeightKg: weightKg,
       totalValueUzs: Number(r.total_value_uzs),
-      occupancyPct:  Math.min(100, Math.round((qty / cap) * 100)),
+      occupancyPct:  Math.min(100, Math.round((basis / cap) * 100)),
     };
   }));
 });
@@ -143,7 +148,7 @@ router.get("/ombor/containers/:id/items", async (req, res): Promise<void> => {
              COALESCE(i.weight_kg, 0)::numeric AS weight_kg
       FROM inventory i
       LEFT JOIN products p ON p.name = i.product
-      WHERE i.warehouse_id = $1 AND i.quantity > 0
+      WHERE i.warehouse_id = $1 AND (i.quantity > 0 OR COALESCE(i.weight_kg, 0) > 0)
       ORDER BY i.product
     `, [id]),
     pool.query("SELECT id, name, capacity_kg FROM warehouses WHERE id=$1", [id]),
@@ -164,10 +169,12 @@ router.get("/ombor/containers/:id/items", async (req, res): Promise<void> => {
       const qty     = Number(r.quantity);
       const isKg     = String(r.unit_type ?? "dona").toLowerCase() === "kg";
       const storedWeight = Number(r.weight_kg) || 0;
-      // Inventoryda saqlangan aniq og'irlikni ishlatamiz (kg-mahsulotlar uchun).
-      const weightKg = isKg && storedWeight > 0 ? storedWeight : null;
-      // kg-mahsulotlar uchun narx kg uchun — qiymatni og'irlikka ko'paytiramiz.
-      const valueQty = weightKg != null ? weightKg : qty;
+      // Saqlangan og'irlik har doim qaytariladi — dona-mahsulot ham baseline'da
+      // og'irlik bilan kiritilgan bo'lishi mumkin (qty=0, weight>0).
+      const weightKg = storedWeight > 0 ? storedWeight : null;
+      // Baholash birligi esa unit_type ga bog'liq qoladi: kg → og'irlik×narx,
+      // dona → dona×narx (konteynerlar ro'yxatidagi SQL bilan bir xil qoida).
+      const valueQty = isKg ? (storedWeight > 0 ? storedWeight : qty) : qty;
       return {
         id:            r.id,
         product:       r.product,
@@ -187,13 +194,19 @@ router.get("/ombor/containers/:id/items", async (req, res): Promise<void> => {
 
 // ── POST /api/ombor/transfer ───────────────────────────────────────────────────
 router.post("/ombor/transfer", async (req, res): Promise<void> => {
-  const { fromId, toId, product, qty, note = "" } = req.body ?? {};
-  if (!fromId || !toId || !product || !qty) {
-    res.status(400).json({ error: "fromId, toId, product, qty required" }); return;
+  const { fromId, toId, product, qty, weightKg, note = "" } = req.body ?? {};
+  if (!fromId || !toId || !product) {
+    res.status(400).json({ error: "fromId, toId, product required" }); return;
   }
-  const amount = Number(qty);
-  if (isNaN(amount) || amount <= 0) {
-    res.status(400).json({ error: "qty must be > 0" }); return;
+  const amount = Number(qty ?? 0);
+  const wantWeight = Number(weightKg ?? 0);
+  if (isNaN(amount) || amount < 0 || isNaN(wantWeight) || wantWeight < 0 || (amount <= 0 && wantWeight <= 0)) {
+    res.status(400).json({ error: "Miqdor (dona) yoki og'irlik (kg) musbat bo'lishi kerak" }); return;
+  }
+  // Rejimlar bir-birini istisno qiladi: dona rejimida og'irlik server tomonda
+  // proporsional hisoblanadi; aniq kg faqat dona=0 bo'lganda qabul qilinadi.
+  if (amount > 0 && wantWeight > 0) {
+    res.status(400).json({ error: "Bir vaqtda ham dona, ham kg berilmaydi — bittasini kiriting" }); return;
   }
   if (Number(fromId) === Number(toId)) {
     res.status(400).json({ error: "from va to bir xil bo'lmasin" }); return;
@@ -203,21 +216,25 @@ router.post("/ombor/transfer", async (req, res): Promise<void> => {
   try {
     await client.query("BEGIN");
 
+    // FOR UPDATE: parallel transferlar bir xil qoldiqni ikki marta tekshirib,
+    // zaxirani ikkilantirmasligi uchun manba qatorini tranzaksiya oxirigacha qulflaymiz.
+    // (Qarama-qarshi yo'nalishdagi bir vaqtli transferlar kamdan-kam deadlock
+    // bo'lishi mumkin — PG birini bekor qiladi, ma'lumot buzilmaydi.)
     const srcRes = await client.query(
-      "SELECT quantity, weight_kg, product_type FROM inventory WHERE warehouse_id=$1 AND product=$2",
+      "SELECT quantity, weight_kg, product_type FROM inventory WHERE warehouse_id=$1 AND product=$2 FOR UPDATE",
       [fromId, product],
     );
-    if (!srcRes.rows.length || Number(srcRes.rows[0].quantity) < amount) {
+    const srcQty    = srcRes.rows.length ? Number(srcRes.rows[0].quantity) || 0 : 0;
+    const srcWeight = srcRes.rows.length ? Number(srcRes.rows[0].weight_kg) || 0 : 0;
+    if (!srcRes.rows.length || srcQty < amount || (wantWeight > 0 && srcWeight < wantWeight)) {
       await client.query("ROLLBACK");
       res.status(400).json({ error: "Yetarli mahsulot yo'q" }); return;
     }
     const productType = srcRes.rows[0].product_type as string;
-    // Og'irlikni proporsional ko'chiramiz (saqlangan aniq og'irlikdan).
-    const srcQty    = Number(srcRes.rows[0].quantity) || 0;
-    const srcWeight = Number(srcRes.rows[0].weight_kg) || 0;
-    const moveWeight = srcQty > 0 && srcWeight > 0
-      ? Math.min(srcWeight, (srcWeight * amount) / srcQty)
-      : 0;
+    // Og'irlik: aniq so'ralgan bo'lsa o'shani, bo'lmasa dona ulushiga proporsional ko'chiramiz.
+    const moveWeight = wantWeight > 0
+      ? Math.min(srcWeight, wantWeight)
+      : (srcQty > 0 && srcWeight > 0 ? Math.min(srcWeight, (srcWeight * amount) / srcQty) : 0);
 
     await client.query(
       "UPDATE inventory SET quantity = GREATEST(0, quantity - $1), weight_kg = GREATEST(0, weight_kg - $2), updated_at=NOW() WHERE warehouse_id=$3 AND product=$4",
@@ -233,9 +250,11 @@ router.post("/ombor/transfer", async (req, res): Promise<void> => {
     );
     await client.query(
       `INSERT INTO stock_movements
-         (product, quantity, movement_type, from_warehouse_id, to_warehouse_id, note, created_by, product_type)
-       VALUES ($1,$2,'TRANSFER',$3,$4,$5,$6,$7)`,
-      [product, amount, fromId, toId, note || `Transfer: ${amount}`, actingUser(req), productType],
+         (product, quantity, movement_type, from_warehouse_id, to_warehouse_id, note, created_by, product_type, weight_kg)
+       VALUES ($1,$2,'TRANSFER',$3,$4,$5,$6,$7,$8)`,
+      [product, amount, fromId, toId,
+       note || (amount === 0 && moveWeight > 0 ? `Transfer: ${moveWeight.toFixed(2)} kg` : `Transfer: ${amount}`),
+       actingUser(req), productType, moveWeight > 0 ? moveWeight : null],
     );
 
     await client.query("COMMIT");
@@ -404,13 +423,13 @@ router.get("/ombor/search", async (req, res): Promise<void> => {
 
   const { rows } = await pool.query(`
     SELECT
-      i.product, i.quantity, i.product_type,
+      i.product, i.quantity, COALESCE(i.weight_kg, 0)::numeric AS weight_kg, i.product_type,
       w.id AS warehouse_id, w.name AS warehouse_name, w.location_type,
       p.unit_type
     FROM inventory i
     JOIN warehouses w ON w.id = i.warehouse_id
     LEFT JOIN products p ON p.name = i.product
-    WHERE i.quantity > 0 AND (i.product ILIKE $1 OR w.name ILIKE $1)
+    WHERE (i.quantity > 0 OR COALESCE(i.weight_kg, 0) > 0) AND (i.product ILIKE $1 OR w.name ILIKE $1)
     ORDER BY i.product, w.name
     LIMIT 60
   `, [`%${q}%`]);
@@ -418,6 +437,7 @@ router.get("/ombor/search", async (req, res): Promise<void> => {
   res.json(rows.map((r) => ({
     product:       r.product,
     quantity:      Number(r.quantity),
+    weightKg:      Number(r.weight_kg) || 0,
     productType:   r.product_type,
     warehouseId:   r.warehouse_id,
     warehouseName: r.warehouse_name,
@@ -581,6 +601,7 @@ router.get("/ombor/finished-goods", async (_req, res): Promise<void> => {
   const { rate } = await getUsdToUzsRate();
   const { rows } = await pool.query(`
     SELECT i.product, SUM(i.quantity)::numeric AS stock_qty,
+           COALESCE(SUM(i.weight_kg) FILTER (WHERE i.weight_kg > 0), 0)::numeric AS stock_weight_kg,
            p.default_sale_price, p.currency_type, p.unit_type, p.minimum_stock,
            COALESCE(SUM(
              (CASE WHEN LOWER(p.unit_type) = 'kg' AND COALESCE(i.weight_kg, 0) > 0
@@ -593,24 +614,28 @@ router.get("/ombor/finished-goods", async (_req, res): Promise<void> => {
     FROM inventory i
     JOIN products p ON p.name = i.product
     GROUP BY i.product, p.default_sale_price, p.currency_type, p.unit_type, p.minimum_stock
-    HAVING SUM(i.quantity) > 0
+    HAVING SUM(i.quantity) > 0 OR COALESCE(SUM(i.weight_kg) FILTER (WHERE i.weight_kg > 0), 0) > 0
     ORDER BY i.product
   `, [rate ?? 0]);
   res.json(rows.map((r) => {
     const isUsd    = String(r.currency_type).toUpperCase() === "USD";
     const priceUzs = isUsd ? Number(r.default_sale_price) * (rate ?? 0) : Number(r.default_sale_price);
     const stockQty = Number(r.stock_qty);
+    const stockWeightKg = Number(r.stock_weight_kg) || 0;
+    const isKgUnit = String(r.unit_type || "dona").toLowerCase() === "kg";
+    const stockBasis = isKgUnit && stockWeightKg > 0 ? stockWeightKg : stockQty;
     const minimumStock = Number(r.minimum_stock) || 0;
     return {
       product:       r.product,
       stockQty,
+      stockWeightKg,
       unitType:      r.unit_type || "dona",
       salePrice:     Number(r.default_sale_price),
       currency:      r.currency_type || "UZS",
       priceUzs,
       totalValueUzs: Number(r.total_value_uzs),
       minimumStock,
-      low:           minimumStock > 0 && stockQty <= minimumStock,
+      low:           minimumStock > 0 && stockBasis <= minimumStock,
     };
   }));
 });
@@ -1036,8 +1061,8 @@ router.get("/ombor/flow", async (_req, res): Promise<void> => {
     pool.query(`
       SELECT w.id, w.name, w.capacity_kg,
              COALESCE(SUM(i.quantity) FILTER (WHERE i.quantity > 0), 0)::numeric AS total_qty,
-             COALESCE(SUM(i.weight_kg) FILTER (WHERE i.quantity > 0), 0)::numeric AS total_kg,
-             COUNT(DISTINCT i.product) FILTER (WHERE i.quantity > 0)::int AS sku_count
+             COALESCE(SUM(i.weight_kg) FILTER (WHERE i.weight_kg > 0), 0)::numeric AS total_kg,
+             COUNT(DISTINCT i.product) FILTER (WHERE i.quantity > 0 OR COALESCE(i.weight_kg, 0) > 0)::int AS sku_count
       FROM warehouses w
       LEFT JOIN inventory i ON i.warehouse_id = w.id AND i.product_type='finished'
       WHERE w.location_type='container' AND w.purpose='finished' AND w.active = TRUE

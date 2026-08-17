@@ -113,6 +113,7 @@ beforeAll(async () => {
       note TEXT NOT NULL DEFAULT '',
       created_by TEXT NOT NULL DEFAULT '',
       product_type TEXT NOT NULL DEFAULT 'finished',
+      weight_kg NUMERIC,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);

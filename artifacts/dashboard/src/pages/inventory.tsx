@@ -34,6 +34,7 @@ type ContainerSummary = {
   active: boolean;
   skuCount: number;
   totalQty: number;
+  totalWeightKg: number;
   totalValueUzs: number;
   occupancyPct: number;
 };
@@ -86,6 +87,7 @@ type RawMaterial = { id: number; name: string; unit: string };
 type FinishedGood = {
   product: string;
   stockQty: number;
+  stockWeightKg: number;
   unitType: string;
   salePrice: number;
   currency: string;
@@ -196,6 +198,9 @@ function useSearch(q: string) {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function fmt(n: number) { return formatNumber(n); }
+function kgAwareStock(g: FinishedGood) {
+  return String(g.unitType).toLowerCase() === "kg" && g.stockWeightKg > 0 ? g.stockWeightKg : g.stockQty;
+}
 function fmtVal(n: number) {
   if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)} mlrd`;
   if (n >= 1_000_000)     return `${(n / 1_000_000).toFixed(0)} mln`;
@@ -320,9 +325,11 @@ function ContainerCard({ c, onClick }: { c: ContainerSummary; onClick: () => voi
         </div>
         <div>
           <div style={{ fontSize: 20, fontWeight: 700, color: isEmpty ? "#D1D5DB" : "#111827", lineHeight: 1 }}>
-            {isEmpty ? "—" : fmt(c.totalQty)}
+            {isEmpty ? "—" : c.totalQty > 0 ? fmt(c.totalQty) : fmt(c.totalWeightKg)}
           </div>
-          <div style={{ fontSize: 11, color: "#9CA3AF", marginTop: 2 }}>dona/kg</div>
+          <div style={{ fontSize: 11, color: "#9CA3AF", marginTop: 2 }}>
+            {isEmpty ? "dona/kg" : c.totalQty > 0 ? (c.totalWeightKg > 0 ? `dona · ${fmt(c.totalWeightKg)} kg` : "dona") : "kg"}
+          </div>
         </div>
         {!isEmpty && (
           <div style={{ marginLeft: "auto", textAlign: "right" }}>
@@ -401,7 +408,7 @@ function ContainerDetailView({
   containerId: number;
   containerName: string;
   onBack: () => void;
-  onTransfer: (product: string, qty: number) => void;
+  onTransfer: (product: string, qty: number, weightKg?: number) => void;
   onReceive: () => void;
   onAdjust: (item: ContainerItem) => void;
 }) {
@@ -409,6 +416,7 @@ function ContainerDetailView({
 
   const totalValue = data?.items.reduce((s, i) => s + i.totalValueUzs, 0) ?? 0;
   const totalQty   = data?.items.reduce((s, i) => s + i.quantity, 0) ?? 0;
+  const totalKg    = data?.items.reduce((s, i) => s + (i.weightKg ?? 0), 0) ?? 0;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -444,7 +452,9 @@ function ContainerDetailView({
         <KpiCard icon={<Boxes style={{ width: 18, height: 18 }} />} label="SKU soni"
           value={isLoading ? undefined : data?.items.length ?? 0} loading={isLoading} />
         <KpiCard icon={<Package style={{ width: 18, height: 18 }} />} label="Jami miqdor"
-          value={isLoading ? undefined : fmt(totalQty)} loading={isLoading} />
+          value={isLoading ? undefined : totalQty > 0 ? fmt(totalQty) : `${fmt(totalKg)} kg`}
+          sub={!isLoading && totalQty > 0 && totalKg > 0 ? `${fmt(totalKg)} kg` : undefined}
+          loading={isLoading} />
         <KpiCard icon={<TrendingUp style={{ width: 18, height: 18 }} />} label="Jami qiymat"
           value={isLoading ? undefined : fmtVal(totalValue)} accent loading={isLoading} />
       </div>
@@ -514,7 +524,7 @@ function ContainerDetailView({
                     </td>
                     <td style={{ padding: "12px 16px" }}>
                       <button
-                        onClick={() => onTransfer(item.product, item.quantity)}
+                        onClick={() => onTransfer(item.product, item.quantity, item.weightKg ?? 0)}
                         style={{
                           border: "none", background: "none", cursor: "pointer",
                           color: "#6B7280", padding: "4px 8px", borderRadius: 6,
@@ -558,6 +568,7 @@ function TransferModal({
   containers,
   preProduct,
   preQty,
+  preWeight,
   onClose,
   onDone,
 }: {
@@ -566,6 +577,7 @@ function TransferModal({
   containers: ContainerSummary[];
   preProduct?: string;
   preQty?: number;
+  preWeight?: number;
   onClose: () => void;
   onDone: () => void;
 }) {
@@ -573,18 +585,26 @@ function TransferModal({
   const [product, setProduct]   = useState(preProduct ?? "");
   const [toId, setToId]         = useState<number>(0);
   const [qty, setQty]           = useState(preQty ? String(preQty) : "");
+  const [weight, setWeight]     = useState(preWeight ? String(preWeight) : "");
   const [note, setNote]         = useState("");
   const [err, setErr]           = useState("");
 
   const { data: detailData } = useContainerDetail(fromId);
   const products = detailData?.items.map((i) => i.product) ?? [];
+  const selItem  = detailData?.items.find((i) => i.product === product);
+  const isKgOnly = !!selItem && selItem.quantity <= 0 && (selItem.weightKg ?? 0) > 0;
 
   const mut = useMutation({
     mutationFn: () =>
       authFetch("/api/ombor/transfer", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fromId, toId, product, qty: Number(qty), note }),
+        body: JSON.stringify({
+          fromId, toId, product,
+          qty: isKgOnly ? 0 : Number(qty),
+          weightKg: isKgOnly && weight !== "" ? Number(weight) : undefined,
+          note,
+        }),
       }).then((r) => r.json()),
     onSuccess: (d) => {
       if (d.error) { setErr(d.error); return; }
@@ -614,7 +634,16 @@ function TransferModal({
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <label style={labelStyle}>
             Mahsulot
-            <select style={selectStyle} value={product} onChange={(e) => setProduct(e.target.value)}>
+            <select
+              style={selectStyle}
+              value={product}
+              onChange={(e) => {
+                // Mahsulot almashganda eski dona/kg qiymatlari chalg'itmasligi uchun tozalaymiz
+                setProduct(e.target.value);
+                setQty("");
+                setWeight("");
+              }}
+            >
               <option value="">Tanlang…</option>
               {products.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
@@ -630,14 +659,30 @@ function TransferModal({
             </select>
           </label>
 
-          <label style={labelStyle}>
-            Miqdor
-            <Input
-              type="number" min="0.001" step="0.001" placeholder="0"
-              value={qty} onChange={(e) => setQty(e.target.value)}
-              style={{ borderRadius: 10 }}
-            />
-          </label>
+          {isKgOnly ? (
+            <label style={labelStyle}>
+              Og'irlik (kg)
+              <Input
+                type="number" min="0.001" step="0.001" placeholder="0"
+                value={weight} onChange={(e) => setWeight(e.target.value)}
+                style={{ borderRadius: 10 }}
+              />
+              {selItem?.weightKg != null && (
+                <span style={{ fontSize: 12, color: "#6B7280", marginTop: 4 }}>
+                  Mavjud: {selItem.weightKg.toLocaleString("uz-UZ", { maximumFractionDigits: 2 })} kg
+                </span>
+              )}
+            </label>
+          ) : (
+            <label style={labelStyle}>
+              Miqdor
+              <Input
+                type="number" min="0.001" step="0.001" placeholder="0"
+                value={qty} onChange={(e) => setQty(e.target.value)}
+                style={{ borderRadius: 10 }}
+              />
+            </label>
+          )}
 
           <label style={labelStyle}>
             Izoh (ixtiyoriy)
@@ -655,7 +700,7 @@ function TransferModal({
           <Button variant="outline" onClick={onClose}>Bekor</Button>
           <Button
             onClick={() => { setErr(""); mut.mutate(); }}
-            disabled={!product || !toId || !qty || mut.isPending}
+            disabled={!product || !toId || (isKgOnly ? !(Number(weight) > 0) : !qty) || mut.isPending}
             style={{ background: "#0B6B3A", color: "#fff" }}
           >
             {mut.isPending ? "Ko'chirilmoqda…" : "Transfer qilish"}
@@ -1060,7 +1105,7 @@ function FinishedGoodsPanel() {
     const filtered = q ? goods.filter((g) => g.product.toLowerCase().includes(q)) : goods.slice();
     filtered.sort((a, b) => {
       if (sortBy === "name") return a.product.localeCompare(b.product);
-      if (sortBy === "qty") return b.stockQty - a.stockQty;
+      if (sortBy === "qty") return kgAwareStock(b) - kgAwareStock(a);
       return b.totalValueUzs - a.totalValueUzs;
     });
     return filtered;
@@ -1175,7 +1220,9 @@ function FinishedGoodsPanel() {
                         </span>
                       </td>
                       <td style={{ padding: "12px 16px", fontWeight: 600, textAlign: "right", color: g.low ? "#DC2626" : "#374151" }}>
-                        {fmt(g.stockQty)}
+                        {String(g.unitType).toLowerCase() === "kg" && g.stockWeightKg > 0
+                          ? `${fmt(g.stockWeightKg)} kg`
+                          : fmt(g.stockQty)}
                       </td>
                       <td style={{ padding: "12px 16px", color: "#9CA3AF", fontSize: 13, textAlign: "right" }}>
                         {g.minimumStock > 0 ? fmt(g.minimumStock) : "—"}
@@ -1441,7 +1488,7 @@ const selectStyle: React.CSSProperties = {
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 type Modal =
-  | { kind: "transfer"; fromId: number; fromName: string; product?: string; qty?: number }
+  | { kind: "transfer"; fromId: number; fromName: string; product?: string; qty?: number; weightKg?: number }
   | { kind: "receive"; warehouseId: number; warehouseName: string }
   | { kind: "adjust"; warehouseId: number; warehouseName: string; product: string; currentQty: number; currentWeight: number | null; isKg: boolean }
   | { kind: "rawin" };
@@ -1612,8 +1659,8 @@ export default function Inventory() {
           containerId={selectedContainer.id}
           containerName={selectedContainer.name}
           onBack={() => setSelectedContainer(null)}
-          onTransfer={(product, qty) =>
-            setModal({ kind: "transfer", fromId: selectedContainer.id, fromName: selectedContainer.name, product, qty })
+          onTransfer={(product, qty, weightKg) =>
+            setModal({ kind: "transfer", fromId: selectedContainer.id, fromName: selectedContainer.name, product, qty, weightKg })
           }
           onReceive={() =>
             setModal({ kind: "receive", warehouseId: selectedContainer.id, warehouseName: selectedContainer.name })
@@ -1682,6 +1729,7 @@ export default function Inventory() {
           containers={containers}
           preProduct={modal.product}
           preQty={modal.qty}
+          preWeight={modal.weightKg}
           onClose={() => setModal(null)}
           onDone={() => setModal(null)}
         />

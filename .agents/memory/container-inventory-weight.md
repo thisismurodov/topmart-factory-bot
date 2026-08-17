@@ -1,65 +1,54 @@
 ---
 name: Container inventory weight (stored, not derived)
-description: How exact kg per container is tracked now that inventory has a real weight_kg column.
+description: How kg stock lives in inventory.weight_kg — existence/display/valuation rules, kg sales & transfers, positive-only aggregation.
 ---
 
 The `inventory` table (warehouse/container finished-goods stock — bot-owned, NOT in
-Drizzle schema, no CREATE TABLE anywhere in repo; it predates the SQLite→PG migration)
-now has a real **`weight_kg NUMERIC NOT NULL DEFAULT 0`** column.
+Drizzle schema, no CREATE TABLE anywhere in repo) has a real
+**`weight_kg NUMERIC NOT NULL DEFAULT 0`** column, plus UNIQUE (warehouse_id, product).
 
-**Why stored, not derived:** exact per-container mass became business-critical (transfers,
-manual receives, changing pack weights make the old `SUM(weight_kg)/SUM(quantity)` batch
-ratio an approximation). Every stock mutation now carries weight directly.
+## Core invariants (post 2026-08-17 baseline reset)
 
-**Mutation paths that maintain weight_kg:**
-- Bot `create_batch`: adds the batch's actual `weight_kg` to inventory.
-- Bot `record_movement` (manual IN/OUT/TRANSFER): IN derives from batch ratio for kg
-  products (0 for dona); OUT/TRANSFER subtract **proportional** stored weight
-  (`weight_kg * qty / quantity`, capped at current).
-- API `/ombor/transfer`: moves proportional stored weight src→dest.
-- API `/ombor/finished-in`: accepts optional `weightKg`; if omitted, derives from batch
-  ratio for kg products. Dashboard ReceiveModal shows a kg input only for kg products.
-- API `/ombor/adjust`: manual stock CORRECTION. Sets qty + weight to absolute values (not
-  deltas). **kg products MUST send a weight (enforce server-side, not just UI) — else qty
-  is "corrected" while weight goes stale, defeating the whole point.** dona forces weight 0.
-  Adjust ≠ receive: 404 if the line isn't already in that container (no upsert).
+- **A stock row "exists" iff `quantity > 0 OR COALESCE(weight_kg,0) > 0`.** The reset
+  baseline stores kg products as `quantity=0, weight_kg>0` — any `quantity > 0`-only
+  filter silently hides them ("Konteyner bo'sh" bug). Every ombor endpoint
+  (summary/containers/items/search/finished-goods) uses the OR predicate.
+- **Display weight is NOT gated on `products.unit_type`.** Dona products can hold
+  weight-only baseline rows too (lenta counted in kg). Item rows return stored weight
+  whenever > 0; **valuation** stays keyed on unit_type: kg → weight×price,
+  dona → qty×price (same CASE rule as the containers-list SQL — keep card↔detail equal).
+- **Aggregates sum positive weight only:** `SUM(weight_kg) FILTER (WHERE weight_kg > 0)`
+  for card totals / occupancy / finished-goods / flow overview. Detail lists only
+  positive rows, so unfiltered sums (negative phantom rows) would diverge from detail.
+- **Occupancy basis:** weight when present, else qty, over capacity_kg.
 
-**One-time backfill:** init_db backfills existing rows from the batch ratio
-(`quantity * kg_per_unit`, kg products only), guarded by db_meta flag
-`inventory_weight_backfilled` AND `to_regclass('public.inventory')` existence (local DBs
-may not have the table — Drizzle doesn't own it). Backfill must stay idempotent/once-only,
-or it would overwrite real post-transfer weights with derived values.
+**Why:** exact per-container mass is business-critical; batch-ratio derivation is an
+approximation kept only as fallback.
 
-**Views (`/ombor/summary`, `/ombor/containers`, `/ombor/containers/:id/items`):** read
-`i.weight_kg` directly. For a kg product show weight only when `weight_kg > 0`, else `null`
-("—") and fall back to quantity for value — never a misleading "0 kg". The old
-`weight_ratio` CTEs were removed from these queries.
+## Mutation paths that maintain weight_kg
 
-**Not touched:** `/ombor/finished-goods (cross-warehouse aggregate)` never derived weight;
-left as-is to avoid overlapping the separate "stock value correct everywhere" task.
-
-**How to apply:** `weight_kg` is live — any new mutation path (new receive/transfer/sale
-flow) must maintain it alongside `quantity`, or per-container mass goes stale.
+- Bot `create_batch` adds batch weight; bot manual IN/OUT/TRANSFER move proportional weight.
+- API `/ombor/transfer`: two modes, **mutually exclusive** (qty>0 XOR explicit weightKg;
+  kg mode = qty:0 + weightKg). Source row read `FOR UPDATE` (parallel transfers otherwise
+  double-move via GREATEST(0,...) clamp). Movement rows carry weight_kg; kg-mode note
+  `Transfer: N kg`.
+- API POST /sales deduction: **saleType ('kg'|'dona' = products.unit_type via
+  resolveProductPrice) picks the path.** kg → decrement weight_kg (never `Math.round` kg!),
+  pick rows by weight DESC FOR UPDATE, movement quantity=0 + weight_kg, negative fallback
+  upserts weight on first active warehouse. dona → qty decrement + proportional weight
+  decrement, unchanged otherwise.
+- API `/ombor/finished-in` (optional weightKg, ratio fallback) and `/ombor/adjust`
+  (absolute values; kg products MUST send weight) as before.
+- Raw-material paths always set qty>0 — OR-predicate not needed there.
 
 ## Current finished-goods stock = inventory table, NOT batches − sales
 
-**Rule:** anywhere you need a product's *current warehouse stock* (the AI daily analysis,
-dashboards, "omborda X" / "ishlab chiqarish kerak" alerts), read the `inventory` table —
-`SUM(quantity) WHERE quantity > 0` across all warehouses. Do NOT derive it as
-all-time produced (`batches`) minus all-time sold (`sales`).
+Read current stock from `inventory` (positive rows), never all-time `batches − sales`
+(transfers/manual OUT/pre-feature sales diverge it). AI daily analysis prefers measured
+`SUM(weight_kg)` (positive-only) over `invQty × kg_per_unit` ratio estimate — ratio is
+fallback only, since baseline kg rows have invQty=0.
 
-**Why:** stock moves via transfers / manual OUT / adjustments, and sales made before the
-sale-deduction feature never decremented `inventory` — so `batches − sales` diverges badly
-(reported products with real container stock as `omborda 0`, false "produce now" alerts).
-The bot (`get_stock_by_warehouse`) and Ombor dashboard both read `inventory` with a
-`quantity > 0` filter — every consumer must match that source.
-
-**Update (2026-08):** dashboard sales now DO decrement `inventory`, atomically inside the
-sale transaction — largest-stock warehouse first; any shortfall is written as a negative
-balance on the primary warehouse (overselling stays visible), movement note `Savdo #id`.
-This makes `inventory` more authoritative, not less — the rule stands.
-
-**The `quantity > 0` filter matters:** general warehouses can carry phantom *negative*
-balances (e.g. Arqon −235 in "Namangan Markaziy Ombor" while container C-05 has +50).
-Filtering to positive rows matches what the bot/dashboard show the user. For kg products
-convert with the same batch ratio (`invQty × kg_per_unit`, fallback `invQty` when ratio 0).
+## Low-stock basis (finished goods)
+- kg products: `low` compares measured weight (when >0) against `minimum_stock`; dona products compare qty.
+- **Why:** post-reset kg rows have qty=0 — qty-basis would flag every kg product permanently low; valuation is already weight-based, so the basis must match.
+- **How to apply:** keep tests pinning weight-basis for kg (incl. qty=0 rows both above and below threshold); don't "fix" them back to qty-basis.

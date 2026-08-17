@@ -89,8 +89,10 @@ async function buildSnapshot(): Promise<Snapshot> {
            FROM batches GROUP BY product
          ),
          inv AS (
-           SELECT product, COALESCE(SUM(quantity),0) qty
-           FROM inventory WHERE quantity > 0 GROUP BY product
+           SELECT product,
+                  COALESCE(SUM(quantity) FILTER (WHERE quantity > 0),0) qty,
+                  COALESCE(SUM(weight_kg) FILTER (WHERE COALESCE(weight_kg,0) > 0),0) kg
+           FROM inventory WHERE quantity > 0 OR COALESCE(weight_kg,0) > 0 GROUP BY product
          ),
          produced_today AS (
            SELECT product, COALESCE(SUM(quantity),0) qty, COALESCE(SUM(weight_kg),0) kg
@@ -111,7 +113,7 @@ async function buildSnapshot(): Promise<Snapshot> {
            GROUP BY product
          )
          SELECT p.name, p.rate_type, p.unit_type, p.minimum_stock,
-                COALESCE(iv.qty,0) inv_qty, COALESCE(wr.kg_per_unit,0) kg_per_unit,
+                COALESCE(iv.qty,0) inv_qty, COALESCE(iv.kg,0) inv_kg, COALESCE(wr.kg_per_unit,0) kg_per_unit,
                 COALESCE(pt.qty,0) today_qty,    COALESCE(pt.kg,0) today_kg,
                 COALESCE(st.qty,0) sold_today_qty,
                 COALESCE(s7.qty,0) sold7_qty, COALESCE(s7.kg,0) sold7_kg
@@ -170,9 +172,11 @@ async function buildSnapshot(): Promise<Snapshot> {
   const products: ProductRow[] = productsRes.rows.map((r) => {
     const isKg = r.rate_type === "kg" || r.unit_type === "kg";
     const invQty = num(r.inv_qty);
+    const invKg = num(r.inv_kg);
     const kgPerUnit = num(r.kg_per_unit);
     const stockQty = invQty;
-    const stockKg = kgPerUnit > 0 ? invQty * kgPerUnit : invQty;
+    // Haqiqiy o'lchangan og'irlik ustuvor; bo'lmasa partiya nisbati orqali taxmin.
+    const stockKg = invKg > 0 ? invKg : kgPerUnit > 0 ? invQty * kgPerUnit : invQty;
     const minimumStock = num(r.minimum_stock);
     // Compare and forecast in the product's own unit: kg products use weight
     // (stock/min/velocity all in kg); piece products use quantity. Never mix.

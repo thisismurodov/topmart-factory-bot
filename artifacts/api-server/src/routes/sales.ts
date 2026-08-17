@@ -283,12 +283,70 @@ router.post("/sales", async (req, res): Promise<void> => {
     // (partiya mahsulotni konteynerga kiritadi — har doim 1-ombor emas).
     try {
       for (const it of resolvedItems) {
+        const isKgSale = String(it.saleType || "").toLowerCase() === "kg";
+
+        if (isKgSale) {
+          // kg mahsulot: zaxira weight_kg da turadi (quantity=0 bo'lishi normal) —
+          // og'irlik bo'yicha kamaytiramiz, dona katakchasiga tegmaymiz.
+          let remainingKg = Number(it.quantity);
+          if (remainingKg <= 0) continue;
+
+          const { rows: kgRows } = await client.query(
+            `SELECT warehouse_id, weight_kg FROM inventory
+              WHERE product = $1 AND COALESCE(weight_kg, 0) > 0
+              ORDER BY weight_kg DESC
+              FOR UPDATE`,
+            [it.productName],
+          );
+          for (const row of kgRows) {
+            if (remainingKg <= 0) break;
+            const takeKg = Math.min(Number(row.weight_kg), remainingKg);
+            await client.query(
+              `UPDATE inventory SET weight_kg = COALESCE(weight_kg,0) - $1, updated_at = NOW()
+                WHERE product = $2 AND warehouse_id = $3`,
+              [takeKg, it.productName, row.warehouse_id],
+            );
+            await client.query(
+              `INSERT INTO stock_movements
+                 (product, quantity, movement_type, from_warehouse_id, note, created_by, product_type, weight_kg)
+               VALUES ($1,0,'OUT',$2,$3,'system','finished',$4)`,
+              [it.productName, row.warehouse_id, `Savdo #${saleId}: ${takeKg.toFixed(2)} kg`, takeKg],
+            );
+            remainingKg -= takeKg;
+          }
+
+          // Og'irlik yetmadi: qolganini asosiy ombordan manfiy yozamiz
+          // (ortiqcha sotilgani ko'rinib turadi).
+          if (remainingKg > 0) {
+            const { rows: whRows } = await client.query(
+              "SELECT id FROM warehouses WHERE active=TRUE ORDER BY id LIMIT 1",
+            );
+            const whId = whRows[0]?.id ?? null;
+            if (whId) {
+              await client.query(
+                `INSERT INTO inventory (warehouse_id, product, quantity, weight_kg, product_type, updated_at)
+                 VALUES ($1,$2,0,$3,'finished',NOW())
+                 ON CONFLICT (warehouse_id, product)
+                 DO UPDATE SET weight_kg = COALESCE(inventory.weight_kg,0) - $4, updated_at = NOW()`,
+                [whId, it.productName, -remainingKg, remainingKg],
+              );
+              await client.query(
+                `INSERT INTO stock_movements
+                   (product, quantity, movement_type, from_warehouse_id, note, created_by, product_type, weight_kg)
+                 VALUES ($1,0,'OUT',$2,$3,'system','finished',$4)`,
+                [it.productName, whId, `Savdo #${saleId}: ${remainingKg.toFixed(2)} kg (zaxira yetmadi)`, remainingKg],
+              );
+            }
+          }
+          continue;
+        }
+
         let remaining = Math.round(it.quantity);
         if (remaining <= 0) continue;
 
         // Zaxira bor omborlardan ketma-ket kamaytiramiz (ko'pi birinchi).
         const { rows: stockRows } = await client.query(
-          `SELECT warehouse_id, quantity FROM inventory
+          `SELECT warehouse_id, quantity, weight_kg FROM inventory
             WHERE product = $1 AND quantity > 0
             ORDER BY quantity DESC
             FOR UPDATE`,
@@ -297,16 +355,20 @@ router.post("/sales", async (req, res): Promise<void> => {
         for (const row of stockRows) {
           if (remaining <= 0) break;
           const take = Math.min(Number(row.quantity), remaining);
+          const rowW = Number(row.weight_kg) || 0;
+          // Og'irlikni dona ulushiga proporsional kamaytiramiz (transfer bilan bir xil qoida).
+          const takeW = rowW > 0 ? Math.min(rowW, (rowW * take) / Number(row.quantity)) : 0;
           await client.query(
-            `UPDATE inventory SET quantity = quantity - $1, updated_at = NOW()
-              WHERE product = $2 AND warehouse_id = $3`,
-            [take, it.productName, row.warehouse_id],
+            `UPDATE inventory SET quantity = quantity - $1,
+                    weight_kg = GREATEST(0, COALESCE(weight_kg,0) - $2), updated_at = NOW()
+              WHERE product = $3 AND warehouse_id = $4`,
+            [take, takeW, it.productName, row.warehouse_id],
           );
           await client.query(
             `INSERT INTO stock_movements
-               (product, quantity, movement_type, from_warehouse_id, note, created_by, product_type)
-             VALUES ($1,$2,'OUT',$3,$4,'system','finished')`,
-            [it.productName, take, row.warehouse_id, `Savdo #${saleId}`],
+               (product, quantity, movement_type, from_warehouse_id, note, created_by, product_type, weight_kg)
+             VALUES ($1,$2,'OUT',$3,$4,'system','finished',$5)`,
+            [it.productName, take, row.warehouse_id, `Savdo #${saleId}`, takeW > 0 ? takeW : null],
           );
           remaining -= take;
         }

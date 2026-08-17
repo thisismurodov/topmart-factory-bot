@@ -1,0 +1,100 @@
+R-D GO — REMAINING 8 CONTAINERS
+
+Tasdiqlayman.
+
+C-15 allaqachon LOADED — unga tegilmang.
+
+Qolgan 8 konteynerni bitta boshqariladigan R-D execution sifatida yuklang:
+
+C-20
+C-19
+C-18
+C-02
+C-04
+C-06
+C-16
+C-17
+
+DRY-RUN natijasi 8/8 PASS ekanligi tasdiqlandi.
+
+MUHIM — №2 QAROR HAM TASDIQLANDI:
+
+C-16 va C-17dagi jami 13 ta eski legacy/current inventory qatori
+auditli BASELINE orqali NOLLANISHI tasdiqlanadi.
+
+Bu DELETE emas.
+
+Eski qiymatlar:
+- avval R-A legacy arxivida muhrlangan bo‘lishi shart;
+- R-D tranzaksiyasida arxiv qiymati bilan solishtirilsin;
+- mos kelmasa STOP + ROLLBACK;
+- mos bo‘lsa teskari/zeroing BASELINE harakat orqali current balansdan chiqarilsin;
+- tarixiy ma'lumot o‘chirilmasin.
+
+Yangi fizik count esa R-B registridan current inventoryga yuklansin.
+
+QAT'IY:
+
+1. C-15ga tegilmasin.
+2. 2 EXACT:
+   - Rossiya Tros 531 kg
+   - Shroki 3.5 Oq 676.55 kg
+   hozircha current inventoryga kiritilmasin.
+3. 92 ta MAPPED pozitsiya yuklansin.
+4. C-16/C-17dagi 13 legacy qator auditli ravishda nollansin.
+5. Sales va sale_itemsga tegilmasin.
+6. R-B frozen registryga tegilmasin.
+7. Legacy archive o‘zgartirilmasin.
+8. Hech qanday DELETE ishlatilmasin.
+9. Har bir yozuv BASELINE movement orqali audit iziga ega bo‘lsin.
+10. Parallel yozuvlardan himoya saqlansin.
+11. Barcha execution bitta atomik tranzaksiyada bajarilsin.
+12. PASS bo‘lmasa to‘liq ROLLBACK.
+13. COMMITdan oldin backup olinsin.
+14. COMMITdan keyin mustaqil read-only verification bajarilsin.
+
+YAKUNIY NAZORAT NISHONLARI:
+
+Current physical baseline:
+- 9 joy
+- 97 physical positions
+- 94 canonical SKU
+- 71,862.20 kg
+- 126,360 dona
+
+EXACT 2 ta hisobga kirmaydi.
+
+Kutilayotgan BASELINE:
+- oldingi 3 ta C-15 baseline
+- + yangi 92 mapped position
+- + C-16/C-17 legacy zeroing uchun 13 ta auditli BASELINE
+= 108 ta BASELINE movement
+- EXACT qarori keyinchalik alohida.
+
+C-16/C-17 eski qoldiqlari nollangandan keyin current inventoryda faqat yangi verified physical count qolishi kerak.
+
+COMMITdan keyin tekshiring:
+
+- 9 ta location current inventory
+- jami 71,862.20 kg
+- 126,360 dona
+- C-15 = 13,020 kg
+- C-16 = yangi physical count
+- C-17 = yangi physical count
+- 13 legacy qator current inventorydan chiqarilgan
+- legacy archive o‘zgarmagan
+- sales o‘zgarmagan
+- R-B o‘zgarmagan
+- 2 EXACT hali chetda
+- barcha MAPPED → LOADED
+- jami baseline/movement soni
+- before/after invariantlar
+
+Agar birorta nazorat mos kelmasa:
+STOP + ROLLBACK.
+
+Muvaffaqiyatli COMMITdan keyin execution report yarating.
+
+Boshqa hech qanday bosqichga avtomatik o'tmang.
+
+R-D GO — REMAINING 8 CONTAINERS.

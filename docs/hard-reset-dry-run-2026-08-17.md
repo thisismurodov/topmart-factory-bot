@@ -120,14 +120,14 @@ kelajakda modul-flaglar (in_production) bilan boshqariladi — bu resetdan ALOHI
 | product_materials (BOM) | 62 | Retseptlar (raw_materials CASCADE dan himoya qilinadi); №3 R-E gate alohida |
 | admin_* / db_meta / audit_logs / ai_analysis_runs | — | Tizim |
 
-### 2.5 QAROR KUTILMOQDA (owner)
+### 2.5 Qarorlar holati
 
-| # | Savol | Tavsiya |
+| # | Savol | Holat |
 |---|---|---|
-| D1 | Yangi davr ma'lumotlari (bugungi 2 partiya, 4 harakat, C-17 dagi +1 760 dona) reset ichidami? | **SAQLASH** — bu yangi baseline USTIDAGI real ishlab chiqarish (Risolat, 12:53). O'chirish real fizik mahsulotni yashiradi |
-| D2 | Legacy 280 partiya: DELETE yoki archived=true belgisi? | Arxiv-jadval + DELETE (operatsion 0 talabiga to'g'ri keladi); istasangiz flag varianti ham mumkin |
-| D3 | Oylik tarixi (salary_entries 29, daily_payroll_runs 18) | **SAQLASH** — bu to'langan pul tarixi; spec reset ro'yxatida yo'q |
-| D4 | Legacy 30 inventar satri: auditli 0-lash (satr qoladi) yoki DELETE? | **Auditli 0-lash** — v2 dekret (hech qachon bare DELETE; tarix harakatda saqlanadi) |
+| D1 | Yangi davr ma'lumotlari (bugungi 2 partiya, 4 harakat, C-17 dagi +1 760 dona) | ✅ **HAL QILINDI (owner, 2026-08-17): SAQLANADI** — «bugungi real partiyalarni saqla» buyrug'i |
+| D2 | Legacy 280 partiya: DELETE yoki archived=true belgisi? | Tavsiya: arxiv-jadval + DELETE («operatsion bazadan tozalash» buyrug'iga mos); GO'da e'tiroz bo'lmasa shu qo'llanadi |
+| D3 | Oylik tarixi (salary_entries 29, daily_payroll_runs 18) | Tavsiya: **SAQLASH** — to'langan pul tarixi, production data emas; GO'da e'tiroz bo'lmasa saqlanadi |
+| D4 | Legacy 30 inventar satri: auditli 0-lash (satr qoladi) yoki DELETE? | Tavsiya: **auditli 0-lash** — v2 dekret (bare DELETE yo'q; tarix harakatda); GO'da e'tiroz bo'lmasa shu qo'llanadi |
 
 ---
 
@@ -189,7 +189,7 @@ GO skripti bu bo'limni pre/post-gate sifatida qayta hisoblaydi; birortasi farq q
 6. **Salesga bog'langan productlar:** 56 nom-orqali + 58 SKU-orqali (58 ⊂ in_sales) → products STOP, DELETE yo'q.
 7. **Reset qilinadigan production data:** §2.1 jadvali (WIP −8 964.77 ham 0 bo'ladi).
 8. **9 fizik sanoq qayta yuklash:** KERAK EMAS — allaqachon LOADED; Phase 5 verify-only.
-9. **Final holat:** ombor = faqat 9 real konteyner + real sanoq (71 862.20/126 360 ± D1); production/WIP/partiyalar operatsion 0; legacy faqat arxivda.
+9. **Final holat:** ombor = faqat 9 real konteyner + real sanoq (71 862.20 kg / 126 360 dona) + yangi-davr real ishlab chiqarish (bugungi +1 760 dona va GO'gacha qo'shilgan jonli partiyalar — D1 bo'yicha saqlanadi); production/WIP/legacy partiyalar operatsion 0; legacy faqat arxivda.
 10. **Rollback:** §6.
 
 ---

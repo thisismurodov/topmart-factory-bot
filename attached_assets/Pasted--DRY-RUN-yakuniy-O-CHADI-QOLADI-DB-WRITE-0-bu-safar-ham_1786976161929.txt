@@ -1,0 +1,34 @@
+# ✅ DRY-RUN yakuniy — O'CHADI / QOLADI
+
+**DB WRITE = 0** — bu safar ham bazaga birorta yozuv qilinmadi (faqat hujjat yangilandi). D1 qaroringiz muhrlandi: **bugungi real partiyalar saqlanadi**.
+
+## 🟢 QOLADI (operatsion bazada)
+
+| Nima | Miqdor |
+|---|---|
+| **9 real-count konteyner** (C-02, 04, 06, 15, 16, 17, 18, 19, 20) — barcha tovar + xomashyo | **71 862.20 kg / 126 360 dona** (110 satr, shu jumladan C-15 dagi 13 020 kg real xomashyo va 2 EXACT: Tros 531 kg + Shroki 676.55 kg) |
+| **Bugungi real partiyalar** (yangi davr) | 2 partiya (Reja ip Qora/Sariq, Risolat) + 4 harakat + C-17 ga **+1 760 dona** |
+| 110 BASELINE harakat (yuklash guvohnomalari) + 37 savdo-izli harakat | Audit izi |
+| `items` 94 TM SKU + registr (9/9 LOADED, 97 pozitsiya) + `legacy.*` arxiv | Yangi poydevor |
+| Savdo: `sales` 45, `sale_items` 143, to'lovlar, mijozlar + **butun Sales Bot sxemasi** (193 savdo = 66 653 390) | **MUTLAQO DAXLSIZ** |
+| Struktura: omborlar, liniyalar, xodimlar, oylik stavkalari + **oylik tarixi** (29 yozuv) | Konfiguratsiya/pul tarixi |
+| `products` katalogi (117) va BOM retseptlar (62) | 🛑 STOP — savdo tarixi 56 nom + Sales Bot 58 SKU orqali bog'langan, o'chirish MUMKIN EMAS. Satrlar qoladi, keyin flaglar bilan boshqariladi |
+
+## 🔴 O'CHADI (arxiv → keyin operatsion 0)
+
+| Nima | Miqdor |
+|---|---|
+| Legacy konteyner qoldiqlari: C-01, C-03, C-05, C-08, C-09, C-13 + Namangan fantom manfiylari | 30 satr = 127 568 birlik / 26 152.27 kg (auditli 0-lash) |
+| Legacy ombor harakatlari (savdoga bog'lanmaganlari) | 583 ta |
+| Eski partiyalar (2026-06-24 → baseline'gacha) | 280 ta |
+| WIP ledger (6-liniya, bir tomonlama) | 171 yozuv → WIP −8 964.77 kg **0 bo'ladi** |
+| `raw_materials` eski stock raqamlari (5 manfiy, Sholcha +25 000 kabi ishonchsizlar) | 17 satrning faqat RAQAMLARI 0-lanadi, satrlar BOM uchun qoladi |
+| WIP manfiy alertlar | 3 ta |
+
+Har bir o'chirish: **avval yangi append-only arxiv jadvalga nusxa + tasdiq, keyin id-ro'yxatli explicit DELETE** (CASCADE/TRUNCATE yo'q), oldin to'liq pg_dump, har fazada savdo invariantlari qayta tekshiriladi — farq chiqsa avtomatik STOP.
+
+To'liq hujjat: `docs/hard-reset-dry-run-2026-08-17.md`
+
+⏸️ **To'xtadim. Ijro faqat sizning aniq «RESET GO» buyrug'ingizdan keyin boshlanadi.**
+
+**Biz taxmin qilmaymiz. Biz bilamiz.**

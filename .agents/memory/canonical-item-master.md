@@ -63,3 +63,11 @@ Global on-hand for a raw item = Σ container inventory **+ Σ WIP balances**. Is
 - Default for count positions = NEW item unless verbatim-EXACT catalog match; similarity merges stay forbidden (Qop ip ≠ Reja ip); owner links later via item_aliases; cross-container dedup only on verbatim-identical names. Attributes stay owner-editable; only SKU+id immutable.
 **Why:** owner's v2 strategy decree + architect review caught the archive-before-zero ordering hole (docs originally allowed R-D before R-A).
 **How to apply:** any destructive baseline/reset runbook must list verified-archive as a hard precondition, not a parallel stage. Current dry-run: `docs/inventory-reset-dry-run-report.md`.
+
+## P2.1 + R-A executed on prod (2026-08-17)
+- Live Railway DB now HAS: empty `items`/`item_aliases` (immutable-SKU + no-delete triggers proven via rolled-back smoke test), 10 nullable item_id cols, and append-only `legacy.*` archive (4 snapshot tables; UPDATE/DELETE/TRUNCATE blocked by triggers). R-D's verified-archive precondition is now SATISFIED, but R-D itself has no GO.
+- items stayed at 0 rows on purpose: owner's "TM-SKU foundation allowed, no loading" was interpreted conservatively (94 item INSERTs are gated at R-C, which owner forbade starting); interpretation stated in the execution report.
+- items id=1 was consumed by the rolled-back smoke insert — first real item gets id=2; business key is SKU, id gaps are by design.
+- Archive triggers stop ACCIDENTAL writes only — the owner DB role can DISABLE TRIGGER (administrative bypass). Hence R-D re-reads + compares archive values inside the zeroing txn itself; corrective snapshots go to NEW timestamped tables under REPEATABLE READ, never appends into an existing *_pre table.
+- Full prod pg_dumps live in `backups/` which is gitignored — they must never enter git history.
+- Execution report with all before/after proofs: `docs/p2.1-r-a-execution-report-2026-08-17.md`; archive script (idempotent, NOT EXISTS-guarded): `scripts/sql/r-a-legacy-archive.sql`.

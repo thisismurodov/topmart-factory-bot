@@ -1,6 +1,6 @@
 # OMBOR QAYTA QURISH — IJRO TAKLIFI (Inventory Reset Implementation Proposal)
 
-*Sana: 2026-08-16 · Holat: **FAQAT TAKLIF — bazaga hech narsa yozilmadi.** Manba topshiriq: `attached_assets/Pasted-TOPMART-ERP-INVENTORY-RESET-PRODUCTION-WAREHOUSE-ARCHIT_1786905730862.txt` (egasining 17 bo'limlik arxitektura brifi, 14 bandlik taklif talabi bilan).*
+*Sana: 2026-08-16 · Holat: **P2.1 + R-A BAJARILDI (2026-08-17, «P2.1 GO + R-A GO» bilan); qolgan bosqichlar alohida GO kutmoqda** — ijro hisoboti: `docs/p2.1-r-a-execution-report-2026-08-17.md`. Manba topshiriq: `attached_assets/Pasted-TOPMART-ERP-INVENTORY-RESET-PRODUCTION-WAREHOUSE-ARCHIT_1786905730862.txt` (egasining 17 bo'limlik arxitektura brifi, 14 bandlik taklif talabi bilan).*
 
 **🔄 v2 YANGILANISH (2026-08-17):** egasining yangi strategiyasi (`attached_assets/Pasted-IMPORTANT-NEW-PRODUCTION-INVENTORY-RESET-STRATEGY-We-ar_1786907653533.txt`) qabul qilindi: eski ishlab chiqarish qoldiqlari ISHONCHSIZ (moslashtirilmaydi, faqat LEGACY arxiv); fizik pozitsiyalardan YANGI kanonik itemlar ochiladi; **avto-SKU (`TM-NNNNNN`) endi RUXSAT ETILGAN**; atributlarni egasi keyin dashboardda to'ldiradi. To'liq quruq sinov: `docs/inventory-reset-dry-run-report.md` (§2.3, §3 va §16 shu hujjatda yangilangan).
 
@@ -10,7 +10,7 @@
 
 Asos hujjatlar (barchasi kuchda qoladi, bu taklif ULARNI BEKOR QILMAYDI, kengaytiradi):
 - `docs/p2-items-foundation-proposal.md` — kanonik items modeli (egasi 2026-08-15 shartlar bilan TASDIQLAGAN)
-- `docs/p2-1-execution-runbook.md` + `scripts/sql/p2.1-items-foundation.sql` — P2.1 DDL (KUTMOQDA, GO yo'q)
+- `docs/p2-1-execution-runbook.md` + `scripts/sql/p2.1-items-foundation.sql` — P2.1 DDL (✅ BAJARILDI 2026-08-17)
 - `docs/physical-count-reconciliation-2026-08-15.md` — 6 konteyner solishtiruvi (MUZLATILGAN)
 - `docs/physical-count-c16-c17-2026-08-15.md` — C-16/C-17 qo'shimcha sanoq (baseline nomzod)
 - `docs/q1-q10-decision-pack.md` — ochiq egasi savollari
@@ -61,7 +61,7 @@ Asos hujjatlar (barchasi kuchda qoladi, bu taklif ULARNI BEKOR QILMAYDI, kengayt
 | Qadam | Mexanizm |
 |---|---|
 | 1. To'liq snapshot | `pg_dump` (sxema + ma'lumot) fayli — halokat sug'urtasi |
-| 2. `legacy` sxema | `CREATE SCHEMA legacy` + kesim jadvallar: `legacy.inventory_baseline_pre` (43 qator), `legacy.raw_material_stock_pre` (17), `legacy.wip_balances_pre` (liniya kesimi), `legacy.container_summary_pre` (9 band ombor) — har birida `archived_at` va manba izohi |
+| 2. `legacy` sxema | `CREATE SCHEMA legacy` + kesim jadvallar: `legacy.inventory_baseline_pre` (43 qator), `legacy.raw_material_stock_pre` (17), `legacy.wip_balances_pre` (liniya kesimi), `legacy.container_summary_pre` (amalda 36 joy yig'masi — 9 sanoq joyi shu ichida) — har birida `archived_at` va manba izohi |
 | 3. Mantiqiy chegara | Baseline sanasidan OLDINGI barcha `stock_movements` qatorlari «legacy davri» deb hisoblanadi — ular joyida qoladi, hech qanday belgi ham o'zgartirilmaydi (created_at o'zi chegara) |
 | 4. Auditlik | «Eski ERP nimaga ishongan?» = `SELECT * FROM legacy.*` (doim ochiq); «Fizik tasdiqlangan holat?» = yangi baseline registri (§2) |
 
@@ -200,8 +200,8 @@ O'tish davri qoidasi: sanalmagan joylarda joriy operatsiyalar ODATDAGIDEK davom 
 
 | # | Bosqich | Nima yoziladi | GO formulasi |
 |---|---|---|---|
-| P2.1 | Items poydevor DDL | 2 jadval + 2 trigger + 10 nullable ustun (TAYYOR: runbook + SQL) | «P2.1 GO» |
-| R-A | Legacy arxiv | pg_dump + `legacy` sxema nusxalari + yakun tekshiruvi (qator soni/yig'indilar) | «R-A GO» — **R-D'dan oldin MAJBURIY** |
+| P2.1 | Items poydevor DDL | 2 jadval + 2 trigger + 10 nullable ustun | ✅ **BAJARILDI 2026-08-17** (items bo'sh — 94 item R-C'da) |
+| R-A | Legacy arxiv | pg_dump + `legacy` sxema nusxalari + yakun tekshiruvi (qator soni/yig'indilar) | ✅ **BAJARILDI 2026-08-17**, 12/12 PASS — R-D'ning majburiy sharti qondirildi |
 | R-B | Sanoq registri | `physical_baselines` + `positions` (97 satr — barcha 9 joy pozitsiyali) | «R-B GO» |
 | P2.2–2.3 | Katalog backfill | 134 item + mavjud qatorlarga item_id | «P2.2 GO» / «P2.3 GO» |
 | R-C | Baseline DDL + item yaratish | `BASELINE` turi, `weight_kg`/`reference`/`reason` ustunlari; **94 yangi item (TM-000001…094)** + 97 pozitsiyaga item_id; 2 EXACT ulash — shu GO ichida alohida tasdiq | «R-C GO» |
@@ -228,6 +228,6 @@ Tartib qat'iy emas faqat bitta joyda: R-A istalgan payt (hatto P2.1'dan oldin) b
 
 ---
 
-*Hech narsa bajarilmadi. Quruq sinov hisoboti tayyor: `docs/inventory-reset-dry-run-report.md` — tavsiya etiladigan birinchi qadamlar: «P2.1 GO» va «R-A GO» (ikkalasi ham eng past xavfli, qaytariladigan bosqichlar).*
+*Holat 2026-08-17: «P2.1 GO + R-A GO» bajarildi va tekshirildi (`docs/p2.1-r-a-execution-report-2026-08-17.md`). `items` jadvali BO'SH (94 item R-C darvozasida), 97 pozitsiya inventarga yuklanmagan, 2 EXACT ulanmagan. Keyingi mumkin qadamlar: «R-B GO» (sanoq registri) yoki №1 javob bilan «R-C GO».*
 
 *Biz taxmin qilmaymiz. Biz bilamiz.*

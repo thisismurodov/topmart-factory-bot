@@ -47,3 +47,6 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Production DB dumps — hech qachon git tarixiga tushmasin (arxitektor ko'rigi 2026-08-17)
+backups/

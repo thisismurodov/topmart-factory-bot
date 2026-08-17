@@ -33,3 +33,8 @@ The app runs in three places that resolve their database differently:
 The dev API server (tsx watch) re-runs initDb against RAILWAY_DATABASE_URL on every file save — any DDL added to bot init_db / API initDb hits the LIVE database within seconds; there is no staging gap.
 **Why:** during P2 prep, approval-gated DDL almost entered the boot path — it would have executed before the owner's GO.
 **How to apply:** unapproved/gated DDL lives in standalone manual SQL scripts (scripts/sql/) executed explicitly; initializers only ever contain already-approved, idempotent schema.
+
+## PG18 client for Railway dumps (2026-08-17)
+Railway Postgres is now v18.x; the workspace pg_dump is 16 and refuses newer servers ("server version mismatch"). Working path: `nix-shell -I nixpkgs=channel:nixos-unstable -p postgresql_18 --run 'pg_dump "$RAILWAY_DATABASE_URL" ...'` — the default pinned nixpkgs channel has NO postgresql_18 attribute.
+**Why:** every write-GO on the reset plan requires a fresh pre-write dump; a wrong-major client fails only at run time.
+**How to apply:** verify dumps with `gzip -t` + per-table COPY row counts vs live DB; store under `backups/` (gitignored — prod dumps must never enter git history) with date-stamped names.

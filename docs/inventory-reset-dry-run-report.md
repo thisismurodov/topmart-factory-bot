@@ -2,6 +2,8 @@
 
 *Sana: 2026-08-17 · Holat: **DRY-RUN — bazaga HECH NARSA yozilmadi** (faqat SELECT tekshiruvlar) · Manba: `attached_assets/Pasted-IMPORTANT-NEW-PRODUCTION-INVENTORY-RESET-STRATEGY-We-ar_1786907653533.txt` · Asosiy reja (v2'ga yangilandi): `docs/inventory-reset-implementation-proposal.md`*
 
+> **YANGILANISH (2026-08-17):** egasi «P2.1 GO + R-A GO» berdi — ikkala bosqich bajarildi va tekshirildi: `docs/p2.1-r-a-execution-report-2026-08-17.md`. Quyidagi matn GO'dan OLDINGI muzlatilgan holatni aks ettiradi; 97 pozitsiya haliyam inventarga YUKLANMAGAN, R-B/R-C/R-D/R-E GO berilmagan. Bitta ijro farqi: joy-yig'ma arxivi (`legacy.container_summary_pre`) 9 emas, BARCHA 36 joy bo'yicha olindi (9 sanoq joyi shu ichida — to'liqroq qamrov).
+
 > Egasi strategiyasi §14 talabi: har qanday baza o'zgarishidan OLDIN 10 band ko'rsatilsin va dry-run hisoboti berilsin. Quyida barchasi. **Hech bir bosqich aniq GO buyrug'isiz bajarilmaydi.**
 
 ---

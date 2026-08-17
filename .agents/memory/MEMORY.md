@@ -40,3 +40,4 @@
 - [Production Flow graph](production-flow-graph.md) — F2 API + F3 /flow-map page (xyflow) live; groups nested under nodes.*; READ ONLY txn + static-scan test (no English write-words); no polling — manual refresh + 5-min staleTime.
 - [xyflow canvas testing & layout](xyflow-edge-testing.md) — e2e edge clicks must target the LABEL chip (bbox-center misses stroke); canvas needs min-h-[360px] md:min-h-0 or #004 height-0 on mobile.
 - [Test schema must mirror prod columns](test-schema-prod-mirror.md) — generate test CREATEs from information_schema, never assumptions; an assumed column passed all tests but 500'd live.
+- [Clone rehearsal for destructive DB ops](clone-rehearsal-pattern.md) — rehearse on LOCAL nix-PG cluster (remote restore too slow); fsync=off+kill reverts sequences → pg_depend setval resync; always pass -d (PGDATABASE quirk).

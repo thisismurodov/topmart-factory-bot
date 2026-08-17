@@ -19,12 +19,18 @@ export const stockMovementsTable = pgTable("stock_movements", {
   createdBy: text("created_by").notNull().default(""),
   productType: text("product_type").notNull().default("finished"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  // R-C (2026-08-17): inventar-reset baseline harakatlari uchun (nullable, default'siz).
+  // BASELINE yozuvlari R-D bosqichida yoziladi; hozircha ustunlar bo'sh turadi.
+  weightKg: numeric("weight_kg"),
+  reference: text("reference"),
+  reason: text("reason"),
 }, (table) => [
   // Drift-tuzatish (2026-08-15, egasi buyrug'i): jonli bazadagi
   // stock_movements_movement_type_check azaldan bor edi, lekin kanonik
   // manbalar (bot init_db / API initDb / ushbu sxema) uni yaratmasdi.
   // Endi UCHALA manba bir xil CHECK'ni e'lon qiladi — schema-drift buni qo'riqlaydi.
-  check("stock_movements_movement_type_check", sql`${table.movementType} IN ('IN', 'OUT', 'TRANSFER')`),
+  // R-C (2026-08-17): BASELINE tipi qo'shildi (inventar-reset boshlang'ich qoldiqlari).
+  check("stock_movements_movement_type_check", sql`${table.movementType} IN ('IN', 'OUT', 'TRANSFER', 'BASELINE')`),
 ]);
 
 export const insertStockMovementSchema = createInsertSchema(stockMovementsTable).omit({ id: true, createdAt: true });

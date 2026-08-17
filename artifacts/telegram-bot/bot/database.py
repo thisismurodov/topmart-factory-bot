@@ -379,13 +379,17 @@ def init_db() -> None:
                 id                SERIAL PRIMARY KEY,
                 product           TEXT NOT NULL,
                 quantity          NUMERIC NOT NULL DEFAULT 0,
-                movement_type     TEXT NOT NULL CHECK (movement_type IN ('IN', 'OUT', 'TRANSFER')),
+                movement_type     TEXT NOT NULL CHECK (movement_type IN ('IN', 'OUT', 'TRANSFER', 'BASELINE')),
                 from_warehouse_id INTEGER REFERENCES warehouses(id),
                 to_warehouse_id   INTEGER REFERENCES warehouses(id),
                 note              TEXT NOT NULL DEFAULT '',
                 created_by        TEXT NOT NULL DEFAULT '',
                 product_type      TEXT NOT NULL DEFAULT 'finished',
-                created_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+                created_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                -- R-C (2026-08-17): inventar-reset baseline harakatlari uchun
+                weight_kg         NUMERIC,
+                reference         TEXT,
+                reason            TEXT
             )
         """)
         # product_type ustunini mavjud jadvallarga qo'shamiz (jadval bo'lmasa xato emas)
@@ -393,6 +397,10 @@ def init_db() -> None:
             DO $$ BEGIN
               IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='stock_movements') THEN
                 ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS product_type TEXT NOT NULL DEFAULT 'finished';
+                -- R-C (2026-08-17): baseline ustunlari (nullable, default'siz)
+                ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS weight_kg NUMERIC;
+                ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS reference TEXT;
+                ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS reason TEXT;
               END IF;
               IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='warehouses') THEN
                 ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS location_type TEXT NOT NULL DEFAULT 'general';
@@ -421,9 +429,10 @@ def init_db() -> None:
                    AND conname  = 'stock_movements_movement_type_check'
               ) THEN
                 BEGIN
+                  -- R-C (2026-08-17): BASELINE qo'shildi (inventar-reset boshlang'ich qoldiqlari)
                   ALTER TABLE stock_movements
                     ADD CONSTRAINT stock_movements_movement_type_check
-                    CHECK (movement_type IN ('IN', 'OUT', 'TRANSFER'));
+                    CHECK (movement_type IN ('IN', 'OUT', 'TRANSFER', 'BASELINE'));
                 EXCEPTION WHEN duplicate_object THEN
                   -- Parallel boot poygasi (bot + API bir vaqtda): yutqazgan
                   -- tomon jim davom etadi. check_violation ATAYIN tutilmaydi:

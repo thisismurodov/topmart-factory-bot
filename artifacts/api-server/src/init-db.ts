@@ -322,13 +322,16 @@ export async function initDb(): Promise<void> {
       id                SERIAL PRIMARY KEY,
       product           TEXT NOT NULL,
       quantity          NUMERIC NOT NULL DEFAULT 0,
-      movement_type     TEXT NOT NULL CHECK (movement_type IN ('IN', 'OUT', 'TRANSFER')),
+      movement_type     TEXT NOT NULL CHECK (movement_type IN ('IN', 'OUT', 'TRANSFER', 'BASELINE')),
       from_warehouse_id INTEGER REFERENCES warehouses(id),
       to_warehouse_id   INTEGER REFERENCES warehouses(id),
       note              TEXT NOT NULL DEFAULT '',
       created_by        TEXT NOT NULL DEFAULT '',
       product_type      TEXT NOT NULL DEFAULT 'finished',
-      created_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+      created_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+      weight_kg         NUMERIC,
+      reference         TEXT,
+      reason            TEXT
     )
   `);
 
@@ -342,6 +345,11 @@ export async function initDb(): Promise<void> {
   await pool.query(`ALTER TABLE IF EXISTS warehouses ADD COLUMN IF NOT EXISTS capacity_kg NUMERIC DEFAULT 20000`);
   await pool.query(`ALTER TABLE IF EXISTS warehouses ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()`);
   await pool.query(`ALTER TABLE IF EXISTS stock_movements ADD COLUMN IF NOT EXISTS product_type TEXT NOT NULL DEFAULT 'finished'`);
+  // R-C (2026-08-17): inventar-reset baseline ustunlari (nullable, default'siz).
+  // Jonli bazaga R-C tranzaksiyasi qo'shgan; bu yerda faqat konvergensiya.
+  await pool.query(`ALTER TABLE IF EXISTS stock_movements ADD COLUMN IF NOT EXISTS weight_kg NUMERIC`);
+  await pool.query(`ALTER TABLE IF EXISTS stock_movements ADD COLUMN IF NOT EXISTS reference TEXT`);
+  await pool.query(`ALTER TABLE IF EXISTS stock_movements ADD COLUMN IF NOT EXISTS reason TEXT`);
   // Drift-tuzatish (2026-08-15, egasi buyrug'i): movement_type CHECK jonli
   // bazada azaldan bor, lekin initializer'lar uni yaratmasdi — yangi (fresh)
   // baza himoyasiz qolardi. Yangi baza inline CHECK oladi (yuqoridagi CREATE),
@@ -357,9 +365,10 @@ export async function initDb(): Promise<void> {
            AND conname  = 'stock_movements_movement_type_check'
       ) THEN
         BEGIN
+          -- R-C (2026-08-17): BASELINE qo'shildi (inventar-reset boshlang'ich qoldiqlari)
           ALTER TABLE stock_movements
             ADD CONSTRAINT stock_movements_movement_type_check
-            CHECK (movement_type IN ('IN', 'OUT', 'TRANSFER'));
+            CHECK (movement_type IN ('IN', 'OUT', 'TRANSFER', 'BASELINE'));
         EXCEPTION WHEN duplicate_object THEN
           -- Parallel boot poygasi (bot + API bir vaqtda): ikkalasi ham "yo'q"
           -- deb ko'rishi mumkin — yutqazgan tomon jim davom etadi.

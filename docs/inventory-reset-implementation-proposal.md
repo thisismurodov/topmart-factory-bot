@@ -204,7 +204,7 @@ O'tish davri qoidasi: sanalmagan joylarda joriy operatsiyalar ODATDAGIDEK davom 
 | R-A | Legacy arxiv | pg_dump + `legacy` sxema nusxalari + yakun tekshiruvi (qator soni/yig'indilar) | ✅ **BAJARILDI 2026-08-17**, 12/12 PASS — R-D'ning majburiy sharti qondirildi |
 | R-B | Sanoq registri | `physical_baselines` + `positions` (97 satr — barcha 9 joy pozitsiyali) | «R-B GO» |
 | P2.2–2.3 | Katalog backfill | 134 item + mavjud qatorlarga item_id | «P2.2 GO» / «P2.3 GO» |
-| R-C | Baseline DDL + item yaratish | `BASELINE` turi, `weight_kg`/`reference`/`reason` ustunlari; **94 yangi item (TM-000001…094)** + 97 pozitsiyaga item_id; 2 EXACT ulash — shu GO ichida alohida tasdiq | «R-C GO» |
+| R-C | Baseline DDL + item yaratish | `BASELINE` turi, `weight_kg`/`reference`/`reason` ustunlari; **94 yangi item (TM-000001…094)** | ✅ **BAJARILDI 2026-08-17** (id 2–95; pozitsiya→item_id YO'Q — R-B'dan keyin; 2 EXACT yaratilmadi — alohida kandidat; hisobot: `docs/r-c-execution-report-2026-08-17.md`) |
 | R-D | Baseline yuklash — **SHART: tekshirilgan R-A** | konteyner-kesim BASELINE harakatlar + inventar (C-16/C-17'da 13 legacy qator ham auditli BASELINE bilan nollanadi) | «R-D GO C-20» … har biri alohida |
 | R-E | Jonli oqimlar | ISSUE/RECEIVE, chiqish-joyi tanlovi, purpose nazorati, global VIEW, transformations | «R-E GO» (alohida texnik reja bilan) |
 | P6 | Sotuv ulanishi | sale_items item-bog'lam o'qish yo'li | keyinroq, alohida taklif |
@@ -229,6 +229,6 @@ Tartib qat'iy emas faqat bitta joyda: R-A istalgan payt (hatto P2.1'dan oldin) b
 
 ---
 
-*Holat 2026-08-17 (kech): «P2.1 GO + R-A GO» bajarilgan va tekshirilgan (`docs/p2.1-r-a-execution-report-2026-08-17.md`); shundan keyin bazaga 0 yozuv. Egasining R-C PREP qarorlari qabul qilindi: R-C = §6 DDL + 94 NEYTRAL INSERT xolos (klassifikatsiyasiz), 2 EXACT alohida kandidat, pozitsiya→item_id R-B'dan keyin, R-D muzlatilgan. Yakuniy preview: `docs/r-c-final-preview-2026-08-17.md` — «R-C GO» = aynan shu hujjatni bajarish. `created_by='thisismurodov'` tasdiqlandi (2026-08-17); R-C to'liq spetsifikatsiyalangan, GO checklist preview §9da. Ochiq katak yo'q — faqat egasining «R-C GO» so'zi kutilmoqda.*
+*Holat 2026-08-17 (kechqurun): «R-C GO» BAJARILDI — 94 neytral item (TM-000001…094, id 2–95, `created_by='thisismurodov'`) + §6 DDL (CHECK'ka BASELINE, `weight_kg`/`reference`/`reason` ustunlari) bitta tranzaksiyada, 8.1–8.9 tekshiruvlar PASS, uch manba lockstep yangilandi, drift-parity yashil. Hisobot: `docs/r-c-execution-report-2026-08-17.md`. Chegara qat'iy saqlandi: pozitsiya→item_id mapping YO'Q (R-B'dan keyin), 2 EXACT yaratilmadi (alohida kandidat), R-D MUZLATILGAN (baseline harakatlar yozilmadi, legacy qoldiqlar tegilmadi). Keyingi darvozalar: R-B «R-B GO» kutmoqda, R-D konteyner-boshiga alohida GO, №2–№5/№7 savollar ochiq.*
 
 *Biz taxmin qilmaymiz. Biz bilamiz.*

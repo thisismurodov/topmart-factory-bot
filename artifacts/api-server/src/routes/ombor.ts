@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { pool } from "@workspace/db";
 import { getUsdToUzsRate } from "../lib/exchangeRate";
 import { notifyNegativeWip, NEGATIVE_WIP_EPS } from "../lib/wipAlerts";
+import { buildFlowGraph } from "../lib/flowGraph";
 
 const router: IRouter = Router();
 
@@ -944,6 +945,19 @@ router.post("/ombor/flow/container-purpose", async (req, res): Promise<void> => 
   );
   if (!upd.rows.length) { res.status(404).json({ error: "Konteyner topilmadi" }); return; }
   res.json({ ok: true });
+});
+
+// ── GET /api/ombor/flow/graph ─────────────────────────────────────────────────
+// PRODUCTION FLOW xaritasi (F2): 5 qatlamli graf — F1 mockup kontrakti bilan
+// bir xil. Butun yig'ish READ ONLY tranzaksiyada (src/lib/flowGraph.ts);
+// hech narsa yozilmaydi.
+router.get("/ombor/flow/graph", async (_req, res): Promise<void> => {
+  try {
+    res.json(await buildFlowGraph(pool));
+  } catch (e) {
+    console.error("flow/graph yig'ishda xatolik:", e);
+    res.status(500).json({ error: "Flow graph yig'ishda xatolik" });
+  }
 });
 
 // ── GET /api/ombor/flow ────────────────────────────────────────────────────────

@@ -1,0 +1,82 @@
+F1 VISUAL APPROVED.
+
+F2 GO.
+
+F1 mockup tasdiqlandi. Endi F2 ga o'ting:
+
+1. GET /ombor/flow/graph endpointini real production database'dagi mavjud ma'lumotlardan READ-ONLY tarzda yarating.
+
+2. F1 mockupdagi contract aynan saqlansin:
+   {
+     nodes: [...],
+     edges: [...],
+     supplyEdges: [...],
+     gaps: [...],
+     meta: {...}
+   }
+
+3. Real DB relationshiplardan foydalaning:
+   - production_lines → wip_movements
+   - WIP → Product
+   - batches → Product
+   - inventory → Container/Product
+   - mavjud boshqa real relationshiplar
+
+4. Container → Department RECEIVE hozir 0 ekanini o'zgartirmang.
+   Fake edge yaratmang.
+   `supplyEdges` yoki `gaps` orqali:
+   "RECEIVE: 0 — Flow data mavjud emas"
+   holatini qaytaring.
+
+5. SKU topilmagan mahsulotlarni taxminan SKU bilan bog'lamang.
+   `sku = null` / "SKU biriktirilmagan" holatini qaytaring.
+
+6. line_id NULL bo'lgan 71 ta partiyani departmentga uydirib bog'lamang.
+   `unassigned` gap sifatida qaytaring.
+
+7. WIP manfiy qiymatini yashirmang.
+   Masalan Arqon Bo'lim 3:
+   -8,964.77 kg
+   real qiymat sifatida qaytsin va frontend warning bera olsin.
+
+8. Container purpose va content mismatchni faqat READ-ONLY warning sifatida qaytaring.
+   C-03, C-04, C-08, C-09, C-13, C-15 aniqlangan.
+   Database'dagi purpose qiymatlarini o'zgartirmang.
+
+9. Yangi table yaratmang.
+10. DDL bajarmang.
+11. Inventoryga yozmang.
+12. R-D/R-B/legacy/salesga tegmang.
+13. RECEIVE movement yaratmang.
+14. Item mapping/backfill qilmang.
+
+15. Endpoint uchun testlar yozing:
+   - response schema
+   - node count/type
+   - edge source validation
+   - fake edge yo'qligi
+   - SKU null holati
+   - unassigned batchlar
+   - negative WIP
+   - purpose/content warning
+   - read-only guarantee
+
+16. API real production DBdan o'qisin, lekin hech qanday write qilmasin.
+
+17. F2 tugagach TO'XTANG.
+
+Menga quyidagilarni qaytaring:
+- endpoint natijasi
+- node/edge/gap sonlari
+- test natijasi
+- real DB snapshot before/after
+- DATABASE WRITE = 0 isboti
+- keyingi F3 uchun tavsiya
+
+F3 avtomatik boshlanmasin.
+
+WAIT FOR EXPLICIT:
+"F3 GO"
+
+WE DON'T GUESS.
+WE KNOW.

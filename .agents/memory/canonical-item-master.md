@@ -71,3 +71,11 @@ Global on-hand for a raw item = Σ container inventory **+ Σ WIP balances**. Is
 - Archive triggers stop ACCIDENTAL writes only — the owner DB role can DISABLE TRIGGER (administrative bypass). Hence R-D re-reads + compares archive values inside the zeroing txn itself; corrective snapshots go to NEW timestamped tables under REPEATABLE READ, never appends into an existing *_pre table.
 - Full prod pg_dumps live in `backups/` which is gitignored — they must never enter git history.
 - Execution report with all before/after proofs: `docs/p2.1-r-a-execution-report-2026-08-17.md`; archive script (idempotent, NOT EXISTS-guarded): `scripts/sql/r-a-legacy-archive.sql`.
+
+## R-C prep decisions (owner, 2026-08-17) — binding for the GO
+- R-C = DDL (BASELINE enum + weight_kg/reference/reason, 3-source lockstep) + 94 NEUTRAL INSERTs ONLY: sku/display_name/unit/source_kind='physical_count'/note/created_by — classification flags are NOT written (DB defaults: all FALSE, inventory_tracked TRUE); owner sets attributes later in dashboard. Count provenance (date · container · qty) goes into items.note.
+- 2 EXACT names (Rossiya Tros, Shroki 3.5 Oq) = unresolved candidates OUTSIDE R-C: no auto-mapping to existing SKUs AND no TM-000095/096 creation until owner decides.
+- position→item_id backfill only AFTER R-B registry GO; R-D fully frozen (no zeroing of anything).
+- items.created_by is TEXT NOT NULL with NO FK; identity is owner-picked text. Live identity sources: admin_users has a single admin; ERP bot user_roles ~24 (Superadmin + workers/packers); existing stock_movements convention = worker first names / 'system' / 'admin'.
+- BASELINE DDL must ship INSIDE the GO txn window together with the initializer/Drizzle code edits — editing init code early IS a prod write (dev workflows boot against the prod Railway DB and auto-ALTER).
+- Final preview (the exact document a GO executes): `docs/r-c-final-preview-2026-08-17.md`.

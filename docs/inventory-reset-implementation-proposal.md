@@ -215,19 +215,20 @@ Tartib qat'iy emas faqat bitta joyda: R-A istalgan payt (hatto P2.1'dan oldin) b
 
 **Hal qilindi (2026-08-16):** ✅ C-15 pozitsiya tafsiloti tasdiqlandi (3 pozitsiya = 13 020.00 kg ✓) · ✅ C-17 qop jami = **279** («259» — manba fayldagi yozuv xatosi).
 **Hal qilindi (2026-08-17, v2 strategiya bilan):** ✅ Qop ip ↔ Reja ip — ULANMAYDI, alohida yangi itemlar (xohlasa egasi keyin alias bilan bog'laydi) · ✅ CF 1000D — YANGI itemlar (`TM-000092…094`) · ✅ avto-SKU taqiqi BEKOR — `TM-NNNNNN` tasdiqlandi · ✅ katalogda yo'q pozitsiyalar uchun DEFAULT = yangi item.
+**Hal qilindi (2026-08-17, R-C PREP qarorlari):** ✅ R-C = faqat NEYTRAL INSERT — klassifikatsiya bayroqlari YOZILMAYDI, atributlar dashboardda (egasi) · ✅ 2 EXACT — avto-mapping YO'Q, alohida kandidat (R-C tashqarisida) · ✅ pozitsiya→item_id faqat R-B registridan keyin · ✅ R-D MUZLATILGAN (hech qanday nollash yo'q, alohida GO'gacha) · ✅ BASELINE/weight_kg/reference/reason DDL — faqat taklif, GO tarkibida yoziladi (`docs/r-c-final-preview-2026-08-17.md` §6).
 
 | № | Savol | Bloklaydi |
 |---|---|---|
-| 1 | 2 EXACT nom («Rossiya Tros» 531 kg, «Shroki 3.5 Oq» 676.55 kg): mavjud katalog itemiga ULANADIMI (tarixiy SKU saqlanadi) yoki ular ham YANGI item (TM-000095/096)? | R-C |
+| 1 | 2 EXACT nom («Rossiya Tros» 531 kg, «Shroki 3.5 Oq» 676.55 kg): mavjud katalog itemiga ULANADIMI (tarixiy SKU saqlanadi) yoki ular ham YANGI item (TM-000095/096)? **2026-08-17 egasi: avto-mapping QILINMAYDI — alohida kandidat; R-C 94 item bilan cheklanadi, bu savol endi R-C'ni bloklamaydi.** | EXACT'larning o'z taqdiri (keyinroq) |
 | 2 | C-16/C-17'dagi 13 legacy inventar qatori R-D'da auditli BASELINE harakati bilan NOLLANADI (arxiv nusxasi legacy sxemada; shu jumladan fizikda topilmagan «Reja ip PP / 50 gr» 100 dona) — tasdiqlaysizmi? | R-D GO C-16/C-17 |
 | 3 | C-15 konteyner maqsadi hozir `finished`, ichidagi mol esa sof xomashyo — maqsadi `raw`ga o'zgartirilsinmi? | R-E purpose nazorati (baseline yuklashni bloklamaydi) |
 | 4 | Baseline kunida liniyalardagi WIP: sanaladimi yoki liniyalar bo'sh holda kesiladimi? | R-D to'liq yakuni |
 | 5 | kg-only pozitsiyalarda (85 ta) `inventory.quantity` = 0 + `weight_kg` = sanoq kg konvensiyasi ma'qulmi? (dona-pozitsiyalarda quantity = dona) | R-D yozish formati |
-| 6 | Sanoq operatori (`counted_by`) va baseline harakatlarining `created_by` qiymati kim bo'lsin? | R-B / R-D |
+| 6 | Sanoq operatori (`counted_by`) va baseline harakatlarining `created_by` qiymati kim bo'lsin? **2026-08-17: R-C itemlari uchun mavjud variantlar ko'rsatildi (`docs/r-c-final-preview-2026-08-17.md` §3; `items.created_by` — TEXT NOT NULL, FK yo'q) — egasi tanlovi kutilmoqda.** | R-C (items.created_by) / R-B / R-D |
 | 7 | Eski Q1–Q10 paketi javoblari (Sholcha, manfiy globallar, dublikat juftliklar…) — endi baselineni BLOKLAMAYDI, legacy katalog tozaligi uchun | dashboard-era |
 
 ---
 
-*Holat 2026-08-17: «P2.1 GO + R-A GO» bajarildi va tekshirildi (`docs/p2.1-r-a-execution-report-2026-08-17.md`). `items` jadvali BO'SH (94 item R-C darvozasida), 97 pozitsiya inventarga yuklanmagan, 2 EXACT ulanmagan. Keyingi mumkin qadamlar: «R-B GO» (sanoq registri) yoki №1 javob bilan «R-C GO».*
+*Holat 2026-08-17 (kech): «P2.1 GO + R-A GO» bajarilgan va tekshirilgan (`docs/p2.1-r-a-execution-report-2026-08-17.md`); shundan keyin bazaga 0 yozuv. Egasining R-C PREP qarorlari qabul qilindi: R-C = §6 DDL + 94 NEYTRAL INSERT xolos (klassifikatsiyasiz), 2 EXACT alohida kandidat, pozitsiya→item_id R-B'dan keyin, R-D muzlatilgan. Yakuniy preview: `docs/r-c-final-preview-2026-08-17.md` — «R-C GO» = tanlangan `created_by` bilan aynan shu hujjatni bajarish. Ochiq: created_by tanlovi (№6ning R-C qismi).*
 
 *Biz taxmin qilmaymiz. Biz bilamiz.*

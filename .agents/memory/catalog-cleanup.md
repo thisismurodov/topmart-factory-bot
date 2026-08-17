@@ -7,7 +7,8 @@ description: 2026-08-17 prod cleanup — products reduced to savdo-bot subset + 
 
 **What holds now:**
 - `public.products` = 58 bot-matching (in_sales=true) + 3 pre-finished (Qop ip Qizil, Qop ip Yashil, FDY Igna Strupa; kg/UZS, in_sales=false, in_production=true, rate=0, price=0 — owner fills prices later).
-- `public.raw_materials` = ONLY those same 3 pre-finished; current_stock seeded from live container weights (≈728.55 / 2244.10 / 4572.25 kg).
+- `public.raw_materials` = 9 rows: 3 pre-finished + 6 container raws (Passport Xom BCF, 4× Polipropilen CF 1000D colors, CF 1500D Qora), current_stock = live container weights (total ≈25 481 kg), all UZS/cost 0 until owner edits.
+- **Ledger rule:** raw-reconcile sums ONLY `product_type='raw'` rows: IN → +quantity, OUT with from_warehouse_id NULL → −quantity; BASELINE rows are quantity=0 (weight_kg only) and count as 0. Any direct current_stock seed MUST be paired with a matching IN movement ("Boshlang'ich balans...") or the dashboard shows yellow drift badges.
 - `product_materials` (BOM) and `product_price_tiers` are EMPTY — recipes must be re-entered against the new raw materials before bot batch BOM deduction works again.
 - Deleted set included Reja ip 100 gr Qora/Sariq (had batches same day) and Rossiya Tros — container inventory rows untouched, but no new batches/sales for them until re-added.
 

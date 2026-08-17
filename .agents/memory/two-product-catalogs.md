@@ -11,4 +11,4 @@ description: One master product with module flags; sales catalog is a downstream
   - A module flag must be enforced in that module's *selection and pricing* queries everywhere (dashboard, API, both Telegram bots) — a flag that is stored and displayed but not filtered on is a lie in the UI and will be rejected in review.
   - Historical/report queries stay unfiltered; flags gate selection, not history.
 
-**Update 2026-08-17 (catalog cleanup):** public.products is now a strict bot-subset (58 of 70 bot names) + 3 pre-finished non-sale items; raw_materials holds only those 3 pre-finished. See catalog-cleanup.md.
+**Update 2026-08-17 (catalog cleanup):** public.products is now a strict bot-subset (58 of 70 bot names) + 3 pre-finished non-sale items; raw_materials rebuilt from live container stock (9 rows: 3 pre-finished + 6 raws). See catalog-cleanup.md.

@@ -19,7 +19,10 @@ import {
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Plus, Trash2, Pencil, Package, Scale, Wand2 } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { cn } from "@/lib/utils";
+import { Plus, Trash2, Pencil, Package, Scale, Wand2, Check, ChevronsUpDown } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
 import { SalesBotProductsSection } from "@/components/distribution/SalesBotProductsSection";
 
@@ -465,6 +468,12 @@ function CostSummary({
   );
 }
 
+// Qidiruv normalizatsiyasi: katta-kichik harf va apostrof variantlari (ʻ ' ’ `)
+// farq qilmasin — katalog nomlarida apostroflar aralash yozilgan.
+function normSearch(s: string): string {
+  return s.toLowerCase().replace(/[ʼʻ'’`´]/g, "").replace(/\s+/g, " ").trim();
+}
+
 // ── BOM tab ───────────────────────────────────────────────────────────────────
 function BomTab({
   product, rawMaterials,
@@ -477,11 +486,18 @@ function BomTab({
   const deleteBom = useDeleteBomItem();
   const [selMat, setSelMat] = useState<string>("");
   const [qty, setQty] = useState<string>("");
+  const [matOpen, setMatOpen] = useState(false);
+  const [matQuery, setMatQuery] = useState("");
 
   // Xom ashyo jami UZS ekvivalentida (USD xom ashyo jonli kursda aylantirilgan).
   const rawMatCost = bom.reduce((s, b) => s + b.calculatedUzsLineCost, 0);
   const usedIds = new Set(bom.map(b => b.rawMaterialId));
   const available = rawMaterials.filter(m => m.active && !usedIds.has(m.id));
+  const matLabel = (m: RawMaterial) => `${m.name} (${m.unitType}) — ${formatCurrency(m.defaultCost)}`;
+  const selectedMat = available.find(m => String(m.id) === selMat);
+  const filteredMats = matQuery.trim()
+    ? available.filter(m => normSearch(m.name).includes(normSearch(matQuery)))
+    : available;
 
   function handleAdd() {
     if (!selMat || !qty || isNaN(Number(qty))) return;
@@ -541,18 +557,67 @@ function BomTab({
         <div className="rounded-lg border p-3 bg-muted/10 space-y-2">
           <p className="text-xs font-medium text-muted-foreground">Xom ashyo qo'shish</p>
           <div className="flex gap-2">
-            <Select value={selMat} onValueChange={setSelMat}>
-              <SelectTrigger className="flex-1 h-8 text-sm">
-                <SelectValue placeholder="Xom ashyo tanlang..." />
-              </SelectTrigger>
-              <SelectContent>
-                {available.map(m => (
-                  <SelectItem key={m.id} value={String(m.id)}>
-                    {m.name} ({m.unitType}) — {formatCurrency(m.defaultCost)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {/* Qidiruvli combobox: ichki scroll (max-h) tufayli ro'yxat hech
+                qachon ekrandan chiqib ketmaydi — Select'dagi eski xato shu edi. */}
+            <Popover
+              open={matOpen}
+              onOpenChange={(o) => { setMatOpen(o); if (!o) setMatQuery(""); }}
+              modal
+            >
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  role="combobox"
+                  aria-expanded={matOpen}
+                  className="flex-1 h-8 min-w-0 justify-between px-3 text-sm font-normal"
+                >
+                  <span className={cn("truncate", !selectedMat && "text-muted-foreground")}>
+                    {selectedMat ? matLabel(selectedMat) : "Xom ashyo tanlang..."}
+                  </span>
+                  <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent
+                className="w-[var(--radix-popover-trigger-width)] p-0"
+                align="start"
+                collisionPadding={12}
+              >
+                <Command shouldFilter={false}>
+                  <CommandInput
+                    placeholder="Qidirish..."
+                    value={matQuery}
+                    onValueChange={setMatQuery}
+                  />
+                  {/* Balandlik: 15rem — yuqori chegara; joy tor bo'lsa (iPad
+                      klaviaturasi, split view) Radix bergan bo'sh joyga qisqaradi
+                      (3.25rem — qidiruv inputi uchun zaxira). Var bo'lmasa min()
+                      bekor bo'lib, komponentning o'z max-h klassi ishlaydi. */}
+                  <CommandList
+                    style={{
+                      maxHeight:
+                        "min(15rem, calc(var(--radix-popover-content-available-height) - 3.25rem))",
+                    }}
+                  >
+                    <CommandEmpty>Hech narsa topilmadi</CommandEmpty>
+                    {filteredMats.map(m => (
+                      <CommandItem
+                        key={m.id}
+                        value={String(m.id)}
+                        onSelect={() => { setSelMat(String(m.id)); setMatOpen(false); setMatQuery(""); }}
+                      >
+                        <Check
+                          className={cn(
+                            "mr-2 h-3.5 w-3.5 shrink-0",
+                            selMat === String(m.id) ? "opacity-100" : "opacity-0",
+                          )}
+                        />
+                        <span className="truncate">{matLabel(m)}</span>
+                      </CommandItem>
+                    ))}
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
             <Input
               type="number"
               min={0}

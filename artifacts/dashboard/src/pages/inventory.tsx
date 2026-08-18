@@ -524,7 +524,11 @@ function ContainerDetailView({
                       {item.product}
                     </td>
                     <td style={{ padding: "12px 16px", color: "#374151", fontWeight: 600 }}>
-                      {fmt(item.quantity)}
+                      {item.quantity > 0
+                        ? fmt(item.quantity)
+                        : (item.weightKg ?? 0) > 0
+                          ? `${(item.weightKg ?? 0).toLocaleString("uz-UZ", { maximumFractionDigits: 1 })} kg`
+                          : fmt(item.quantity)}
                     </td>
                     <td style={{ padding: "12px 16px", color: item.weightKg != null ? "#0B6B3A" : "#D1D5DB", fontWeight: 600 }}>
                       {item.weightKg != null

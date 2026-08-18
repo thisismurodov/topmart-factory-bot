@@ -115,5 +115,11 @@ order, MAPPED) → `stock_movements` BASELINE (product_type = owner's tasnif) �
 (quantity=0, weight_kg). finished/pre-finished names ALSO get ombor-only `products` rows (sku='',
 item_id NULL, in_sales=f, in_production=f, weight=1) so bot kirim 'store' sees them; raw names go into raw_materials too (owner expects them in the xomashyo section):
 current_stock = container kg, IN movement note "Boshlang'ich balans: N kg (katalogga qo'shishda …)",
-default_cost 0 until owner gives a price, currency USD like peers, minimum_stock 300 — but NOT products. Guards first: container inventory
+default_cost 0 until owner gives a price — EXCEPT clear same-family precedent (CF variants all 1.75 USD → use it, tell owner),
+currency USD like peers, minimum_stock 300 — but NOT products.
+If a count name already EXISTS as an item in another container: reuse item_id, ADD kg to the existing
+raw_materials row ("Qo'shimcha balans" IN movement), never duplicate. raw_materials.current_stock mirrors
+the SUM over container holdings. Owner may amend count names (e.g. add "70 metr") → canonical name gets
+the amendment, short form goes to item_aliases (source='physical_count'). Weight >20t is possible —
+owner raised all container capacity_kg to 25000 on 2026-08-18; confirm anomalies, don't assume typo. Guards first: container inventory
 empty + no baseline row + names absent in items/item_aliases + SUM equals owner's JAMI.

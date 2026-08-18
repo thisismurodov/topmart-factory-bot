@@ -29,7 +29,7 @@ Arifmetik tekshiruv: 145.40 + 264.55 + 202.00 + 402.80 + 933.40 + 7 980.00 = **9
 
 - 6/6 nom katalogda YO'Q edi (items + item_aliases tekshirildi) — barchasi yangi item sifatida EXACT nom bilan yaratildi, mapping_status=MAPPED.
 - 5 finished nom `products`ga ombor-mahsuloti sifatida qo'shildi (in_sales=f, in_production=f) — bot kirim «🏬 Ombor mahsuloti» bo'limida ko'rinadi.
-- FDY Polyester (Raw) — konventsiya bo'yicha `products`/`raw_materials`ga qo'shilmadi (raw faqat egasi bot katalogiga qo'shganda kiradi).
+- FDY Polyester (Raw) — egasining 2026-08-18 so'rovi bilan `raw_materials` katalogiga ham qo'shildi: boshlang'ich balans 7 980.00 kg (C-14 sanog'idan), default_cost=0 (narx egasidan kutilmoqda), USD, minimum 300 kg. `products`ga qo'shilmadi (xomashyo).
 
 ---
 

@@ -113,6 +113,7 @@ physical count = ONE txn: `physical_baselines` row (LOADED, source_doc docs/phys
 sku TM-<max+1>) → `physical_baseline_positions` (position_no = GLOBAL max+i, container_pos = sheet
 order, MAPPED) → `stock_movements` BASELINE (product_type = owner's tasnif) → `inventory`
 (quantity=0, weight_kg). finished/pre-finished names ALSO get ombor-only `products` rows (sku='',
-item_id NULL, in_sales=f, in_production=f, weight=1) so bot kirim 'store' sees them; raw names touch
-NEITHER products NOR raw_materials (owner adds via bot catalog). Guards first: container inventory
+item_id NULL, in_sales=f, in_production=f, weight=1) so bot kirim 'store' sees them; raw names go into raw_materials too (owner expects them in the xomashyo section):
+current_stock = container kg, IN movement note "Boshlang'ich balans: N kg (katalogga qo'shishda …)",
+default_cost 0 until owner gives a price, currency USD like peers, minimum_stock 300 — but NOT products. Guards first: container inventory
 empty + no baseline row + names absent in items/item_aliases + SUM equals owner's JAMI.

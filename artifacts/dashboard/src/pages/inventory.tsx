@@ -44,7 +44,7 @@ type ContainerItem = {
   product: string;
   quantity: number;
   weightKg: number | null;
-  productType: "raw" | "finished";
+  productType: "raw" | "pre-finished" | "finished";
   unit: string;
   salePrice: number;
   currency: string;
@@ -63,7 +63,7 @@ type Movement = {
   product: string;
   quantity: number;
   movementType: "IN" | "OUT" | "TRANSFER";
-  productType: "raw" | "finished";
+  productType: "raw" | "pre-finished" | "finished";
   fromWarehouse: string | null;
   toWarehouse: string | null;
   note: string;
@@ -516,10 +516,10 @@ function ContainerDetailView({
                     <td style={{ padding: "12px 16px" }}>
                       <span style={{
                         fontSize: 11, padding: "3px 8px", borderRadius: 6, fontWeight: 500,
-                        background: item.productType === "raw" ? "#FEF3C7" : "#DCFCE7",
-                        color: item.productType === "raw" ? "#92400E" : "#166534",
+                        background: item.productType === "raw" ? "#FEF3C7" : item.productType === "pre-finished" ? "#DBEAFE" : "#DCFCE7",
+                        color: item.productType === "raw" ? "#92400E" : item.productType === "pre-finished" ? "#1E40AF" : "#166534",
                       }}>
-                        {item.productType === "raw" ? "Xom" : "Tayyor"}
+                        {item.productType === "raw" ? "Xom" : item.productType === "pre-finished" ? "Yarim tayyor" : "Tayyor"}
                       </span>
                     </td>
                     <td style={{ padding: "12px 16px" }}>
@@ -1070,10 +1070,10 @@ function MovementRow({ m }: { m: Movement }) {
           </span>
           <span style={{
             fontSize: 11, padding: "2px 7px", borderRadius: 5, fontWeight: 500,
-            background: m.productType === "raw" ? "#FEF3C7" : "#DCFCE7",
-            color: m.productType === "raw" ? "#92400E" : "#166534",
+            background: m.productType === "raw" ? "#FEF3C7" : m.productType === "pre-finished" ? "#DBEAFE" : "#DCFCE7",
+            color: m.productType === "raw" ? "#92400E" : m.productType === "pre-finished" ? "#1E40AF" : "#166534",
           }}>
-            {m.productType === "raw" ? "Xom" : "Tayyor"}
+            {m.productType === "raw" ? "Xom" : m.productType === "pre-finished" ? "Yarim tayyor" : "Tayyor"}
           </span>
         </div>
         <div style={{ fontSize: 12, color: "#6B7280", marginTop: 2 }}>

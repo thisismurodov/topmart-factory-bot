@@ -121,5 +121,8 @@ If a count name already EXISTS as an item in another container: reuse item_id, A
 raw_materials row ("Qo'shimcha balans" IN movement), never duplicate. raw_materials.current_stock mirrors
 the SUM over container holdings. Owner may amend count names (e.g. add "70 metr") → canonical name gets
 the amendment, short form goes to item_aliases (source='physical_count'). Weight >20t is possible —
-owner raised all container capacity_kg to 25000 on 2026-08-18; confirm anomalies, don't assume typo. Guards first: container inventory
+owner raised all container capacity_kg to 25000 on 2026-08-18; confirm anomalies, don't assume typo.
+PRE-FINISHED (owner definition 2026-08-18): ham sotiladi ham ishlab chiqarishda ishlatiladi — products row
+gets in_sales=t AND in_production=t (not ombor-only like finished count items), plus raw_materials row.
+Dashboard Tur badge is 3-way: raw→Xom, pre-finished→Yarim tayyor (blue), else→Tayyor. Guards first: container inventory
 empty + no baseline row + names absent in items/item_aliases + SUM equals owner's JAMI.

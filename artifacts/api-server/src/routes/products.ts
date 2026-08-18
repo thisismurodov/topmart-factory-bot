@@ -232,6 +232,23 @@ router.get("/products", async (_req, res): Promise<void> => {
   }));
 });
 
+// ── GET /products/sku-suggest — nomdan unikal SKU taklifi (formadagi "Avto"
+// tugmasi uchun). exclude = tahrirlanayotgan mahsulot nomi (o'z SKU'si band
+// deb hisoblanmaydi).
+router.get("/products/sku-suggest", async (req, res): Promise<void> => {
+  const name = String(req.query.name ?? "").trim();
+  const exclude = String(req.query.exclude ?? "").trim();
+  if (!name) {
+    res.status(400).json({ error: "name talab qilinadi" });
+    return;
+  }
+  const sku = await uniqueProductSku(
+    name,
+    exclude ? { excludeName: exclude } : undefined
+  );
+  res.json({ sku });
+});
+
 // ── POST /products — create ───────────────────────────────────────────────────
 router.post("/products", async (req, res): Promise<void> => {
   const {

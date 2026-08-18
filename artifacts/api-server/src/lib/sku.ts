@@ -16,11 +16,22 @@ export function skuFromName(name: string): string {
 }
 
 // public.products ichida unikal SKU qaytaradi (band bo'lsa -2, -3 ... qo'shiladi)
-export async function uniqueProductSku(name: string): Promise<string> {
+// opts.excludeName — tahrirlanayotgan mahsulotning o'zi hisobga olinmaydi
+// (o'zining joriy SKU'si unga "band" bo'lib ko'rinmasligi uchun)
+export async function uniqueProductSku(
+  name: string,
+  opts?: { excludeName?: string },
+): Promise<string> {
   const base = skuFromName(name);
+  const params: string[] = [base];
+  let where = `(sku = $1 OR sku LIKE $1 || '-%')`;
+  if (opts?.excludeName) {
+    params.push(opts.excludeName);
+    where += ` AND name <> $2`;
+  }
   const { rows } = await pool.query(
-    `SELECT sku FROM public.products WHERE sku = $1 OR sku LIKE $1 || '-%'`,
-    [base]
+    `SELECT sku FROM public.products WHERE ${where}`,
+    params
   );
   const taken = new Set(rows.map((r) => String(r.sku)));
   if (!taken.has(base)) return base;

@@ -19,7 +19,7 @@ import {
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Plus, Trash2, Pencil, Package, Scale } from "lucide-react";
+import { Plus, Trash2, Pencil, Package, Scale, Wand2 } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
 import { SalesBotProductsSection } from "@/components/distribution/SalesBotProductsSection";
 
@@ -771,6 +771,30 @@ function ProductDialog({
     form.setValue("sku", suggestSku(watchedName ?? ""));
   }, [watchedName, isEdit, skuTouched]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // "Avto" tugmasi — serverdan unikal SKU oladi (band bo'lsa -2, -3 qo'shilgan
+  // bo'ladi). Tahrirlashda mahsulotning o'z SKU'si band hisoblanmaydi.
+  const [skuGenBusy, setSkuGenBusy] = useState(false);
+  async function handleGenerateSku() {
+    const name = (form.getValues("name") ?? "").trim();
+    if (!name || skuGenBusy) return;
+    setSkuGenBusy(true);
+    form.clearErrors("sku");
+    try {
+      const res = await authFetch(
+        `/api/products/sku-suggest?name=${encodeURIComponent(name)}` +
+          (isEdit ? `&exclude=${encodeURIComponent(product!.name)}` : ""),
+      );
+      if (!res.ok) throw new Error(String(res.status));
+      const data = await res.json();
+      setSkuTouched(true);
+      form.setValue("sku", String(data.sku ?? ""), { shouldDirty: true });
+    } catch {
+      form.setError("sku", { message: "SKU yaratib bo'lmadi — qayta urinib ko'ring" });
+    } finally {
+      setSkuGenBusy(false);
+    }
+  }
+
   const watchedSalePrice = form.watch("defaultSalePrice");
   const watchedWeight    = form.watch("weight");
   const watchedRate      = form.watch("rate");
@@ -862,13 +886,27 @@ function ProductDialog({
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>SKU {isEdit ? "" : "(avtomatik taklif — o'zgartirish mumkin)"}</FormLabel>
-                    <FormControl>
-                      <Input
-                        {...field}
-                        placeholder="ARQON-6MM"
-                        onChange={(e) => { setSkuTouched(true); field.onChange(e.target.value.toUpperCase()); }}
-                      />
-                    </FormControl>
+                    <div className="flex gap-2">
+                      <FormControl>
+                        <Input
+                          {...field}
+                          placeholder="ARQON-6MM"
+                          onChange={(e) => { setSkuTouched(true); field.onChange(e.target.value.toUpperCase()); }}
+                        />
+                      </FormControl>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="shrink-0 gap-1.5"
+                        onClick={handleGenerateSku}
+                        disabled={skuGenBusy || !(watchedName ?? "").trim()}
+                        title="Nomdan avtomatik unikal SKU yaratish"
+                      >
+                        <Wand2 className="w-3.5 h-3.5" />
+                        {skuGenBusy ? "..." : "Avto"}
+                      </Button>
+                    </div>
+                    <FormMessage />
                   </FormItem>
                 )}
               />

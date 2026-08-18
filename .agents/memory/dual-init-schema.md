@@ -36,3 +36,5 @@ Drizzle).
 wins. When the drift check flags a nullability mismatch, sync the Drizzle mirror
 in `lib/db/src/schema/` to match runtime — do NOT alter the runtime DDL to match
 Drizzle (Drizzle is never used for migrations here).
+
+**Update (2026-08-18):** THREE sync points, not two: bot `init_db` (py), API `initDb` (ts), and `lib/db/src/schema` (Drizzle) — plus the prod ALTER itself. The `schema-drift` workflow catches misses. Drizzle numeric defaults are strings (`.default("0")`).

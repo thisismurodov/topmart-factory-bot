@@ -16,7 +16,7 @@
 - [Container inventory weight](container-inventory-weight.md) — existence = qty>0 OR weight>0 (raw ham!); bot record_movement dual-mode (kg vs dona) + atomic availability guard in txn; stock = inventory, never batches−sales.
 - [Material Flow two-step WIP](material-flow-wip.md) — dept WIP = SUM(RECEIVE)−SUM(PRODUCE) over wip_movements ledger only; raw-in is the single entry point that syncs container inventory + raw_materials.
 - [Distribution bot integration](distribution-integration.md) — SQLite bot folded into monorepo on central Postgres `distribution` schema via psycopg2 shim; watch SQLite→PG GROUP BY strictness + GROUP_CONCAT.
-- [Dual init schema (bot + API)](dual-init-schema.md) — any table written at runtime must be CREATEd in BOTH bot init_db (py) and API initDb (ts), or fresh DBs crash (sale_items did).
+- [Dual init schema (bot + API + Drizzle)](dual-init-schema.md) — new columns/tables sync in THREE places: bot init_db (py), API initDb (ts), lib/db Drizzle; schema-drift workflow catches misses.
 - [Fresh-DB boot ordering](fresh-db-boot-ordering.md) — empty DB exposes ALTER-before-CREATE (42P01, not caught) + never-created tables (sale_items); guard test runs bot init_db()+API initDb() on a throwaway Railway DB.
 - [Telegram-bot test schema isolation](bot-test-schema-isolation.md) — never mutate DATABASE_URL env at test-module import; patch bot.database.DATABASE_URL in setUpClass or combined discovery breaks.
 - [Shared-DB test schema contention](test-schema-contention.md) — api-server tests run on shared Railway DB; schema/DB names MUST be unique per run (pid+timestamp) or parallel agent validations DROP each other's schemas.

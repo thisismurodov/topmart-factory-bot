@@ -61,3 +61,10 @@ uri = "file://attached_assets/etiketka_shablon_dona.png"
 type = "image"
 title = "4) SKU'siz, og'irliksiz mahsulot"
 description = "Shtrix-kod partiya kodidan: B-1808-7-20260818-1432."
+
+[[outputs]]
+id = "purvo8MQQAN_v81qKNUHx"
+uri = "file://attached_assets/etiketka_profil.png"
+type = "image"
+title = "Etiketka — profil'dan METR va KG"
+description = "Namuna: «Arqon 6mm Ko'k» — nomida metr yo'q, lekin profilda 80 metr va 3.1 kg kiritilgan; etiketka ikkalasini profildan oldi."

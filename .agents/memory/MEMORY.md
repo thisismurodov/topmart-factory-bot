@@ -43,3 +43,4 @@
 - [Test schema must mirror prod columns](test-schema-prod-mirror.md) — generate test CREATEs from information_schema, never assumptions; an assumed column passed all tests but 500'd live.
 - [Clone rehearsal for destructive DB ops](clone-rehearsal-pattern.md) — rehearse on LOCAL nix-PG cluster (remote restore too slow); fsync=off+kill reverts sequences → pg_depend setval resync; always pass -d (PGDATABASE quirk).
 - [Telegram inline index-callbacks need a keyboard nonce](tg-index-callbacks.md) — index callback_data must carry a per-keyboard token or stale in-range taps silently pick wrong items; non-matching payloads = legacy name callbacks.
+- [Replit AI proxy is sidecar-local](replit-ai-proxy-local.md) — AI_INTEGRATIONS_OPENAI_* point to a 127.0.0.1 sidecar; useless outside Replit (Railway); AI client stays lazy-init, deploy external hosts without these vars.

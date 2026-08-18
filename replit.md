@@ -60,7 +60,7 @@ Arqon ishlab chiqarish zavodi uchun Telegram bot — partiyalarni kiritish, nazo
 - `AI_INTERNAL_KEY` — bot↔API ichki autentifikatsiya kaliti (bot va API'da bir xil bo'lishi shart)
 - `API_BASE_URL` — bot uchun API manzili (`https://<api-host>/api`). Replit'da default `http://localhost:80/api`
 - `AI_HOUR` — kunlik AI tahlil yuboriladigan soat (0-23, Asia/Tashkent). Standart: 20
-- `AI_INTEGRATIONS_OPENAI_*` — Replit AI integration o'zgaruvchilari. Railway deploy'da bot+API servislarida ham bo'lishi kerak
+- `AI_INTEGRATIONS_OPENAI_*` — Replit AI integration o'zgaruvchilari. DIQQAT: bu ICHKI proksi manzili (http://127.0.0.1:...), faqat Replit muhitida (workspace + Replit deployment) ishlaydi. Railway'ga KO'CHIRMANG — u yerda proksi yo'q. API server ularsiz ham ko'tariladi (lazy klient); Railway'da AI endpointlar chaqirilganda aniq xato qaytadi, AI funksiyalar Replit deployment orqali ishlaydi
 - `DISTRIBUTION_BOT_TOKEN` — API serverda Mini App initData'ni tekshirish uchun distribution bot tokeni (productionda majburiy)
 - `FIELD_DEV_BYPASS` — faqat dev: `1` bo'lsa `X-Field-Dev-Id` bypass yoqiladi (productionda hech qachon qo'yilmasin)
 - `FIELD_APP_URL` — distribution bot uchun Mini App manzili (default: `https://$REPLIT_DEV_DOMAIN/field/`)

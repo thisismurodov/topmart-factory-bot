@@ -60,6 +60,7 @@ beforeAll(async () => {
   await pool.query(`
     CREATE TABLE products (
       cost_price NUMERIC(12,2) NOT NULL DEFAULT 0,
+      roll_length_m NUMERIC(12,2) NOT NULL DEFAULT 0,
       id            SERIAL PRIMARY KEY,
       name          TEXT NOT NULL UNIQUE,
       sku           TEXT NOT NULL DEFAULT '',

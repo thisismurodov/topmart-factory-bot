@@ -165,7 +165,7 @@ const REQUIRED: Record<string, string[]> = {
     "from_warehouse_id", "batch_id", "note", "created_by", "created_at",
   ],
   raw_materials: ["id", "name", "current_stock"],
-  products: ["name", "line_id", "active", "weight", "unit_type", "default_sale_price", "payroll_method", "pieces_per_box"],
+  products: ["name", "line_id", "active", "weight", "unit_type", "default_sale_price", "payroll_method", "pieces_per_box", "roll_length_m"],
   production_lines: ["id", "name"],
   production_line_workers: ["line_id", "worker_name", "role"],
   product_materials: ["product_name", "raw_material_id", "quantity_required"],

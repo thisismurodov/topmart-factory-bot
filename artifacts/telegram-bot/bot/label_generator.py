@@ -168,6 +168,14 @@ def extract_metr(product_name: str) -> float | None:
         return None
 
 
+def box_contents(quantity: int, per_box: int, box_num: int) -> int:
+    """box_num-qutidagi dona soni (oxirgi quti to'liq bo'lmasligi mumkin)."""
+    if per_box <= 1:
+        return 1
+    remaining = quantity - (box_num - 1) * per_box
+    return max(0, min(per_box, remaining))
+
+
 def kg_profile_meaningful(profile_kg: float) -> bool:
     """Profil og'irligi haqiqatan to'ldirilganmi? 1.0 — standart qiymat,
     "to'ldirilmagan" hisoblanadi (bot QC'sidagi qoida bilan bir xil)."""
@@ -262,6 +270,7 @@ def _build_single(
     per_box: int = 1,
     sku: str = "",
     metr: float | None = None,
+    in_box: int | None = None,
 ) -> Image.Image:
     img  = Image.new("RGB", (LABEL_W, LABEL_H), "white")
     draw = ImageDraw.Draw(img)
@@ -352,7 +361,11 @@ def _build_single(
     # SKU bo'lmasa partiya kodi shtrix-kod matnida allaqachon bor — takrorlamaymiz
     extra = f"{batch_code} · {unit_num}/{total_units}" if sku else f"{unit_num}/{total_units}"
     if per_box > 1:
-        extra += f" · 1 quti = {per_box} dona"
+        n = in_box if in_box is not None else per_box
+        if n == per_box:
+            extra += f" · 1 quti = {per_box} dona"
+        else:
+            extra += f" · oxirgi quti: {n} dona"
     f_ext = _fit_font(draw, extra, right - left, start=24, minimum=18)
     draw.text(((left + right) // 2, cap_y), extra,
               font=f_ext, fill="#222222", anchor="ma")
@@ -431,13 +444,16 @@ def generate_batch_session_pdf(
             # Qutili rejim: har bir qutiga 1 ta etiketika
             num_labels = math.ceil(quantity / per_box)
             actual_box = (weight_kg / num_labels) if num_labels > 0 else 0.0
-            # Profil to'ldirilgan: quti og'irligi = dona og'irligi × quti dona
-            box_weight = (profile_kg * per_box
-                          if kg_profile_meaningful(profile_kg) else actual_box)
             for i in range(1, num_labels + 1):
+                in_box = box_contents(quantity, per_box, i)
+                # Profil to'ldirilgan: quti og'irligi = dona og'irligi ×
+                # QUTIDAGI dona (oxirgi to'liq bo'lmagan quti o'z soniga ko'ra)
+                box_weight = (profile_kg * in_box
+                              if kg_profile_meaningful(profile_kg) else actual_box)
                 pages.append(_build_single(batch_code, worker, product, i,
                                            num_labels, box_weight, ts,
-                                           per_box=per_box, sku=sku, metr=metr))
+                                           per_box=per_box, sku=sku, metr=metr,
+                                           in_box=in_box))
         else:
             # Donabay rejim: har donaga 1 ta etiketika
             actual_unit = (weight_kg / quantity) if quantity > 0 else 0.0

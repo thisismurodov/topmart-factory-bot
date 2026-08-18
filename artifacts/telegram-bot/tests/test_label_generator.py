@@ -164,3 +164,31 @@ class LabelProfileFieldsTest(unittest.TestCase):
         ]
         buf = _gen("B-9", "W", items, _dt(2026, 8, 18, 10, 0))
         self.assertGreater(len(buf.getvalue()), 1000)
+
+
+class PartialBoxTest(unittest.TestCase):
+    """Oxirgi to'liq bo'lmagan quti: haqiqiy dona soni va og'irligi."""
+
+    def test_box_contents(self):
+        from bot.label_generator import box_contents
+        self.assertEqual(box_contents(26, 25, 1), 25)
+        self.assertEqual(box_contents(26, 25, 2), 1)   # oxirgi qutida 1 dona
+        self.assertEqual(box_contents(50, 25, 2), 25)
+        self.assertEqual(box_contents(24, 25, 1), 24)  # bitta to'liqmas quti
+        self.assertEqual(box_contents(5, 1, 3), 1)     # donabay rejim
+
+    def test_partial_box_label_differs_from_full(self):
+        from datetime import datetime as _dt
+        from bot.label_generator import _build_single as _bs
+        ts = _dt(2026, 8, 18, 10, 0)
+        full    = _bs("B", "W", "Qop", 1, 2, 50.0, ts, per_box=25, sku="Q-1", in_box=25)
+        partial = _bs("B", "W", "Qop", 2, 2, 2.0,  ts, per_box=25, sku="Q-1", in_box=1)
+        self.assertNotEqual(full.tobytes(), partial.tobytes())
+
+    def test_partial_box_session_pdf_pages(self):
+        from datetime import datetime as _dt
+        from bot.label_generator import generate_batch_session_pdf as _gen
+        items = [{"product": "Qop", "quantity": 26, "weight_kg": 52.0,
+                  "pieces_per_box": 25, "sku": "Q-1", "profile_kg": 2.0}]
+        buf = _gen("B-9", "W", items, _dt(2026, 8, 18, 10, 0))
+        self.assertGreater(len(buf.getvalue()), 1000)

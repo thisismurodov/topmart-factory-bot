@@ -106,3 +106,13 @@ Global on-hand for a raw item = Σ container inventory **+ Σ WIP balances**. Is
 - Architect catch (generalizes): protected-table claims (sales/sale_items/raw_materials "unchanged") need those tables IN the SHARE ROW EXCLUSIVE lock list too — REPEATABLE READ pins+9.x reread the same snapshot, so unlocked concurrent commits are invisible and the claim can be falsely green.
 - legacy.* archive is APPEND-ONLY via trigger (legacy.no_touch_fn): rehearsal tamper-tests must corrupt INVENTORY (pin gate catches), not the archive; live≠arxiv mismatch can only arise from inventory-side corruption.
 - product_type has NO DB CHECK — 'pre-finished' stores fine; sales decrement path is name-based (no type filter) so pre-finished sells OK; BUT some panels filter ='finished'/'raw' equality (ombor container/raw panels, dashboard badge fallback «Tayyor») — later dashboard pass per owner §17–18, NOT part of R-D.
+
+**Container count loading recipe (est. C-15, repeated C-14 2026-08-18).** New container
+physical count = ONE txn: `physical_baselines` row (LOADED, source_doc docs/physical-count-cNN-<date>.md)
+→ per position: `items` (ALL class flags false, inventory_tracked=t, source_kind='physical_count',
+sku TM-<max+1>) → `physical_baseline_positions` (position_no = GLOBAL max+i, container_pos = sheet
+order, MAPPED) → `stock_movements` BASELINE (product_type = owner's tasnif) → `inventory`
+(quantity=0, weight_kg). finished/pre-finished names ALSO get ombor-only `products` rows (sku='',
+item_id NULL, in_sales=f, in_production=f, weight=1) so bot kirim 'store' sees them; raw names touch
+NEITHER products NOR raw_materials (owner adds via bot catalog). Guards first: container inventory
+empty + no baseline row + names absent in items/item_aliases + SUM equals owner's JAMI.

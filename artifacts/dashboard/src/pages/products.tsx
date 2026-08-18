@@ -43,6 +43,7 @@ type Product = {
   lineSalaryRate?: number;
   electricityCost: number;
   otherCost: number;
+  costPrice: number;
   rawMaterialCost: number;
   totalCost: number;
   profit: number;
@@ -95,6 +96,7 @@ const productSchema = z.object({
   rate: z.coerce.number().min(0),
   electricityCost: z.coerce.number().min(0),
   otherCost: z.coerce.number().min(0),
+  costPrice: z.coerce.number().min(0).default(0),
   minimumStock: z.coerce.number().min(0).int(),
   piecesPerBox: z.coerce.number().int().min(1).default(1),
   active: z.boolean().default(true),
@@ -353,7 +355,7 @@ function useDeleteTier() {
 
 // ── Cost summary ──────────────────────────────────────────────────────────────
 function CostSummary({
-  rawMaterialCost, rate, rateType, electricityCost, otherCost, salePrice, weight, currencyType, usdRate, unitType, payrollMethod, lineSalaryRate,
+  rawMaterialCost, rate, rateType, electricityCost, otherCost, salePrice, weight, currencyType, usdRate, unitType, payrollMethod, lineSalaryRate, costPrice,
 }: {
   rawMaterialCost: number;
   rate: number;
@@ -367,6 +369,7 @@ function CostSummary({
   unitType: string;
   payrollMethod?: string;
   lineSalaryRate?: number;
+  costPrice?: number;
 }) {
   const isKg      = unitType === "kg";
   const isRolePay = payrollMethod === "ROLE_BASED_KG";
@@ -380,7 +383,11 @@ function CostSummary({
     : (rateType === "kg" ? rate * w : rate);
   const effElec   = isKg ? electricityCost * w : electricityCost;
   const effOther  = isKg ? otherCost * w : otherCost;
-  const totalCost = rawMaterialCost + effSalary + effElec + effOther;
+  // Qo'lda tan narx (>0) — BOM/maosh/elektr o'rniga to'liq ishlatiladi
+  const manualCost = (costPrice ?? 0) > 0;
+  const totalCost = manualCost
+    ? (costPrice ?? 0) * saleRate * (isKg ? w : 1)
+    : rawMaterialCost + effSalary + effElec + effOther;
   const profit    = effSale - totalCost;
   const marginPct = effSale > 0 ? (profit / effSale) * 100 : 0;
   const fmt = (v: number) => formatCurrency(v);
@@ -393,6 +400,12 @@ function CostSummary({
           <span className="font-mono">{w} kg</span>
         </div>
       )}
+      {manualCost ? (
+        <div className="flex justify-between text-muted-foreground">
+          <span>Tan narx (qo'lda){isKg && w !== 1 ? ` (×${w})` : ""}</span>
+          <span className="font-mono">{fmt(totalCost)}</span>
+        </div>
+      ) : (<>
       <div className="flex justify-between text-muted-foreground">
         <span>Xom ashyo xarajati</span>
         <span className="font-mono">{fmt(rawMaterialCost)}</span>
@@ -417,6 +430,7 @@ function CostSummary({
         <span>Boshqa xarajatlar{isKg ? ` (×${w})` : ""}</span>
         <span className="font-mono">{fmt(effOther)}</span>
       </div>
+      </>)}
       <div className="flex justify-between font-semibold border-t pt-1.5">
         <span>Jami xarajat</span>
         <span className="font-mono">{fmt(totalCost)}</span>
@@ -573,6 +587,7 @@ function BomTab({
         unitType={product.unitType}
         payrollMethod={product.payrollMethod}
         lineSalaryRate={product.lineSalaryRate}
+        costPrice={product.costPrice}
       />
     </div>
   );
@@ -738,6 +753,7 @@ function ProductDialog({
       lineId: product?.lineId ?? null,
       electricityCost: product?.electricityCost ?? 0,
       otherCost: product?.otherCost ?? 0,
+      costPrice: product?.costPrice ?? 0,
       minimumStock: product?.minimumStock ?? 0,
       piecesPerBox: product?.piecesPerBox ?? 1,
       active: product?.active ?? true,
@@ -761,6 +777,8 @@ function ProductDialog({
   const watchedUnitType  = form.watch("unitType");
   const watchedElec      = form.watch("electricityCost");
   const watchedOther          = form.watch("otherCost");
+  const watchedCostPrice      = form.watch("costPrice");
+  const watchedInSales        = form.watch("inSales");
   const watchedCurrency       = form.watch("currencyType");
   const watchedPayrollMethod  = form.watch("payrollMethod");
   const watchedLineId         = form.watch("lineId");
@@ -914,6 +932,28 @@ function ProductDialog({
                     </FormItem>
                   )}
                 />
+                {watchedInSales && (
+                  <FormField
+                    control={form.control}
+                    name="costPrice"
+                    render={({ field }) => (
+                      <FormItem className="pl-10 pb-1">
+                        <FormLabel className="font-normal">
+                          Tan narx
+                          <span className="text-muted-foreground font-normal ml-1 text-xs">
+                            ({watchedUnitType === "kg" ? "1 kg uchun" : "1 dona uchun"}, {watchedCurrency})
+                          </span>
+                        </FormLabel>
+                        <FormControl>
+                          <Input type="number" step="0.01" min={0} {...field} />
+                        </FormControl>
+                        <p className="text-xs text-muted-foreground">
+                          To'ldirilsa — foyda shu tan narxdan hisoblanadi (BOM shart emas). 0 = xarajatlar (BOM) dan hisoblanadi.
+                        </p>
+                      </FormItem>
+                    )}
+                  />
+                )}
                 <FormField
                   control={form.control}
                   name="inProduction"
@@ -1184,6 +1224,7 @@ function ProductDialog({
                   unitType={watchedUnitType}
                   payrollMethod={watchedPayrollMethod}
                   lineSalaryRate={lineRoleCfg.length > 0 ? lineRoleCfg.reduce((s, r) => s + r.rate, 0) : undefined}
+                  costPrice={Number(watchedCostPrice) || 0}
                 />
               </div>
 

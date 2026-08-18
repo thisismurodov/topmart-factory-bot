@@ -99,7 +99,8 @@ def init_db() -> None:
               ADD COLUMN IF NOT EXISTS created_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
               ADD COLUMN IF NOT EXISTS pieces_per_box   INTEGER NOT NULL DEFAULT 1,
               ADD COLUMN IF NOT EXISTS in_sales         BOOLEAN NOT NULL DEFAULT FALSE,
-              ADD COLUMN IF NOT EXISTS in_production    BOOLEAN NOT NULL DEFAULT TRUE
+              ADD COLUMN IF NOT EXISTS in_production    BOOLEAN NOT NULL DEFAULT TRUE,
+              ADD COLUMN IF NOT EXISTS cost_price       NUMERIC(12,2) NOT NULL DEFAULT 0
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS batches (

@@ -158,6 +158,7 @@ beforeAll(async () => {
       paid_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE TABLE products (
+      cost_price NUMERIC(12,2) NOT NULL DEFAULT 0,
       id SERIAL PRIMARY KEY,
       name TEXT NOT NULL,
       item_id INTEGER

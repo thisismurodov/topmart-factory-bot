@@ -16,6 +16,8 @@ export const productsTable = pgTable("products", {
   salaryCost:        numeric("salary_cost", { precision: 12, scale: 2 }).notNull().default("0"),
   electricityCost:   numeric("electricity_cost", { precision: 12, scale: 2 }).notNull().default("0"),
   otherCost:         numeric("other_cost", { precision: 12, scale: 2 }).notNull().default("0"),
+  // Qo'lda tan narx (savdo mahsulotlari uchun): >0 bo'lsa BOM/mehnat/elektr o'rniga ishlatiladi
+  costPrice:         numeric("cost_price", { precision: 12, scale: 2 }).notNull().default("0"),
   minimumStock:      integer("minimum_stock").notNull().default(0),
   piecesPerBox:      integer("pieces_per_box").notNull().default(1),
   payrollMethod:     text("payroll_method").notNull().default("PRODUCT_RATE"),

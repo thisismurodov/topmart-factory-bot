@@ -57,6 +57,7 @@ beforeAll(async () => {
       role   TEXT NOT NULL DEFAULT 'worker'
     );
     CREATE TABLE products (
+      cost_price NUMERIC(12,2) NOT NULL DEFAULT 0,
       name      TEXT PRIMARY KEY,
       id        SERIAL UNIQUE,
       unit_type TEXT NOT NULL DEFAULT 'dona',

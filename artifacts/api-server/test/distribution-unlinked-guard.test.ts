@@ -86,6 +86,7 @@ beforeAll(async () => {
   // ustunlar (savdo statistikasi jadvallari bo'sh bo'lsa ham bo'lishi kerak).
   await pool.query(`
     CREATE TABLE public.products (
+      cost_price NUMERIC(12,2) NOT NULL DEFAULT 0,
       id SERIAL PRIMARY KEY,
       name TEXT NOT NULL UNIQUE,
       sku TEXT NOT NULL DEFAULT '',

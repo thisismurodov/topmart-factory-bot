@@ -100,6 +100,7 @@ beforeAll(async () => {
   // bog'liq) + distribution.mahsulotlar'ning propagate tegadigan ustunlari.
   await pool.query(`
     CREATE TABLE public.products (
+      cost_price NUMERIC(12,2) NOT NULL DEFAULT 0,
       id SERIAL PRIMARY KEY,
       name TEXT NOT NULL UNIQUE,
       sku TEXT NOT NULL DEFAULT '',

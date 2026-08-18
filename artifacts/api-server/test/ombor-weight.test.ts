@@ -78,6 +78,7 @@ beforeAll(async () => {
       capacity_kg NUMERIC DEFAULT 20000
     );
     CREATE TABLE products (
+      cost_price NUMERIC(12,2) NOT NULL DEFAULT 0,
       name TEXT PRIMARY KEY,
       unit_type TEXT NOT NULL DEFAULT 'dona',
       currency_type TEXT NOT NULL DEFAULT 'UZS',

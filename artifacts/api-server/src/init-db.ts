@@ -55,6 +55,13 @@ export async function initDb(): Promise<void> {
       ADD COLUMN IF NOT EXISTS in_production BOOLEAN NOT NULL DEFAULT TRUE
   `);
 
+  // products.cost_price — qo'lda tan narx (savdo mahsulotlari uchun): >0 bo'lsa
+  // BOM/mehnat/elektr o'rniga TO'LIQ tan narx sifatida ishlatiladi.
+  await pool.query(`
+    ALTER TABLE IF EXISTS products
+      ADD COLUMN IF NOT EXISTS cost_price NUMERIC(12,2) NOT NULL DEFAULT 0
+  `);
+
   // Backfill: savdo katalogiga (distribution.mahsulotlar) SKU orqali bog'langan
   // mahsulotlar avtomatik "savdoda ishlatiladi" deb belgilanadi. Idempotent va
   // o'z-o'zini tuzatadi: in_sales o'chirilsa sync mahsulotni faol=0 qiladi,

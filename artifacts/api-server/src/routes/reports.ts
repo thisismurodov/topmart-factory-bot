@@ -202,6 +202,7 @@ router.get("/reports/product-profitability", async (req, res): Promise<void> => 
         p.rate_type,
         p.electricity_cost,
         p.other_cost,
+        p.cost_price,
         COALESCE((
           SELECT SUM(rm.default_cost * pm.quantity_required * CASE WHEN UPPER(rm.currency)='USD' THEN $1::numeric ELSE 1 END)
           FROM product_materials pm
@@ -215,31 +216,34 @@ router.get("/reports/product-profitability", async (req, res): Promise<void> => 
       LEFT JOIN sale_items si ON si.product_name = p.name
       WHERE p.active = TRUE
       GROUP BY p.name, p.sku, p.unit_type, p.currency_type,
-               p.default_sale_price, p.weight, p.rate, p.rate_type, p.electricity_cost, p.other_cost
+               p.default_sale_price, p.weight, p.rate, p.rate_type, p.electricity_cost, p.other_cost, p.cost_price
     ),
-    enriched AS (
+    costed AS (
       -- mehnat stavkadan (kg → rate×og'irlik, dona → rate); elektr/boshqa × og'irlik; xom ashyo mutlaq
       -- dona (piece) uchun sotuv narxi og'irlikka ko'paytirilmaydi — 1 dona narxi.
       -- kg uchun: narx/kg × og'irlik. USD narx jonli kursda ($1) UZS'ga aylantiriladi.
+      -- cost_price > 0 (qo'lda tan narx) — BOM/mehnat/elektr o'rniga TO'LIQ ishlatiladi.
       SELECT *,
         (CASE WHEN unit_type='kg' THEN default_sale_price * weight ELSE default_sale_price END
-          * CASE WHEN UPPER(currency_type)='USD' THEN $1::numeric ELSE 1 END
-          - (CASE WHEN rate_type='kg' THEN rate * weight ELSE rate END)
-          - CASE WHEN unit_type='kg' THEN (electricity_cost + other_cost) * weight
-                                     ELSE (electricity_cost + other_cost) END
-          - raw_material_cost) AS profit,
-        CASE WHEN CASE WHEN unit_type='kg' THEN default_sale_price * weight ELSE default_sale_price END
-                  * CASE WHEN UPPER(currency_type)='USD' THEN $1::numeric ELSE 1 END > 0
-          THEN (CASE WHEN unit_type='kg' THEN default_sale_price * weight ELSE default_sale_price END
-                  * CASE WHEN UPPER(currency_type)='USD' THEN $1::numeric ELSE 1 END
-                  - (CASE WHEN rate_type='kg' THEN rate * weight ELSE rate END)
-                  - CASE WHEN unit_type='kg' THEN (electricity_cost + other_cost) * weight
-                                             ELSE (electricity_cost + other_cost) END
-                  - raw_material_cost)
-               / (CASE WHEN unit_type='kg' THEN default_sale_price * weight ELSE default_sale_price END
-                    * CASE WHEN UPPER(currency_type)='USD' THEN $1::numeric ELSE 1 END) * 100
-          ELSE 0 END AS margin_pct
+          * CASE WHEN UPPER(currency_type)='USD' THEN $1::numeric ELSE 1 END) AS sale_price_uzs,
+        (CASE WHEN cost_price > 0
+           THEN cost_price
+                * CASE WHEN UPPER(currency_type)='USD' THEN $1::numeric ELSE 1 END
+                * CASE WHEN unit_type='kg' THEN weight ELSE 1 END
+           ELSE (CASE WHEN rate_type='kg' THEN rate * weight ELSE rate END)
+                + CASE WHEN unit_type='kg' THEN (electricity_cost + other_cost) * weight
+                                           ELSE (electricity_cost + other_cost) END
+                + raw_material_cost
+         END) AS total_cost_uzs
       FROM base
+    ),
+    enriched AS (
+      SELECT *,
+        (sale_price_uzs - total_cost_uzs) AS profit,
+        CASE WHEN sale_price_uzs > 0
+          THEN (sale_price_uzs - total_cost_uzs) / sale_price_uzs * 100
+          ELSE 0 END AS margin_pct
+      FROM costed
     )
     SELECT * FROM enriched ORDER BY ${orderClause}
   `, [rate]);
@@ -253,7 +257,11 @@ router.get("/reports/product-profitability", async (req, res): Promise<void> => 
     const otherCost       = isKg ? Number(r.other_cost) * w : Number(r.other_cost);
     const saleRate        = String(r.currency_type) === "USD" ? rate : 1;
     const salePrice       = Number(r.default_sale_price) * saleRate * (isKg ? w : 1);
-    const totalCost = rawCost + laborCost + electricityCost + otherCost;
+    // Qo'lda tan narx (>0) — komponent xarajatlar o'rniga to'liq ishlatiladi
+    const costPriceBase   = Number(r.cost_price) || 0;
+    const totalCost = costPriceBase > 0
+      ? costPriceBase * saleRate * (isKg ? w : 1)
+      : rawCost + laborCost + electricityCost + otherCost;
     const profit    = salePrice - totalCost;
     const marginPct = salePrice > 0 ? Math.round((profit / salePrice) * 10000) / 100 : 0;
     return {
@@ -267,6 +275,7 @@ router.get("/reports/product-profitability", async (req, res): Promise<void> => 
       salaryCost:      laborCost,
       electricityCost,
       otherCost,
+      costPrice:       costPriceBase,
       totalCost,
       profit,
       marginPct,
@@ -294,7 +303,12 @@ router.get("/reports/profit-trend", async (req, res): Promise<void> => {
         p.name,
         COALESCE(NULLIF(p.weight, 0), 1) AS weight,
         -- birlik (1 dona / 1 birlik mahsulot) XARAJATI, UZS'da (joriy konfiguratsiyadan)
-        ((CASE WHEN p.rate_type='kg' THEN p.rate * COALESCE(NULLIF(p.weight,0),1) ELSE p.rate END)
+        -- cost_price > 0 (qo'lda tan narx) — BOM/mehnat/elektr o'rniga TO'LIQ ishlatiladi
+        (CASE WHEN p.cost_price > 0
+           THEN p.cost_price
+                * CASE WHEN UPPER(p.currency_type)='USD' THEN $1::numeric ELSE 1 END
+                * CASE WHEN p.unit_type='kg' THEN COALESCE(NULLIF(p.weight,0),1) ELSE 1 END
+           ELSE (CASE WHEN p.rate_type='kg' THEN p.rate * COALESCE(NULLIF(p.weight,0),1) ELSE p.rate END)
           + CASE WHEN p.unit_type='kg' THEN (p.electricity_cost + p.other_cost) * COALESCE(NULLIF(p.weight,0),1)
                                        ELSE (p.electricity_cost + p.other_cost) END
           + COALESCE((
@@ -303,7 +317,7 @@ router.get("/reports/profit-trend", async (req, res): Promise<void> => {
               JOIN raw_materials rm ON rm.id = pm.raw_material_id
               WHERE pm.product_name = p.name
             ), 0)
-        ) AS unit_cost
+        END) AS unit_cost
       FROM products p
       WHERE p.active = TRUE
     )

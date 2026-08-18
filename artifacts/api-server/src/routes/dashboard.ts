@@ -260,7 +260,12 @@ router.get("/dashboard/v2", async (_req, res): Promise<void> => {
             THEN p.default_sale_price * COALESCE(NULLIF(p.weight, 0), 1)
             ELSE p.default_sale_price END
             * CASE WHEN UPPER(p.currency_type)='USD' THEN $1::numeric ELSE 1 END AS sale_price,
-          ((CASE WHEN p.rate_type='kg' THEN p.rate * COALESCE(NULLIF(p.weight, 0), 1) ELSE p.rate END)
+          CASE WHEN p.cost_price > 0
+            -- qo'lda tan narx — BOM/mehnat/elektr o'rniga TO'LIQ ishlatiladi
+            THEN p.cost_price
+                 * CASE WHEN UPPER(p.currency_type)='USD' THEN $1::numeric ELSE 1 END
+                 * CASE WHEN p.unit_type='kg' THEN COALESCE(NULLIF(p.weight, 0), 1) ELSE 1 END
+            ELSE ((CASE WHEN p.rate_type='kg' THEN p.rate * COALESCE(NULLIF(p.weight, 0), 1) ELSE p.rate END)
             + CASE WHEN p.unit_type='kg'
                 THEN (p.electricity_cost + p.other_cost) * COALESCE(NULLIF(p.weight, 0), 1)
                 ELSE (p.electricity_cost + p.other_cost) END) +
@@ -269,13 +274,14 @@ router.get("/dashboard/v2", async (_req, res): Promise<void> => {
               FROM product_materials pm
               JOIN raw_materials rm ON rm.id = pm.raw_material_id
               WHERE pm.product_name = p.name
-            ), 0) AS total_cost,
+            ), 0)
+          END AS total_cost,
           COALESCE(SUM(si.line_total) FILTER (WHERE LOWER(si.currency)='uzs'), 0) AS revenue_uzs,
           COALESCE(SUM(si.line_total) FILTER (WHERE LOWER(si.currency)='usd'), 0) AS revenue_usd
         FROM products p
         LEFT JOIN sale_items si ON si.product_name = p.name
         WHERE p.active = TRUE AND p.default_sale_price > 0
-        GROUP BY p.name, p.unit_type, p.default_sale_price, p.weight, p.rate, p.rate_type, p.electricity_cost, p.other_cost, p.currency_type
+        GROUP BY p.name, p.unit_type, p.default_sale_price, p.weight, p.rate, p.rate_type, p.electricity_cost, p.other_cost, p.currency_type, p.cost_price
       )
       SELECT name, sale_price, total_cost,
              (sale_price - total_cost) AS profit,
@@ -375,7 +381,12 @@ router.get("/dashboard/product-highlights", async (_req, res): Promise<void> => 
         THEN p.default_sale_price * COALESCE(NULLIF(p.weight, 0), 1)
         ELSE p.default_sale_price END
         * CASE WHEN UPPER(p.currency_type)='USD' THEN $1::numeric ELSE 1 END AS sale_price,
-      ((CASE WHEN p.rate_type='kg' THEN p.rate * COALESCE(NULLIF(p.weight, 0), 1) ELSE p.rate END)
+      CASE WHEN p.cost_price > 0
+        -- qo'lda tan narx — BOM/mehnat/elektr o'rniga TO'LIQ ishlatiladi
+        THEN p.cost_price
+             * CASE WHEN UPPER(p.currency_type)='USD' THEN $1::numeric ELSE 1 END
+             * CASE WHEN p.unit_type='kg' THEN COALESCE(NULLIF(p.weight, 0), 1) ELSE 1 END
+        ELSE ((CASE WHEN p.rate_type='kg' THEN p.rate * COALESCE(NULLIF(p.weight, 0), 1) ELSE p.rate END)
         + CASE WHEN p.unit_type='kg'
             THEN (p.electricity_cost + p.other_cost) * COALESCE(NULLIF(p.weight, 0), 1)
             ELSE (p.electricity_cost + p.other_cost) END) +
@@ -384,7 +395,8 @@ router.get("/dashboard/product-highlights", async (_req, res): Promise<void> => 
           FROM product_materials pm
           JOIN raw_materials rm ON rm.id = pm.raw_material_id
           WHERE pm.product_name = p.name
-        ), 0) AS total_cost,
+        ), 0)
+      END AS total_cost,
       COALESCE(SUM(si.line_total) FILTER (WHERE LOWER(si.currency)='uzs'), 0) AS revenue_uzs,
       COALESCE(SUM(si.line_total) FILTER (WHERE LOWER(si.currency)='usd'), 0) AS revenue_usd,
       COALESCE(SUM(si.quantity), 0) AS units_sold
@@ -392,7 +404,7 @@ router.get("/dashboard/product-highlights", async (_req, res): Promise<void> => 
     LEFT JOIN sale_items si ON si.product_name = p.name
     WHERE p.active = TRUE AND p.default_sale_price > 0
     GROUP BY p.name, p.unit_type, p.default_sale_price, p.weight,
-             p.rate, p.rate_type, p.electricity_cost, p.other_cost, p.currency_type
+             p.rate, p.rate_type, p.electricity_cost, p.other_cost, p.currency_type, p.cost_price
   `, [rate]);
 
   if (!rows.length) {

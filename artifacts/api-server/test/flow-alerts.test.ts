@@ -66,6 +66,7 @@ beforeAll(async () => {
       line_id INTEGER NOT NULL
     );
     CREATE TABLE products (
+      cost_price NUMERIC(12,2) NOT NULL DEFAULT 0,
       id      SERIAL PRIMARY KEY,
       name    TEXT NOT NULL,
       line_id INTEGER,

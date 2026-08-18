@@ -18,3 +18,13 @@ same wrong assumption, so the test proved nothing about prod compatibility.
 - Mirror nullability and defaults too, not just names — NOT NULL columns without defaults catch seed rows that quietly rely on impossible NULLs (e.g. batches.worker is NOT NULL in prod; a seeded "orphan batch with NULL worker" scenario was unrepresentable, i.e. a fake test case).
 - In this project activity/visibility flags often do NOT exist as columns (production_lines has none); they are app-level conventions like ACTIVE_LINE_IDS. Check the flow-graph lib before inventing flag columns.
 - Related but distinct memories: dual-init-schema (bot+API both CREATE), fresh-DB boot ordering, shared-DB test schema contention.
+
+**New products column ⇒ update ~15 hand-rolled test DDLs.** Many api-server test files each
+hand-roll their own `CREATE TABLE ... products (` DDL (find them:
+`grep -rl "CREATE TABLE[^(]*products\s*(" test/`). When a new column is added to prod
+`products`, every one of those DDLs must gain it or POST/GET products in those tests fail with
+`column ... does not exist` (surfaces as 409 from the POST upsert catch, not 500 — misleading).
+Only files whose tests hit an affected endpoint fail; the rest break silently later. Inserting
+the new column right after the opening paren is safe HERE because test inserts are all
+column-list based — verify first with `grep -rn "INSERT INTO [^ ]*products\s*VALUES" test/`
+(positional inserts would break on column-order changes).

@@ -149,7 +149,7 @@ router.get("/products", async (_req, res): Promise<void> => {
     SELECT
       p.id, p.name, p.sku, p.unit_type, p.currency_type,
       p.default_sale_price, p.weight, p.rate, p.rate_type,
-      p.salary_cost, p.electricity_cost, p.other_cost,
+      p.salary_cost, p.electricity_cost, p.other_cost, p.cost_price,
       p.minimum_stock, p.active, p.created_at, p.payroll_method,
       p.in_sales, p.in_production,
       p.line_id,
@@ -188,8 +188,13 @@ router.get("/products", async (_req, res): Promise<void> => {
     const elecBase        = Number(row.electricity_cost);
     const otherBase       = Number(row.other_cost);
     const rawCost         = Number(row.raw_material_cost);
+    // Qo'lda tan narx (>0) — BOM/mehnat/elektr hisobini TO'LIQ almashtiradi.
+    // Sotuv narxi kabi: mahsulot valyutasida, kg mahsulotda 1 kg uchun kiritiladi.
+    const costPriceBase   = Number(row.cost_price) || 0;
     const effectiveSale   = salePriceBase * saleRate * (isKg ? w : 1);
-    const totalCost       = rawCost + laborCost + (isKg ? (elecBase + otherBase) * w : (elecBase + otherBase));
+    const totalCost       = costPriceBase > 0
+      ? costPriceBase * saleRate * (isKg ? w : 1)
+      : rawCost + laborCost + (isKg ? (elecBase + otherBase) * w : (elecBase + otherBase));
     const profit          = effectiveSale - totalCost;
     const marginPct       = effectiveSale > 0
       ? Math.round((profit / effectiveSale) * 10000) / 100
@@ -212,6 +217,7 @@ router.get("/products", async (_req, res): Promise<void> => {
       salaryCost:         laborCost,
       electricityCost:    elecBase,
       otherCost:          otherBase,
+      costPrice:          costPriceBase,
       rawMaterialCost:    rawCost,
       totalCost,
       profit,
@@ -233,7 +239,7 @@ router.post("/products", async (req, res): Promise<void> => {
     defaultSalePrice = 0, weight = 1, rate = 0, rateType,
     salaryCost = 0, electricityCost = 0, otherCost = 0,
     minimumStock = 0, active = true, piecesPerBox = 1,
-    lineId = null,
+    lineId = null, costPrice = 0,
   } = req.body ?? {};
   // Bitta mahsulot bazasi modullari: aniq berilmasa mavjud qiymat saqlanadi
   // (yangi yozuvda: in_sales=FALSE, in_production=TRUE default'lari ishlaydi)
@@ -269,23 +275,24 @@ router.post("/products", async (req, res): Promise<void> => {
           `INSERT INTO products
              (name, sku, unit_type, currency_type, default_sale_price, weight, rate, rate_type,
               salary_cost, electricity_cost, other_cost, minimum_stock, active, pieces_per_box, line_id,
-              in_sales, in_production)
+              in_sales, in_production, cost_price)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
-                   COALESCE($16, FALSE), COALESCE($17, TRUE))
+                   COALESCE($16, FALSE), COALESCE($17, TRUE), $18)
            ON CONFLICT (name) DO UPDATE SET
              sku = CASE WHEN products.sku <> '' THEN products.sku ELSE EXCLUDED.sku END,
              unit_type=$3, currency_type=$4, default_sale_price=$5, weight=$6, rate=$7, rate_type=$8,
              salary_cost=$9, electricity_cost=$10, other_cost=$11, minimum_stock=$12, active=$13,
              pieces_per_box=$14, line_id=$15,
              in_sales=COALESCE($16, products.in_sales),
-             in_production=COALESCE($17, products.in_production)
+             in_production=COALESCE($17, products.in_production),
+             cost_price=$18
            RETURNING id, name, sku, unit_type, currency_type, default_sale_price, weight, rate, rate_type,
                      salary_cost, electricity_cost, other_cost, minimum_stock, active, pieces_per_box, line_id,
-                     in_sales, in_production`,
+                     in_sales, in_production, cost_price`,
           [name.trim(), finalSku, unitType, currencyType, Number(defaultSalePrice), finalWeight, Number(rate),
            finalRateType, Number(salaryCost), Number(electricityCost), Number(otherCost),
            Number(minimumStock), Boolean(active), Math.max(1, Number(piecesPerBox) || 1), finalLineId,
-           inSales, inProduction]
+           inSales, inProduction, Math.max(0, Number(costPrice) || 0)]
         ));
         break;
       } catch (e: any) {
@@ -314,7 +321,7 @@ router.post("/products", async (req, res): Promise<void> => {
       defaultSalePrice: Number(p.default_sale_price), weight: Number(p.weight),
       rate: Number(p.rate), rateType: p.rate_type,
       salaryCost: Number(p.salary_cost), electricityCost: Number(p.electricity_cost),
-      otherCost: Number(p.other_cost), minimumStock: p.minimum_stock,
+      otherCost: Number(p.other_cost), costPrice: Number(p.cost_price), minimumStock: p.minimum_stock,
       piecesPerBox: Number(p.pieces_per_box) || 1, active: p.active,
       inSales: p.in_sales === true, inProduction: p.in_production !== false,
     });
@@ -333,7 +340,8 @@ router.patch("/products/:name", async (req, res): Promise<void> => {
     ["sku", "sku"], ["unit_type", "unitType"], ["currency_type", "currencyType"],
     ["default_sale_price", "defaultSalePrice"], ["weight", "weight"], ["rate", "rate"], ["rate_type", "rateType"],
     ["salary_cost", "salaryCost"], ["electricity_cost", "electricityCost"],
-    ["other_cost", "otherCost"], ["minimum_stock", "minimumStock"], ["active", "active"],
+    ["other_cost", "otherCost"], ["cost_price", "costPrice"],
+    ["minimum_stock", "minimumStock"], ["active", "active"],
     ["payroll_method", "payrollMethod"], ["pieces_per_box", "piecesPerBox"], ["line_id", "lineId"],
     ["in_sales", "inSales"], ["in_production", "inProduction"],
   ];
@@ -343,6 +351,8 @@ router.patch("/products/:name", async (req, res): Promise<void> => {
       // og'irlik 0 yoki manfiy bo'lsa 1 ga tenglaymiz (manfiy narx oldini olish)
       const value = col === "weight"
         ? (Number(req.body[key]) > 0 ? Number(req.body[key]) : 1)
+        : col === "cost_price"
+        ? Math.max(0, Number(req.body[key]) || 0)
         : req.body[key];
       vals.push(value);
       fields.push(`${col}=$${vals.length}`);
@@ -451,7 +461,11 @@ router.get("/products/:name/profitability", async (req, res): Promise<void> => {
   // USD narx jonli kursda UZS'ga aylantiriladi (xarajatlar UZS'da — izchillik uchun).
   const saleRate        = String(p.currency_type) === "USD" ? rate : 1;
   const salePrice       = Number(p.default_sale_price) * saleRate * (isKg ? w : 1);
-  const totalCost       = rawCost + laborCost + electricityCost + otherCost;
+  // Qo'lda tan narx (>0) — komponent xarajatlar (BOM/mehnat/elektr) o'rniga to'liq ishlatiladi
+  const costPriceBase   = Number(p.cost_price) || 0;
+  const totalCost       = costPriceBase > 0
+    ? costPriceBase * saleRate * (isKg ? w : 1)
+    : rawCost + laborCost + electricityCost + otherCost;
   const profit          = salePrice - totalCost;
   const marginPct       = salePrice > 0 ? (profit / salePrice) * 100 : 0;
 
@@ -459,6 +473,7 @@ router.get("/products/:name/profitability", async (req, res): Promise<void> => {
     name:            p.name,
     weight:          w,
     salePrice,
+    costPrice:       costPriceBase,
     rawMaterialCost: rawCost,
     salaryCost:      laborCost,
     electricityCost,

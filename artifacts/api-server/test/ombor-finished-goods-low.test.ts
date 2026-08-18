@@ -69,6 +69,7 @@ beforeAll(async () => {
       location_type TEXT NOT NULL DEFAULT 'container'
     );
     CREATE TABLE products (
+      cost_price NUMERIC(12,2) NOT NULL DEFAULT 0,
       id                 SERIAL PRIMARY KEY,
       name               TEXT NOT NULL UNIQUE,
       unit_type          TEXT NOT NULL DEFAULT 'dona',

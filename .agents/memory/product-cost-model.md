@@ -65,6 +65,27 @@ be computed in a single currency or it is meaningless. The rule:
 $1.85 product) and a `$`-labeled UZS number in the UI. This was found and re-found across 4 review
 rounds because each endpoint/UI spot had its own copy of the calc.
 
+## Manual cost price override (`products.cost_price`) — qo'lda tan narx
+
+`cost_price NUMERIC(12,2) NOT NULL DEFAULT 0` — owner-entered per-unit cost in the **product's own
+currency** (`currency_type`), per kg for kg products / per dona for piece products.
+
+- **Precedence:** if `cost_price > 0` it **fully replaces** the legacy computed cost
+  (BOM + labor + electricity + other). If 0 → legacy formula, byte-identical.
+- **Conversion:** `totalCost_UZS = cost_price × (USD? live cbu rate : 1) × (kg? COALESCE(NULLIF(weight,0),1) : 1)`.
+  Profit/margin stay ALWAYS UZS. The `$n::numeric` cast gotcha (below) applies to the rate param here too.
+- Applies to EVERY profitability path (same list as currency normalization): `products.ts` list +
+  `/:name/profitability`, `reports.ts` `/product-profitability` + `/profit-trend` unit_cost,
+  `dashboard.ts` `/dashboard/v2` + `/product-highlights`, and dashboard `CostSummary` (single
+  "Tan narx (qo'lda)" row replaces the 4 component rows). Any SQL GROUP BY over products must add
+  `p.cost_price`.
+- Clamp `≥ 0` on POST/PATCH. UI input renders only when the `inSales` toggle is ON.
+
+**Why:** savdo-only products (bought for resale) have no BOM/production data, so their margin was
+always 100%-wrong; the owner sets tan narx manually instead of faking a BOM.
+**How to apply:** any new cost/profit endpoint must branch on `cost_price > 0` FIRST, then fall
+back to the legacy formula.
+
 ## Gotcha: Postgres infers a `$n` param as integer from a sibling integer literal
 
 `CASE WHEN ... THEN $1 ELSE 1 END` makes Postgres type `$1` as **integer** (from the `ELSE 1`

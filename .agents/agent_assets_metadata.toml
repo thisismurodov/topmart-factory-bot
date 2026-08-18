@@ -12,3 +12,24 @@ id = "PoRaeLTQUenwG6V8XxZcH"
 uri = "file://artifacts/dashboard/public/label_preview.png"
 type = "image"
 title = "Label — tepa va past boʻshliq qoʻshildi"
+
+[[outputs]]
+id = "cMxzUH-9t6PnNlydob5PA"
+uri = "file://attached_assets/etiketka_100x80_oddiy.png"
+type = "image"
+title = "Etiketka 100×80 — oddiy (kg)"
+description = "Yangi termal printer uchun: partiya kodi, mahsulot, ishchi, yirik og'irlik, sana/soat."
+
+[[outputs]]
+id = "H_CzXTy6NC5qQnt8-itDz"
+uri = "file://attached_assets/etiketka_100x80_qutili.png"
+type = "image"
+title = "Etiketka 100×80 — qutili + uzun nom"
+description = "Qutili mahsulotda «1 quti = N dona» ramkasi, N/M = quti raqami, og'irlik = quti og'irligi."
+
+[[outputs]]
+id = "A0v2eTnmwl4ruk0AmkthO"
+uri = "file://attached_assets/etiketka_100x80_dona.png"
+type = "image"
+title = "Etiketka 100×80 — og'irliksiz (dona)"
+description = "Og'irlik kiritilmagan mahsulotda pastki blok bo'sh qoladi."

@@ -1,6 +1,17 @@
 """
-58mm × 40mm thermal label generator (XPrinter XP-365B, 203 DPI).
-Landscape layout — uses 95% of sticker area, readable from 1 metre.
+100mm × 80mm termal etiketka generatori (203 DPI, yangi termal printer).
+Landshaft, o'lcham QAT'IY 100×80 — die-cut stiker, pastki qismi kesilmaydi.
+
+Dizayn (tepadan pastga):
+  TOPMART                                    N/M
+  ────────────────────────────────────────────
+  PARTIYA KODI            (eng katta, moslashuvchan)
+  Mahsulot nomi           (max 2 qator, moslashuvchan)
+  [ 1 quti = N dona ]     (faqat qutili mahsulotlarda)
+  Ishchi: ...
+  OG'IRLIK                (yirik, pastga yaqin)
+  ────────────────────────────────────────────
+  sana                                     soat
 """
 import io
 import os
@@ -9,21 +20,33 @@ from datetime import datetime
 import img2pdf
 from PIL import Image, ImageDraw, ImageFont
 
-# 58mm × 40mm @ 203 DPI
+# 100mm × 80mm @ 203 DPI
 _DPI    = 203
-LABEL_W = round(58 * _DPI / 25.4)   # 464 px
-LABEL_H = round(40 * _DPI / 25.4)   # 320 px
+LABEL_W = round(100 * _DPI / 25.4)   # 799 px
+LABEL_H = round(80 * _DPI / 25.4)    # 639 px
 
+BRAND = "TOPMART"
+
+# Repo ichidagi shriftlar birinchi — Railway slim image'da /usr/share
+# shriftlari YO'Q (receipt.py bilan bir xil yechim).
+_FONT_DIR = os.path.join(os.path.dirname(__file__), "fonts")
 _BOLD_PATHS = [
+    os.path.join(_FONT_DIR, "DejaVuSans-Bold.ttf"),
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
     "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
 ]
 _REG_PATHS = [
+    os.path.join(_FONT_DIR, "DejaVuSans.ttf"),
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
     "/usr/share/fonts/dejavu/DejaVuSans.ttf",
 ]
+
+# Chekka xavfsiz zonalar (die-cut stiker, ~4mm)
+PAD_L = 32
+PAD_R = 32
+PAD_T = 20
 
 
 def _font(px: int, bold: bool = False) -> ImageFont.FreeTypeFont:
@@ -83,6 +106,18 @@ def _wrap(draw, text: str, font, max_w: int) -> list[str]:
     return lines or [text]
 
 
+def _product_rows(draw, product: str, content_w: int, sz: int):
+    """Mahsulot nomini shu o'lchamda 1-2 qatorga joylashtiradi.
+    Qatorlardan biri sig'masa None (chaqiruvchi kichikroq o'lcham sinaydi)."""
+    f = _font(sz, bold=True)
+    if _text_w(draw, product, f) <= content_w:
+        return [(product, f)]
+    lines = _wrap(draw, product, f, content_w)
+    if all(_text_w(draw, ln, f) <= content_w for ln in lines):
+        return [(ln, f) for ln in lines]
+    return None
+
+
 def _build_single(
     batch_code: str,
     worker: str,
@@ -100,61 +135,91 @@ def _build_single(
     img  = Image.new("RGB", (LABEL_W, LABEL_H), "white")
     draw = ImageDraw.Draw(img)
 
-    PAD_L = 42    # chap xavfsiz zona: ~5.2mm
-    PAD_R = 18    # o'ng chegara
+    left      = PAD_L
+    right     = LABEL_W - PAD_R
+    content_w = right - left
 
-    # ── Fontlar (203 DPI, 1pt ≈ 2.82px) ──────────────────────────
-    F_HDR  = _font(22, bold=True)
-    F_PROD = _font(27, bold=True)
-    F_INFO = _font(24, bold=True)
-    F_DT   = _font(21, bold=True)
+    # ── Pastki lenta (ankerlangan): chiziq + sana/soat ────────────────
+    F_DT = _font(30, bold=True)
+    footer_rule_y = LABEL_H - 68
+    draw.line((left, footer_rule_y, right, footer_rule_y), fill="black", width=3)
+    dt_y = footer_rule_y + 14
+    draw.text((left, dt_y), date_str, font=F_DT, fill="#333333")
+    draw.text((right, dt_y), time_str, font=F_DT, fill="#333333", anchor="ra")
 
-    # Batch code uchun mavjud kenglik (chap offset hisobga olingan)
-    BC_MAX_W = LABEL_W - PAD_L - PAD_R
-
-    # ── Satır 1: N/M (o'ng) ──────────────────────────────────────
-    y = 16
-    page_txt = f"{unit_num}/{total_units}"
-    draw.text((LABEL_W - PAD_R, y), page_txt, font=F_HDR, fill="black", anchor="ra")
-    y += _text_h(draw, page_txt, F_HDR) + 6
-
-    # ── Satır 2: Partiya kodi — ENG KATTA ────────────────────────
-    bc_font, _ = _fit_font(draw, batch_code,
-                           max_w=BC_MAX_W,
-                           start=58, minimum=28, bold=True)
-    draw.text((PAD_L, y), batch_code, font=bc_font, fill="black")
-    y += _text_h(draw, batch_code, bc_font) + 7
-
-    # ── Satır 3: Mahsulot nomi (wrap → max 2 qator) ───────────────
-    prod_lines = _wrap(draw, product, F_PROD, BC_MAX_W)
-    for line in prod_lines:
-        draw.text((PAD_L, y), line, font=F_PROD, fill="black")
-        y += _text_h(draw, line, F_PROD) + 3
-
-    # ── Satır 3b: Qutidagi dona (faqat qutili mahsulotlar uchun) ──
-    if per_box > 1:
-        box_txt = f"📦 {per_box} dona/quti"
-        F_BOX = _font(21, bold=False)
-        draw.text((PAD_L, y), box_txt, font=F_BOX, fill="#444444")
-        y += _text_h(draw, box_txt, F_BOX) + 4
+    # ── Og'irlik (ankerlangan, yirik). Og'irliksiz mahsulotda bu blok
+    #    chizilmaydi — katta «—» termal qog'ozda brak dog'iga o'xshaydi. ──
+    if unit_weight > 0:
+        w_font = _font(88, bold=True)
+        w_h    = _text_h(draw, weight_txt, w_font)
+        weight_y = footer_rule_y - 18 - w_h
+        draw.text((left, weight_y), weight_txt, font=w_font, fill="black")
     else:
-        y += 2
+        weight_y = footer_rule_y - 18
 
-    # ── Satır 4: Ishchi ───────────────────────────────────────────
-    draw.text((PAD_L, y), f"Ishchi: {worker}", font=F_INFO, fill="black")
-    y += _text_h(draw, worker, F_INFO) + 6
+    # ── Sarlavha: brend + N/M ─────────────────────────────────────────
+    F_BRAND = _font(30, bold=True)
+    F_PAGE  = _font(52, bold=True)
+    draw.text((left, PAD_T + 10), BRAND, font=F_BRAND, fill="#333333")
+    page_txt = f"{unit_num}/{total_units}"
+    draw.text((right, PAD_T), page_txt, font=F_PAGE, fill="black", anchor="ra")
+    header_rule_y = PAD_T + 64
+    draw.line((left, header_rule_y, right, header_rule_y), fill="black", width=3)
 
-    # ── Satır 5: Og'irlik ─────────────────────────────────────────
-    draw.text((PAD_L, y), weight_txt, font=F_INFO, fill="black")
-    y += _text_h(draw, weight_txt, F_INFO) + 6
+    # ── Yuqori oqim: partiya kodi → mahsulot → quti → ishchi ─────────
+    # Mahsulot shriftini og'irlik zonasiga tegmaydigan qilib tanlaymiz.
+    F_WORKER = _font(36, bold=True)
+    F_BOX    = _font(32, bold=True)
 
-    # ── Satır 6: Sana (chap) + Soat (o'ng) — og'irlik ostida ─────
-    draw.text((PAD_L, y), date_str, font=F_DT, fill="#444444")
-    draw.text((LABEL_W - PAD_R, y), time_str, font=F_DT, fill="#444444", anchor="ra")
-    y += _text_h(draw, date_str, F_DT) + 16   # 16px pastki bo'shliq
+    prod_sz = 56
+    while True:
+        rows = _product_rows(draw, product, content_w, prod_sz)
+        if rows is not None:
+            # umumiy balandlikni o'lchaymiz
+            y = header_rule_y + 14
+            bc_font, _ = _fit_font(draw, batch_code, max_w=content_w,
+                                   start=100, minimum=48, bold=True)
+            y += _text_h(draw, batch_code, bc_font) + 12
+            for ln, f in rows:
+                y += _text_h(draw, ln, f) + 6
+            if per_box > 1:
+                y += _text_h(draw, "Xg", F_BOX) + 24 + 10
+            y += _text_h(draw, "Ishchi", F_WORKER) + 8
+            if y <= weight_y - 8 or prod_sz <= 34:
+                break
+        if prod_sz <= 34:
+            rows = rows or [(product, _font(34, bold=True))]
+            break
+        prod_sz -= 4
 
-    # Quyi bo'sh qismni kesib tashlash — faqat mazmun balandligi qoladi
-    return img.crop((0, 0, LABEL_W, y))
+    # Endi chizamiz
+    y = header_rule_y + 14
+    bc_font, _ = _fit_font(draw, batch_code, max_w=content_w,
+                           start=100, minimum=48, bold=True)
+    draw.text((left, y), batch_code, font=bc_font, fill="black")
+    y += _text_h(draw, batch_code, bc_font) + 12
+
+    for ln, f in rows:
+        draw.text((left, y), ln, font=f, fill="black")
+        y += _text_h(draw, ln, f) + 6
+
+    if per_box > 1:
+        box_txt = f"1 quti = {per_box} dona"
+        bw = _text_w(draw, box_txt, F_BOX)
+        bh = _text_h(draw, box_txt, F_BOX)
+        y += 6
+        draw.rounded_rectangle(
+            (left, y, left + bw + 32, y + bh + 24),
+            radius=10, outline="black", width=3,
+        )
+        draw.text((left + 16, y + 10), box_txt, font=F_BOX, fill="black")
+        y += bh + 24 + 10
+    else:
+        y += 4
+
+    draw.text((left, y), f"Ishchi: {worker}", font=F_WORKER, fill="black")
+
+    return img
 
 
 def generate_label_pdf(
@@ -175,7 +240,7 @@ def generate_label_pdf(
         img.save(buf, format="PNG", dpi=(_DPI, _DPI))
         png_pages.append(buf.getvalue())
 
-    # img2pdf — PDF/MediaBox sahifasini aniq 58×40mm qiladi (Foxit 100% da chiqaradi)
+    # img2pdf — PDF sahifasini aniq 100×80mm qiladi (printer 100% masshtabda chiqaradi)
     pdf_bytes = img2pdf.convert(
         png_pages,
         layout_fun=img2pdf.get_fixed_dpi_layout_fun((_DPI, _DPI)),

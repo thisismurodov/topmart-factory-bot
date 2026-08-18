@@ -766,6 +766,13 @@ def get_product_pieces_per_box(name: str) -> int:
         return int(row["pieces_per_box"])
     return 1
 
+def get_product_sku(name: str) -> str:
+    """Mahsulot SKU'si (etiketka uchun). Topilmasa bo'sh satr."""
+    with get_conn() as (conn, cur):
+        cur.execute("SELECT sku FROM products WHERE name=%s", (name,))
+        row = cur.fetchone()
+    return (row["sku"] or "").strip() if row else ""
+
 def get_line_wip_balance(product: str):
     """Mahsulot liniyasining joriy WIP balansi (RECEIVE − PRODUCE, kg).
 
@@ -1458,7 +1465,8 @@ def get_today_batches(worker_filter: list[str] | None = None) -> list[dict]:
             cur.execute(
                 f"""SELECT b.batch_code, b.worker, b.product, b.quantity,
                            b.weight_kg, b.earnings, b.created_at,
-                           COALESCE(p.pieces_per_box, 1) AS pieces_per_box
+                           COALESCE(p.pieces_per_box, 1) AS pieces_per_box,
+                           COALESCE(p.sku, '') AS sku
                     FROM batches b
                     LEFT JOIN products p ON p.name = b.product
                     WHERE b.created_at::date = CURRENT_DATE
@@ -1470,7 +1478,8 @@ def get_today_batches(worker_filter: list[str] | None = None) -> list[dict]:
             cur.execute(
                 """SELECT b.batch_code, b.worker, b.product, b.quantity,
                           b.weight_kg, b.earnings, b.created_at,
-                          COALESCE(p.pieces_per_box, 1) AS pieces_per_box
+                          COALESCE(p.pieces_per_box, 1) AS pieces_per_box,
+                          COALESCE(p.sku, '') AS sku
                    FROM batches b
                    LEFT JOIN products p ON p.name = b.product
                    WHERE b.created_at::date = CURRENT_DATE

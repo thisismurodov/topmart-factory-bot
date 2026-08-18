@@ -1,9 +1,11 @@
+from datetime import datetime
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler, MessageHandler, filters
 
 from ..database import get_today_batches
 from ..keyboards import main_menu_keyboard
-from ..label_generator import generate_batch_session_pdf
+from ..label_generator import TASHKENT_TZ, generate_batch_session_pdf
 
 
 def _group_by_code(rows: list[dict]) -> dict[str, list[dict]]:
@@ -73,10 +75,19 @@ async def send_label_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             "quantity":      r["quantity"],
             "weight_kg":     r["weight_kg"] or 0.0,
             "pieces_per_box": int(r.get("pieces_per_box") or 1),
+            "sku":            r.get("sku") or "",
         }
         for r in items
     ]
-    pdf_buf = generate_batch_session_pdf(batch_code, worker, pdf_items)
+    # Qayta chop etishda partiyaning ASL vaqti ishlatiladi (Toshkent bo'yicha) —
+    # aks holda har reprint boshqa sana/shtrix-kod bilan chiqadi.
+    created = items[0].get("created_at")
+    if isinstance(created, datetime):
+        if created.tzinfo is not None:
+            created = created.astimezone(TASHKENT_TZ).replace(tzinfo=None)
+    else:
+        created = None
+    pdf_buf = generate_batch_session_pdf(batch_code, worker, pdf_items, created)
     await query.message.reply_document(
         document=pdf_buf,
         filename=f"{batch_code}.pdf",

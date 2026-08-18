@@ -13,11 +13,12 @@ from ..database import (
     create_batch_session, get_worker_chat_id, get_workers,
     get_products, get_product_weight, get_user_role, get_worker_monthly,
     get_product_method, get_containers, get_product_pieces_per_box,
+    get_product_sku,
     get_worker_production_role, WipBalanceError, RawStockError,
     get_line_wip_balance,
 )
 from ..config import calc_earnings, SUPERADMIN_CHAT_ID
-from ..label_generator import generate_batch_session_pdf
+from ..label_generator import TASHKENT_TZ, generate_batch_session_pdf
 
 (CHOOSE_WORKER, CHOOSE_PRODUCT, ENTER_QUANTITY, ENTER_WEIGHT,
  AFTER_ITEM, CHOOSE_CONTAINER, CONFIRM_STOCK) = range(7)
@@ -208,6 +209,10 @@ async def _add_item(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     worker_role   = get_worker_production_role(worker, product) if method == "ROLE_BASED_KG" else None
     earnings      = calc_earnings(product, quantity, weight_kg, method=method, worker_role=worker_role, worker_name=worker)
     pieces_per_box = get_product_pieces_per_box(product)
+    try:
+        sku = get_product_sku(product)
+    except Exception:
+        sku = ""  # SKU topilmasa ham etiketka chiqishi shart
 
     items = context.user_data.setdefault("items", [])
     items.append({
@@ -219,6 +224,7 @@ async def _add_item(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         "worker_role":    worker_role,
         "qc":             qc,
         "pieces_per_box": pieces_per_box,
+        "sku":            sku,
     })
 
     # Faqat joriy mahsulotning vaqtinchalik maydonlarini tozalaymiz (savat saqlanadi)
@@ -336,7 +342,8 @@ async def _finalize(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     workers      = get_workers()
     prefix       = workers.get(worker, worker[:2].upper())
-    created      = datetime.now()
+    # Etiketkadagi sana/soat doim Toshkent bo'yicha (server UTC'da ishlaydi)
+    created      = datetime.now(TASHKENT_TZ).replace(tzinfo=None)
     warehouse_id = context.user_data.get("warehouse_id")
     wh_name      = context.user_data.get("warehouse_name", "")
 

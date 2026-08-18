@@ -33,3 +33,31 @@ uri = "file://attached_assets/etiketka_100x80_dona.png"
 type = "image"
 title = "Etiketka 100×80 — og'irliksiz (dona)"
 description = "Og'irlik kiritilmagan mahsulotda pastki blok bo'sh qoladi."
+
+[[outputs]]
+id = "UAMwXgwIxZraAcgj6p5a_"
+uri = "file://attached_assets/etiketka_shablon_metrli.png"
+type = "image"
+title = "Etiketka — shablon bo'yicha (metrli mahsulot)"
+description = "SKU + metri + shtrix-kod. Metri mahsulot nomidan olinadi."
+
+[[outputs]]
+id = "vLxnJrDyoYAQDBifB6Fq2"
+uri = "file://attached_assets/etiketka_shablon_oddiy.png"
+type = "image"
+title = "Etiketka — oddiy kg mahsulot"
+description = "Metri yo'q mahsulotda «—» chiqadi."
+
+[[outputs]]
+id = "bi-J-kdD6P2xvDl90Sgdm"
+uri = "file://attached_assets/etiketka_shablon_qutili.png"
+type = "image"
+title = "Etiketka — qutili, uzun nom"
+description = "Pastda: partiya · quti raqami 7/40 · 1 quti = 25 dona."
+
+[[outputs]]
+id = "sy7IHQnTgan8JC4HptcET"
+uri = "file://attached_assets/etiketka_shablon_dona.png"
+type = "image"
+title = "Etiketka — SKU'siz, og'irliksiz"
+description = "SKU bo'lmasa shtrix-kod partiya kodidan tuziladi."

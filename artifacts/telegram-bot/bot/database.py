@@ -2007,10 +2007,11 @@ def get_warehouses() -> list[dict]:
 
 
 def get_containers() -> list[dict]:
-    """Faqat konteyner turidagi omborlarni qaytaradi (C-01…C-30)."""
+    """Konteyner va ayvon turidagi omborlarni qaytaradi (C-01…C-27, Ayvon 1…3)."""
     with get_conn() as (conn, cur):
         cur.execute(
-            "SELECT id, name FROM warehouses WHERE active=TRUE AND location_type='container' ORDER BY name"
+            "SELECT id, name FROM warehouses WHERE active=TRUE AND location_type IN ('container','ayvon') "
+            "ORDER BY (location_type='ayvon'), name"
         )
         return cur.fetchall()
 

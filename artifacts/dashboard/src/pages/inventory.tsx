@@ -23,6 +23,7 @@ type Summary = {
   lowStockRawCount: number;
   usdRate: number;
   totalContainers: number;
+  totalAyvons: number;
   occupiedContainers: number;
   emptyContainers: number;
 };
@@ -32,6 +33,7 @@ type ContainerSummary = {
   name: string;
   capacityKg: number;
   active: boolean;
+  locationType: "container" | "ayvon";
   skuCount: number;
   totalQty: number;
   totalWeightKg: number;
@@ -307,7 +309,7 @@ function ContainerCard({ c, onClick }: { c: ContainerSummary; onClick: () => voi
       {/* Name row */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 18 }}>📦</span>
+          <span style={{ fontSize: 18 }}>{c.locationType === "ayvon" ? "🏠" : "📦"}</span>
           <span style={{ fontWeight: 700, fontSize: 15, color: "#111827" }}>{c.name}</span>
         </div>
         {!isEmpty && (
@@ -386,11 +388,32 @@ function ContainerGrid({
     );
   }
 
-  return (
+  const konteynerlar = containers.filter((c) => c.locationType !== "ayvon");
+  const ayvonlar = containers.filter((c) => c.locationType === "ayvon");
+  const grid = (list: ContainerSummary[]) => (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12 }}>
-      {containers.map((c) => (
+      {list.map((c) => (
         <ContainerCard key={c.id} c={c} onClick={() => onSelect(c)} />
       ))}
+    </div>
+  );
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: "#6B7280", marginBottom: 8 }}>
+          Konteynerlar ({konteynerlar.length})
+        </div>
+        {grid(konteynerlar)}
+      </div>
+      {ayvonlar.length > 0 && (
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "#6B7280", marginBottom: 8 }}>
+            Ayvonlar ({ayvonlar.length})
+          </div>
+          {grid(ayvonlar)}
+        </div>
+      )}
     </div>
   );
 }
@@ -400,6 +423,7 @@ function ContainerGrid({
 function ContainerDetailView({
   containerId,
   containerName,
+  locationType,
   onBack,
   onTransfer,
   onReceive,
@@ -407,6 +431,7 @@ function ContainerDetailView({
 }: {
   containerId: number;
   containerName: string;
+  locationType?: "container" | "ayvon";
   onBack: () => void;
   onTransfer: (product: string, qty: number, weightKg?: number) => void;
   onReceive: () => void;
@@ -434,7 +459,7 @@ function ContainerDetailView({
         </button>
         <div>
           <h2 style={{ fontSize: 20, fontWeight: 700, color: "#111827", margin: 0 }}>
-            📦 {containerName}
+            {locationType === "ayvon" ? "🏠" : "📦"} {containerName}
           </h2>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
@@ -1608,6 +1633,7 @@ export default function Inventory() {
             icon={<Container style={{ width: 18, height: 18 }} />}
             label="Jami konteynerlar"
             value={loadSummary ? undefined : summary?.totalContainers ?? 0}
+            sub={loadSummary || !(summary?.totalAyvons) ? undefined : `+ ${summary.totalAyvons} ta ayvon`}
             loading={loadSummary}
           />
           <KpiCard
@@ -1658,6 +1684,7 @@ export default function Inventory() {
         <ContainerDetailView
           containerId={selectedContainer.id}
           containerName={selectedContainer.name}
+          locationType={selectedContainer.locationType}
           onBack={() => setSelectedContainer(null)}
           onTransfer={(product, qty, weightKg) =>
             setModal({ kind: "transfer", fromId: selectedContainer.id, fromName: selectedContainer.name, product, qty, weightKg })

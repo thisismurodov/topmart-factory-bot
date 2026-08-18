@@ -126,3 +126,8 @@ PRE-FINISHED (owner definition 2026-08-18): ham sotiladi ham ishlab chiqarishda 
 gets in_sales=t AND in_production=t (not ombor-only like finished count items), plus raw_materials row.
 Dashboard Tur badge is 3-way: raw→Xom, pre-finished→Yarim tayyor (blue), else→Tayyor. Guards first: container inventory
 empty + no baseline row + names absent in items/item_aliases + SUM equals owner's JAMI.
+
+## Ombor parki (2026-08-18)
+- Real park: 27 konteyner (C-01..C-27) + 3 ayvon (Ayvon 1/2/3, location_type='ayvon') — ayvon konteyner bilan teng huquqli saqlash joyi; har qanday yangi joy-filtri IN ('container','ayvon') bo'lishi shart.
+- Ayvon sanog'i kelsa: recipe'dagi warehouse lookup location_type='ayvon' bilan (container emas).
+- Sanalmagan: C-03, C-09, C-21..C-27 + 3 ayvon.

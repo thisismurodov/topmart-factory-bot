@@ -4,6 +4,7 @@ Menu: ➕ Kirim | ➖ Chiqim | 🔄 O'tkazish | 📋 Qoldiqlar | 📜 Tarix
 Kirimda kategoriya tanlanadi: 📦 Tayyor mahsulot | 🧵 Xom ashyo
 """
 import re
+import secrets
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.ext import (
@@ -57,15 +58,42 @@ def _warehouse_inline(warehouses: list[dict], prefix: str) -> InlineKeyboardMark
     return InlineKeyboardMarkup(buttons)
 
 
-def _product_inline(products: list[str], prefix: str) -> InlineKeyboardMarkup:
-    rows = []
-    for i in range(0, len(products), 2):
-        row = [InlineKeyboardButton(products[i], callback_data=f"{prefix}:{products[i]}")]
-        if i + 1 < len(products):
-            row.append(InlineKeyboardButton(products[i + 1], callback_data=f"{prefix}:{products[i + 1]}"))
-        rows.append(row)
+def _product_inline(products: list[str], prefix: str, token: str) -> InlineKeyboardMarkup:
+    """Har bir mahsulot ALOHIDA qatorda — uzun nomlar to'liq ko'rinadi.
+    callback_data = '{prefix}:{token}:{indeks}' — 64-bayt limitiga har doim
+    sig'adi; token callbackni AYNAN shu klaviaturaga bog'laydi (eski xabar
+    tugmasi yangi ro'yxatga adashib tushmasligi uchun). Ro'yxat chaqiruvchi
+    tomonidan ctx.user_data['inv_plist'] = (token, ro'yxat) qilib saqlanadi."""
+    rows = [
+        [InlineKeyboardButton(p, callback_data=f"{prefix}:{token}:{i}")]
+        for i, p in enumerate(products)
+    ]
     rows.append([InlineKeyboardButton("❌ Bekor", callback_data=f"{prefix}:cancel")])
     return InlineKeyboardMarkup(rows)
+
+
+def _new_plist_token() -> str:
+    return secrets.token_hex(3)  # 6 ta hex belgi
+
+
+_PLIST_CB_RE = re.compile(r"^([0-9a-f]{6}):(\d+)$")
+
+
+def _resolve_product_cb(q_data: str, ctx: ContextTypes.DEFAULT_TYPE) -> str | None:
+    """'kp:a1b2c3:3' callbackdan mahsulot nomini topadi. Token joriy
+    klaviaturanikiga mos kelmasa — None (eskirgan tugma). Eski (publishgacha
+    yuborilgan) nom-asosli callbacklar nomning o'zini qaytaradi; sof raqamli
+    nomlar ham token talabi tufayli indeks bilan adashmaydi."""
+    raw = q_data.split(":", 1)[1]
+    m = _PLIST_CB_RE.fullmatch(raw)
+    if not m:
+        return raw  # eski xabar: callbackda nomning o'zi
+    stored = ctx.user_data.get("inv_plist")
+    if not (isinstance(stored, tuple) and len(stored) == 2 and stored[0] == m.group(1)):
+        return None  # boshqa klaviaturaning tugmasi — eskirgan
+    plist = stored[1]
+    idx = int(m.group(2))
+    return plist[idx] if 0 <= idx < len(plist) else None
 
 
 def _is_allowed(chat_id: int) -> bool:
@@ -175,9 +203,11 @@ async def kirim_category_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
         )
         return INV_MAIN
 
+    token = _new_plist_token()
+    ctx.user_data["inv_plist"] = (token, prods)
     await q.edit_message_text(
         label,
-        reply_markup=_product_inline(prods, "kp"),
+        reply_markup=_product_inline(prods, "kp", token),
     )
     return INV_IN_PRODUCT
 
@@ -190,15 +220,25 @@ async def kirim_product_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> in
     if q.data == "kp:cancel":
         await q.edit_message_text("❌ Bekor qilindi.")
         return INV_MAIN
-    ctx.user_data["inv_product"] = q.data.split(":", 1)[1]
+    product = _resolve_product_cb(q.data, ctx)
+    if not product:
+        await q.edit_message_text("⚠️ Tugma eskirgan. Kirimni qaytadan boshlang.")
+        return INV_MAIN
+    ctx.user_data["inv_product"] = product
     unit = get_unit_for_item(
-        ctx.user_data["inv_product"],
+        product,
         ctx.user_data.get("inv_product_type", "finished"),
     )
     ctx.user_data["inv_unit"] = unit
+    # Mahsulot tanlangan zahoti: qaysi skladlarda borligini ogohlantiramiz
+    locs = get_stock_locations(product)
+    if locs:
+        loc_txt = "📍 *Bu mahsulot hozir bor:*\n" + _stock_list_text(locs, key="warehouse") + "\n\n"
+    else:
+        loc_txt = "📍 Hozircha hech bir skladda yo'q.\n\n"
     prompt = "⚖️ Og'irlikni kiriting (kg):" if unit == "kg" else "📊 Miqdorni kiriting (dona):"
     await q.edit_message_text(
-        f"📦 Mahsulot: *{_md(ctx.user_data['inv_product'])}*\n\n{prompt}",
+        f"📦 Mahsulot: *{_md(product)}*\n\n{loc_txt}{prompt}",
         parse_mode="Markdown",
     )
     return INV_IN_QTY
@@ -348,10 +388,12 @@ async def chiqim_warehouse_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
         await q.edit_message_text("⚠️ Bu skladda mahsulot yo'q.")
         return INV_MAIN
     products = [i["product"] for i in items]
+    token = _new_plist_token()
+    ctx.user_data["inv_plist"] = (token, products)
     await q.edit_message_text(
         f"🏬 Sklad: *{_md(parts[2])}*\n\n{_stock_list_text(items)}\n\nMahsulotni tanlang:",
         parse_mode="Markdown",
-        reply_markup=_product_inline(products, "cp"),
+        reply_markup=_product_inline(products, "cp", token),
     )
     return INV_OUT_PRODUCT
 
@@ -362,7 +404,11 @@ async def chiqim_product_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
     if q.data == "cp:cancel":
         await q.edit_message_text("❌ Bekor.")
         return INV_MAIN
-    ctx.user_data["inv_product"] = q.data.split(":", 1)[1]
+    product = _resolve_product_cb(q.data, ctx)
+    if not product:
+        await q.edit_message_text("⚠️ Tugma eskirgan. Chiqimni qaytadan boshlang.")
+        return INV_MAIN
+    ctx.user_data["inv_product"] = product
     line = get_inventory_line(ctx.user_data["inv_from_id"], ctx.user_data["inv_product"])
     qty_av = float(line["quantity"] or 0) if line else 0.0
     w_av   = float(line["weight_kg"] or 0) if line else 0.0
@@ -497,10 +543,12 @@ async def transfer_from_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> in
         await q.edit_message_text(f"⚠️ *{_md(parts[2])}* da mahsulot yo'q.", parse_mode="Markdown")
         return INV_MAIN
     products = [i["product"] for i in items]
+    token = _new_plist_token()
+    ctx.user_data["inv_plist"] = (token, products)
     await q.edit_message_text(
         f"🏬 Dan: *{_md(parts[2])}*\n\n{_stock_list_text(items)}\n\nMahsulot tanlang:",
         parse_mode="Markdown",
-        reply_markup=_product_inline(products, "tp"),
+        reply_markup=_product_inline(products, "tp", token),
     )
     return INV_TR_PRODUCT
 
@@ -511,7 +559,11 @@ async def transfer_product_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
     if q.data == "tp:cancel":
         await q.edit_message_text("❌ Bekor.")
         return INV_MAIN
-    ctx.user_data["inv_product"] = q.data.split(":", 1)[1]
+    product = _resolve_product_cb(q.data, ctx)
+    if not product:
+        await q.edit_message_text("⚠️ Tugma eskirgan. O'tkazishni qaytadan boshlang.")
+        return INV_MAIN
+    ctx.user_data["inv_product"] = product
     line = get_inventory_line(ctx.user_data["inv_from_id"], ctx.user_data["inv_product"])
     qty_av = float(line["quantity"] or 0) if line else 0.0
     w_av   = float(line["weight_kg"] or 0) if line else 0.0
@@ -670,10 +722,12 @@ async def adjust_container_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
         await q.edit_message_text(f"⚠️ *{parts[2]}* bo'sh.", parse_mode="Markdown")
         return INV_MAIN
     products = [i["product"] for i in items]
+    token = _new_plist_token()
+    ctx.user_data["inv_plist"] = (token, products)
     await q.edit_message_text(
         f"🏬 Konteyner: *{parts[2]}*\n\nMahsulotni tanlang:",
         parse_mode="Markdown",
-        reply_markup=_product_inline(products, "ap"),
+        reply_markup=_product_inline(products, "ap", token),
     )
     return INV_ADJ_PRODUCT
 
@@ -684,7 +738,10 @@ async def adjust_product_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
     if q.data == "ap:cancel":
         await q.edit_message_text("❌ Bekor.")
         return INV_MAIN
-    product = q.data.split(":", 1)[1]
+    product = _resolve_product_cb(q.data, ctx)
+    if not product:
+        await q.edit_message_text("⚠️ Tugma eskirgan. To'g'rilashni qaytadan boshlang.")
+        return INV_MAIN
     line = get_inventory_line(ctx.user_data["adj_wh_id"], product)
     if not line:
         await q.edit_message_text("⚠️ Mahsulot bu konteynerda topilmadi.")
@@ -798,14 +855,11 @@ async def adjust_confirm_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _raw_material_inline(materials: list[dict], prefix: str) -> InlineKeyboardMarkup:
-    rows = []
-    for i in range(0, len(materials), 2):
-        m = materials[i]
-        row = [InlineKeyboardButton(m["name"], callback_data=f"{prefix}:{m['id']}")]
-        if i + 1 < len(materials):
-            m2 = materials[i + 1]
-            row.append(InlineKeyboardButton(m2["name"], callback_data=f"{prefix}:{m2['id']}"))
-        rows.append(row)
+    """Har bir xom ashyo alohida qatorda — uzun nomlar to'liq ko'rinadi."""
+    rows = [
+        [InlineKeyboardButton(m["name"], callback_data=f"{prefix}:{m['id']}")]
+        for m in materials
+    ]
     rows.append([InlineKeyboardButton("❌ Bekor", callback_data=f"{prefix}:cancel")])
     return InlineKeyboardMarkup(rows)
 

@@ -57,12 +57,13 @@ router.get("/ombor/summary", async (_req, res): Promise<void> => {
 
     pool.query(`
       SELECT
-        COUNT(*)::int AS total,
+        COUNT(*) FILTER (WHERE location_type = 'container')::int AS total,
+        COUNT(*) FILTER (WHERE location_type = 'ayvon')::int AS ayvon_total,
         COUNT(*) FILTER (
           WHERE id IN (SELECT DISTINCT warehouse_id FROM inventory WHERE quantity > 0 OR COALESCE(weight_kg, 0) > 0)
         )::int AS occupied
       FROM warehouses
-      WHERE location_type = 'container'
+      WHERE location_type IN ('container', 'ayvon')
     `),
   ]);
 
@@ -81,8 +82,9 @@ router.get("/ombor/summary", async (_req, res): Promise<void> => {
     lowStockRawCount:      Number(raw.low_count),
     usdRate:               rate ?? 0,
     totalContainers:       Number(cnt.total),
+    totalAyvons:           Number(cnt.ayvon_total),
     occupiedContainers:    Number(cnt.occupied),
-    emptyContainers:       Number(cnt.total) - Number(cnt.occupied),
+    emptyContainers:       Number(cnt.total) + Number(cnt.ayvon_total) - Number(cnt.occupied),
   });
 });
 
@@ -96,6 +98,7 @@ router.get("/ombor/containers", async (_req, res): Promise<void> => {
       w.name,
       w.capacity_kg,
       w.active,
+      w.location_type,
       COUNT(DISTINCT i.product) FILTER (WHERE i.quantity > 0 OR COALESCE(i.weight_kg, 0) > 0)::int AS sku_count,
       COALESCE(SUM(i.quantity) FILTER (WHERE i.quantity > 0), 0)::numeric AS total_qty,
       COALESCE(SUM(i.weight_kg) FILTER (WHERE i.weight_kg > 0), 0)::numeric AS total_weight_kg,
@@ -110,9 +113,9 @@ router.get("/ombor/containers", async (_req, res): Promise<void> => {
     FROM warehouses w
     LEFT JOIN inventory i ON i.warehouse_id = w.id
     LEFT JOIN products p  ON p.name = i.product
-    WHERE w.location_type = 'container'
-    GROUP BY w.id, w.name, w.capacity_kg, w.active
-    ORDER BY w.name
+    WHERE w.location_type IN ('container', 'ayvon')
+    GROUP BY w.id, w.name, w.capacity_kg, w.active, w.location_type
+    ORDER BY (w.location_type = 'ayvon'), w.name
   `, [rate ?? 0]);
 
   res.json(rows.map((r) => {
@@ -126,6 +129,7 @@ router.get("/ombor/containers", async (_req, res): Promise<void> => {
       name:          r.name,
       capacityKg:    cap,
       active:        r.active,
+      locationType:  r.location_type,
       skuCount:      Number(r.sku_count),
       totalQty:      qty,
       totalWeightKg: weightKg,
@@ -836,7 +840,7 @@ router.post("/ombor/flow/raw-in", async (req, res): Promise<void> => {
   try {
     await client.query("BEGIN");
     const whRes = await client.query(
-      "SELECT id FROM warehouses WHERE id=$1 AND location_type='container' AND purpose='raw'", [warehouseId],
+      "SELECT id FROM warehouses WHERE id=$1 AND location_type IN ('container','ayvon') AND purpose='raw'", [warehouseId],
     );
     if (!whRes.rows.length) {
       await client.query("ROLLBACK");
@@ -912,7 +916,7 @@ router.post("/ombor/flow/receive", async (req, res): Promise<void> => {
     }
     // Manba konteyner xom ashyo ombori bo'lishi shart.
     const whRes = await client.query(
-      "SELECT id FROM warehouses WHERE id=$1 AND location_type='container' AND purpose='raw'", [warehouseId],
+      "SELECT id FROM warehouses WHERE id=$1 AND location_type IN ('container','ayvon') AND purpose='raw'", [warehouseId],
     );
     if (!whRes.rows.length) {
       await client.query("ROLLBACK");
@@ -966,7 +970,7 @@ router.post("/ombor/flow/container-purpose", async (req, res): Promise<void> => 
     res.status(400).json({ error: "warehouseId va purpose ('raw'|'finished') required" }); return;
   }
   const upd = await pool.query(
-    "UPDATE warehouses SET purpose=$1 WHERE id=$2 AND location_type='container' RETURNING id",
+    "UPDATE warehouses SET purpose=$1 WHERE id=$2 AND location_type IN ('container','ayvon') RETURNING id",
     [purpose, warehouseId],
   );
   if (!upd.rows.length) { res.status(404).json({ error: "Konteyner topilmadi" }); return; }
@@ -1030,7 +1034,7 @@ router.get("/ombor/flow", async (_req, res): Promise<void> => {
              ), 0)::numeric AS today_out
       FROM warehouses w
       LEFT JOIN inventory i ON i.warehouse_id = w.id
-      WHERE w.location_type='container' AND w.purpose='raw' AND w.active = TRUE
+      WHERE w.location_type IN ('container','ayvon') AND w.purpose='raw' AND w.active = TRUE
       GROUP BY w.id, w.name, w.capacity_kg
       ORDER BY w.name
     `),
@@ -1065,14 +1069,14 @@ router.get("/ombor/flow", async (_req, res): Promise<void> => {
              COUNT(DISTINCT i.product) FILTER (WHERE i.quantity > 0 OR COALESCE(i.weight_kg, 0) > 0)::int AS sku_count
       FROM warehouses w
       LEFT JOIN inventory i ON i.warehouse_id = w.id AND i.product_type='finished'
-      WHERE w.location_type='container' AND w.purpose='finished' AND w.active = TRUE
+      WHERE w.location_type IN ('container','ayvon') AND w.purpose='finished' AND w.active = TRUE
       GROUP BY w.id, w.name, w.capacity_kg
       ORDER BY w.name
     `),
     pool.query(`
       SELECT id, name, purpose, active FROM warehouses
-      WHERE location_type='container'
-      ORDER BY name
+      WHERE location_type IN ('container','ayvon')
+      ORDER BY (location_type='ayvon'), name
     `),
     pool.query(`
       SELECT wm.id, wm.movement_type, wm.raw_material, wm.product, wm.weight_kg,
@@ -1245,7 +1249,7 @@ router.post("/ombor/flow/produce", async (req, res): Promise<void> => {
     }
     // Maqsad konteyner tayyor mahsulot ombori bo'lishi shart.
     const whRes = await client.query(
-      "SELECT id FROM warehouses WHERE id=$1 AND location_type='container' AND purpose='finished'", [warehouseId],
+      "SELECT id FROM warehouses WHERE id=$1 AND location_type IN ('container','ayvon') AND purpose='finished'", [warehouseId],
     );
     if (!whRes.rows.length) {
       await client.query("ROLLBACK");

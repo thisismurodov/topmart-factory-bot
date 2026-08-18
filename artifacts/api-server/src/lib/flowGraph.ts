@@ -425,7 +425,7 @@ function assemble(src: {
     };
   });
 
-  const isContainer = (c: FlowContainer): boolean => (c.loc || "").toLowerCase() === "container";
+  const isContainer = (c: FlowContainer): boolean => ["container", "ayvon"].includes((c.loc || "").toLowerCase());
   const regionalList = contAll.filter((c) => !isContainer(c));
   const contOnly = contAll.filter(isContainer);
   const emptyContainers = contOnly.filter((c) => c.derived === "empty");

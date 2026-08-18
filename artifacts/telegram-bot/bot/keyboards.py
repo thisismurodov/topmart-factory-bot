@@ -80,12 +80,11 @@ def products_inline_keyboard(
         products = get_products_for_packer(packer_name)
     else:
         products = get_product_names()
-    buttons = []
-    for i in range(0, len(products), 2):
-        row = [InlineKeyboardButton(products[i], callback_data=f"product:{products[i]}")]
-        if i + 1 < len(products):
-            row.append(InlineKeyboardButton(products[i + 1], callback_data=f"product:{products[i + 1]}"))
-        buttons.append(row)
+    # Har bir mahsulot alohida qatorda — uzun nomlar to'liq ko'rinadi.
+    buttons = [
+        [InlineKeyboardButton(p, callback_data=f"product:{p}")]
+        for p in products
+    ]
     if not buttons:
         buttons = [[InlineKeyboardButton("⚠️ Mahsulotlar biriktirilmagan", callback_data="cancel")]]
     return InlineKeyboardMarkup(buttons)
@@ -122,7 +121,7 @@ def batch_cart_keyboard() -> InlineKeyboardMarkup:
 
 
 def containers_inline_keyboard(containers: list[dict]) -> InlineKeyboardMarkup:
-    """C-01…C-30 konteynerlar uchun inline klaviatura (3 ta ustun)."""
+    """Konteyner va ayvonlar uchun inline klaviatura (3 ta ustun)."""
     buttons: list[list[InlineKeyboardButton]] = []
     row: list[InlineKeyboardButton] = []
     for c in containers:

@@ -42,3 +42,4 @@
 - [xyflow canvas testing & layout](xyflow-edge-testing.md) — e2e edge clicks must target the LABEL chip (bbox-center misses stroke); canvas needs min-h-[360px] md:min-h-0 or #004 height-0 on mobile.
 - [Test schema must mirror prod columns](test-schema-prod-mirror.md) — generate test CREATEs from information_schema, never assumptions; an assumed column passed all tests but 500'd live.
 - [Clone rehearsal for destructive DB ops](clone-rehearsal-pattern.md) — rehearse on LOCAL nix-PG cluster (remote restore too slow); fsync=off+kill reverts sequences → pg_depend setval resync; always pass -d (PGDATABASE quirk).
+- [Telegram inline index-callbacks need a keyboard nonce](tg-index-callbacks.md) — index callback_data must carry a per-keyboard token or stale in-range taps silently pick wrong items; non-matching payloads = legacy name callbacks.

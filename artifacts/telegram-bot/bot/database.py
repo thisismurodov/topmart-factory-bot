@@ -1709,6 +1709,19 @@ def get_sale_products() -> list[dict]:
         return cur.fetchall()
 
 
+def get_store_product_names() -> list[str]:
+    """Ombor mahsulotlari — katalogda bor, lekin sotuvda ham, ishlab chiqarishda ham
+    yo'q (in_sales=FALSE, in_production=FALSE). Bot kirim oqimidagi
+    «🏬 Ombor mahsuloti» toifasi shu ro'yxatdan oladi."""
+    with get_conn() as (conn, cur):
+        cur.execute(
+            """SELECT name FROM products
+               WHERE active = TRUE AND in_sales = FALSE AND in_production = FALSE
+               ORDER BY name"""
+        )
+        return [r[0] if not isinstance(r, dict) else r["name"] for r in cur.fetchall()]
+
+
 def get_sale_product_by_id(prod_id: int) -> dict | None:
     """V3: unified products jadvalidan id bo'yicha."""
     with get_conn() as (conn, cur):

@@ -14,7 +14,7 @@ from ..database import (
     get_user_role, get_warehouses, get_warehouse_by_name,
     get_stock_by_warehouse, get_stock_for_warehouse, get_stock_by_warehouse_typed,
     record_movement, get_recent_movements, get_product_names,
-    get_sale_products, get_raw_material_names,
+    get_sale_products, get_raw_material_names, get_store_product_names,
     get_containers, get_inventory_line,
     get_raw_materials_full, get_raw_material_by_id,
     get_stock_locations, get_unit_for_item,
@@ -134,6 +134,7 @@ async def kirim_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
                 InlineKeyboardButton("📦 Tayyor mahsulot", callback_data="kcat:finished"),
                 InlineKeyboardButton("🧵 Xom ashyo",       callback_data="kcat:raw"),
             ],
+            [InlineKeyboardButton("🏬 Ombor mahsuloti", callback_data="kcat:store")],
             [InlineKeyboardButton("❌ Bekor", callback_data="kcat:cancel")],
         ]),
     )
@@ -147,13 +148,19 @@ async def kirim_category_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
         await q.edit_message_text("❌ Bekor qilindi.")
         return INV_MAIN
 
-    cat = q.data.split(":", 1)[1]  # 'finished' yoki 'raw'
-    ctx.user_data["inv_product_type"] = cat
+    cat = q.data.split(":", 1)[1]  # 'finished' / 'store' / 'raw'
+    # 'store' (ombor mahsuloti) inventar va harakat turi bo'yicha 'finished':
+    # birlik products.unit_type dan olinadi, harakat product_type='finished' yoziladi.
+    ctx.user_data["inv_product_type"] = "finished" if cat == "store" else cat
 
     if cat == "finished":
         # sotuv mahsulotlari — unified products jadvali
         prods = [p["name"] for p in get_sale_products()]
         label = "📦 Tayyor mahsulot tanlang:"
+    elif cat == "store":
+        # ombor mahsulotlari — katalogda bor, sotuv/ishlab chiqarishda yo'q
+        prods = get_store_product_names()
+        label = "🏬 Ombor mahsulotini tanlang:"
     else:
         # xom ashyo
         prods = get_raw_material_names()
@@ -163,6 +170,7 @@ async def kirim_category_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
         await q.edit_message_text(
             "❌ Ro'yxat bo'sh.\n"
             + ("Admin panelidan sotuv mahsulotlari qo'shing." if cat == "finished"
+               else "Ombor mahsulotlari topilmadi." if cat == "store"
                else "Admin panelidan xom ashyo qo'shing.")
         )
         return INV_MAIN

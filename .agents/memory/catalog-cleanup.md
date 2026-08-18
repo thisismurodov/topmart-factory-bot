@@ -19,3 +19,9 @@ description: 2026-08-17 prod cleanup — products reduced to savdo-bot subset + 
 **Recovery:** full pre-state archived as `legacy.*_pre_catalog_cleanup_20260817` (products 117, raw_materials 17, product_materials 62, product_price_tiers 12, packer_product_assignments 38). Restore = INSERT...SELECT back. Do not re-run the cleanup.
 
 **How to apply:** any future "add product to dashboard" request for non-bot goods is now the NORMAL path (catalog no longer mirrors production list); check in_sales semantics before bulk ops keyed on it.
+
+## Update 2026-08-18 — "ombor mahsuloti" class
+- Durable rule: warehouse-only finished goods live in products with in_sales=FALSE AND in_production=FALSE — that flag pair IS the class definition. Keep them out of sales, production, and payroll selection queries; bot Kirim reaches them only via the «Ombor mahsuloti» category, movements stay product_type='finished'. Catalog is no longer a strict savdo-bot subset.
+- **Why:** container stock predating the catalog reset needed kirim + dashboard visibility without polluting savdo sync or production menus.
+- Canonical name direction when merging word-order duplicates: 'Alpinist N mm' (owner-confirmed); rename inventory + stock_movements together.
+- Unit rule when seeding catalog rows from container stock: any row with quantity>0 → dona, else kg.

@@ -313,7 +313,7 @@ router.post("/products", async (req, res): Promise<void> => {
         ));
         break;
       } catch (e: any) {
-        if (e?.code === "23505" && String(e?.constraint) === "idx_products_sku_unique") {
+        if (e?.code === "23505" && String(e?.constraint ?? "").includes("sku")) {
           if (skuProvided) {
             res.status(409).json({ error: `SKU '${finalSku}' allaqachon boshqa mahsulotda ishlatilgan` });
             return;
@@ -370,6 +370,8 @@ router.patch("/products/:name", async (req, res): Promise<void> => {
         ? (Number(req.body[key]) > 0 ? Number(req.body[key]) : 1)
         : col === "cost_price"
         ? Math.max(0, Number(req.body[key]) || 0)
+        : col === "sku"
+        ? String(req.body[key] ?? "").trim().toUpperCase() // POST bilan bir xil normalizatsiya
         : req.body[key];
       vals.push(value);
       fields.push(`${col}=$${vals.length}`);
@@ -395,7 +397,19 @@ router.patch("/products/:name", async (req, res): Promise<void> => {
 
   vals.push(productName);
 
-  await pool.query(`UPDATE products SET ${fields.join(",")} WHERE name=$${vals.length}`, vals);
+  try {
+    await pool.query(`UPDATE products SET ${fields.join(",")} WHERE name=$${vals.length}`, vals);
+  } catch (e: any) {
+    // SKU unikal indeksi — boshqa mahsulotda band: 500 emas, tushunarli 409.
+    // Nomni aniq solishtirmaymiz: LIKE bilan ko'chirilgan (test) sxemalarda
+    // indeks nomi boshqacha bo'ladi, lekin 'sku' ustuni nomda qatnashadi.
+    if (e?.code === "23505" && String(e?.constraint ?? "").includes("sku")) {
+      const skuVal = String(req.body?.sku ?? "").trim().toUpperCase();
+      res.status(409).json({ error: `SKU '${skuVal}' allaqachon boshqa mahsulotda ishlatilgan` });
+      return;
+    }
+    throw e;
+  }
 
   // Mahsulot ENDI nofaol bo'ldi — biriktirilgan packer'lardan birortasi bo'sh
   // faol ro'yxat bilan qolgan bo'lsa adminlarga Telegram xabar (best-effort,

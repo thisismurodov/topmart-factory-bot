@@ -1,5 +1,5 @@
 import { authFetch } from "@/App";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -773,10 +773,15 @@ function ProductDialog({
 
   // "Avto" tugmasi — serverdan unikal SKU oladi (band bo'lsa -2, -3 qo'shilgan
   // bo'ladi). Tahrirlashda mahsulotning o'z SKU'si band hisoblanmaydi.
+  // Poyga himoyasi (skuGenSeq): so'rov ketayotganda foydalanuvchi SKU'ni qo'lda
+  // yozsa yoki nomni o'zgartirsa, kechikib kelgan javob yangi qiymatni ustidan
+  // yozmasligi kerak — eskirgan javob shunchaki tashlab yuboriladi.
   const [skuGenBusy, setSkuGenBusy] = useState(false);
+  const skuGenSeq = useRef(0);
   async function handleGenerateSku() {
     const name = (form.getValues("name") ?? "").trim();
     if (!name || skuGenBusy) return;
+    const seq = ++skuGenSeq.current;
     setSkuGenBusy(true);
     form.clearErrors("sku");
     try {
@@ -786,10 +791,15 @@ function ProductDialog({
       );
       if (!res.ok) throw new Error(String(res.status));
       const data = await res.json();
+      // Javob eskirgan: qo'lda yozildi yoki nom o'zgardi — qo'llamaymiz
+      if (seq !== skuGenSeq.current) return;
+      if ((form.getValues("name") ?? "").trim() !== name) return;
       setSkuTouched(true);
       form.setValue("sku", String(data.sku ?? ""), { shouldDirty: true });
     } catch {
-      form.setError("sku", { message: "SKU yaratib bo'lmadi — qayta urinib ko'ring" });
+      if (seq === skuGenSeq.current) {
+        form.setError("sku", { message: "SKU yaratib bo'lmadi — qayta urinib ko'ring" });
+      }
     } finally {
       setSkuGenBusy(false);
     }
@@ -891,7 +901,7 @@ function ProductDialog({
                         <Input
                           {...field}
                           placeholder="ARQON-6MM"
-                          onChange={(e) => { setSkuTouched(true); field.onChange(e.target.value.toUpperCase()); }}
+                          onChange={(e) => { skuGenSeq.current++; setSkuTouched(true); field.onChange(e.target.value.toUpperCase()); }}
                         />
                       </FormControl>
                       <Button

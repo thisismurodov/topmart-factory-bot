@@ -29,8 +29,10 @@ export async function uniqueProductSku(
     params.push(opts.excludeName);
     where += ` AND name <> $2`;
   }
+  // Eslatma: routerdagi boshqa so'rovlar kabi search_path'ga tayanamiz
+  // (prod'da public; testlarda throwaway sxema) — sxema-qualified emas.
   const { rows } = await pool.query(
-    `SELECT sku FROM public.products WHERE ${where}`,
+    `SELECT sku FROM products WHERE ${where}`,
     params
   );
   const taken = new Set(rows.map((r) => String(r.sku)));

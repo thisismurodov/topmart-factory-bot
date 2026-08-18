@@ -1,0 +1,130 @@
+
+
+sunny-expression
+
+production
+
+
+
+Agent
+
+
+keen-energy
+Deployments
+Variables
+Metrics
+Console
+Settings
+keen-energy-production-f4d2.up.railway.app
+US East
+1 Replica
+
+HISTORY
+Hide Skipped
+keen-energy
+/
+fcfb9f5b
+Crashed
+
+2026-08-18 14:52 GMT+5
+keen-energy-production-f4d2.up.railway.app
+Get Help
+Details
+Build Logs
+Deploy Logs
+Network Logs
+Filter and search logs
+
+Error: AI_INTEGRATIONS_OPENAI_BASE_URL must be set. Did you forget to provision the OpenAI AI integration?
+    at <anonymous> (/workspace/lib/integrations-openai-ai-server/src/client.ts:4:9)
+    at ModuleJob.run (node:internal/modules/esm/module_job:325:25)
+    at async ModuleLoader.import (node:internal/modules/esm/loader:606:24)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)
+Node.js v20.20.2
+Node.js v20.20.2
+/workspace/lib/integrations-openai-ai-server/src/client.ts:4
+/workspace/lib/integrations-openai-ai-server/src/client.ts:4
+Node.js v20.20.2
+  throw new Error(
+        ^
+Error: AI_INTEGRATIONS_OPENAI_BASE_URL must be set. Did you forget to provision the OpenAI AI integration?
+    at <anonymous> (/workspace/lib/integrations-openai-ai-server/src/client.ts:4:9)
+    at ModuleJob.run (node:internal/modules/esm/module_job:325:25)
+    at async ModuleLoader.import (node:internal/modules/esm/loader:606:24)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)
+/workspace/lib/integrations-openai-ai-server/src/client.ts:4
+  throw new Error(
+        ^
+Error: AI_INTEGRATIONS_OPENAI_BASE_URL must be set. Did you forget to provision the OpenAI AI integration?
+    at <anonymous> (/workspace/lib/integrations-openai-ai-server/src/client.ts:4:9)
+    at ModuleJob.run (node:internal/modules/esm/module_job:325:25)
+    at async ModuleLoader.import (node:internal/modules/esm/loader:606:24)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)
+Node.js v20.20.2
+/workspace/lib/integrations-openai-ai-server/src/client.ts:4
+  throw new Error(
+        ^
+Error: AI_INTEGRATIONS_OPENAI_BASE_URL must be set. Did you forget to provision the OpenAI AI integration?
+    at <anonymous> (/workspace/lib/integrations-openai-ai-server/src/client.ts:4:9)
+    at ModuleJob.run (node:internal/modules/esm/module_job:325:25)
+    at async ModuleLoader.import (node:internal/modules/esm/loader:606:24)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)
+Node.js v20.20.2
+/workspace/lib/integrations-openai-ai-server/src/client.ts:4
+  throw new Error(
+        ^
+Error: AI_INTEGRATIONS_OPENAI_BASE_URL must be set. Did you forget to provision the OpenAI AI integration?
+    at <anonymous> (/workspace/lib/integrations-openai-ai-server/src/client.ts:4:9)
+    at ModuleJob.run (node:internal/modules/esm/module_job:325:25)
+    at async ModuleLoader.import (node:internal/modules/esm/loader:606:24)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)
+Node.js v20.20.2
+/workspace/lib/integrations-openai-ai-server/src/client.ts:4
+  throw new Error(
+        ^
+Error: AI_INTEGRATIONS_OPENAI_BASE_URL must be set. Did you forget to provision the OpenAI AI integration?
+    at <anonymous> (/workspace/lib/integrations-openai-ai-server/src/client.ts:4:9)
+    at ModuleJob.run (node:internal/modules/esm/module_job:325:25)
+    at async ModuleLoader.import (node:internal/modules/esm/loader:606:24)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)
+Node.js v20.20.2
+/workspace/lib/integrations-openai-ai-server/src/client.ts:4
+  throw new Error(
+        ^
+Error: AI_INTEGRATIONS_OPENAI_BASE_URL must be set. Did you forget to provision the OpenAI AI integration?
+    at <anonymous> (/workspace/lib/integrations-openai-ai-server/src/client.ts:4:9)
+    at ModuleJob.run (node:internal/modules/esm/module_job:325:25)
+    at async ModuleLoader.import (node:internal/modules/esm/loader:606:24)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)
+Node.js v20.20.2
+/workspace/lib/integrations-openai-ai-server/src/client.ts:4
+  throw new Error(
+        ^
+Error: AI_INTEGRATIONS_OPENAI_BASE_URL must be set. Did you forget to provision the OpenAI AI integration?
+    at <anonymous> (/workspace/lib/integrations-openai-ai-server/src/client.ts:4:9)
+    at ModuleJob.run (node:internal/modules/esm/module_job:325:25)
+    at async ModuleLoader.import (node:internal/modules/esm/loader:606:24)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)
+Node.js v20.20.2
+/workspace/lib/integrations-openai-ai-server/src/client.ts:4
+  throw new Error(
+        ^
+Error: AI_INTEGRATIONS_OPENAI_BASE_URL must be set. Did you forget to provision the OpenAI AI integration?
+    at <anonymous> (/workspace/lib/integrations-openai-ai-server/src/client.ts:4:9)
+    at ModuleJob.run (node:internal/modules/esm/module_job:325:25)
+    at async ModuleLoader.import (node:internal/modules/esm/loader:606:24)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)
+Node.js v20.20.2
+/workspace/lib/integrations-openai-ai-server/src/client.ts:4
+  throw new Error(
+        ^
+Error: AI_INTEGRATIONS_OPENAI_BASE_URL must be set. Did you forget to provision the OpenAI AI integration?
+    at <anonymous> (/workspace/lib/integrations-openai-ai-server/src/client.ts:4:9)
+    at ModuleJob.run (node:internal/modules/esm/module_job:325:25)
+    at async ModuleLoader.import (node:internal/modules/esm/loader:606:24)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)
+Node.js v20.20.2
+You reached the end of the range
+2026-08-18 14:52
+
+

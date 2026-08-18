@@ -37,6 +37,7 @@ type Product = {
   currencyType: string;
   defaultSalePrice: number;
   weight: number;
+  rollLengthM: number;
   effectiveSalePrice: number;
   rate: number;
   rateType: string;
@@ -96,6 +97,7 @@ const productSchema = z.object({
   currencyType: z.enum(["UZS", "USD"]),
   defaultSalePrice: z.coerce.number().min(0),
   weight: z.coerce.number().min(0).default(1),
+  rollLengthM: z.coerce.number().min(0).default(0),
   rate: z.coerce.number().min(0),
   electricityCost: z.coerce.number().min(0),
   otherCost: z.coerce.number().min(0),
@@ -813,6 +815,7 @@ function ProductDialog({
       currencyType: (product?.currencyType as "UZS" | "USD") ?? "UZS",
       defaultSalePrice: product?.defaultSalePrice ?? 0,
       weight: product?.weight ?? 1,
+      rollLengthM: product?.rollLengthM ?? 0,
       rate: product?.rate ?? 0,
       payrollMethod: (product?.payrollMethod as "PRODUCT_RATE" | "ROLE_BASED_KG") ?? "PRODUCT_RATE",
       lineId: product?.lineId ?? null,
@@ -1125,6 +1128,24 @@ function ProductDialog({
                             yozuvlariga ta'sir qilmaydi — ular eski og'irlikda qoladi.
                           </p>
                         )}
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="rollLengthM"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>
+                          O'ramdagi metr
+                          <span className="text-muted-foreground font-normal ml-1 text-xs">
+                            (etiketkada METRI; 0 = nomdan olinadi)
+                          </span>
+                        </FormLabel>
+                        <FormControl>
+                          <Input type="number" step="0.01" min={0} {...field} />
+                        </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}

@@ -125,3 +125,42 @@ class LabelGeneratorTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+from bot.label_generator import kg_profile_meaningful  # noqa: E402
+
+
+class LabelProfileFieldsTest(unittest.TestCase):
+    """Profildan olinadigan KG/METRI qiymatlari."""
+
+    def test_kg_profile_meaningful(self):
+        self.assertFalse(kg_profile_meaningful(0.0))
+        self.assertFalse(kg_profile_meaningful(-2.0))
+        self.assertFalse(kg_profile_meaningful(1.0))       # standart qiymat
+        self.assertFalse(kg_profile_meaningful(1.0005))    # epsilon ichida
+        self.assertTrue(kg_profile_meaningful(0.5))
+        self.assertTrue(kg_profile_meaningful(3.1))
+
+    def test_metr_param_overrides_name_regex(self):
+        from datetime import datetime as _dt
+        from bot.label_generator import _build_single as _bs
+        ts = _dt(2026, 8, 18, 14, 32)
+        base  = _bs("B-1", "W", "Arqon 6mm", 1, 1, 2.0, ts, sku="A-1")
+        withm = _bs("B-1", "W", "Arqon 6mm", 1, 1, 2.0, ts, sku="A-1", metr=80.0)
+        self.assertNotEqual(base.tobytes(), withm.tobytes())
+        # metr=0 → nomdagi «70 metr» regex ishlashi saqlanadi
+        named  = _bs("B-1", "W", "70 metr Strupa", 1, 1, 2.0, ts, sku="A-1")
+        named0 = _bs("B-1", "W", "70 metr Strupa", 1, 1, 2.0, ts, sku="A-1", metr=0.0)
+        self.assertEqual(named.tobytes(), named0.tobytes())
+
+    def test_session_pdf_with_profile_fields(self):
+        from datetime import datetime as _dt
+        from bot.label_generator import generate_batch_session_pdf as _gen
+        items = [
+            {"product": "Arqon", "quantity": 2, "weight_kg": 6.3,
+             "pieces_per_box": 1, "sku": "A-1", "profile_kg": 3.1, "metr": 80},
+            {"product": "Qop", "quantity": 50, "weight_kg": 100.0,
+             "pieces_per_box": 25, "sku": "Q-1", "profile_kg": 2.0, "metr": 0},
+        ]
+        buf = _gen("B-9", "W", items, _dt(2026, 8, 18, 10, 0))
+        self.assertGreater(len(buf.getvalue()), 1000)

@@ -16,9 +16,10 @@ Dizayn (foydalanuvchi shabloni, 2026-08-18):
   │      B-1808-3 · 3/12 · 1 quti = 25 dona       │
   └───────────────────────────────────────────────┘
 
-- METRI mahsulot nomidan olinadi («70 metr Sariq Strupa» → 70 METR), yo'q bo'lsa «—».
+- METRI profildan (products.roll_length_m); 0 bo'lsa mahsulot nomidan («70 metr …»), yo'q bo'lsa «—».
+- KG profildagi og'irlikdan (weight > 0 va ≠ 1.0 bo'lsa); aks holda tarozidagi haqiqiydan.
 - SKU bo'lmasa qator «—», shtrix-kod partiya kodidan tuziladi.
-- Qutili mahsulotda: N/M = quti raqami, KG = quti og'irligi.
+- Qutili mahsulotda: N/M = quti raqami, KG = quti og'irligi (profil bo'lsa: weight × quti dona).
 """
 import io
 import os
@@ -167,6 +168,12 @@ def extract_metr(product_name: str) -> float | None:
         return None
 
 
+def kg_profile_meaningful(profile_kg: float) -> bool:
+    """Profil og'irligi haqiqatan to'ldirilganmi? 1.0 — standart qiymat,
+    "to'ldirilmagan" hisoblanadi (bot QC'sidagi qoida bilan bir xil)."""
+    return profile_kg > 0 and abs(profile_kg - 1.0) > 0.001
+
+
 def _num(v: float) -> str:
     s = f"{v:.2f}".rstrip("0").rstrip(".")
     return s if s else "0"
@@ -254,6 +261,7 @@ def _build_single(
     ts: datetime,
     per_box: int = 1,
     sku: str = "",
+    metr: float | None = None,
 ) -> Image.Image:
     img  = Image.new("RGB", (LABEL_W, LABEL_H), "white")
     draw = ImageDraw.Draw(img)
@@ -272,7 +280,9 @@ def _build_single(
     value_rx = right
 
     sku = (sku or "").strip().upper()
-    metr = extract_metr(product)
+    # METRI: profil qiymati ustuvor, 0/berilmagan bo'lsa mahsulot nomidan
+    if metr is None or metr <= 0:
+        metr = extract_metr(product)
 
     # Qiymatlar
     kg_txt   = f"{_num(unit_weight)} KG" if unit_weight > 0 else "—"
@@ -378,12 +388,15 @@ def generate_label_pdf(
     weight_kg: float,
     created_at: datetime | None = None,
     sku: str = "",
+    profile_kg: float = 0.0,
+    metr: float | None = None,
 ) -> io.BytesIO:
-    unit_weight = (weight_kg / quantity) if quantity > 0 else 0.0
+    actual = (weight_kg / quantity) if quantity > 0 else 0.0
+    unit_weight = profile_kg if kg_profile_meaningful(profile_kg) else actual
     ts = created_at or datetime.now()
     pages = [
         _build_single(batch_code, worker, product, i, quantity, unit_weight,
-                      ts, sku=sku)
+                      ts, sku=sku, metr=metr)
         for i in range(1, quantity + 1)
     ]
     return _render_pages(pages)
@@ -398,7 +411,8 @@ def generate_batch_session_pdf(
     """Bitta batch_code ostidagi BARCHA mahsulotlar uchun yagona PDF.
     pieces_per_box > 1 bo'lsa: N/M = quti raqami, og'irlik = quti og'irligi.
 
-    items: [{"product", "quantity", "weight_kg", "pieces_per_box", "sku"?}]
+    items: [{"product", "quantity", "weight_kg", "pieces_per_box",
+             "sku"?, "profile_kg"?, "metr"?}]
     """
     import math
     ts = created_at or datetime.now()
@@ -409,22 +423,30 @@ def generate_batch_session_pdf(
         weight_kg = float(it.get("weight_kg") or 0.0)
         per_box   = max(1, int(it.get("pieces_per_box") or 1))
         sku       = str(it.get("sku") or "")
+        profile_kg = float(it.get("profile_kg") or 0.0)
+        metr_raw   = it.get("metr")
+        metr       = float(metr_raw) if metr_raw else None
 
         if per_box > 1:
             # Qutili rejim: har bir qutiga 1 ta etiketika
             num_labels = math.ceil(quantity / per_box)
-            box_weight = (weight_kg / num_labels) if num_labels > 0 else 0.0
+            actual_box = (weight_kg / num_labels) if num_labels > 0 else 0.0
+            # Profil to'ldirilgan: quti og'irligi = dona og'irligi × quti dona
+            box_weight = (profile_kg * per_box
+                          if kg_profile_meaningful(profile_kg) else actual_box)
             for i in range(1, num_labels + 1):
                 pages.append(_build_single(batch_code, worker, product, i,
                                            num_labels, box_weight, ts,
-                                           per_box=per_box, sku=sku))
+                                           per_box=per_box, sku=sku, metr=metr))
         else:
             # Donabay rejim: har donaga 1 ta etiketika
-            unit_weight = (weight_kg / quantity) if quantity > 0 else 0.0
+            actual_unit = (weight_kg / quantity) if quantity > 0 else 0.0
+            unit_weight = (profile_kg if kg_profile_meaningful(profile_kg)
+                           else actual_unit)
             for i in range(1, quantity + 1):
                 pages.append(_build_single(batch_code, worker, product, i,
                                            quantity, unit_weight, ts,
-                                           per_box=1, sku=sku))
+                                           per_box=1, sku=sku, metr=metr))
 
     return _render_pages(pages)
 
@@ -437,10 +459,13 @@ def generate_label(
     weight_kg: float = 0.0,
     created_at: datetime | None = None,
     sku: str = "",
+    profile_kg: float = 0.0,
+    metr: float | None = None,
 ) -> io.BytesIO:
-    unit_weight = (weight_kg / quantity) if weight_kg and quantity > 0 else 0.0
+    actual = (weight_kg / quantity) if weight_kg and quantity > 0 else 0.0
+    unit_weight = profile_kg if kg_profile_meaningful(profile_kg) else actual
     img = _build_single(batch_code, worker, product, 1, quantity, unit_weight,
-                        created_at or datetime.now(), sku=sku)
+                        created_at or datetime.now(), sku=sku, metr=metr)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)

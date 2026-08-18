@@ -98,6 +98,7 @@ def init_db() -> None:
               ADD COLUMN IF NOT EXISTS weight           NUMERIC(12,3) NOT NULL DEFAULT 1,
               ADD COLUMN IF NOT EXISTS created_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
               ADD COLUMN IF NOT EXISTS pieces_per_box   INTEGER NOT NULL DEFAULT 1,
+              ADD COLUMN IF NOT EXISTS roll_length_m    NUMERIC(12,2) NOT NULL DEFAULT 0,
               ADD COLUMN IF NOT EXISTS in_sales         BOOLEAN NOT NULL DEFAULT FALSE,
               ADD COLUMN IF NOT EXISTS in_production    BOOLEAN NOT NULL DEFAULT TRUE,
               ADD COLUMN IF NOT EXISTS cost_price       NUMERIC(12,2) NOT NULL DEFAULT 0
@@ -766,12 +767,25 @@ def get_product_pieces_per_box(name: str) -> int:
         return int(row["pieces_per_box"])
     return 1
 
-def get_product_sku(name: str) -> str:
-    """Mahsulot SKU'si (etiketka uchun). Topilmasa bo'sh satr."""
+def get_product_label_info(name: str) -> dict:
+    """Etiketka uchun profil ma'lumotlari: SKU, og'irlik (kg), o'ramdagi metr.
+
+    Topilmasa bo'sh/nol qiymatlar — etiketka baribir chiqishi shart.
+    profile_kg=1.0 "to'ldirilmagan" hisoblanadi (QC'dagi qoida bilan bir xil).
+    """
     with get_conn() as (conn, cur):
-        cur.execute("SELECT sku FROM products WHERE name=%s", (name,))
+        cur.execute(
+            "SELECT sku, weight, roll_length_m FROM products WHERE name=%s",
+            (name,),
+        )
         row = cur.fetchone()
-    return (row["sku"] or "").strip() if row else ""
+    if not row:
+        return {"sku": "", "profile_kg": 0.0, "roll_length_m": 0.0}
+    return {
+        "sku": (row["sku"] or "").strip(),
+        "profile_kg": float(row["weight"] or 0.0),
+        "roll_length_m": float(row["roll_length_m"] or 0.0),
+    }
 
 def get_line_wip_balance(product: str):
     """Mahsulot liniyasining joriy WIP balansi (RECEIVE − PRODUCE, kg).
@@ -1466,7 +1480,9 @@ def get_today_batches(worker_filter: list[str] | None = None) -> list[dict]:
                 f"""SELECT b.batch_code, b.worker, b.product, b.quantity,
                            b.weight_kg, b.earnings, b.created_at,
                            COALESCE(p.pieces_per_box, 1) AS pieces_per_box,
-                           COALESCE(p.sku, '') AS sku
+                           COALESCE(p.sku, '') AS sku,
+                   COALESCE(p.weight, 1) AS profile_kg,
+                   COALESCE(p.roll_length_m, 0) AS roll_length_m
                     FROM batches b
                     LEFT JOIN products p ON p.name = b.product
                     WHERE b.created_at::date = CURRENT_DATE
@@ -1479,7 +1495,9 @@ def get_today_batches(worker_filter: list[str] | None = None) -> list[dict]:
                 """SELECT b.batch_code, b.worker, b.product, b.quantity,
                           b.weight_kg, b.earnings, b.created_at,
                           COALESCE(p.pieces_per_box, 1) AS pieces_per_box,
-                          COALESCE(p.sku, '') AS sku
+                          COALESCE(p.sku, '') AS sku,
+                   COALESCE(p.weight, 1) AS profile_kg,
+                   COALESCE(p.roll_length_m, 0) AS roll_length_m
                    FROM batches b
                    LEFT JOIN products p ON p.name = b.product
                    WHERE b.created_at::date = CURRENT_DATE

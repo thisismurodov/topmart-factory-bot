@@ -19,6 +19,8 @@ export const productsTable = pgTable("products", {
   // Qo'lda tan narx (savdo mahsulotlari uchun): >0 bo'lsa BOM/mehnat/elektr o'rniga ishlatiladi
   costPrice:         numeric("cost_price", { precision: 12, scale: 2 }).notNull().default("0"),
   minimumStock:      integer("minimum_stock").notNull().default(0),
+  // O'ramdagi metr — etiketkadagi METRI qatori profildan olinadi (0 = nomdan regex)
+  rollLengthM:       numeric("roll_length_m", { precision: 12, scale: 2 }).notNull().default("0"),
   piecesPerBox:      integer("pieces_per_box").notNull().default(1),
   payrollMethod:     text("payroll_method").notNull().default("PRODUCT_RATE"),
   // Bitta mahsulot bazasi (master katalog) modullari: savdo / ishlab chiqarish

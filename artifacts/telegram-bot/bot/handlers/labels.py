@@ -76,6 +76,8 @@ async def send_label_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             "weight_kg":     r["weight_kg"] or 0.0,
             "pieces_per_box": int(r.get("pieces_per_box") or 1),
             "sku":            r.get("sku") or "",
+            "profile_kg":     float(r.get("profile_kg") or 0.0),
+            "metr":           float(r.get("roll_length_m") or 0.0),
         }
         for r in items
     ]

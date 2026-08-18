@@ -148,7 +148,7 @@ router.get("/products", async (_req, res): Promise<void> => {
   const { rows } = await pool.query(`
     SELECT
       p.id, p.name, p.sku, p.unit_type, p.currency_type,
-      p.default_sale_price, p.weight, p.rate, p.rate_type,
+      p.default_sale_price, p.weight, p.roll_length_m, p.rate, p.rate_type,
       p.salary_cost, p.electricity_cost, p.other_cost, p.cost_price,
       p.minimum_stock, p.active, p.created_at, p.payroll_method,
       p.in_sales, p.in_production,
@@ -224,6 +224,7 @@ router.get("/products", async (_req, res): Promise<void> => {
       marginPct,
       minimumStock:       row.minimum_stock,
       piecesPerBox:       Number(row.pieces_per_box) || 1,
+      rollLengthM:        Number(row.roll_length_m) || 0,
       inSales:            row.in_sales === true,
       inProduction:       row.in_production !== false,
       active:             row.active,
@@ -256,7 +257,7 @@ router.post("/products", async (req, res): Promise<void> => {
     defaultSalePrice = 0, weight = 1, rate = 0, rateType,
     salaryCost = 0, electricityCost = 0, otherCost = 0,
     minimumStock = 0, active = true, piecesPerBox = 1,
-    lineId = null, costPrice = 0,
+    lineId = null, costPrice = 0, rollLengthM = 0,
   } = req.body ?? {};
   // Bitta mahsulot bazasi modullari: aniq berilmasa mavjud qiymat saqlanadi
   // (yangi yozuvda: in_sales=FALSE, in_production=TRUE default'lari ishlaydi)
@@ -292,9 +293,9 @@ router.post("/products", async (req, res): Promise<void> => {
           `INSERT INTO products
              (name, sku, unit_type, currency_type, default_sale_price, weight, rate, rate_type,
               salary_cost, electricity_cost, other_cost, minimum_stock, active, pieces_per_box, line_id,
-              in_sales, in_production, cost_price)
+              in_sales, in_production, cost_price, roll_length_m)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
-                   COALESCE($16, FALSE), COALESCE($17, TRUE), $18)
+                   COALESCE($16, FALSE), COALESCE($17, TRUE), $18, $19)
            ON CONFLICT (name) DO UPDATE SET
              sku = CASE WHEN products.sku <> '' THEN products.sku ELSE EXCLUDED.sku END,
              unit_type=$3, currency_type=$4, default_sale_price=$5, weight=$6, rate=$7, rate_type=$8,
@@ -302,14 +303,15 @@ router.post("/products", async (req, res): Promise<void> => {
              pieces_per_box=$14, line_id=$15,
              in_sales=COALESCE($16, products.in_sales),
              in_production=COALESCE($17, products.in_production),
-             cost_price=$18
+             cost_price=$18, roll_length_m=$19
            RETURNING id, name, sku, unit_type, currency_type, default_sale_price, weight, rate, rate_type,
                      salary_cost, electricity_cost, other_cost, minimum_stock, active, pieces_per_box, line_id,
-                     in_sales, in_production, cost_price`,
+                     in_sales, in_production, cost_price, roll_length_m`,
           [name.trim(), finalSku, unitType, currencyType, Number(defaultSalePrice), finalWeight, Number(rate),
            finalRateType, Number(salaryCost), Number(electricityCost), Number(otherCost),
            Number(minimumStock), Boolean(active), Math.max(1, Number(piecesPerBox) || 1), finalLineId,
-           inSales, inProduction, Math.max(0, Number(costPrice) || 0)]
+           inSales, inProduction, Math.max(0, Number(costPrice) || 0),
+           Math.max(0, Number(rollLengthM) || 0)]
         ));
         break;
       } catch (e: any) {
@@ -339,7 +341,7 @@ router.post("/products", async (req, res): Promise<void> => {
       rate: Number(p.rate), rateType: p.rate_type,
       salaryCost: Number(p.salary_cost), electricityCost: Number(p.electricity_cost),
       otherCost: Number(p.other_cost), costPrice: Number(p.cost_price), minimumStock: p.minimum_stock,
-      piecesPerBox: Number(p.pieces_per_box) || 1, active: p.active,
+      piecesPerBox: Number(p.pieces_per_box) || 1, rollLengthM: Number(p.roll_length_m) || 0, active: p.active,
       inSales: p.in_sales === true, inProduction: p.in_production !== false,
     });
   } catch (err: any) {
@@ -361,6 +363,7 @@ router.patch("/products/:name", async (req, res): Promise<void> => {
     ["minimum_stock", "minimumStock"], ["active", "active"],
     ["payroll_method", "payrollMethod"], ["pieces_per_box", "piecesPerBox"], ["line_id", "lineId"],
     ["in_sales", "inSales"], ["in_production", "inProduction"],
+    ["roll_length_m", "rollLengthM"],
   ];
 
   for (const [col, key] of allowed) {

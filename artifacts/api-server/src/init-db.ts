@@ -46,6 +46,12 @@ export async function initDb(): Promise<void> {
       ADD COLUMN IF NOT EXISTS pieces_per_box INTEGER NOT NULL DEFAULT 1
   `);
 
+  // products.roll_length_m — o'ramdagi metr (etiketkadagi METRI qatori profildan olinadi)
+  await pool.query(`
+    ALTER TABLE IF EXISTS products
+      ADD COLUMN IF NOT EXISTS roll_length_m NUMERIC(12,2) NOT NULL DEFAULT 0
+  `);
+
   // products.in_sales / in_production — Bitta mahsulot bazasi modullari (Task 104):
   // bitta master yozuv savdo va ishlab chiqarish bo'limlarida qaysi rejimda
   // ishlatilishini belgilaydi.

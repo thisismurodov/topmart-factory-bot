@@ -13,7 +13,7 @@ from ..database import (
     create_batch_session, get_worker_chat_id, get_workers,
     get_products, get_product_weight, get_user_role, get_worker_monthly,
     get_product_method, get_containers, get_product_pieces_per_box,
-    get_product_sku,
+    get_product_label_info,
     get_worker_production_role, WipBalanceError, RawStockError,
     get_line_wip_balance,
 )
@@ -210,9 +210,11 @@ async def _add_item(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     earnings      = calc_earnings(product, quantity, weight_kg, method=method, worker_role=worker_role, worker_name=worker)
     pieces_per_box = get_product_pieces_per_box(product)
     try:
-        sku = get_product_sku(product)
+        label_info = get_product_label_info(product)
     except Exception:
-        sku = ""  # SKU topilmasa ham etiketka chiqishi shart
+        # Profil o'qilmasa ham etiketka chiqishi shart
+        label_info = {"sku": "", "profile_kg": 0.0, "roll_length_m": 0.0}
+    sku = label_info["sku"]
 
     items = context.user_data.setdefault("items", [])
     items.append({
@@ -225,6 +227,8 @@ async def _add_item(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         "qc":             qc,
         "pieces_per_box": pieces_per_box,
         "sku":            sku,
+        "profile_kg":     label_info["profile_kg"],
+        "metr":           label_info["roll_length_m"],
     })
 
     # Faqat joriy mahsulotning vaqtinchalik maydonlarini tozalaymiz (savat saqlanadi)

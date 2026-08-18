@@ -8,3 +8,5 @@ description: How workspace code reaches Railway; stale-lock pitfall that silentl
 - Railway deploy cards show 8-hex deployment IDs (e.g. 87305d84) that are NOT git SHAs — never hunt for them in git history; identify deployed code by stack traces or a /version endpoint instead.
 - The owner (Elyorbek) commits to GitHub main from outside the workspace (e.g. 04-avg savdo-bot pagination+search). ALWAYS `git fetch` and inspect `main..origin/main` before pushing; merge and preserve their commits, never force-push.
 - Stale deploys also corrupt DATA, not just behavior: the month-old bot wrote kg kirims as dona (qty>0, weight 0) for kg products. After fixing a stale pipeline, audit stock_movements made during the stale window (kg-unit products with qty>0 & weight=0) and fold qty into weight_kg.
+
+Owner merges need a full suite run: the 04-avg owner bot improvements (dokon picker `{where}` f-string) sat merged for 2 weeks before the dialect-sweep guard fired — after any fetch+merge of owner commits, run the whole api-tests suite, and teach new safe dynamic fragments to the sweep's KNOWN_SUBS (representative SQL) instead of bumping its skip cap.

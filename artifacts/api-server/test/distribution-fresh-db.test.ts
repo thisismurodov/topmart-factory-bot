@@ -226,6 +226,9 @@ KNOWN_SUBS = {
     "vil_clause": "(viloyat=NULL OR (viloyat IS NULL AND NULL='x') OR (viloyat='' AND NULL='x'))",
     "hud_clause": "(hudud=NULL OR (hudud IS NULL AND NULL='x') OR (hudud='' AND NULL='x'))",
     "ph": "NULL",  # expanded IN (...) placeholder list
+    # _dokon_page_kb universal picker (owner's 04-avg pagination/search work):
+    # where = "1=1" [+ " AND holat='faol'"] [+ " AND agent_id=%s"] — maximal form
+    "where": "1=1 AND holat='faol' AND agent_id=NULL",
 }
 
 def sql_from_node(node):

@@ -47,3 +47,4 @@
 - [GitHub→Railway deploy pipeline](github-railway-deploy-pipeline.md) — stale origin/main.lock froze sync a month; Railway deploy IDs ≠ git SHAs; owner commits on GitHub directly — always fetch+merge, never force-push.
 - [23505 handlers vs cloned schemas](pg-constraint-name-matching.md) — LIKE INCLUDING ALL renames indexes (idx_products_sku_unique→products_sku_idx); match unique-violations by column substring, not exact name.
 - [Bot timestamps = Tashkent fixed +5](bot-timezone.md) — Railway+PG run UTC; render via timezone(timedelta(hours=5)) (tzdata absent on slim → no ZoneInfo); reprints must reuse original created_at or barcode identity drifts.
+- [C-17 Reja ip nomenclature](c17-reja-ip.md) — C-17 30/50/100g Oq/Qora/Sariq stock is Reja ip, never Qop ip; duplicate Reja rows are the same canonical stock.

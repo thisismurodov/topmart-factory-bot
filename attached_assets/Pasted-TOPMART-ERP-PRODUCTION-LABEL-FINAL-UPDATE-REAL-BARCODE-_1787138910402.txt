@@ -1,0 +1,414 @@
+TOPMART ERP — PRODUCTION LABEL FINAL UPDATE + REAL BARCODE SYSTEM
+
+Maqsad:
+Hozir amalda ishlatilayotgan 100×80 mm termal label dizaynini O‘ZGARTIRMANG.
+Men yuborgan real mahsulotdagi label — FINAL DESIGN REFERENCE.
+
+Vazifa:
+1) mavjud label dizaynini 1:1 saqlash;
+2) uzun SKU sababli kesilib qolish muammosini tuzatish;
+3) barcode'ni REAL SCANNABLE BARCODE qilish;
+4) barcha mahsulotlar uchun barcode tizimini avtomatik ishlaydigan qilish;
+5) barcode har bir ishlab chiqarilgan mahsulot/partiyani unique identifikatsiya qilsin.
+
+==================================================
+1. LABEL O‘LCHAMI
+==================================================
+
+Physical label:
+100 × 80 mm
+
+Printer:
+Proton by Gainscha DTP-4207
+
+Print:
+Black & white thermal
+
+QR CODE:
+KERAK EMAS.
+
+BRAND:
+KERAK EMAS.
+Diyor Mahsulotlari, TopMart yoki boshqa kompaniya nomi labelga qo‘shilmasin.
+
+==================================================
+2. LABEL DIZAYNI
+==================================================
+
+Hozirgi real labeldagi dizaynni saqlang:
+
+- tashqi border
+- 6 ta information row
+- chap tomonda kichik ikonka
+- field nomi
+- qiymat
+- horizontal separatorlar
+- pastki barcode
+- barcode ostida uning readable text qiymati
+
+Dizaynni qayta o‘ylab topmang.
+Mavjud real labelni yaxshilang, xolos.
+
+LABEL:
+
+MAHSULOT NOMI:
+[real product name]
+
+MAHSULOT SKU:
+[short real SKU]
+
+MAHSULOT KG:
+[real kg]
+
+MAHSULOT METRI:
+[real metr yoki —]
+
+KIM ISHLAB CHIQARGANI:
+[real employee]
+
+SANA VA SOAT:
+[real production datetime]
+
+-------------------------
+
+[REAL SCANNABLE BARCODE]
+
+[BARCODE VALUE]
+
+==================================================
+3. SKU MUAMMOSI
+==================================================
+
+Hozirgi labelda:
+
+SHLANKA-POLYESTER-FDY-...
+
+kabi uzun SKU ko‘rinishi kesilib qolmoqda.
+
+Buni tuzating.
+
+MUHIM:
+SKU'ni barcode uchun ishlatmang.
+
+SKU — mahsulot identifikatori.
+
+Barcode — konkret ishlab chiqarilgan mahsulot/partiya identifikatori.
+
+Masalan:
+
+Mahsulot:
+SHLANKA POLYESTER FDY KO‘K
+
+SKU:
+TM-000075
+
+Barcode ID:
+TM000075-DI260819-01
+
+Yoki tizimdagi mavjud production/batch ID asosida undan ham yaxshi unique format tanlang.
+
+Replit mavjud database arxitekturasini tekshirib, eng to‘g‘ri unique ID strategiyasini tanlasin.
+
+YANGI SKU UYDIRMANG.
+
+Mavjud SKU bo‘lsa — aynan o‘sha SKU ishlatilsin.
+
+==================================================
+4. REAL BARCODE
+==================================================
+
+Barcode dekorativ chiziqlar BO‘LMASIN.
+
+Real barcode generator/library ishlatilsin.
+
+Barcode:
+- scanner bilan o‘qilishi kerak;
+- printerdan chiqqanda scan qilinishi kerak;
+- barcode value unique bo‘lishi kerak;
+- barcode value ERP'dagi konkret production record / batch bilan bog‘langan bo‘lishi kerak.
+
+Barcode format sifatida ERP va DTP-4207 uchun eng ishonchli 1D formatni tanlang
+(masalan Code 128), lekin avval mavjud stackni tekshiring.
+
+Barcode ostida readable text ko‘rsatiladi.
+
+==================================================
+5. BARCODE LOGIC
+==================================================
+
+MUHIM ARXITEKTURA:
+
+SKU:
+TM-000075
+
+Production:
+Shu mahsulotning konkret ishlab chiqarish yozuvi.
+
+Barcode:
+UNIQUE PRODUCTION IDENTIFIER
+
+Masalan:
+
+TM000075-DI260819-01
+
+Bu quyidagilarni anglatishi mumkin:
+- product SKU
+- production date
+- production sequence
+
+Lekin formatni o‘zingizcha taxmin qilib databasega yozmang.
+
+Avval mavjud:
+- products
+- items
+- batches
+- production
+- wip
+- inventory
+- employees
+relationshiplarini tekshiring.
+
+Agar mavjud production/batch ID unique bo‘lsa, uni barcode identity sifatida ishlatish afzal.
+
+==================================================
+6. BARCHA MAHSULOTLAR
+==================================================
+
+Barcode tizimi barcha mahsulotlarga umumiy ishlashi kerak.
+
+Ya'ni:
+
+Arqon
+Shlanka
+Strupa
+Lenta
+Tulpor
+Qop ip
+Babin
+Reja ip
+va boshqa barcha mahsulotlar
+
+uchun bitta universal label engine ishlasin.
+
+Har bir mahsulot uchun alohida hardcode qilmang.
+
+Label template universal bo‘lsin.
+
+Product data ERPdan avtomatik keladi.
+
+==================================================
+7. OLDINGI MAHSULOTLAR
+==================================================
+
+Mavjud mahsulot katalogidagi SKUlarni o‘zgartirmang.
+
+Sales historyga tegmang.
+
+Sales Botga tegmang.
+
+Eski savdo ma'lumotlarini buzmayin.
+
+Barcode'ni mahsulot SKU'sining o‘rniga ishlatmang.
+
+Agar mavjud production records uchun barcode identity yaratish kerak bo‘lsa:
+- avval mavjud recordsni tekshiring;
+- duplicate bo‘lmasligini isbotlang;
+- migration kerak bo‘lsa backup oling;
+- migrationdan oldin menga nima yozilishini ko‘rsating.
+
+Hech qanday production data'ni taxmin bilan o‘zgartirmang.
+
+==================================================
+8. PRINT
+==================================================
+
+Production record yaratilgandan keyin:
+
+[ 🖨 LABEL CHOP ETISH ]
+
+tugmasi ishlasin.
+
+Flow:
+
+Production
+↓
+Production Record
+↓
+Label Preview
+↓
+Barcode generation
+↓
+Print
+↓
+100×80 mm thermal label
+
+Print preview fizik 100×80 mm nisbatda bo‘lsin.
+
+==================================================
+9. LONG TEXT
+==================================================
+
+Mahsulot nomi uzun bo‘lsa:
+
+- avtomatik 2 qatorga tushsin;
+- labeldan chiqib ketmasin;
+- barcode va boshqa fieldlar joyidan siljib ketmasin.
+
+SKU uzun bo‘lsa:
+- readable text qisqartirilishi mumkin;
+- lekin barcode value TO‘LIQ qoladi.
+
+Muhim:
+display value bilan barcode value bir xil bo‘lishi shart emas.
+
+==================================================
+10. REAL LABEL REFERENCE
+==================================================
+
+Reference sifatida real fizik label:
+
+SHLANKA POLYESTER FDY KO‘K
+3.47 KG
+METR: —
+NAZOKAT
+19.08.2026 16:00
+
+labelda aynan shu struktura ishlatilgan.
+
+Yangi dizayn yaratmang.
+Shu fizik labelni ERPga ko‘chiring.
+
+==================================================
+11. DATABASE SAFETY
+==================================================
+
+Avval architecture audit qiling.
+
+Aniqlang:
+- barcode uchun mavjud field/table bormi?
+- production ID bormi?
+- batch ID bormi?
+- item_id bilan bog‘lash mumkinmi?
+
+Agar mavjud field yetarli bo‘lsa:
+YANGI TABLE YARATMANG.
+
+Agar yangi field zarur bo‘lsa:
+migrationni alohida tayyorlang va menga ko‘rsating.
+
+Sales:
+DAXLSIZ.
+
+Sales Bot:
+DAXLSIZ.
+
+Existing inventory:
+DAXLSIZ.
+
+Production history:
+DAXLSIZ, faqat label/barcode uchun zarur bo‘lgan minimal o‘zgarishlar bundan mustasno.
+
+==================================================
+12. TEST
+==================================================
+
+Kamida quyidagilarni test qiling:
+
+1. Tulpor
+2. Shlanka Polyester FDY Ko‘k
+3. Qop ip
+4. Babin
+5. Arqon
+6. Reja ip
+
+Har birida:
+- product name
+- SKU
+- kg
+- metr
+- employee
+- date/time
+- barcode
+
+to‘g‘ri chiqsin.
+
+Barcode:
+- generated
+- unique
+- scannable
+- production recordga qaytib boradigan
+bo‘lsin.
+
+Test qiling:
+- uzun product name
+- uzun SKU
+- decimal kg
+- metr yo‘q holat
+- decimal metr
+- apostrofli mahsulot nomlari
+- o‘zbekcha belgilar
+- 100×80 print boundary
+
+==================================================
+13. BARCODE SCAN FLOW
+==================================================
+
+Eng muhim kelajak funksiyasi:
+
+Scanner
+↓
+Barcode
+↓
+ERP
+↓
+Production Record / Product / Batch
+↓
+KG
+↓
+Metr
+↓
+Kim ishlab chiqargan
+↓
+Sana va vaqt
+↓
+Status / Location
+
+Barcode shunchaki label uchun emas.
+U kelajakda mahsulotning digital passporti sifatida ishlashi kerak.
+
+==================================================
+14. GOAL
+==================================================
+
+Natijada men ERPda:
+
+Production → Label Print
+
+bosaman.
+
+ERP avtomatik:
+
+- real product name
+- real SKU
+- real kg
+- real metr
+- real employee
+- real date/time
+- unique barcode
+
+olib,
+
+100×80 mm fizik labelni tayyorlaydi.
+
+Qo‘lda hech narsa kiritish kerak bo‘lmasin.
+
+AVVAL:
+Architecture audit → implementation plan → sandbox test.
+
+KEYIN:
+Implementation → unit tests → print preview → barcode validation → e2e test.
+
+Production DBga yozishdan oldin barcha o‘zgarishlarni report qiling.
+
+BIZ TAXMIN QILMAYMIZ.
+BIZ BILAMIZ.

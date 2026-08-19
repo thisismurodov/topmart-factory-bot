@@ -12,6 +12,7 @@ tags:
   - name: auth
   - name: dashboard
   - name: batches
+  - name: production-labels
   - name: workers
   - name: products
   - name: salary
@@ -213,6 +214,38 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /production-labels/{barcode}:
+    get:
+      operationId: getProductionLabel
+      tags: [production-labels]
+      summary: Look up one physical production label passport
+      parameters:
+        - name: barcode
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^TM[A-Z2-7]{16}$"
+      responses:
+        "200":
+          description: Label passport
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductionLabelPassport"
+        "400":
+          description: Invalid barcode
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Label not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   # ── Workers ───────────────────────────────────────────────────────────
   /workers:
@@ -912,6 +945,73 @@ components:
         total:
           type: integer
       required: [items, total]
+
+    ProductionLabelPassport:
+      type: object
+      properties:
+        barcode:
+          type: string
+        batchId:
+          type: ["integer", "null"]
+        batchCode:
+          type: string
+        labelType:
+          type: string
+          enum: [unit, box]
+        labelNumber:
+          type: integer
+        totalLabels:
+          type: integer
+        piecesInLabel:
+          type: integer
+        piecesPerBox:
+          type: integer
+        quantityTotal:
+          type: integer
+        weightKg:
+          type: number
+        lengthM:
+          type: ["number", "null"]
+        productName:
+          type: string
+        productSku:
+          type: string
+        workerName:
+          type: string
+        producedAt:
+          type: string
+        warehouseId:
+          type: ["integer", "null"]
+        warehouseName:
+          type: string
+        status:
+          type: string
+          enum: [created, printed, void]
+        printCount:
+          type: integer
+        lastPrintedAt:
+          type: ["string", "null"]
+      required:
+        - barcode
+        - batchId
+        - batchCode
+        - labelType
+        - labelNumber
+        - totalLabels
+        - piecesInLabel
+        - piecesPerBox
+        - quantityTotal
+        - weightKg
+        - lengthM
+        - productName
+        - productSku
+        - workerName
+        - producedAt
+        - warehouseId
+        - warehouseName
+        - status
+        - printCount
+        - lastPrintedAt
 
     # ── Workers ─────────────────────────────────────────────────────
     Worker:

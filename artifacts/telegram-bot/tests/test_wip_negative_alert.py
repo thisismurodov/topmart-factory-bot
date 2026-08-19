@@ -125,6 +125,16 @@ class NegativeWipAlertTest(unittest.TestCase):
                 production_line_id INTEGER,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
+            CREATE TABLE production_labels (
+                id SERIAL PRIMARY KEY, barcode_value TEXT NOT NULL, batch_id INTEGER,
+                batch_code TEXT NOT NULL, label_type TEXT NOT NULL, label_number INTEGER NOT NULL,
+                total_labels INTEGER NOT NULL, pieces_in_label INTEGER NOT NULL,
+                pieces_per_box INTEGER NOT NULL, quantity_total INTEGER NOT NULL,
+                weight_kg NUMERIC NOT NULL, length_m NUMERIC, product_name TEXT NOT NULL,
+                product_sku TEXT NOT NULL, worker_name TEXT NOT NULL, produced_at TIMESTAMPTZ NOT NULL,
+                warehouse_id INTEGER, warehouse_name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'created',
+                print_count INTEGER NOT NULL DEFAULT 0, last_printed_at TIMESTAMPTZ
+            );
             CREATE TABLE inventory (
                 id SERIAL PRIMARY KEY,
                 warehouse_id INTEGER NOT NULL,

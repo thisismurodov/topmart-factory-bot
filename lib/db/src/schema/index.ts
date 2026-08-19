@@ -23,3 +23,4 @@ export * from "./warehouses";
 export * from "./inventory";
 export * from "./stock_movements";
 export * from "./distribution";
+export * from "./production_labels";

@@ -77,6 +77,50 @@ export interface BatchList {
   total: number;
 }
 
+export type ProductionLabelPassportLabelType = typeof ProductionLabelPassportLabelType[keyof typeof ProductionLabelPassportLabelType];
+
+
+export const ProductionLabelPassportLabelType = {
+  unit: 'unit',
+  box: 'box',
+} as const;
+
+export type ProductionLabelPassportStatus = typeof ProductionLabelPassportStatus[keyof typeof ProductionLabelPassportStatus];
+
+
+export const ProductionLabelPassportStatus = {
+  created: 'created',
+  printed: 'printed',
+  void: 'void',
+} as const;
+
+export interface ProductionLabelPassport {
+  barcode: string;
+  /** @nullable */
+  batchId: number | null;
+  batchCode: string;
+  labelType: ProductionLabelPassportLabelType;
+  labelNumber: number;
+  totalLabels: number;
+  piecesInLabel: number;
+  piecesPerBox: number;
+  quantityTotal: number;
+  weightKg: number;
+  /** @nullable */
+  lengthM: number | null;
+  productName: string;
+  productSku: string;
+  workerName: string;
+  producedAt: string;
+  /** @nullable */
+  warehouseId: number | null;
+  warehouseName: string;
+  status: ProductionLabelPassportStatus;
+  printCount: number;
+  /** @nullable */
+  lastPrintedAt: string | null;
+}
+
 export interface Worker {
   name: string;
   prefix: string;

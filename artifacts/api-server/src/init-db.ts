@@ -348,6 +348,117 @@ export async function initDb(): Promise<void> {
     )
   `);
 
+  // Production schema o'zgarishi oddiy restartda tasodifan qo'llanmaydi.
+  // Faqat foydalanuvchi aniq DDL modelini tasdiqlagan migration jarayoni yoki
+  // throwaway schema testlari bu gate'ni ataylab yoqadi.
+  if (process.env.PRODUCTION_LABELS_SCHEMA_APPROVED === "1") {
+    // Har bir fizik ishlab chiqarish etiketkasi uchun o'zgarmas passport.
+    // batch/warehouse FK SET NULL: manba qatori o'chirilsa ham barcode tarixi qoladi.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS production_labels (
+        id               SERIAL PRIMARY KEY,
+        barcode_value    TEXT NOT NULL,
+        batch_id         INTEGER REFERENCES batches(id) ON DELETE SET NULL,
+        batch_code       TEXT NOT NULL,
+        label_type       TEXT NOT NULL DEFAULT 'unit',
+        label_number     INTEGER NOT NULL,
+        total_labels     INTEGER NOT NULL,
+        pieces_in_label  INTEGER NOT NULL DEFAULT 1,
+        pieces_per_box   INTEGER NOT NULL DEFAULT 1,
+        quantity_total   INTEGER NOT NULL,
+        weight_kg        NUMERIC(12,3) NOT NULL DEFAULT 0,
+        length_m         NUMERIC(12,2),
+        product_name     TEXT NOT NULL,
+        product_sku      TEXT NOT NULL DEFAULT '',
+        worker_name      TEXT NOT NULL,
+        produced_at      TIMESTAMP WITH TIME ZONE NOT NULL,
+        warehouse_id     INTEGER REFERENCES warehouses(id) ON DELETE SET NULL,
+        warehouse_name   TEXT NOT NULL DEFAULT '',
+        status           TEXT NOT NULL DEFAULT 'created',
+        print_count      INTEGER NOT NULL DEFAULT 0,
+        last_printed_at  TIMESTAMP WITH TIME ZONE,
+        created_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+        CONSTRAINT production_labels_barcode_check
+          CHECK (barcode_value ~ '^TM[A-Z2-7]{16}$'),
+        CONSTRAINT production_labels_number_check
+          CHECK (label_number > 0 AND total_labels >= label_number),
+        CONSTRAINT production_labels_pieces_check
+          CHECK (pieces_in_label > 0),
+        CONSTRAINT production_labels_box_capacity_check
+          CHECK (pieces_per_box > 0),
+        CONSTRAINT production_labels_quantity_check
+          CHECK (quantity_total > 0),
+        CONSTRAINT production_labels_weight_check
+          CHECK (weight_kg >= 0),
+        CONSTRAINT production_labels_length_check
+          CHECK (length_m IS NULL OR length_m >= 0),
+        CONSTRAINT production_labels_type_check
+          CHECK (label_type IN ('unit','box')),
+        CONSTRAINT production_labels_status_check
+          CHECK (status IN ('created','printed','void')),
+        CONSTRAINT production_labels_print_count_check
+          CHECK (print_count >= 0)
+      )
+    `);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_production_labels_barcode
+        ON production_labels(barcode_value)
+    `);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_production_labels_batch_number
+        ON production_labels(batch_id, label_number)
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_production_labels_batch_code
+        ON production_labels(batch_code)
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_production_labels_product
+        ON production_labels(product_name)
+    `);
+    await pool.query(`
+      CREATE OR REPLACE FUNCTION enforce_production_label_immutable()
+      RETURNS TRIGGER
+      LANGUAGE plpgsql
+      AS $$
+      BEGIN
+        IF ROW(
+          NEW.id, NEW.barcode_value, NEW.batch_code, NEW.label_type,
+          NEW.label_number, NEW.total_labels, NEW.pieces_in_label,
+          NEW.pieces_per_box, NEW.quantity_total, NEW.weight_kg, NEW.length_m,
+          NEW.product_name, NEW.product_sku, NEW.worker_name, NEW.produced_at,
+          NEW.warehouse_name, NEW.created_at
+        ) IS DISTINCT FROM ROW(
+          OLD.id, OLD.barcode_value, OLD.batch_code, OLD.label_type,
+          OLD.label_number, OLD.total_labels, OLD.pieces_in_label,
+          OLD.pieces_per_box, OLD.quantity_total, OLD.weight_kg, OLD.length_m,
+          OLD.product_name, OLD.product_sku, OLD.worker_name, OLD.produced_at,
+          OLD.warehouse_name, OLD.created_at
+        ) OR (
+          NEW.batch_id IS DISTINCT FROM OLD.batch_id
+          AND NOT (OLD.batch_id IS NOT NULL AND NEW.batch_id IS NULL)
+        ) OR (
+          NEW.warehouse_id IS DISTINCT FROM OLD.warehouse_id
+          AND NOT (OLD.warehouse_id IS NOT NULL AND NEW.warehouse_id IS NULL)
+        ) THEN
+          RAISE EXCEPTION 'production label identity and snapshots are immutable'
+            USING ERRCODE = '55000';
+        END IF;
+        RETURN NEW;
+      END;
+      $$
+    `);
+    await pool.query(`
+      DROP TRIGGER IF EXISTS production_labels_immutable_trigger
+        ON production_labels
+    `);
+    await pool.query(`
+      CREATE TRIGGER production_labels_immutable_trigger
+      BEFORE UPDATE ON production_labels
+      FOR EACH ROW EXECUTE FUNCTION enforce_production_label_immutable()
+    `);
+  }
+
   // ── Ish jarayoni (Material Flow / WIP) ───────────────────────────────────
   // Ombor/inventory ustunlari odatda bot init_db tomonidan qo'shiladi, lekin
   // API cold-start da (bot hali ishlamagan bo'lsa) ham mavjudligini kafolatlaymiz

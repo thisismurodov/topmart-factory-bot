@@ -89,6 +89,16 @@ class ContainerWeightTest(unittest.TestCase):
                 production_line_id INTEGER,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
+            CREATE TABLE production_labels (
+                id SERIAL PRIMARY KEY, barcode_value TEXT NOT NULL, batch_id INTEGER,
+                batch_code TEXT NOT NULL, label_type TEXT NOT NULL, label_number INTEGER NOT NULL,
+                total_labels INTEGER NOT NULL, pieces_in_label INTEGER NOT NULL,
+                pieces_per_box INTEGER NOT NULL, quantity_total INTEGER NOT NULL,
+                weight_kg NUMERIC NOT NULL, length_m NUMERIC, product_name TEXT NOT NULL,
+                product_sku TEXT NOT NULL, worker_name TEXT NOT NULL, produced_at TIMESTAMPTZ NOT NULL,
+                warehouse_id INTEGER, warehouse_name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'created',
+                print_count INTEGER NOT NULL DEFAULT 0, last_printed_at TIMESTAMPTZ
+            );
             CREATE TABLE inventory (
                 id SERIAL PRIMARY KEY,
                 warehouse_id INTEGER NOT NULL,
@@ -134,7 +144,7 @@ class ContainerWeightTest(unittest.TestCase):
         self.conn = _conn()
         self.cur = self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         self.cur.execute(
-            "TRUNCATE inventory, stock_movements, batches RESTART IDENTITY"
+            "TRUNCATE production_labels, inventory, stock_movements, batches RESTART IDENTITY"
         )
         self.cur.execute("TRUNCATE products, warehouses, raw_materials RESTART IDENTITY")
         # KG va dona mahsulot
@@ -204,6 +214,43 @@ class ContainerWeightTest(unittest.TestCase):
         return self._raw_stock(name) - led
 
     # ── create_batch_session: KIRIM og'irligi ──────────────────────────────
+    def test_batch_creates_unique_immutable_label_passports(self):
+        result = db.create_batch_session(
+            "Ali", "AL",
+            [{
+                "product": "TestDona",
+                "quantity": 26,
+                "weight_kg": 52.0,
+                "earnings": 0,
+                "pieces_per_box": 25,
+                "profile_kg": 2.0,
+                "sku": "LONG-SKU-TEST-01",
+                "metr": 80,
+            }],
+            warehouse_id=self.wh_a,
+        )
+
+        labels = result["label_items"][0]["labels"]
+        self.assertEqual(len(labels), 2)
+        self.assertEqual(len({r["barcode_value"] for r in labels}), 2)
+        for row in labels:
+            self.assertRegex(row["barcode_value"], r"^TM[A-Z2-7]{16}$")
+
+        self.assertEqual([r["pieces_in_label"] for r in labels], [25, 1])
+        self.assertEqual([float(r["weight_kg"]) for r in labels], [50.0, 2.0])
+        self.assertTrue(all(r["warehouse_name"] == "C-A" for r in labels))
+        self.assertTrue(all(r["status"] == "created" for r in labels))
+
+        persisted = db.get_production_labels(result["batch_code"])
+        self.assertEqual(
+            [r["barcode_value"] for r in persisted],
+            [r["barcode_value"] for r in labels],
+        )
+        self.assertEqual(db.mark_batch_labels_printed(result["batch_code"]), 2)
+        printed = db.get_production_labels(result["batch_code"])
+        self.assertTrue(all(r["status"] == "printed" for r in printed))
+        self.assertTrue(all(r["print_count"] == 1 for r in printed))
+
     def test_batch_in_adds_and_accumulates_weight(self):
         db.create_batch_session(
             "Ali", "AL",

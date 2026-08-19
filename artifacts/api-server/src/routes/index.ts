@@ -6,6 +6,7 @@ import authRouter from "./auth";
 import aiRouter from "./ai";
 import dashboardRouter from "./dashboard";
 import batchesRouter from "./batches";
+import productionLabelsRouter from "./production-labels";
 import workersRouter from "./workers";
 import productsRouter from "./products";
 import salaryRouter from "./salary";
@@ -56,6 +57,7 @@ router.use(requireAuth);
 
 router.use(dashboardRouter);
 router.use(batchesRouter);
+router.use(productionLabelsRouter);
 router.use(workersRouter);
 router.use(productsRouter);
 router.use(salaryRouter);

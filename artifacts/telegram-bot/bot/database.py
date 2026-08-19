@@ -1,4 +1,7 @@
+import base64
+import math
 import os
+import secrets
 import time
 import logging
 from datetime import date
@@ -444,6 +447,114 @@ def init_db() -> None:
               END IF;
             END $$;
         """)
+        # Production schema o'zgarishi oddiy restartda tasodifan qo'llanmaydi.
+        # Faqat tasdiqlangan migration yoki throwaway schema testlari gate'ni yoqadi.
+        if os.environ.get("PRODUCTION_LABELS_SCHEMA_APPROVED") == "1":
+            # Har bir fizik etiketka uchun o'zgarmas passport. Batch/ombor qatori
+            # keyin o'chirilsa ham snapshot va barcode saqlanadi (FK SET NULL).
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS production_labels (
+                    id               SERIAL PRIMARY KEY,
+                    barcode_value    TEXT NOT NULL,
+                    batch_id         INTEGER REFERENCES batches(id) ON DELETE SET NULL,
+                    batch_code       TEXT NOT NULL,
+                    label_type       TEXT NOT NULL DEFAULT 'unit',
+                    label_number     INTEGER NOT NULL,
+                    total_labels     INTEGER NOT NULL,
+                    pieces_in_label  INTEGER NOT NULL DEFAULT 1,
+                    pieces_per_box   INTEGER NOT NULL DEFAULT 1,
+                    quantity_total   INTEGER NOT NULL,
+                    weight_kg        NUMERIC(12,3) NOT NULL DEFAULT 0,
+                    length_m         NUMERIC(12,2),
+                    product_name     TEXT NOT NULL,
+                    product_sku      TEXT NOT NULL DEFAULT '',
+                    worker_name      TEXT NOT NULL,
+                    produced_at      TIMESTAMP WITH TIME ZONE NOT NULL,
+                    warehouse_id     INTEGER REFERENCES warehouses(id) ON DELETE SET NULL,
+                    warehouse_name   TEXT NOT NULL DEFAULT '',
+                    status           TEXT NOT NULL DEFAULT 'created',
+                    print_count      INTEGER NOT NULL DEFAULT 0,
+                    last_printed_at  TIMESTAMP WITH TIME ZONE,
+                    created_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                    CONSTRAINT production_labels_barcode_check
+                      CHECK (barcode_value ~ '^TM[A-Z2-7]{16}$'),
+                    CONSTRAINT production_labels_number_check
+                      CHECK (label_number > 0 AND total_labels >= label_number),
+                    CONSTRAINT production_labels_pieces_check
+                      CHECK (pieces_in_label > 0),
+                    CONSTRAINT production_labels_box_capacity_check
+                      CHECK (pieces_per_box > 0),
+                    CONSTRAINT production_labels_quantity_check
+                      CHECK (quantity_total > 0),
+                    CONSTRAINT production_labels_weight_check
+                      CHECK (weight_kg >= 0),
+                    CONSTRAINT production_labels_length_check
+                      CHECK (length_m IS NULL OR length_m >= 0),
+                    CONSTRAINT production_labels_type_check
+                      CHECK (label_type IN ('unit','box')),
+                    CONSTRAINT production_labels_status_check
+                      CHECK (status IN ('created','printed','void')),
+                    CONSTRAINT production_labels_print_count_check
+                      CHECK (print_count >= 0)
+                )
+            """)
+            cur.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_production_labels_barcode
+                  ON production_labels(barcode_value)
+            """)
+            cur.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_production_labels_batch_number
+                  ON production_labels(batch_id, label_number)
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_production_labels_batch_code
+                  ON production_labels(batch_code)
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_production_labels_product
+                  ON production_labels(product_name)
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION enforce_production_label_immutable()
+                RETURNS TRIGGER
+                LANGUAGE plpgsql
+                AS $$
+                BEGIN
+                  IF ROW(
+                    NEW.id, NEW.barcode_value, NEW.batch_code, NEW.label_type,
+                    NEW.label_number, NEW.total_labels, NEW.pieces_in_label,
+                    NEW.pieces_per_box, NEW.quantity_total, NEW.weight_kg, NEW.length_m,
+                    NEW.product_name, NEW.product_sku, NEW.worker_name, NEW.produced_at,
+                    NEW.warehouse_name, NEW.created_at
+                  ) IS DISTINCT FROM ROW(
+                    OLD.id, OLD.barcode_value, OLD.batch_code, OLD.label_type,
+                    OLD.label_number, OLD.total_labels, OLD.pieces_in_label,
+                    OLD.pieces_per_box, OLD.quantity_total, OLD.weight_kg, OLD.length_m,
+                    OLD.product_name, OLD.product_sku, OLD.worker_name, OLD.produced_at,
+                    OLD.warehouse_name, OLD.created_at
+                  ) OR (
+                    NEW.batch_id IS DISTINCT FROM OLD.batch_id
+                    AND NOT (OLD.batch_id IS NOT NULL AND NEW.batch_id IS NULL)
+                  ) OR (
+                    NEW.warehouse_id IS DISTINCT FROM OLD.warehouse_id
+                    AND NOT (OLD.warehouse_id IS NOT NULL AND NEW.warehouse_id IS NULL)
+                  ) THEN
+                    RAISE EXCEPTION 'production label identity and snapshots are immutable'
+                      USING ERRCODE = '55000';
+                  END IF;
+                  RETURN NEW;
+                END;
+                $$
+            """)
+            cur.execute("""
+                DROP TRIGGER IF EXISTS production_labels_immutable_trigger
+                  ON production_labels
+            """)
+            cur.execute("""
+                CREATE TRIGGER production_labels_immutable_trigger
+                BEFORE UPDATE ON production_labels
+                FOR EACH ROW EXECUTE FUNCTION enforce_production_label_immutable()
+            """)
         # Mavjud inventory satrlari uchun og'irlikni partiya nisbati bo'yicha bir marta
         # to'ldiramiz (kg-mahsulotlar). Bundan keyin har bir harakat og'irlikni o'zi
         # olib yuradi; shu sabab faqat bir marta (db_meta bayrog'i bilan) bajariladi.
@@ -1204,6 +1315,12 @@ def get_registered_packers() -> list[dict]:
 
 # ── Batches ───────────────────────────────────────────────────────────────────
 
+def _new_label_token() -> str:
+    """Code 128 uchun qisqa 80-bit identity: TM + 16 ta Base32 belgi."""
+    encoded = base64.b32encode(secrets.token_bytes(10)).decode("ascii")
+    return f"TM{encoded.rstrip('=')}"
+
+
 def next_batch_code(worker_prefix: str) -> str:
     today = date.today().strftime("%y%m%d")
     prefix = f"{worker_prefix}-{today}-"
@@ -1230,13 +1347,18 @@ def create_batch_session(
     items: [{"product", "quantity", "weight_kg", "earnings"}]
     warehouse_id: tayyor mahsulot qaysi konteynerga tushishini belgilaydi.
                   None bo'lsa birinchi faol ombor tanlanadi (orqaga mos).
-    Returns: {"batch_code", "total_earnings", "low_materials"}
+    Returns: {"batch_code", "total_earnings", "low_materials",
+              "created_at", "label_items"}
       low_materials — minimal zahiradan kam qolgan xom ashyolar (nom bo'yicha dedup).
     """
+    from .label_generator import box_contents, extract_metr, kg_profile_meaningful
+
     today = date.today().strftime("%y%m%d")
     code_prefix = f"{prefix}-{today}-"
     low_by_name: dict[str, dict] = {}
     total_earnings = 0.0
+    label_items: list[dict] = []
+    session_created_at = None
 
     with get_conn() as (conn, cur):
         # Bir vaqtning o'zida ikki sessiya bir xil kod olmasligi uchun tranzaksiya-lock
@@ -1252,13 +1374,16 @@ def create_batch_session(
 
         # Tayyor mahsulot uchun ombor: berilgan konteyner yoki birinchi faol ombor
         if warehouse_id:
-            cur.execute("SELECT id FROM warehouses WHERE id=%s AND active=TRUE", (warehouse_id,))
+            cur.execute("SELECT id, name FROM warehouses WHERE id=%s AND active=TRUE", (warehouse_id,))
             wh = cur.fetchone()
             wh_id = wh["id"] if wh else None
         else:
-            cur.execute("SELECT id FROM warehouses WHERE active=TRUE ORDER BY id LIMIT 1")
+            cur.execute("SELECT id, name FROM warehouses WHERE active=TRUE ORDER BY id LIMIT 1")
             wh = cur.fetchone()
             wh_id = wh["id"] if wh else None
+        if wh_id is None:
+            raise ValueError("Faol tayyor mahsulot ombori topilmadi")
+        wh_name = str(wh["name"]) if wh and wh.get("name") else ""
 
         # Ishlab chiqaruvchining liniyasi — mahsulotda line_id bo'lmasa fallback.
         cur.execute(
@@ -1348,9 +1473,62 @@ def create_batch_session(
 
             cur.execute(
                 """INSERT INTO batches (batch_code, worker, product, quantity, weight_kg, earnings, payroll_method, production_line_id)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                   RETURNING id, created_at""",
                 (batch_code, worker, product, quantity, weight_kg, batch_earnings, method, prod_line_id),
             )
+            batch_row = cur.fetchone()
+            batch_id = int(batch_row["id"])
+            produced_at = batch_row["created_at"]
+            if session_created_at is None:
+                session_created_at = produced_at
+
+            # Har bir fizik dona/quti uchun alohida, o'zgarmas label passport.
+            # Profil snapshotlari keyin mahsulot sozlamasi o'zgarsa ham reprintni
+            # aynan bir xil saqlaydi.
+            per_box = max(1, int(it.get("pieces_per_box") or 1))
+            total_labels = math.ceil(quantity / per_box)
+            profile_kg = float(it.get("profile_kg") or 0.0)
+            actual_unit_kg = (weight_kg / quantity) if quantity > 0 else 0.0
+            length_raw = it.get("metr")
+            length_m = float(length_raw) if length_raw and float(length_raw) > 0 else extract_metr(product)
+            sku = str(it.get("sku") or "").strip()
+            passport_rows: list[dict] = []
+
+            for label_number in range(1, total_labels + 1):
+                pieces = box_contents(quantity, per_box, label_number)
+                unit_kg = profile_kg if kg_profile_meaningful(profile_kg) else actual_unit_kg
+                label_weight = unit_kg * pieces
+                token = _new_label_token()
+                cur.execute(
+                    """INSERT INTO production_labels
+                         (barcode_value, batch_id, batch_code, label_type,
+                          label_number, total_labels, pieces_in_label, pieces_per_box,
+                          quantity_total,
+                          weight_kg, length_m, product_name, product_sku, worker_name,
+                          produced_at, warehouse_id, warehouse_name)
+                       VALUES
+                         (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                       RETURNING id, barcode_value, batch_id, batch_code, label_type,
+                                 label_number, total_labels, pieces_in_label, pieces_per_box,
+                                 quantity_total, weight_kg, length_m, product_name,
+                                 product_sku, worker_name, produced_at, warehouse_id,
+                                 warehouse_name, status, print_count, last_printed_at""",
+                    (
+                        token, batch_id, batch_code,
+                        "box" if per_box > 1 else "unit",
+                        label_number, total_labels, pieces, per_box, quantity,
+                        label_weight, length_m, product, sku, worker,
+                        produced_at, wh_id, wh_name,
+                    ),
+                )
+                passport_rows.append(cur.fetchone())
+
+            label_items.append({
+                **it,
+                "batch_id": batch_id,
+                "labels": passport_rows,
+            })
 
             # Tayyor mahsulotni faol omborga "Kirim" qilib yozamiz
             if wh_id:
@@ -1469,6 +1647,8 @@ def create_batch_session(
         "total_earnings": total_earnings,
         "low_materials": list(low_by_name.values()),
         "line_entries":  line_entries,
+        "created_at":    session_created_at,
+        "label_items":   label_items,
     }
 
 
@@ -1477,7 +1657,7 @@ def get_today_batches(worker_filter: list[str] | None = None) -> list[dict]:
         if worker_filter:
             placeholders = ",".join(["%s"] * len(worker_filter))
             cur.execute(
-                f"""SELECT b.batch_code, b.worker, b.product, b.quantity,
+                f"""SELECT b.id, b.batch_code, b.worker, b.product, b.quantity,
                            b.weight_kg, b.earnings, b.created_at,
                            COALESCE(p.pieces_per_box, 1) AS pieces_per_box,
                            COALESCE(p.sku, '') AS sku,
@@ -1492,7 +1672,7 @@ def get_today_batches(worker_filter: list[str] | None = None) -> list[dict]:
             )
         else:
             cur.execute(
-                """SELECT b.batch_code, b.worker, b.product, b.quantity,
+                """SELECT b.id, b.batch_code, b.worker, b.product, b.quantity,
                           b.weight_kg, b.earnings, b.created_at,
                           COALESCE(p.pieces_per_box, 1) AS pieces_per_box,
                           COALESCE(p.sku, '') AS sku,
@@ -1504,6 +1684,38 @@ def get_today_batches(worker_filter: list[str] | None = None) -> list[dict]:
                    ORDER BY b.id"""
             )
         return cur.fetchall()
+
+
+def get_production_labels(batch_code: str) -> list[dict]:
+    """Partiyadagi barcha label passportlar (reprint uchun o'zgarmas tartibda)."""
+    with get_conn() as (conn, cur):
+        cur.execute(
+            """SELECT id, barcode_value, batch_id, batch_code, label_type,
+                      label_number, total_labels, pieces_in_label, quantity_total,
+                      pieces_per_box,
+                      weight_kg, length_m, product_name, product_sku, worker_name,
+                      produced_at, warehouse_id, warehouse_name, status,
+                      print_count, last_printed_at
+               FROM production_labels
+               WHERE batch_code=%s AND status <> 'void'
+               ORDER BY batch_id, label_number""",
+            (batch_code,),
+        )
+        return cur.fetchall()
+
+
+def mark_batch_labels_printed(batch_code: str) -> int:
+    """PDF muvaffaqiyatli yuborilgach print metadata'ni atomar yangilaydi."""
+    with get_conn() as (conn, cur):
+        cur.execute(
+            """UPDATE production_labels
+               SET status='printed',
+                   print_count=print_count+1,
+                   last_printed_at=NOW()
+               WHERE batch_code=%s AND status <> 'void'""",
+            (batch_code,),
+        )
+        return cur.rowcount or 0
 
 
 def set_product_pieces_per_box(name: str, pieces_per_box: int) -> bool:

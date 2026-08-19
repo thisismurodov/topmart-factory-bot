@@ -24,6 +24,7 @@ import {
   productMaterialsTable,
   productPriceTiersTable,
   productsTable,
+  productionLabelsTable,
   rawMaterialsTable,
   salaryEntriesTable,
   salaryPaymentsTable,
@@ -84,6 +85,7 @@ const TABLES = {
   product_materials: productMaterialsTable,
   product_price_tiers: productPriceTiersTable,
   products: productsTable,
+  production_labels: productionLabelsTable,
   raw_materials: rawMaterialsTable,
   salary_entries: salaryEntriesTable,
   salary_payments: salaryPaymentsTable,
@@ -152,7 +154,11 @@ async function main(): Promise<void> {
 
   const driftUrl = withDatabase(adminUrl, DRIFT_DB);
   const drizzleUrl = withDatabase(adminUrl, DRIZZLE_DB);
-  const childEnv: NodeJS.ProcessEnv = { ...process.env, DATABASE_URL: driftUrl };
+  const childEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    DATABASE_URL: driftUrl,
+    PRODUCTION_LABELS_SCHEMA_APPROVED: "1",
+  };
   delete childEnv["RAILWAY_DATABASE_URL"]; // lib/db avval RAILWAY_DATABASE_URL ni oladi
   const drizzleEnv: NodeJS.ProcessEnv = { ...process.env, DATABASE_URL: drizzleUrl };
   delete drizzleEnv["RAILWAY_DATABASE_URL"];

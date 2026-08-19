@@ -12,4 +12,5 @@ dependencies = [
     "qrcode[pil]==7.4.2",
     "reportlab==4.2.5",
     "schedule==1.2.2",
+    "zxing-cpp==2.3.0",
 ]

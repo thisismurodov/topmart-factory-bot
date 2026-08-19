@@ -14,6 +14,7 @@ from ..database import (
     get_products, get_product_weight, get_user_role, get_worker_monthly,
     get_product_method, get_containers, get_product_pieces_per_box,
     get_product_label_info,
+    mark_batch_labels_printed,
     get_worker_production_role, WipBalanceError, RawStockError,
     get_line_wip_balance,
 )
@@ -384,6 +385,13 @@ async def _finalize(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     batch_code    = result["batch_code"]
     total         = result["total_earnings"]
     low_materials = result["low_materials"]
+    label_items   = result["label_items"]
+    produced_at   = result.get("created_at")
+    if isinstance(produced_at, datetime):
+        created = (
+            produced_at.astimezone(TASHKENT_TZ).replace(tzinfo=None)
+            if produced_at.tzinfo is not None else produced_at
+        )
 
     today_str = date.today().strftime("%d.%m.%Y")
 
@@ -425,16 +433,12 @@ async def _finalize(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         reply_markup=kb,
     )
 
-    import math
-    total_stickers = sum(
-        math.ceil(int(it["quantity"]) / max(1, int(it.get("pieces_per_box") or 1)))
-        for it in items
-    )
+    total_stickers = sum(len(it["labels"]) for it in label_items)
     total_qty = sum(int(it["quantity"]) for it in items)
     qty_note = f" ({total_qty} dona)" if total_stickers != total_qty else ""
     gen_msg = await message.reply_text(f"🖨️ {total_stickers} ta stiker tayyorlanmoqda…")
 
-    pdf_buf = generate_batch_session_pdf(batch_code, worker, items, created)
+    pdf_buf = generate_batch_session_pdf(batch_code, worker, label_items, created)
     await message.reply_document(
         document=pdf_buf,
         filename=f"{batch_code}.pdf",
@@ -444,6 +448,12 @@ async def _finalize(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         ),
         parse_mode="Markdown",
     )
+    marked = mark_batch_labels_printed(batch_code)
+    if marked != total_stickers:
+        raise RuntimeError(
+            f"{batch_code}: {total_stickers} label chop etildi, "
+            f"lekin {marked} passport metadata yangilandi"
+        )
     await gen_msg.delete()
 
     await _notify_worker(context, worker, batch_code, items, total)

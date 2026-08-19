@@ -3,19 +3,61 @@
 Bu testlar DB talab qilmaydi — sof Pillow/img2pdf/python-barcode.
 """
 import unittest
+import math
 from datetime import datetime
+
+import zxingcpp
+from PIL import Image, ImageDraw
 
 from bot.label_generator import (
     LABEL_H,
     LABEL_W,
     TASHKENT_TZ,
     _build_single,
+    _fit_value_lines,
     barcode_safe,
     extract_metr,
     generate_batch_session_pdf,
 )
 
 TS = datetime(2026, 8, 18, 14, 32)
+_TOKEN_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+
+
+def token(n: int) -> str:
+    return "TM" + ("A" * 15) + _TOKEN_ALPHABET[n % len(_TOKEN_ALPHABET)]
+
+
+def passports(
+    product: str,
+    quantity: int,
+    per_box: int = 1,
+    *,
+    start: int = 0,
+    total_weight: float = 0.0,
+    sku: str = "",
+    metr: float | None = None,
+) -> list[dict]:
+    total = math.ceil(quantity / per_box)
+    unit_kg = total_weight / quantity if quantity else 0.0
+    rows = []
+    for i in range(1, total + 1):
+        pieces = min(per_box, quantity - (i - 1) * per_box)
+        rows.append({
+            "barcode_value": token(start + i),
+            "batch_code": "B-1808-3",
+            "label_number": i,
+            "total_labels": total,
+            "pieces_in_label": pieces,
+            "pieces_per_box": per_box,
+            "quantity_total": quantity,
+            "weight_kg": unit_kg * pieces,
+            "length_m": metr,
+            "product_name": product,
+            "product_sku": sku,
+            "worker_name": "Botir",
+        })
+    return rows
 
 
 class LabelGeneratorTest(unittest.TestCase):
@@ -37,7 +79,8 @@ class LabelGeneratorTest(unittest.TestCase):
             # Uzun ishchi nomi ham (2 qatorga bo'linadi, yozuv ustiga chiqmaydi)
             img = _build_single("B-1808-3", "Umidjon Qambarov", v["product"],
                                 3, 12, v["w"], TS,
-                                per_box=v["per_box"], sku=v["sku"])
+                                 per_box=v["per_box"], sku=v["sku"],
+                                 barcode_value=token(1))
             self.assertEqual(img.size, (LABEL_W, LABEL_H), v["product"])
 
     def test_extract_metr_from_product_name(self):
@@ -51,7 +94,7 @@ class LabelGeneratorTest(unittest.TestCase):
         """Shtrix-kod zonasi (punktirdan pastda) ham qora, ham oq piksellar
         va ko'p vertikal chiziq o'tishlariga ega bo'lishi kerak."""
         img = _build_single("B-1808-3", "Sayyora", "Tulpor", 1, 4, 3.1, TS,
-                            sku="TPLR-00087")
+                            sku="TPLR-00087", barcode_value=token(2))
         # Shtrix-kod taxminan y=470..540 oralig'ida
         row_y = 505
         px = img.convert("L").load()
@@ -67,10 +110,10 @@ class LabelGeneratorTest(unittest.TestCase):
         self.assertGreater(transitions, 20, "shtrix-kod chiziqlari topilmadi")
         self.assertGreater(blacks, 50)
 
-    def test_sku_fallback_to_batch_code(self):
-        """SKU bo'sh bo'lsa ham etiketka chiziladi (kod partiya kodidan)."""
+    def test_empty_sku_keeps_passport_barcode(self):
+        """SKU bo'sh bo'lsa ham persisted passport barcode ishlatiladi."""
         img = _build_single("B-1808-7", "Dilshod", "0.5 Babin", 1, 4, 0.0, TS,
-                            sku="")
+                            sku="", barcode_value=token(3))
         self.assertEqual(img.size, (LABEL_W, LABEL_H))
 
     def test_barcode_safe_normalizes_payload(self):
@@ -82,22 +125,96 @@ class LabelGeneratorTest(unittest.TestCase):
         self.assertEqual(barcode_safe(""), "")
         # Kirill SKU'da ham etiketka chiziladi (partiya kodiga tushadi)
         img = _build_single("B-1808-3", "Sayyora", "Tulpor", 1, 2, 1.0, TS,
-                            sku="БЛОК")
+                            sku="БЛОК", barcode_value=token(4))
         self.assertEqual(img.size, (LABEL_W, LABEL_H))
 
     def test_single_long_token_does_not_overflow(self):
         """Bo'shliqsiz juda uzun nom yozuv/ikonka ustiga chiqmasligi kerak:
         yorliq ustuni (x<400) qiymat matni bilan ifloslanmaydi."""
         img = _build_single("B-1808-3", "X" * 40, "Y" * 60, 1, 2, 1.0, TS,
-                            sku="Z" * 50)
+                            sku="Z" * 50, barcode_value=token(5))
         self.assertEqual(img.size, (LABEL_W, LABEL_H))
+
+    def test_long_sku_is_fully_preserved_across_two_lines(self):
+        canvas = Image.new("RGB", (LABEL_W, LABEL_H), "white")
+        draw = ImageDraw.Draw(canvas)
+        long_sku = "TOPMART-EXPORT-LONG-SKU-2026-08-19-COLOR-BLACK-100G"
+        _font, lines = _fit_value_lines(
+            draw, long_sku, max_w=300, start=42, minimum=24, wrap_size=22,
+        )
+        self.assertLessEqual(len(lines), 2)
+        self.assertEqual("".join(lines), long_sku)
 
     def test_reprint_with_same_created_at_is_identical(self):
         """Qayta chop etish (created_at berilgan) AYNAN bir xil rasm berishi
         kerak — sana/shtrix-kod «hozirgi vaqt»ga sirg'alib ketmasin."""
-        a = _build_single("B-1808-3", "Botir", "Arqon", 2, 5, 3.0, TS, sku="A-1")
-        b = _build_single("B-1808-3", "Botir", "Arqon", 2, 5, 3.0, TS, sku="A-1")
+        a = _build_single("B-1808-3", "Botir", "Arqon", 2, 5, 3.0, TS,
+                          sku="A-1", barcode_value=token(6))
+        b = _build_single("B-1808-3", "Botir", "Arqon", 2, 5, 3.0, TS,
+                          sku="A-1", barcode_value=token(6))
         self.assertEqual(a.tobytes(), b.tobytes())
+
+    def test_profile_change_cannot_change_passport_reprint(self):
+        """Joriy mahsulot profili o'zgarsa ham persisted passport snapshoti
+        reprint rasmini biror baytga ham o'zgartirmaydi."""
+        label_rows = passports(
+            "Arqon 6mm Ko'k", 25, 25, start=20,
+            total_weight=12.5, sku="ARQ-OLD-001", metr=80,
+        )
+        original = [{
+            "product": "Arqon 6mm Ko'k",
+            "quantity": 25,
+            "weight_kg": 12.5,
+            "pieces_per_box": 25,
+            "sku": "ARQ-OLD-001",
+            "metr": 80,
+            "labels": label_rows,
+        }]
+        changed_profile = [{
+            "product": "Yangi nom",
+            "quantity": 999,
+            "weight_kg": 777,
+            "pieces_per_box": 1,
+            "sku": "YANGI-SKU",
+            "metr": 5,
+            "labels": label_rows,
+        }]
+
+        first = generate_batch_session_pdf(
+            "B-1808-3", "Boshqa ishchi", original, created_at=TS,
+        ).read()
+        reprint = generate_batch_session_pdf(
+            "B-1808-3", "Yana boshqa ishchi", changed_profile, created_at=TS,
+        ).read()
+        self.assertEqual(first, reprint)
+
+    def test_real_code128_decoder_reads_exact_passport(self):
+        expected = token(7)
+        img = _build_single(
+            "B-1808-3", "Botir", "Arqon", 1, 1, 3.0, TS,
+            sku="A-1", barcode_value=expected,
+        )
+        barcode_zone = img.crop((35, 460, LABEL_W - 35, 585))
+        decoded = zxingcpp.read_barcode(barcode_zone)
+        self.assertIsNotNone(decoded, "ZXing Code 128 ni o'qimadi")
+        self.assertEqual(decoded.text, expected)
+
+    def test_six_physical_labels_decode_to_six_unique_values(self):
+        decoded_values = []
+        for i in range(8, 14):
+            expected = token(i)
+            img = _build_single(
+                "B-1808-3", "Botir", "Arqon", i - 7, 6, 3.0, TS,
+                sku="A-1", barcode_value=expected,
+            )
+            decoded = zxingcpp.read_barcode(img.crop((35, 460, LABEL_W - 35, 585)))
+            self.assertIsNotNone(decoded)
+            decoded_values.append(decoded.text)
+        self.assertEqual(len(set(decoded_values)), 6)
+
+    def test_missing_passport_fails_loudly(self):
+        with self.assertRaisesRegex(ValueError, "passport"):
+            _build_single("B", "W", "Arqon", 1, 1, 1.0, TS, sku="A-1")
 
     def test_tashkent_tz_is_plus5(self):
         from datetime import timezone as _tz
@@ -113,9 +230,11 @@ class LabelGeneratorTest(unittest.TestCase):
         """Donabay: har donaga 1 sahifa; qutili: ceil(qty/per_box) sahifa."""
         pdf = generate_batch_session_pdf("B-1808-3", "Botir", [
             {"product": "Arqon", "quantity": 3, "weight_kg": 12.5,
-             "pieces_per_box": 1, "sku": "ARQ-1"},
+             "pieces_per_box": 1, "sku": "ARQ-1",
+             "labels": passports("Arqon", 3, start=1, total_weight=12.5, sku="ARQ-1")},
             {"product": "Qop ip", "quantity": 50, "weight_kg": 50,
-             "pieces_per_box": 25, "sku": ""},
+             "pieces_per_box": 25, "sku": "",
+             "labels": passports("Qop ip", 50, 25, start=10, total_weight=50)},
         ], created_at=TS)
         data = pdf.read()
         self.assertEqual(data[:4], b"%PDF")
@@ -145,12 +264,16 @@ class LabelProfileFieldsTest(unittest.TestCase):
         from datetime import datetime as _dt
         from bot.label_generator import _build_single as _bs
         ts = _dt(2026, 8, 18, 14, 32)
-        base  = _bs("B-1", "W", "Arqon 6mm", 1, 1, 2.0, ts, sku="A-1")
-        withm = _bs("B-1", "W", "Arqon 6mm", 1, 1, 2.0, ts, sku="A-1", metr=80.0)
+        base  = _bs("B-1", "W", "Arqon 6mm", 1, 1, 2.0, ts, sku="A-1",
+                    barcode_value=token(14))
+        withm = _bs("B-1", "W", "Arqon 6mm", 1, 1, 2.0, ts, sku="A-1", metr=80.0,
+                    barcode_value=token(14))
         self.assertNotEqual(base.tobytes(), withm.tobytes())
         # metr=0 → nomdagi «70 metr» regex ishlashi saqlanadi
-        named  = _bs("B-1", "W", "70 metr Strupa", 1, 1, 2.0, ts, sku="A-1")
-        named0 = _bs("B-1", "W", "70 metr Strupa", 1, 1, 2.0, ts, sku="A-1", metr=0.0)
+        named  = _bs("B-1", "W", "70 metr Strupa", 1, 1, 2.0, ts, sku="A-1",
+                     barcode_value=token(15))
+        named0 = _bs("B-1", "W", "70 metr Strupa", 1, 1, 2.0, ts, sku="A-1", metr=0.0,
+                     barcode_value=token(15))
         self.assertEqual(named.tobytes(), named0.tobytes())
 
     def test_session_pdf_with_profile_fields(self):
@@ -158,9 +281,13 @@ class LabelProfileFieldsTest(unittest.TestCase):
         from bot.label_generator import generate_batch_session_pdf as _gen
         items = [
             {"product": "Arqon", "quantity": 2, "weight_kg": 6.3,
-             "pieces_per_box": 1, "sku": "A-1", "profile_kg": 3.1, "metr": 80},
+             "pieces_per_box": 1, "sku": "A-1", "profile_kg": 3.1, "metr": 80,
+             "labels": passports("Arqon", 2, start=16, total_weight=6.2,
+                                 sku="A-1", metr=80)},
             {"product": "Qop", "quantity": 50, "weight_kg": 100.0,
-             "pieces_per_box": 25, "sku": "Q-1", "profile_kg": 2.0, "metr": 0},
+             "pieces_per_box": 25, "sku": "Q-1", "profile_kg": 2.0, "metr": 0,
+             "labels": passports("Qop", 50, 25, start=20, total_weight=100,
+                                 sku="Q-1")},
         ]
         buf = _gen("B-9", "W", items, _dt(2026, 8, 18, 10, 0))
         self.assertGreater(len(buf.getvalue()), 1000)
@@ -181,14 +308,18 @@ class PartialBoxTest(unittest.TestCase):
         from datetime import datetime as _dt
         from bot.label_generator import _build_single as _bs
         ts = _dt(2026, 8, 18, 10, 0)
-        full    = _bs("B", "W", "Qop", 1, 2, 50.0, ts, per_box=25, sku="Q-1", in_box=25)
-        partial = _bs("B", "W", "Qop", 2, 2, 2.0,  ts, per_box=25, sku="Q-1", in_box=1)
+        full    = _bs("B", "W", "Qop", 1, 2, 50.0, ts, per_box=25, sku="Q-1",
+                      in_box=25, barcode_value=token(24))
+        partial = _bs("B", "W", "Qop", 2, 2, 2.0,  ts, per_box=25, sku="Q-1",
+                      in_box=1, barcode_value=token(25))
         self.assertNotEqual(full.tobytes(), partial.tobytes())
 
     def test_partial_box_session_pdf_pages(self):
         from datetime import datetime as _dt
         from bot.label_generator import generate_batch_session_pdf as _gen
         items = [{"product": "Qop", "quantity": 26, "weight_kg": 52.0,
-                  "pieces_per_box": 25, "sku": "Q-1", "profile_kg": 2.0}]
+                  "pieces_per_box": 25, "sku": "Q-1", "profile_kg": 2.0,
+                  "labels": passports("Qop", 26, 25, start=26,
+                                      total_weight=52.0, sku="Q-1")}]
         buf = _gen("B-9", "W", items, _dt(2026, 8, 18, 10, 0))
         self.assertGreater(len(buf.getvalue()), 1000)

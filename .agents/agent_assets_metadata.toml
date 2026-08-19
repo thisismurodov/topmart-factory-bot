@@ -68,3 +68,17 @@ uri = "file://attached_assets/etiketka_profil.png"
 type = "image"
 title = "Etiketka — profil'dan METR va KG"
 description = "Namuna: «Arqon 6mm Ko'k» — nomida metr yo'q, lekin profilda 80 metr va 3.1 kg kiritilgan; etiketka ikkalasini profildan oldi."
+
+[[outputs]]
+id = "OxXmgvUN4Qp7rx2voWOOi"
+uri = "file://attached_assets/label-passport-samples/topmart-label-passport-6-samples.pdf"
+type = "pdf"
+title = "TopMart passport label — 6 sample PDF"
+description = "100×80 mm qora-oq termal etiketka namunalari: dona, to‘liq quti, partial quti, metr, SKU’siz va uzun SKU. 6/6 Code 128 ZXing bilan o‘qildi."
+
+[[outputs]]
+id = "lUjo1rJX_adsK3OWsLj8l"
+uri = "file://attached_assets/label-passport-samples/topmart-label-passport-6-samples.png"
+type = "image"
+title = "TopMart passport label — contact sheet"
+description = "Olti etiketkaning birlashtirilgan PNG ko‘rinishi."

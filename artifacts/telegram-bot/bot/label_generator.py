@@ -12,13 +12,13 @@ Dizayn (foydalanuvchi shabloni, 2026-08-18):
   │ [📅]  SANA VA SOAT:          18.08.2026 09:00 │
   │ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌ │
   │ ║║│║║║│║│║║ (Code128)                         │
-  │      TPLR-00087-20260818-0900                 │
+  │      TM6X4N7G2PK9R3WQ5B                       │
   │      B-1808-3 · 3/12 · 1 quti = 25 dona       │
   └───────────────────────────────────────────────┘
 
 - METRI profildan (products.roll_length_m); 0 bo'lsa mahsulot nomidan («70 metr …»), yo'q bo'lsa «—».
 - KG profildagi og'irlikdan (weight > 0 va ≠ 1.0 bo'lsa); aks holda tarozidagi haqiqiydan.
-- SKU bo'lmasa qator «—», shtrix-kod partiya kodidan tuziladi.
+- SKU bo'lmasa qator «—»; shtrix-kod har doim fizik label passport tokeni.
 - Qutili mahsulotda: N/M = quti raqami, KG = quti og'irligi (profil bo'lsa: weight × quti dona).
 """
 import io
@@ -120,27 +120,42 @@ def _ellipsize(draw, text: str, font, max_w: int) -> str:
     return (t + "…") if t else "…"
 
 
-def _wrap2(draw, text: str, font, max_w: int) -> list[str]:
-    """So'zlarni max 2 qatorga bo'ladi; har bir qator max_w ga qat'iy sig'adi."""
-    words = text.split()
-    lines: list[str] = []
-    cur = ""
-    for i, w in enumerate(words):
-        test = f"{cur} {w}".strip()
-        if _text_w(draw, test, font) > max_w and cur:
-            lines.append(cur)
-            cur = w
-            if len(lines) == 2:
-                cur = " ".join(words[i:])
-                break
-        else:
-            cur = test
-    if cur and len(lines) < 2:
-        lines.append(cur)
-    elif cur and len(lines) == 2:
-        lines[1] = f"{lines[1]} {cur}".strip() if lines[1] != cur else cur
-    lines = lines or [text]
-    return [_ellipsize(draw, ln, font, max_w) for ln in lines[:2]]
+def _fit_value_lines(
+    draw, text: str, max_w: int, start: int, minimum: int = 10,
+    wrap_size: int | None = None,
+) -> tuple[ImageFont.FreeTypeFont, list[str]]:
+    """Qiymatni hech bir belgisini kesmasdan 1 yoki 2 qatorga sig'diradi.
+
+    Uzun, bo'shliqsiz SKU'lar ham ikki qator orasida belgi chegarasidan
+    bo'linishi mumkin. Sig'maydigan favqulodda matn jim «…» bo'lib qolmaydi.
+    """
+    # Mavjud dizayndagi kabi avval shriftni minimal o'lchamgacha kichraytirib,
+    # bir qatorga sig'dirishga harakat qilamiz.
+    for size in range(start, minimum - 1, -1):
+        font = _font(size, bold=True)
+        if _text_w(draw, text, font) <= max_w:
+            return font, [text]
+
+    # Faqat shundan keyin ikki qator: avval tabiiy chegara (bo'shliq,
+    # defis va h.k.), bo'lmasa uzun SKU uchun belgi chegarasi.
+    first_wrap_size = wrap_size if wrap_size is not None else minimum
+    for size in range(first_wrap_size, 9, -1):
+        font = _font(size, bold=True)
+        midpoint = len(text) // 2
+        candidates = sorted(
+            range(1, len(text)),
+            key=lambda pos: (
+                text[pos - 1:pos] not in " -_/." and text[pos:pos + 1] not in " -_/.",
+                abs(pos - midpoint),
+            ),
+        )
+        for pos in candidates:
+            left = text[:pos].rstrip()
+            right = text[pos:].lstrip()
+            if left and right and _text_w(draw, left, font) <= max_w \
+                    and _text_w(draw, right, font) <= max_w:
+                return font, [left, right]
+    raise ValueError(f"Etiketka qiymati 2 qatorga ham sig'madi: {text!r}")
 
 
 def barcode_safe(text: str) -> str:
@@ -238,12 +253,15 @@ def _icon_calendar(d, x, y):
             d.ellipse((cx, cy, cx + 4, cy + 4), fill="white")
 
 
-def _make_barcode(content: str, max_w: int, height_px: int) -> Image.Image | None:
+def _make_barcode(content: str, max_w: int, height_px: int) -> Image.Image:
     """Code128 shtrix-kod PIL rasm sifatida (matn yozuvisiz)."""
     if not _HAS_BARCODE:
-        return None
+        raise RuntimeError("python-barcode topilmadi — etiketka shtrix-kodsiz chiqarilmadi")
+    normalized = barcode_safe(content)
+    if not normalized or normalized != content.strip().upper():
+        raise ValueError(f"Barcode qiymati Code 128 passport formatiga mos emas: {content!r}")
     try:
-        code = _barcode.get("code128", content, writer=_BarcodeImageWriter())
+        code = _barcode.get("code128", normalized, writer=_BarcodeImageWriter())
         img = code.render(writer_options={
             "module_width": 0.25,        # mm
             "module_height": height_px / _DPI * 25.4,
@@ -252,11 +270,15 @@ def _make_barcode(content: str, max_w: int, height_px: int) -> Image.Image | Non
             "dpi": _DPI,
         })
         if img.width > max_w:
-            img = img.resize((max_w, height_px), Image.LANCZOS)
-            img = img.convert("L").point(lambda p: 0 if p < 128 else 255).convert("RGB")
+            raise ValueError(
+                f"Barcode {img.width}px — mavjud {max_w}px joyga sig'madi; "
+                "modul kengligini buzib resize qilinmadi"
+            )
         return img
-    except Exception:
-        return None
+    except (RuntimeError, ValueError):
+        raise
+    except Exception as exc:
+        raise RuntimeError(f"Code 128 generatsiya xatosi: {exc}") from exc
 
 
 def _build_single(
@@ -271,6 +293,7 @@ def _build_single(
     sku: str = "",
     metr: float | None = None,
     in_box: int | None = None,
+    barcode_value: str = "",
 ) -> Image.Image:
     img  = Image.new("RGB", (LABEL_W, LABEL_H), "white")
     draw = ImageDraw.Draw(img)
@@ -316,17 +339,17 @@ def _build_single(
         draw.text((label_x, cy), label, font=F_LABEL, fill="black", anchor="lm")
 
         avail = value_rx - (label_x + _text_w(draw, label, F_LABEL) + 20)
-        f = _fit_font(draw, value, avail, start=v_start, minimum=v_min)
-        if _text_w(draw, value, f) <= avail:
+        f, lines = _fit_value_lines(
+            draw, value, avail, start=v_start, minimum=v_min, wrap_size=v_wrap,
+        )
+        if len(lines) == 1:
             draw.text((value_rx, cy), value, font=f, fill="black", anchor="rm")
         else:
-            # Bir qatorga sig'madi — 2 qatorga bo'lamiz (yozuv ustiga chiqmasin)
-            f2 = _font(v_wrap, bold=True)
-            lines = _wrap2(draw, value, f2, avail)
-            lh = v_wrap + 5
+            # Bir qatorga sig'madi — to'liq qiymatni 2 qatorga bo'lamiz.
+            lh = getattr(f, "size", v_wrap) + 3
             y0 = cy - lh * (len(lines) - 1) // 2
             for j, ln in enumerate(lines):
-                draw.text((value_rx, y0 + j * lh), ln, font=f2,
+                draw.text((value_rx, y0 + j * lh), ln, font=f,
                           fill="black", anchor="rm")
 
         y += _ROW_H
@@ -340,17 +363,18 @@ def _build_single(
         draw.line((x, dash_y, min(x + 12, right), dash_y), fill="black", width=3)
         x += 22
 
-    # Shtrix-kod: SKU (bo'lmasa partiya kodi) + sana + soat
-    ident = barcode_safe(sku) or barcode_safe(batch_code) or "ETIKETKA"
-    bc_content = f"{ident}-{ts:%Y%m%d}-{ts:%H%M}"
+    # Shtrix-kod: faqat persisted fizik-label passport identity.
+    bc_content = (barcode_value or "").strip().upper()
+    if not re.fullmatch(r"TM[A-Z2-7]{16}", bc_content):
+        raise ValueError(
+            "Etiketkaga production label passport barcode berilmadi "
+            "yoki formati noto'g'ri"
+        )
     bc_top     = dash_y + 10
     bc_h       = 84
     bc_img = _make_barcode(bc_content, max_w=right - left, height_px=bc_h)
-    if bc_img is not None:
-        img.paste(bc_img, (left + (right - left - bc_img.width) // 2, bc_top))
-        cap_y = bc_top + bc_img.height + 6
-    else:
-        cap_y = bc_top + 6
+    img.paste(bc_img, (left + (right - left - bc_img.width) // 2, bc_top))
+    cap_y = bc_top + bc_img.height + 6
 
     # Izoh qatorlari: kod + partiya/N-M/quti
     f_cap = _fit_font(draw, bc_content, right - left, start=26, minimum=20)
@@ -358,8 +382,7 @@ def _build_single(
               font=f_cap, fill="black", anchor="ma")
     cap_y += _text_h(draw, bc_content, f_cap) + 8
 
-    # SKU bo'lmasa partiya kodi shtrix-kod matnida allaqachon bor — takrorlamaymiz
-    extra = f"{batch_code} · {unit_num}/{total_units}" if sku else f"{unit_num}/{total_units}"
+    extra = f"{batch_code} · {unit_num}/{total_units}"
     if per_box > 1:
         n = in_box if in_box is not None else per_box
         if n == per_box:
@@ -403,13 +426,16 @@ def generate_label_pdf(
     sku: str = "",
     profile_kg: float = 0.0,
     metr: float | None = None,
+    barcode_values: list[str] | None = None,
 ) -> io.BytesIO:
     actual = (weight_kg / quantity) if quantity > 0 else 0.0
     unit_weight = profile_kg if kg_profile_meaningful(profile_kg) else actual
     ts = created_at or datetime.now()
+    if not barcode_values or len(barcode_values) != quantity:
+        raise ValueError("Har bir etiketka uchun persisted barcode qiymati kerak")
     pages = [
         _build_single(batch_code, worker, product, i, quantity, unit_weight,
-                      ts, sku=sku, metr=metr)
+                      ts, sku=sku, metr=metr, barcode_value=barcode_values[i - 1])
         for i in range(1, quantity + 1)
     ]
     return _render_pages(pages)
@@ -425,7 +451,7 @@ def generate_batch_session_pdf(
     pieces_per_box > 1 bo'lsa: N/M = quti raqami, og'irlik = quti og'irligi.
 
     items: [{"product", "quantity", "weight_kg", "pieces_per_box",
-             "sku"?, "profile_kg"?, "metr"?}]
+             "sku"?, "profile_kg"?, "metr"?, "labels": [...passport rows...]}]
     """
     import math
     ts = created_at or datetime.now()
@@ -440,29 +466,52 @@ def generate_batch_session_pdf(
         metr_raw   = it.get("metr")
         metr       = float(metr_raw) if metr_raw else None
 
-        if per_box > 1:
-            # Qutili rejim: har bir qutiga 1 ta etiketika
-            num_labels = math.ceil(quantity / per_box)
-            actual_box = (weight_kg / num_labels) if num_labels > 0 else 0.0
-            for i in range(1, num_labels + 1):
-                in_box = box_contents(quantity, per_box, i)
-                # Profil to'ldirilgan: quti og'irligi = dona og'irligi ×
-                # QUTIDAGI dona (oxirgi to'liq bo'lmagan quti o'z soniga ko'ra)
-                box_weight = (profile_kg * in_box
-                              if kg_profile_meaningful(profile_kg) else actual_box)
-                pages.append(_build_single(batch_code, worker, product, i,
-                                           num_labels, box_weight, ts,
-                                           per_box=per_box, sku=sku, metr=metr,
-                                           in_box=in_box))
-        else:
-            # Donabay rejim: har donaga 1 ta etiketika
-            actual_unit = (weight_kg / quantity) if quantity > 0 else 0.0
-            unit_weight = (profile_kg if kg_profile_meaningful(profile_kg)
-                           else actual_unit)
-            for i in range(1, quantity + 1):
-                pages.append(_build_single(batch_code, worker, product, i,
-                                           quantity, unit_weight, ts,
-                                           per_box=1, sku=sku, metr=metr))
+        labels = it.get("labels")
+        if not isinstance(labels, list) or not labels:
+            raise ValueError(
+                f"{product}: persisted label passportlar berilmadi"
+            )
+        # Reprint uchun tashqi item yoki joriy mahsulot profili emas, aynan
+        # yaratilish paytidagi passport snapshoti mutlaq manba hisoblanadi.
+        first = labels[0]
+        quantity = int(first.get("quantity_total") or quantity)
+        per_box = max(1, int(first.get("pieces_per_box") or per_box))
+        expected_labels = len(labels)
+        product = str(first.get("product_name") or product)
+        worker = str(first.get("worker_name") or worker)
+        sku = str(first.get("product_sku") or sku)
+        labels = sorted(labels, key=lambda row: int(row["label_number"]))
+        expected_numbers = list(range(1, expected_labels + 1))
+        actual_numbers = [int(row["label_number"]) for row in labels]
+        if actual_numbers != expected_numbers:
+            raise ValueError(f"{product}: label raqamlari uzluksiz emas: {actual_numbers}")
+
+        for label in labels:
+            i = int(label["label_number"])
+            label_total = int(label["total_labels"])
+            if label_total != expected_labels:
+                raise ValueError(
+                    f"{product}: passport total_labels={label_total}, "
+                    f"kutilgan={expected_labels}"
+                )
+            label_per_box = max(1, int(label.get("pieces_per_box") or per_box))
+            in_box = int(label.get("pieces_in_label") or 1)
+            label_metr_raw = label.get("length_m")
+            label_metr = float(label_metr_raw) if label_metr_raw is not None else None
+            pages.append(_build_single(
+                str(label.get("batch_code") or batch_code),
+                str(label.get("worker_name") or worker),
+                str(label.get("product_name") or product),
+                i,
+                label_total,
+                float(label.get("weight_kg") or 0.0),
+                ts,
+                per_box=label_per_box,
+                sku=str(label.get("product_sku") or sku),
+                metr=label_metr,
+                in_box=in_box,
+                barcode_value=str(label.get("barcode_value") or ""),
+            ))
 
     return _render_pages(pages)
 
@@ -477,11 +526,13 @@ def generate_label(
     sku: str = "",
     profile_kg: float = 0.0,
     metr: float | None = None,
+    barcode_value: str = "",
 ) -> io.BytesIO:
     actual = (weight_kg / quantity) if weight_kg and quantity > 0 else 0.0
     unit_weight = profile_kg if kg_profile_meaningful(profile_kg) else actual
     img = _build_single(batch_code, worker, product, 1, quantity, unit_weight,
-                        created_at or datetime.now(), sku=sku, metr=metr)
+                        created_at or datetime.now(), sku=sku, metr=metr,
+                        barcode_value=barcode_value)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)

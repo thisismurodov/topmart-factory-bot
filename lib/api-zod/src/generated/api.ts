@@ -149,6 +149,40 @@ export const DeleteBatchResponse = zod.object({
 
 
 /**
+ * @summary Look up one physical production label passport
+ */
+export const getProductionLabelPathBarcodeRegExp = new RegExp('^TM[A-Z2-7]{16}$');
+
+
+export const GetProductionLabelParams = zod.object({
+  "barcode": zod.coerce.string().regex(getProductionLabelPathBarcodeRegExp)
+})
+
+export const GetProductionLabelResponse = zod.object({
+  "barcode": zod.string(),
+  "batchId": zod.number().nullable(),
+  "batchCode": zod.string(),
+  "labelType": zod.enum(['unit', 'box']),
+  "labelNumber": zod.number(),
+  "totalLabels": zod.number(),
+  "piecesInLabel": zod.number(),
+  "piecesPerBox": zod.number(),
+  "quantityTotal": zod.number(),
+  "weightKg": zod.number(),
+  "lengthM": zod.number().nullable(),
+  "productName": zod.string(),
+  "productSku": zod.string(),
+  "workerName": zod.string(),
+  "producedAt": zod.string(),
+  "warehouseId": zod.number().nullable(),
+  "warehouseName": zod.string(),
+  "status": zod.enum(['created', 'printed', 'void']),
+  "printCount": zod.number(),
+  "lastPrintedAt": zod.string().nullable()
+})
+
+
+/**
  * @summary List all workers
  */
 export const GetWorkersResponseItem = zod.object({

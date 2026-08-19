@@ -51,6 +51,7 @@ let pool: pg.Pool;
 let server: Server;
 let apiUrl: string;
 let initDbThrew: unknown = null;
+const originalProductionLabelsApproval = process.env.PRODUCTION_LABELS_SCHEMA_APPROVED;
 
 // Where the Python bot lives (…/artifacts/telegram-bot).
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -69,6 +70,10 @@ async function dropTmpDb(): Promise<void> {
 }
 
 beforeAll(async () => {
+  // Throwaway baza bu migrationni ataylab sinaydi; oddiy runtime startupda
+  // gate yoqilmagan bo'ladi.
+  process.env.PRODUCTION_LABELS_SCHEMA_APPROVED = "1";
+
   // 1. Create a brand-new empty database on the same server.
   await dropTmpDb();
   {
@@ -81,7 +86,11 @@ beforeAll(async () => {
   // 2. Run the Python bot init_db() against the empty DB (psycopg2 needs SSL).
   execFileSync("python3", ["-c", "from bot.database import init_db; init_db()"], {
     cwd: botDir,
-    env: { ...process.env, DATABASE_URL: tmpUrl(true) },
+    env: {
+      ...process.env,
+      DATABASE_URL: tmpUrl(true),
+      PRODUCTION_LABELS_SCHEMA_APPROVED: "1",
+    },
     stdio: "pipe",
   });
 
@@ -106,7 +115,7 @@ beforeAll(async () => {
   // auth). pino-http provides req.log, which several routes use in catch paths.
   const routeModules = [
     "ombor", "inventory-v2", "warehouses", "inventory",
-    "dashboard", "batches", "workers", "products", "salary", "payroll",
+    "dashboard", "batches", "production-labels", "workers", "products", "salary", "payroll",
     "customers", "sales", "sales-products", "debts", "reports",
     "exchange-rate", "raw-materials", "product-materials",
     "packer-product-assignments", "audit", "ai", "health", "auth",
@@ -129,6 +138,11 @@ afterAll(async () => {
   if (pool) await pool.end();
   // Restore env so other suites/files see the original connection.
   process.env.RAILWAY_DATABASE_URL = adminUrl;
+  if (originalProductionLabelsApproval === undefined) {
+    delete process.env.PRODUCTION_LABELS_SCHEMA_APPROVED;
+  } else {
+    process.env.PRODUCTION_LABELS_SCHEMA_APPROVED = originalProductionLabelsApproval;
+  }
   await dropTmpDb();
 }, 60_000);
 
@@ -187,6 +201,13 @@ const REQUIRED: Record<string, string[]> = {
     "id", "batch_code", "worker", "product", "quantity", "weight_kg",
     "earnings", "payroll_method", "created_at", "archived", "production_line_id",
   ],
+  production_labels: [
+    "id", "barcode_value", "batch_id", "batch_code", "label_type",
+    "label_number", "total_labels", "pieces_in_label", "pieces_per_box", "quantity_total",
+    "weight_kg", "length_m", "product_name", "product_sku", "worker_name",
+    "produced_at", "warehouse_id", "warehouse_name", "status", "print_count",
+    "last_printed_at", "created_at",
+  ],
   workers: ["name", "prefix", "phone", "role"],
   user_roles: ["chat_id", "worker_name", "role"],
   packer_assignments: ["packer_chat_id", "worker_name"],
@@ -233,6 +254,78 @@ describe("Fresh DB boots via init code alone", () => {
     expect(missing, `Missing schema after init: ${missing.join(", ")}`).toEqual([]);
   });
 
+  it("keeps a physical label passport immutable and queryable after batch deletion", async () => {
+    const warehouse = await pool.query(
+      `INSERT INTO warehouses (name, active) VALUES ('Test konteyner', TRUE) RETURNING id`,
+    );
+    const batch = await pool.query(
+      `INSERT INTO batches
+         (batch_code, worker, product, quantity, weight_kg, earnings, payroll_method)
+       VALUES ('TS-260819-01', 'Test ishchi', 'Test mahsulot', 25, 12.5, 0, 'PRODUCT_RATE')
+       RETURNING id`,
+    );
+    await pool.query(
+      `INSERT INTO production_labels
+         (barcode_value, batch_id, batch_code, label_type, label_number,
+          total_labels, pieces_in_label, pieces_per_box, quantity_total,
+          weight_kg, length_m, product_name, product_sku, worker_name,
+          produced_at, warehouse_id, warehouse_name, status, print_count,
+          last_printed_at)
+       VALUES
+         ('TMAAAAAAAAAAAAAAAA', $1, 'TS-260819-01', 'box', 1,
+          1, 25, 25, 25, 12.5, 80, 'Test mahsulot', 'SKU-TEST-01',
+          'Test ishchi', '2026-08-19T08:30:00Z', $2, 'Test konteyner',
+          'printed', 2, '2026-08-19T08:35:00Z')`,
+      [batch.rows[0].id, warehouse.rows[0].id],
+    );
+
+    const response = await get("/production-labels/TMAAAAAAAAAAAAAAAA");
+    expect(response.status, response.text).toBe(200);
+    expect(response.json).toMatchObject({
+      barcode: "TMAAAAAAAAAAAAAAAA",
+      batchCode: "TS-260819-01",
+      labelType: "box",
+      piecesInLabel: 25,
+      piecesPerBox: 25,
+      weightKg: 12.5,
+      lengthM: 80,
+      productName: "Test mahsulot",
+      productSku: "SKU-TEST-01",
+      workerName: "Test ishchi",
+      warehouseName: "Test konteyner",
+      status: "printed",
+      printCount: 2,
+    });
+
+    await expect(
+      pool.query(
+        `UPDATE production_labels
+            SET product_name = 'O''zgartirilgan mahsulot'
+          WHERE barcode_value = 'TMAAAAAAAAAAAAAAAA'`,
+      ),
+    ).rejects.toMatchObject({ code: "55000" });
+
+    await pool.query(
+      `UPDATE production_labels
+          SET print_count = print_count + 1,
+              last_printed_at = '2026-08-19T08:40:00Z'
+        WHERE barcode_value = 'TMAAAAAAAAAAAAAAAA'`,
+    );
+    await pool.query(`DELETE FROM batches WHERE id = $1`, [batch.rows[0].id]);
+
+    const afterDelete = await get("/production-labels/TMAAAAAAAAAAAAAAAA");
+    expect(afterDelete.status, afterDelete.text).toBe(200);
+    expect(afterDelete.json).toMatchObject({
+      barcode: "TMAAAAAAAAAAAAAAAA",
+      batchId: null,
+      batchCode: "TS-260819-01",
+      productName: "Test mahsulot",
+      productSku: "SKU-TEST-01",
+      warehouseName: "Test konteyner",
+      printCount: 3,
+    });
+  });
+
   // Shared Railway DB yuk ostida har bir so'rov 5-8s ga cho'zilishi mumkin —
   // bu testda o'nlab endpoint bor, shuning uchun timeout kattaroq (flake emas, latency).
   it("GET endpoints across ALL route groups don't 500 on a fresh (empty) DB", { timeout: 180_000 }, async () => {
@@ -259,6 +352,7 @@ describe("Fresh DB boots via init code alone", () => {
       "/dashboard/today-extended",
       // Batches / workers / products
       "/batches",
+      "/production-labels/TMAAAAAAAAAAAAAAAA",
       "/workers",
       "/products",
       // Salary / payroll

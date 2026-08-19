@@ -125,10 +125,10 @@ export function Layout({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex h-screen bg-muted/20 overflow-hidden">
-      <aside className="w-64 bg-sidebar border-r border-sidebar-border flex flex-col shrink-0">
-        <div className="h-16 flex items-center px-6 border-b border-sidebar-border bg-sidebar-accent/50">
-          <ShoppingCart className="w-6 h-6 text-sidebar-foreground mr-3" />
-          <span className="font-bold text-lg tracking-tight text-sidebar-foreground uppercase">TopMart ERP</span>
+      <aside className="w-16 md:w-64 bg-sidebar border-r border-sidebar-border flex flex-col shrink-0">
+        <div className="h-16 flex items-center justify-center md:justify-start px-3 md:px-6 border-b border-sidebar-border bg-sidebar-accent/50">
+          <ShoppingCart className="w-6 h-6 text-sidebar-foreground md:mr-3 shrink-0" />
+          <span className="hidden md:inline font-bold text-lg tracking-tight text-sidebar-foreground uppercase">TopMart ERP</span>
         </div>
         <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
           {NAV_ITEMS.map((item) => {
@@ -136,22 +136,22 @@ export function Layout({ children }: { children: ReactNode }) {
             return (
               <Link key={item.href} href={item.href}>
                 <div 
-                  className={`flex items-center px-3 py-2.5 rounded-md cursor-pointer transition-colors ${
+                  className={`flex items-center justify-center md:justify-start px-2 md:px-3 py-2.5 rounded-md cursor-pointer transition-colors ${
                     active 
                       ? "bg-sidebar-primary text-sidebar-primary-foreground font-medium shadow-sm" 
                       : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground"
                   }`}
                   data-testid={`nav-${item.href.slice(1)}`}
                 >
-                  <item.icon className={`w-5 h-5 mr-3 ${active ? "text-sidebar-primary-foreground" : "text-sidebar-foreground/50"}`} />
-                  {item.label}
+                  <item.icon className={`w-5 h-5 md:mr-3 shrink-0 ${active ? "text-sidebar-primary-foreground" : "text-sidebar-foreground/50"}`} />
+                  <span className="hidden md:inline">{item.label}</span>
                 </div>
               </Link>
             );
           })}
         </nav>
-        <div className="p-4 border-t border-sidebar-border">
-          <div className="flex items-center justify-between mb-4 px-2">
+        <div className="p-2 md:p-4 border-t border-sidebar-border">
+          <div className="hidden md:flex items-center justify-between mb-4 px-2">
             <div className="flex flex-col">
               <div className="text-sm font-medium text-sidebar-foreground/80">
                 {user.username}
@@ -169,17 +169,17 @@ export function Layout({ children }: { children: ReactNode }) {
           </div>
           <Button 
             variant="outline" 
-            className="w-full justify-start text-sidebar-foreground border-sidebar-accent bg-transparent hover:bg-sidebar-accent hover:text-sidebar-foreground"
+            className="w-full justify-center md:justify-start px-2 md:px-4 text-sidebar-foreground border-sidebar-accent bg-transparent hover:bg-sidebar-accent hover:text-sidebar-foreground"
             onClick={() => logout.mutate(undefined)}
             data-testid="btn-logout"
           >
-            <LogOut className="w-4 h-4 mr-2" />
-            Chiqish
+            <LogOut className="w-4 h-4 md:mr-2" />
+            <span className="hidden md:inline">Chiqish</span>
           </Button>
         </div>
       </aside>
-      <main className="flex-1 flex flex-col overflow-hidden relative">
-        <div className="h-16 border-b border-border bg-card flex items-center px-8 shrink-0">
+      <main className="min-w-0 flex-1 flex flex-col overflow-hidden relative">
+        <div className="h-16 border-b border-border bg-card flex items-center px-4 md:px-8 shrink-0">
           <h1 className="text-xl font-semibold text-foreground tracking-tight">
             {NAV_ITEMS.find(i => location.startsWith(i.href))?.label || "Bosh sahifa"}
           </h1>
@@ -189,7 +189,7 @@ export function Layout({ children }: { children: ReactNode }) {
           // odatiy padding/max-width o'ramisiz chiziladi.
           <div className="flex-1 min-h-0">{children}</div>
         ) : (
-          <div className="flex-1 overflow-y-auto p-8">
+          <div className="flex-1 overflow-y-auto p-4 md:p-8">
             <div className="max-w-7xl mx-auto">
               {children}
             </div>

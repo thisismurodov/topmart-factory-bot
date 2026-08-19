@@ -45,6 +45,7 @@ import type {
   PayrollWorkerEarnings,
   Product,
   ProductInput,
+  ProductionLabelPassport,
   ProductionLine,
   ProductionLineInput,
   ProductionLineWorker,
@@ -837,6 +838,83 @@ export const useDeleteBatch = <TError = ErrorType<unknown>,
       > => {
       return useMutation(getDeleteBatchMutationOptions(options));
     }
+
+export const getGetProductionLabelUrl = (barcode: string,) => {
+
+
+
+
+  return `/api/production-labels/${barcode}`
+}
+
+/**
+ * @summary Look up one physical production label passport
+ */
+export const getProductionLabel = async (barcode: string, options?: RequestInit): Promise<ProductionLabelPassport> => {
+
+  return customFetch<ProductionLabelPassport>(getGetProductionLabelUrl(barcode),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetProductionLabelQueryKey = (barcode: string,) => {
+    return [
+    `/api/production-labels/${barcode}`
+    ] as const;
+    }
+
+
+export const getGetProductionLabelQueryOptions = <TData = Awaited<ReturnType<typeof getProductionLabel>>, TError = ErrorType<ErrorResponse>>(barcode: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getProductionLabel>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetProductionLabelQueryKey(barcode);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getProductionLabel>>> = ({ signal }) => getProductionLabel(barcode, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(barcode), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getProductionLabel>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetProductionLabelQueryResult = NonNullable<Awaited<ReturnType<typeof getProductionLabel>>>
+export type GetProductionLabelQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary Look up one physical production label passport
+ */
+
+export function useGetProductionLabel<TData = Awaited<ReturnType<typeof getProductionLabel>>, TError = ErrorType<ErrorResponse>>(
+ barcode: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getProductionLabel>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetProductionLabelQueryOptions(barcode,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
 
 export const getGetWorkersUrl = () => {
 

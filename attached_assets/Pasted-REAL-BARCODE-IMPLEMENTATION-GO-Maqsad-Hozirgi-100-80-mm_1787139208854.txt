@@ -1,0 +1,322 @@
+REAL BARCODE — IMPLEMENTATION GO
+
+Maqsad:
+Hozirgi 100×80 mm production labeldagi barcode'ni dekorativ grafik emas, REAL SCANNABLE BARCODE qilish.
+
+MUHIM:
+Label dizayni, o‘lchami va mavjud 6 ta field o‘zgartirilmasin.
+Bu task FAQAT barcode functionality uchun.
+
+==================================================
+1. BARCODE FORMAT
+==================================================
+
+1D barcode ishlatilsin.
+
+Default:
+CODE 128
+
+Sabab:
+- qisqa va uzun IDlarni qo‘llaydi;
+- scannerlar keng qo‘llab-quvvatlaydi;
+- thermal printer uchun mos;
+- SKU + production unique ID kabi qiymatlar uchun qulay.
+
+Lekin avval mavjud frontend/backend stackni tekshiring.
+Agar boshqa format texnik jihatdan yaxshiroq bo‘lsa, sababini report qiling.
+
+==================================================
+2. BARCODE REAL DATA BILAN ISHLASIN
+==================================================
+
+Barcode ichidagi qiymat random yoki fake bo‘lmasin.
+
+Har bir ishlab chiqarilgan production record / batch uchun UNIQUE barcode identity yaratilishi kerak.
+
+Masalan:
+
+Product SKU:
+TM-000075
+
+Production ID:
+DI-260819-01
+
+Barcode value:
+TM-000075-DI-260819-01
+
+Lekin bu faqat MISOL.
+
+Avval mavjud database architecture'ni tekshiring:
+
+- products
+- items
+- batches
+- production records
+- inventory
+- employees
+
+Agar mavjud production/batch ID allaqachon unique bo‘lsa, yangi ID yaratish o‘rniga mavjud unique identity'dan foydalanish afzal.
+
+DUPLICATE BARCODE BO‘LMASIN.
+
+==================================================
+3. SKU VA BARCODE FARQI
+==================================================
+
+SKU:
+Mahsulotning identifikatori.
+
+Barcode:
+Konkret ishlab chiqarilgan mahsulot/partiyaning identifikatori.
+
+Masalan:
+
+SKU:
+TM-000075
+
+Barcode:
+TM-000075-DI260819-01
+
+Labelda odam ko‘radigan SKU:
+TM-000075
+
+Barcode esa:
+TM-000075-DI260819-01
+
+bo‘lishi mumkin.
+
+Barcode texti ham barcode ostida ko‘rsatilsin.
+
+==================================================
+4. REAL SCANNING TEST
+==================================================
+
+Barcode faqat ekranda chiroyli ko‘rinishi yetarli emas.
+
+Quyidagilarni test qiling:
+
+1. Barcode generate bo‘lsin.
+2. Browser preview'da ko‘rinsin.
+3. Print preview'da ko‘rinsin.
+4. 100×80 mm thermal labelga chiqarilganda scan qilinsin.
+5. Telefon scanner bilan o‘qilsin.
+6. Oddiy USB/Bluetooth barcode scanner bilan o‘qilsin.
+7. O‘qilgan qiymat ERPdagi aynan o‘sha production recordga mos tushsin.
+
+Test uchun:
+TULPOR
+Shlanka Polyester FDY Ko‘k
+Qop ip
+Babin
+Arqon
+
+kabi real mahsulotlardan foydalaning.
+
+==================================================
+5. SCAN → ERP FLOW
+==================================================
+
+Barcode scanner
+        ↓
+Barcode value
+        ↓
+ERP barcode lookup
+        ↓
+Production record
+        ↓
+Product
+        ↓
+SKU
+        ↓
+KG
+        ↓
+Metr
+        ↓
+Employee
+        ↓
+Production date/time
+        ↓
+Current location/status
+
+ERP ichida barcode qidirish endpoint/function bo‘lsin.
+
+Masalan:
+
+GET /api/production/barcode/:barcode
+
+yoki mavjud architecture'ga mos equivalent.
+
+Login/authentication mavjud tizim qoidalariga mos ishlasin.
+
+Unauthorized user ma'lumot ololmasin.
+
+==================================================
+6. DUPLICATE PROTECTION
+==================================================
+
+Barcode unique constraint bilan himoyalansin.
+
+Ikki production recordga bir xil barcode berilishi mumkin emas.
+
+Test:
+
+Production A → barcode X
+Production B → barcode X
+
+ikkinchisi:
+STOP / REJECT
+
+bo‘lishi kerak.
+
+==================================================
+7. LABEL GENERATION
+==================================================
+
+Label print qilinayotganda:
+
+Product name
+SKU
+KG
+Metr
+Employee
+Date/time
+
+real production recorddan olinadi.
+
+Barcode ham shu production recorddan avtomatik yaratiladi.
+
+Qo‘lda barcode kiritish KERAK EMAS.
+
+==================================================
+8. EXISTING PRODUCTS
+==================================================
+
+Mavjud barcha SKUlar uchun barcode system universal ishlashi kerak.
+
+Hardcode qilmang.
+
+Mahsulotlar:
+- Arqon
+- Shlanka
+- Strupa
+- Lenta
+- Tulpor
+- Qop ip
+- Babin
+- Reja ip
+- va boshqa SKUlar
+
+bir xil barcode engine orqali ishlasin.
+
+Mavjud SKUlarni o‘zgartirmang.
+
+Sales Botga tegmang.
+Sales historyga tegmang.
+
+==================================================
+9. EXISTING PRODUCTION RECORDS
+==================================================
+
+Avval mavjud production/batch recordlarni tekshiring.
+
+Agar ularda barcode identity yo‘q bo‘lsa:
+
+HECH QANDAY MASS MIGRATIONNI DARHOL BAJARMANG.
+
+Avval:
+- nechta record;
+- qaysi biri barcodega ega;
+- qaysi biri yo‘q;
+- duplicate ehtimoli;
+- databasega qanday o‘zgarish kerak
+
+haqida report chiqaring.
+
+Keyin migration kerak bo‘lsa alohida GO talab qilinsin.
+
+==================================================
+10. DATABASE SAFETY
+==================================================
+
+Bu task davomida:
+
+- sales o‘zgarmasin;
+- Sales Bot o‘zgarmasin;
+- inventory o‘zgarmasin;
+- production history o‘zgarmasin;
+- mavjud SKUlar o‘zgarmasin.
+
+Agar schema o‘zgarishi kerak bo‘lsa:
+avval migration plan ko‘rsating.
+
+Taxmin bilan DB WRITE qilmang.
+
+==================================================
+11. BARCODE QUALITY
+==================================================
+
+Barcode thermal printerda aniq chiqishi kerak.
+
+100×80 mm labelga mos:
+
+- barcode yetarlicha baland;
+- chiziqlar juda zich bo‘lmasin;
+- quiet zone saqlansin;
+- barcode text kesilmasin;
+- label chetiga yopishib qolmasin;
+- qora-oq thermal printda kontrast maksimal bo‘lsin.
+
+Barcode qiymati juda uzun bo‘lib ketsa:
+display textni layoutga moslashtiring,
+lekin barcode value'ni buzib yoki kesib yubormang.
+
+==================================================
+12. ACCEPTANCE CRITERIA
+==================================================
+
+TASK PASS faqat quyidagilarning barchasi bajarilganda:
+
+✅ Real Code 128 barcode
+✅ Barcode random dekor emas
+✅ Unique
+✅ Database record bilan bog‘langan
+✅ Scanner o‘qiydi
+✅ Telefon scanner o‘qiydi
+✅ USB/Bluetooth scanner o‘qiydi
+✅ Scan → ERP record ochiladi
+✅ SKU alohida qoladi
+✅ Barcode alohida unique identity
+✅ 100×80 labelga sig‘adi
+✅ Existing sales data o‘zgarmaydi
+✅ Existing SKUlar o‘zgarmaydi
+✅ Duplicate barcode reject qilinadi
+✅ Unit tests
+✅ Integration tests
+✅ E2E scan/lookup test
+✅ Typecheck clean
+
+==================================================
+13. FINAL REPORT
+==================================================
+
+Ish tugagach quyidagilarni aniq report qiling:
+
+1. Qaysi barcode format ishlatildi?
+2. Barcode value qanday generatsiya qilinadi?
+3. Unique constraint qayerda?
+4. Qaysi database table/field ishlatiladi?
+5. Scan qilganda qaysi endpoint ishlaydi?
+6. Real scanner bilan test qilindimi?
+7. Test natijasi?
+8. Existing DBga nima o‘zgardi?
+9. WRITE bo‘lgan bo‘lsa, aynan nima yozildi?
+10. Migration kerak bo‘ladimi?
+
+MUHIM:
+Hozirgi real label dizaynini o‘zgartirmang.
+FAQAT barcode'ni REAL SYSTEM FUNCTION qiling.
+
+Avval audit → implementation → tests → report.
+
+Biz taxmin qilmaymiz.
+Biz bilamiz.

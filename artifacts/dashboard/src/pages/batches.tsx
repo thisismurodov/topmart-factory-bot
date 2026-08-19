@@ -1,11 +1,17 @@
 import { useState } from "react";
-import { useGetBatches, getGetBatchesQueryKey, useDeleteBatch } from "@workspace/api-client-react";
+import {
+  useGetBatches,
+  getGetBatchesQueryKey,
+  useDeleteBatch,
+  useGetProductionLabel,
+  getGetProductionLabelQueryKey,
+} from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCurrency, formatNumber, formatDate } from "@/lib/format";
-import { Trash2, Search, X, Archive, ArchiveRestore } from "lucide-react";
+import { Trash2, Search, X, Archive, ArchiveRestore, ScanBarcode, AlertCircle, Printer, Box, Package, Barcode } from "lucide-react";
 import { authFetch } from "@/App";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -31,6 +37,22 @@ export default function Batches() {
   
   const [filters, setFilters] = useState({ date: "", worker: "", product: "" });
   const [activeFilters, setActiveFilters] = useState({ date: "", worker: "", product: "" });
+
+  const [scannedValue, setScannedValue] = useState("");
+  const [submittedBarcode, setSubmittedBarcode] = useState("");
+  const normalizedBarcode = submittedBarcode.trim().toUpperCase();
+  const barcodeIsValid = /^TM[A-Z2-7]{16}$/.test(normalizedBarcode);
+
+  const { data: passport, isLoading: isLoadingPassport, error: passportError } = useGetProductionLabel(
+    normalizedBarcode,
+    { 
+      query: { 
+        queryKey: getGetProductionLabelQueryKey(normalizedBarcode),
+        enabled: barcodeIsValid,
+        retry: false 
+      } 
+    }
+  );
 
   const { data, isLoading } = useGetBatches(
     { 
@@ -76,9 +98,194 @@ export default function Batches() {
     setPage(0);
   };
 
+  const handleScanSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (scannedValue.trim()) {
+      const normalized = scannedValue.trim().toUpperCase();
+      setScannedValue(normalized);
+      setSubmittedBarcode(normalized);
+    } else {
+      setSubmittedBarcode("");
+    }
+  };
+
+  const handleClearScanner = () => {
+    setScannedValue("");
+    setSubmittedBarcode("");
+  };
+
   return (
     <div className="space-y-6">
-      <Card className="border-border">
+      <Card className="border-border border-t-4 border-t-primary shadow-sm">
+        <CardHeader className="pb-4 bg-muted/20">
+          <CardTitle className="text-sm font-medium uppercase tracking-wider text-primary flex items-center gap-2">
+            <ScanBarcode className="w-4 h-4" />
+            Etiketka passportini tekshirish
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pt-4">
+          <form onSubmit={handleScanSubmit} className="flex flex-col sm:flex-row gap-2 max-w-2xl">
+            <Input
+              value={scannedValue}
+              onChange={(e) => setScannedValue(e.target.value)}
+              placeholder="Barcode skanerlang yoki TM… kodini kiriting"
+              className="font-mono text-base sm:text-lg h-12 min-w-0 flex-1 border-primary/20 focus-visible:ring-primary"
+              autoFocus
+              data-testid="input-barcode-scanner"
+            />
+            <Button type="submit" className="h-12 px-6 shadow-sm font-medium" data-testid="btn-scan-submit">
+              Tekshirish
+            </Button>
+            {submittedBarcode && (
+              <Button type="button" variant="outline" className="h-12 px-4" onClick={handleClearScanner} data-testid="btn-scan-clear" title="Skan maydonini tozalash">
+                <X className="w-4 h-4" />
+              </Button>
+            )}
+          </form>
+
+          {submittedBarcode && (
+            <div className="mt-6 animate-in fade-in slide-in-from-top-2 duration-200">
+              {!barcodeIsValid ? (
+                <div className="p-4 bg-destructive/10 border border-destructive/20 rounded-md flex items-start gap-3 text-destructive shadow-sm">
+                  <AlertCircle className="w-5 h-5 mt-0.5 shrink-0" />
+                  <div>
+                    <h4 className="font-semibold text-sm">Barcode formati noto‘g‘ri</h4>
+                    <p className="text-sm opacity-90 mt-1">
+                      Fizik etiketka kodi <span className="font-mono font-semibold">TM</span> bilan boshlanadigan 18 belgili passport bo‘lishi kerak.
+                    </p>
+                  </div>
+                </div>
+              ) : isLoadingPassport ? (
+                <div className="space-y-3 rounded-lg border border-border p-4">
+                  <Skeleton className="h-6 w-1/3" />
+                  <Skeleton className="h-20 w-full" />
+                </div>
+              ) : passportError ? (
+                <div className="p-4 bg-destructive/10 border border-destructive/20 rounded-md flex items-start gap-3 text-destructive shadow-sm">
+                   <AlertCircle className="w-5 h-5 mt-0.5 shrink-0" />
+                   <div>
+                     <h4 className="font-semibold text-sm">Etiketka topilmadi</h4>
+                     <p className="text-sm opacity-90 mt-1">
+                       <span className="font-mono font-semibold">{normalizedBarcode}</span> passporti mavjud emas. Skan natijasini tekshirib, qayta urinib ko‘ring.
+                     </p>
+                   </div>
+                </div>
+              ) : passport ? (
+                <div className="rounded-lg border border-border overflow-hidden bg-card shadow-sm">
+                   <div className="bg-muted/50 px-4 py-3 flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between border-b border-border">
+                    <div className="flex items-center gap-3">
+                      <Barcode className="w-5 h-5 text-muted-foreground" />
+                      <span className="font-mono font-semibold text-base" data-testid="text-passport-barcode">{passport.barcode}</span>
+                    </div>
+                    <div className={`px-2.5 py-1 text-xs font-bold uppercase tracking-wider rounded-sm shadow-sm ${
+                      passport.status === 'printed' ? 'bg-primary text-primary-foreground' :
+                      passport.status === 'void' ? 'bg-destructive text-destructive-foreground' :
+                      'bg-secondary text-secondary-foreground border border-border'
+                    }`} data-testid="badge-passport-status">
+                      {passport.status === "printed" ? "Chop etilgan" :
+                       passport.status === "void" ? "Bekor qilingan" : "Yaratilgan"}
+                    </div>
+                  </div>
+                  
+                  <div className="p-0">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 divide-y md:divide-y-0 lg:divide-x divide-border">
+                      
+                      <div className="p-4 space-y-4 lg:col-span-2">
+                        <div>
+                           <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1">Mahsulot</div>
+                          <div className="font-medium text-sm" data-testid="text-passport-product">{passport.productName}</div>
+                          <div className="text-xs text-muted-foreground font-mono mt-0.5">SKU: {passport.productSku}</div>
+                        </div>
+                        
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                             <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1">Partiya kodi</div>
+                             <div className="font-mono text-sm font-medium">{passport.batchCode || '—'}</div>
+                          </div>
+                          <div>
+                             <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1">Ishchi</div>
+                            <div className="text-sm font-medium">{passport.workerName}</div>
+                          </div>
+                        </div>
+                        
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                             <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1">Ishlab chiqarilgan vaqt</div>
+                            <div className="text-sm font-medium">{formatDate(passport.producedAt)}</div>
+                          </div>
+                          <div>
+                             <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1">Boshlang‘ich ombor</div>
+                             <div className="text-sm font-medium">{passport.warehouseName || 'Belgilanmagan'}</div>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="p-4 space-y-4">
+                        <div>
+                           <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1">Etiketka</div>
+                          <div className="flex items-center gap-2 mb-2">
+                             {passport.labelType === 'box' ? <Package className="w-4 h-4 text-primary" /> : <Box className="w-4 h-4 text-primary" />}
+                              <span className="text-sm font-medium">{passport.labelType === "box" ? "Quti etiketkasi" : "Dona etiketkasi"}</span>
+                          </div>
+                          <div className="text-sm">
+                             Tartib: <span className="font-mono font-medium">{passport.labelNumber}</span> / <span className="font-mono text-muted-foreground">{passport.totalLabels}</span>
+                          </div>
+                        </div>
+                        
+                        <div>
+                           <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1">Tarkib</div>
+                           <div className="text-sm">Etiketkadagi dona: <span className="font-mono font-medium">{passport.piecesInLabel}</span></div>
+                          {passport.labelType === 'box' && (
+                             <div className="text-sm mt-1">Quti sig‘imi: <span className="font-mono font-medium">{passport.piecesPerBox}</span></div>
+                          )}
+                        </div>
+                      </div>
+                      
+                      <div className="p-4 space-y-4">
+                        <div>
+                           <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1">O‘lchovlar</div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                               <div className="text-xs text-muted-foreground">Partiya donasi</div>
+                              <div className="font-mono text-sm font-medium">{formatNumber(passport.quantityTotal)}</div>
+                            </div>
+                            <div>
+                               <div className="text-xs text-muted-foreground">Etiketka KG</div>
+                              <div className="font-mono text-sm font-medium">{formatNumber(passport.weightKg)} kg</div>
+                            </div>
+                            {passport.lengthM != null && (
+                               <div className="col-span-2 mt-1">
+                                 <div className="text-xs text-muted-foreground">Metr</div>
+                                 <div className="font-mono text-sm font-medium">{formatNumber(passport.lengthM)} m</div>
+                               </div>
+                            )}
+                          </div>
+                        </div>
+                        
+                        <div>
+                            <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1">Chop tarixi</div>
+                           <div className="text-sm flex items-center gap-2">
+                             <Printer className="w-3.5 h-3.5 text-muted-foreground" />
+                              <span className="font-medium">{passport.printCount} marta chop etilgan</span>
+                           </div>
+                           {passport.lastPrintedAt && (
+                             <div className="text-xs text-muted-foreground mt-1">
+                                Oxirgi chop: {formatDate(passport.lastPrintedAt)}
+                             </div>
+                           )}
+                        </div>
+                      </div>
+                      
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="border-border shadow-sm">
         <CardHeader className="pb-4">
           <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Partiyalarni Qidirish</CardTitle>
         </CardHeader>
@@ -131,8 +338,9 @@ export default function Batches() {
         </CardContent>
       </Card>
 
-      <Card className="border-border">
+      <Card className="border-border shadow-sm">
         <CardContent className="p-0">
+          <div className="overflow-x-auto">
           <Table>
             <TableHeader className="bg-muted/50">
               <TableRow>
@@ -221,11 +429,12 @@ export default function Batches() {
               )}
             </TableBody>
           </Table>
+          </div>
         </CardContent>
       </Card>
       
       <div className="flex items-center justify-between">
-        <div className="text-sm text-muted-foreground">
+        <div className="text-sm text-muted-foreground font-medium">
           {data?.items.length || 0} ta / {data?.total || 0} ta yozuv
         </div>
         <div className="flex gap-2">

@@ -3,7 +3,11 @@ from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler, MessageHandler, filters
 
-from ..database import get_today_batches
+from ..database import (
+    get_production_labels,
+    get_today_batches,
+    mark_batch_labels_printed,
+)
 from ..keyboards import main_menu_keyboard
 from ..label_generator import TASHKENT_TZ, generate_batch_session_pdf
 
@@ -55,14 +59,24 @@ async def send_label_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text("❌ Partiya topilmadi.")
         return
 
-    import math
     worker = items[0]["worker"]
     total_qty = sum(int(i["quantity"]) for i in items)
-    # Etiketika soni: qutili mahsulotlarda dona emas, quti soni chiqadi
-    total_labels = sum(
-        math.ceil(int(i["quantity"]) / max(1, int(i.get("pieces_per_box") or 1)))
-        for i in items
-    )
+    passports = get_production_labels(batch_code)
+    by_batch: dict[int, list[dict]] = {}
+    for label in passports:
+        if label["batch_id"] is not None:
+            by_batch.setdefault(int(label["batch_id"]), []).append(label)
+
+    missing = [r["product"] for r in items if int(r["id"]) not in by_batch]
+    if missing:
+        await query.edit_message_text(
+            "❌ Bu eski partiyada fizik label passport yaratilmagan.\n"
+            "Yangi barcode uydirib qayta chop etilmadi.\n\n"
+            f"Mahsulotlar: {', '.join(missing)}"
+        )
+        return
+
+    total_labels = len(passports)
     label_note = "" if total_labels == total_qty else f" ({total_labels} ta etiketika)"
     await query.edit_message_text(
         f"🖨️ *{batch_code}* — {total_qty} dona{label_note}, tayyorlanmoqda…",
@@ -78,6 +92,7 @@ async def send_label_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             "sku":            r.get("sku") or "",
             "profile_kg":     float(r.get("profile_kg") or 0.0),
             "metr":           float(r.get("roll_length_m") or 0.0),
+            "labels":          by_batch[int(r["id"])],
         }
         for r in items
     ]
@@ -95,11 +110,17 @@ async def send_label_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         filename=f"{batch_code}.pdf",
         caption=(
             f"🏷️ *{batch_code}* — {worker}\n"
-            f"{len(items)} ta mahsulot · {total_qty} ta stiker"
+            f"{len(items)} ta mahsulot · {total_labels} ta stiker"
         ),
         parse_mode="Markdown",
         reply_markup=main_menu_keyboard(),
     )
+    marked = mark_batch_labels_printed(batch_code)
+    if marked != total_labels:
+        raise RuntimeError(
+            f"{batch_code}: {total_labels} label qayta chop etildi, "
+            f"lekin {marked} passport metadata yangilandi"
+        )
 
 
 def register(app) -> None:

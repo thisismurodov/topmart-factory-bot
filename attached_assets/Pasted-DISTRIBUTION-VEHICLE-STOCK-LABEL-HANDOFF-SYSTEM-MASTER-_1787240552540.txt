@@ -1,0 +1,696 @@
+DISTRIBUTION VEHICLE STOCK + LABEL HANDOFF SYSTEM
+MASTER ARCHITECTURE / DRY-RUN PROMPT
+
+Biz Distribution bo‘limida delivery agentlarning mashinasini alohida
+"mini-ombor" sifatida yuritadigan tizim qilamiz.
+
+Birinchi agent:
+NAVRUZBEK
+Mashina:
+DAMAS
+Vehicle ID: DM-001
+
+Lekin arxitektura kelajakda 100+ delivery agent va mashinaga
+oson kengayadigan bo‘lishi shart.
+
+MUHIM:
+Avval mavjud ERP arxitekturasini, Distribution, Sales, Inventory,
+Production va hozirgi label tizimini o‘rgan.
+Hech qanday taxmin bilan yangi table yoki field yaratma.
+Avval arxitektura/dry-run hisobotini ber.
+PROD DATABASE'GA WRITE QILMA.
+GO bo‘lmaguncha hech qanday destructive yoki operational write qilinmasin.
+
+
+==================================================
+1. ASOSIY MODEL
+==================================================
+
+Mashina alohida STOCK LOCATION sifatida ishlaydi.
+
+Flow:
+
+OMBOR
+   ↓
+YUK BERISH
+   ↓
+LABEL TAYYORLASH
+   ↓
+OMBORCHI MAHSULOTGA LABEL YOPISHTIRADI
+   ↓
+AGENTGA TOPSHIRADI
+   ↓
+MASHINA STOCK
+   ↓
+DOKONLARGA SOTUV
+   ↓
+MASHINA STOCK KAMAYADI
+   ↓
+QAYTA YUKLASH RO‘YXATI
+   ↓
+OMBORCHI YANGI YUK TAYYORLAYDI
+   ↓
+YANGI LABEL
+   ↓
+MASHINA STOCK
+
+
+==================================================
+2. AGENT + MASHINA
+==================================================
+
+Agent va mashina alohida entity bo‘lishi kerak.
+
+Misol:
+
+Agent:
+Navruzbek
+
+Vehicle:
+DM-001
+Type: Damas
+Status: active
+
+Relationship:
+
+Agent → Vehicle → Stock
+
+Kelajakda:
+
+Navruzbek → DM-001
+Bekzod → DM-002
+...
+100+ agent
+
+Bitta agentga kerak bo‘lsa bitta mashina biriktiriladi.
+
+Mashina holatlari kamida:
+
+- ACTIVE
+- INACTIVE
+- IN_WAREHOUSE
+- ON_ROUTE
+- MAINTENANCE
+
+UI'da mashina kartasida:
+- Agent
+- Mashina
+- Vehicle ID
+- Joriy SKU soni
+- Joriy dona
+- Joriy kg
+- Bugungi sotuv
+- Oxirgi yuklash
+- Oxirgi qaytarish
+
+
+==================================================
+3. "TOVAR BERISH" — ASOSIY JARAYON
+==================================================
+
+Omborchi Telegram botdan:
+
+📦 TOVAR BERISH
+
+→ Agent tanlaydi
+→ Mashina avtomatik chiqadi
+
+Misol:
+
+Navruzbek
+DM-001
+
+Keyin:
+
+➕ TOVAR QO‘SHISH
+
+Mahsulot tanlanadi:
+
+TULPOR
+
+Miqdor:
+
+3 dona
+
+ERP mahsulotning standart bir dona og‘irligini bilsa,
+OG‘IRLIKNI AVTOMATIK HISOBLAYDI.
+
+Misol:
+
+Tulpor
+1 dona = 3 kg
+
+3 dona = 9 kg
+
+Omborchi kgni qo‘lda hisoblamaydi.
+
+Agar mahsulotning kg/dona normasi mavjud bo‘lmasa:
+TIZIM TAXMIN QILMASIN.
+Operatorga real qiymatni kiritish yoki mavjud konfiguratsiyani
+to‘ldirish talab qilinsin.
+
+
+==================================================
+4. ENG MUHIM QISM — INDIVIDUAL LABEL
+==================================================
+
+Agar:
+
+Tulpor
+3 dona
+9 kg
+
+bo‘lsa:
+
+BOT 3 TA ALOHIDA LABEL TAYYORLAYDI.
+
+YA'NI:
+
+Label #1 → Tulpor → 3.00 kg
+Label #2 → Tulpor → 3.00 kg
+Label #3 → Tulpor → 3.00 kg
+
+Har bir fizik mahsulot/birlik o‘zining UNIQUE IDENTIFIER'iga ega bo‘lsin.
+
+Barcode REAL SCANNABLE bo‘lishi shart.
+Barcode dekor emas.
+
+Har bir label individual ID bilan yaratiladi.
+
+Misol:
+
+Product SKU:
+TM-XXXXXX
+
+Unit ID:
+UN-20260820-000001
+
+Barcode:
+UN-20260820-000001
+
+Keyingi birlik:
+
+UN-20260820-000002
+
+va hokazo.
+
+
+==================================================
+5. LABEL DIZAYNI
+==================================================
+
+Bizdagi thermal label:
+
+100 × 80 mm
+
+Printer:
+Proton by Gainscha DTP-4207
+
+Label qora-oq, minimalist industrial style.
+
+BRAND NOMI KERAK EMAS.
+DIYOR MAHSULOTLARI KERAK EMAS.
+TOP MART KERAK EMAS.
+QR CODE KERAK EMAS.
+Telefon/manzil/reklama KERAK EMAS.
+
+Labelda:
+
+MAHSULOT NOMI
+MAHSULOT SKU
+MAHSULOT KG
+MAHSULOT METRI
+KIM ISHLAB CHIQARGANI
+SANA VA SOAT
+REAL BARCODE
+
+Misol:
+
+MAHSULOT NOMI: TULPOR
+MAHSULOT SKU: TM-XXXXXX
+MAHSULOT KG: 3.00 KG
+MAHSULOT METRI: 80 M
+KIM ISHLAB CHIQARGANI: OMBORCHI / REAL OPERATOR
+SANA VA SOAT: 20.08.2026 18:32
+
+[REAL BARCODE]
+
+Barcode ostida uning text qiymati chiqishi mumkin.
+
+
+==================================================
+6. LABEL PRINT — FIZIK HANDOFF
+==================================================
+
+Bu juda muhim:
+
+"Tovar berish" tugmasi bosilishi bilan mahsulotni darhol
+mashina stockiga o'tkazib yuborma.
+
+Avval:
+
+1. Mahsulotlar tanlanadi
+2. Miqdor hisoblanadi
+3. Individual labels yaratiladi
+4. Label preview
+5. Omborchi PRINT qiladi
+6. Label printerdan chiqadi
+7. Omborchi har bir fizik mahsulotga tegishli labelni yopishtiradi
+8. Mahsulotlar agentga topshiriladi
+9. Handoff tasdiqlanadi
+10. SHUNDAN KEYIN stock:
+   OMBOR → MASHINA
+
+Bu ikki bosqichli nazorat bo‘lsin:
+
+PREPARED
+→ LABEL PRINTED
+→ HANDED OVER
+→ STOCK TRANSFERRED
+
+Agar label chop etilmagan yoki handoff tasdiqlanmagan bo‘lsa,
+mahsulot mashina stockiga o'tgan deb hisoblanmasin.
+
+
+==================================================
+7. "YANA TOVAR QO‘SHISH"
+==================================================
+
+Har bir mahsulotdan keyin bot:
+
+"Yana tovar qo‘shasizmi?"
+
+[➕ Tovar qo‘shish]
+[✅ Yuklashni yakunlash]
+
+Agar Tovar qo‘shish:
+
+yana mahsulot tanlanadi.
+
+Masalan:
+
+Tulpor — 3 dona
+Qop ip — 5 dona
+Shlanka — 4 dona
+
+Har bir mahsulot uchun kerakli individual label soni
+avtomatik yaratiladi.
+
+Oxirida barcha label'larni bitta print job sifatida chiqarish
+imkoniyati bo‘lsin.
+
+
+==================================================
+8. YUKLASH YAKUNI
+==================================================
+
+Omborchi:
+
+✅ YUKLASHNI YAKUNLASH
+
+bosganda preview:
+
+NAVRUZBEK
+DM-001
+
+Yuk:
+
+Tulpor       3 dona / 9 kg
+Qop ip       5 dona / XX kg
+Shlanka      4 dona / XX kg
+
+Jami:
+XX SKU
+XX dona
+XXX kg
+
+Status:
+
+LABELS PRINTED
+HANDOFF PENDING
+
+Agentga fizik topshirilgach:
+
+✅ TOPSHIRILDI
+
+Shundan keyin:
+
+OMBOR STOCK
+→
+DM-001 STOCK
+
+
+==================================================
+9. MASHINA STOCK
+==================================================
+
+Mashina alohida inventory location bo‘ladi.
+
+Misol:
+
+DM-001
+
+Tulpor:
+3 dona
+9 kg
+
+Qop ip:
+5 dona
+XX kg
+
+Shlanka:
+4 dona
+XX kg
+
+Har bir stock movement audit trailga ega bo‘lsin:
+
+WAREHOUSE → VEHICLE
+VEHICLE → CUSTOMER
+VEHICLE → WAREHOUSE
+
+Stockni qo‘lda o‘zgartirish imkoniyati bo‘lmasin,
+agar mavjud ERP arxitekturasi bunga yo‘l qo‘ymasa.
+
+
+==================================================
+10. SOTUV BILAN AVTOMATIK BOG‘LASH
+==================================================
+
+Navruzbek do‘konda sotuv qilganda:
+
+Agent:
+Navruzbek
+
+Vehicle:
+DM-001
+
+Sale:
+Tulpor — 2 dona
+
+ERP:
+
+DM-001 Tulpor
+3 dona → 1 dona
+
+Sotuv mashina stockidan kamayadi.
+
+Muhim:
+Sales Bot mavjud sales history'ga zarar bermasin.
+
+Mavjud sales logic saqlansin.
+Faqat sale → vehicle stock relationship qo‘shilsin,
+agar arxitektura uchun kerak bo‘lsa.
+
+
+==================================================
+11. KUN OXIRI — REPLENISHMENT
+==================================================
+
+Navruzbek oxirgi marshrutini tugatgandan keyin
+ERP uning mashina stockini hisoblaydi.
+
+Misol:
+
+Boshlang‘ich:
+Tulpor 10 dona
+
+Sotilgan:
+Tulpor 7 dona
+
+Qolgan:
+Tulpor 3 dona
+
+ERP avtomatik:
+
+"QAYTA YUKLASH KERAK"
+
+Tulpor — 7 dona
+
+Shu kabi barcha sotilgan mahsulotlar bo‘yicha ro‘yxat.
+
+Bu ro‘yxat avtomatik ravishda
+OMBORCHINING TELEGRAM BOTIGA yuboriladi.
+
+
+==================================================
+12. OMBORCHI TELEGRAM BOT
+==================================================
+
+Omborchi:
+
+📦 QAYTA YUKLASH
+
+NAVRUZBEK
+DM-001
+
+Kerak:
+
+Tulpor — 7 dona
+Qop ip — 4 dona
+Shlanka — 3 dona
+
+[📦 TOVAR TAYYORLASH]
+
+Bosilganda yuqoridagi TOVAR BERISH workflow ishga tushadi:
+
+Product
+→ Quantity
+→ automatic kg
+→ individual labels
+→ print
+→ physical labeling
+→ handoff
+→ vehicle stock.
+
+
+==================================================
+13. YUK QAYTARISH
+==================================================
+
+Agent qaytganida:
+
+🔄 YUK QAYTARISH
+
+Agent:
+Navruzbek
+
+Vehicle:
+DM-001
+
+Mahsulot:
+Tulpor
+Miqdor:
+1 dona
+
+Tasdiqlash:
+
+DM-001
+→
+OMBOR
+
+Stock qaytadi.
+
+Sabab ham bo‘lishi mumkin:
+
+- Sotilmadi
+- Ortiqcha yuk
+- Mahsulot almashtirildi
+- Shikastlangan
+- Boshqa
+
+
+==================================================
+14. MASHINA DASHBOARD
+==================================================
+
+Distribution bo‘limida:
+
+🚚 DELIVERY AGENTS
+
+Har bir mashina:
+
+NAVRUZBEK
+DM-001
+🟢 ACTIVE
+
+27 SKU
+83 dona
+XXX kg
+
+Bugungi sotuv:
+12 SKU
+31 dona
+
+Bugungi yuk:
++15 SKU
+
+Qaytarilgan:
+2 SKU
+
+Kutilayotgan qoldiq:
+...
+
+Mashina kartasiga kirilganda
+to‘liq stock va movement history ko‘rinsin.
+
+
+==================================================
+15. HAFTALIK REAL COUNT / RECONCILIATION
+==================================================
+
+Bu tizimning asosiy maqsadlaridan biri:
+
+Haftada bir marta mashina fizik sanaladi.
+
+ERP:
+
+EXPECTED STOCK
+
+Tulpor:
+14 dona
+
+Fizik count:
+
+14 dona
+
+→ ✅ MATCH
+
+Agar:
+
+ERP:
+14
+
+Physical:
+13
+
+→ 🔴 DIFFERENCE: -1
+
+Har bir SKU bo‘yicha:
+
+EXPECTED
+PHYSICAL
+DIFFERENCE
+
+ko‘rinsin.
+
+Hech qanday farq yashirilmasin.
+
+
+==================================================
+16. AUDIT TRAIL
+==================================================
+
+Har bir movement:
+
+Kim:
+Navruzbek / Omborchi
+
+Nima:
+Tulpor
+
+Miqdor:
+3 dona
+
+Kg:
+9 kg
+
+Qayerdan:
+Warehouse
+
+Qayerga:
+DM-001
+
+Vaqt:
+...
+
+Action:
+LOAD / SALE / RETURN / ADJUSTMENT
+
+bo‘yicha saqlansin.
+
+Individual label/unit ID bilan bog‘lanishi ideal.
+
+
+==================================================
+17. KELAJAKKA MOS ARXITEKTURA
+==================================================
+
+Hozir:
+1 agent + 1 Damas
+
+Lekin tizim quyidagiga tayyor bo‘lsin:
+
+100+ agents
+100+ vehicles
+minglab SKU movement
+minglab individual labels
+
+Yangi agent qo‘shish uchun kod yozish kerak bo‘lmasin.
+
+Faqat:
+
+Agent yaratish
+→ Vehicle yaratish
+→ biriktirish
+→ ishlatish
+
+
+==================================================
+18. MUHIM: MAVJUD ERPGA ZARAR BERMASLIK
+==================================================
+
+Quyidagilar daxlsiz:
+
+- Sales Bot
+- sales history
+- customers
+- existing products
+- existing inventory
+- production
+- existing label functionality
+- existing warehouse functionality
+
+Avval mavjud schema va relationshiplarni tekshir.
+
+Agar mavjud table bu vazifani bajara olsa,
+yangi table yaratma.
+
+Agar yangi schema zarur bo‘lsa:
+avval taklif qil va menga ko‘rsat.
+
+PROD WRITE = 0
+
+GO berilmaguncha:
+- migration yo‘q
+- destructive SQL yo‘q
+- production data o‘zgartirish yo‘q
+- sales data o‘zgartirish yo‘q
+
+
+==================================================
+19. DRY-RUN HISOBOTI
+==================================================
+
+Implementatsiyadan oldin menga quyidagilarni chiqar:
+
+1. Hozirgi inventory schema
+2. Sales → customer relationship
+3. Production → product relationship
+4. Existing label system
+5. Qaysi mavjud table'larni qayta ishlatish mumkin
+6. Qaysi yangi table/field kerak
+7. Vehicle stock modeli
+8. Individual label/unit modeli
+9. Sale → vehicle stock deduction modeli
+10. Replenishment algoritmi
+11. Return modeli
+12. Weekly reconciliation modeli
+13. Transaction boundaries
+14. Rollback strategy
+15. Test plan
+
+HECH NARSA WRITE QILMA.
+
+Avval architecture + dry-run report ber.
+
+"GO" faqat men tasdiqlaganimdan keyin.

@@ -416,6 +416,14 @@ export async function initDb(): Promise<void> {
       CREATE INDEX IF NOT EXISTS idx_production_labels_product
         ON production_labels(product_name)
     `);
+    // F4: vehicle-handoff passports carry batch_id NULL + batch_code 'VH-<handoffId>'.
+    // The (batch_id, label_number) unique index does not constrain NULL batch_id
+    // rows, so this partial unique index enforces one label_number per VH batch.
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_production_labels_vh_batch_number
+        ON production_labels(batch_code, label_number)
+        WHERE batch_id IS NULL AND batch_code LIKE 'VH-%'
+    `);
     await pool.query(`
       CREATE OR REPLACE FUNCTION enforce_production_label_immutable()
       RETURNS TRIGGER

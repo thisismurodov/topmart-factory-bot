@@ -59,8 +59,11 @@ import type {
   SaleStatusInput,
   VehicleDistributionBootstrapInput,
   VehicleDistributionPilot,
+  VehicleHandoffConfirmLabelsResult,
   VehicleHandoffDetail,
+  VehicleHandoffLabelsPayload,
   VehicleHandoffList,
+  VehicleHandoffOperationInput,
   VehicleHandoffTransitionInput,
   Worker,
   WorkerDeleteInput,
@@ -3506,6 +3509,157 @@ export function useGetVehicleHandoff<TData = Awaited<ReturnType<typeof getVehicl
 
 
 
+export const getPrepareVehicleHandoffLabelsUrl = (handoffId: number,) => {
+
+
+
+
+  return `/api/vehicle-distribution/handoffs/${handoffId}/labels/prepare`
+}
+
+/**
+ * Idempotently materialises one production_labels passport + one vehicle_label_claim + one label_prepared unit event per physical unit of a handoff in status 'prepared'. Requires PRODUCTION_LABELS_SCHEMA_APPROVED at request time (503 otherwise). Strict {operationKey} body. Barcodes are generated server-side (TS only). Replaying the same handoff + key + fingerprint returns the existing payload; a different key on the same handoff, the same key on another handoff, or a payload/fingerprint mismatch yields 409. No inventory is mutated.
+ * @summary Prepare printable production-label passports for a prepared handoff
+ */
+export const prepareVehicleHandoffLabels = async (handoffId: number,
+    vehicleHandoffOperationInput: VehicleHandoffOperationInput, options?: RequestInit): Promise<VehicleHandoffLabelsPayload> => {
+
+  return customFetch<VehicleHandoffLabelsPayload>(getPrepareVehicleHandoffLabelsUrl(handoffId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      vehicleHandoffOperationInput,)
+  }
+);}
+
+
+
+
+export const getPrepareVehicleHandoffLabelsMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof prepareVehicleHandoffLabels>>, TError,{handoffId: number;data: BodyType<VehicleHandoffOperationInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof prepareVehicleHandoffLabels>>, TError,{handoffId: number;data: BodyType<VehicleHandoffOperationInput>}, TContext> => {
+
+const mutationKey = ['prepareVehicleHandoffLabels'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof prepareVehicleHandoffLabels>>, {handoffId: number;data: BodyType<VehicleHandoffOperationInput>}> = (props) => {
+          const {handoffId,data} = props ?? {};
+
+          return  prepareVehicleHandoffLabels(handoffId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PrepareVehicleHandoffLabelsMutationResult = NonNullable<Awaited<ReturnType<typeof prepareVehicleHandoffLabels>>>
+    export type PrepareVehicleHandoffLabelsMutationBody = BodyType<VehicleHandoffOperationInput>
+    export type PrepareVehicleHandoffLabelsMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Prepare printable production-label passports for a prepared handoff
+ */
+export const usePrepareVehicleHandoffLabels = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof prepareVehicleHandoffLabels>>, TError,{handoffId: number;data: BodyType<VehicleHandoffOperationInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof prepareVehicleHandoffLabels>>,
+        TError,
+        {handoffId: number;data: BodyType<VehicleHandoffOperationInput>},
+        TContext
+      > => {
+      return useMutation(getPrepareVehicleHandoffLabelsMutationOptions(options));
+    }
+
+export const getGetVehicleHandoffLabelsUrl = (handoffId: number,) => {
+
+
+
+
+  return `/api/vehicle-distribution/handoffs/${handoffId}/labels`
+}
+
+/**
+ * Returns the deterministic, ordered print payload (persisted barcodes + all passport fields required by the PDF generator + print metadata) for a handoff whose labels have been prepared. Requires PRODUCTION_LABELS_SCHEMA_APPROVED at request time (503 otherwise).
+ * @summary Read the immutable printable label payload for a handoff
+ */
+export const getVehicleHandoffLabels = async (handoffId: number, options?: RequestInit): Promise<VehicleHandoffLabelsPayload> => {
+
+  return customFetch<VehicleHandoffLabelsPayload>(getGetVehicleHandoffLabelsUrl(handoffId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetVehicleHandoffLabelsQueryKey = (handoffId: number,) => {
+    return [
+    `/api/vehicle-distribution/handoffs/${handoffId}/labels`
+    ] as const;
+    }
+
+
+export const getGetVehicleHandoffLabelsQueryOptions = <TData = Awaited<ReturnType<typeof getVehicleHandoffLabels>>, TError = ErrorType<ErrorResponse>>(handoffId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getVehicleHandoffLabels>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetVehicleHandoffLabelsQueryKey(handoffId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getVehicleHandoffLabels>>> = ({ signal }) => getVehicleHandoffLabels(handoffId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(handoffId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getVehicleHandoffLabels>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetVehicleHandoffLabelsQueryResult = NonNullable<Awaited<ReturnType<typeof getVehicleHandoffLabels>>>
+export type GetVehicleHandoffLabelsQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary Read the immutable printable label payload for a handoff
+ */
+
+export function useGetVehicleHandoffLabels<TData = Awaited<ReturnType<typeof getVehicleHandoffLabels>>, TError = ErrorType<ErrorResponse>>(
+ handoffId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getVehicleHandoffLabels>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetVehicleHandoffLabelsQueryOptions(handoffId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
 export const getConfirmVehicleHandoffLabelsPrintedUrl = (handoffId: number,) => {
 
 
@@ -3515,19 +3669,19 @@ export const getConfirmVehicleHandoffLabelsPrintedUrl = (handoffId: number,) => 
 }
 
 /**
- * Requires one cross-handoff vehicle_label_claim per physical unit (matching item/product/SKU/weight, status prepared or printed). Marks the claims printed, records idempotent label_printed unit events, and advances the handoff to labels_printed. Same-state retry is idempotent.
- * @summary Transition a prepared handoff to labels_printed
+ * Owns the full print-session contract. Requires PRODUCTION_LABELS_SCHEMA_APPROVED at request time (503 otherwise). Strict {operationKey} body. If a print session already exists for this operationKey on this handoff, returns the current payload with no increment. A first successful confirm on a 'prepared' handoff inserts a print session, marks each production_label printed (print_count +1, last_printed_at), advances claims prepared→printed, records idempotent label_printed events, and advances the handoff to labels_printed. A reprint confirm (allowed in labels_printed / handed_over / stock_transferred) inserts a reprint session and increments each passport once per NEW session, leaving handoff and loaded/sold claim states untouched. Reports isReprint and atLeastOnce (never claims exactly-once physical print). Cancelled/void/missing/mismatch yield 409.
+ * @summary Confirm labels printed (first print or reprint) for a handoff
  */
 export const confirmVehicleHandoffLabelsPrinted = async (handoffId: number,
-    vehicleHandoffTransitionInput?: VehicleHandoffTransitionInput, options?: RequestInit): Promise<VehicleHandoffDetail> => {
+    vehicleHandoffOperationInput: VehicleHandoffOperationInput, options?: RequestInit): Promise<VehicleHandoffConfirmLabelsResult> => {
 
-  return customFetch<VehicleHandoffDetail>(getConfirmVehicleHandoffLabelsPrintedUrl(handoffId),
+  return customFetch<VehicleHandoffConfirmLabelsResult>(getConfirmVehicleHandoffLabelsPrintedUrl(handoffId),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      vehicleHandoffTransitionInput,)
+      vehicleHandoffOperationInput,)
   }
 );}
 
@@ -3535,8 +3689,8 @@ export const confirmVehicleHandoffLabelsPrinted = async (handoffId: number,
 
 
 export const getConfirmVehicleHandoffLabelsPrintedMutationOptions = <TError = ErrorType<ErrorResponse>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmVehicleHandoffLabelsPrinted>>, TError,{handoffId: number;data?: BodyType<VehicleHandoffTransitionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof confirmVehicleHandoffLabelsPrinted>>, TError,{handoffId: number;data?: BodyType<VehicleHandoffTransitionInput>}, TContext> => {
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmVehicleHandoffLabelsPrinted>>, TError,{handoffId: number;data: BodyType<VehicleHandoffOperationInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof confirmVehicleHandoffLabelsPrinted>>, TError,{handoffId: number;data: BodyType<VehicleHandoffOperationInput>}, TContext> => {
 
 const mutationKey = ['confirmVehicleHandoffLabelsPrinted'];
 const {mutation: mutationOptions, request: requestOptions} = options ?
@@ -3548,7 +3702,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof confirmVehicleHandoffLabelsPrinted>>, {handoffId: number;data?: BodyType<VehicleHandoffTransitionInput>}> = (props) => {
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof confirmVehicleHandoffLabelsPrinted>>, {handoffId: number;data: BodyType<VehicleHandoffOperationInput>}> = (props) => {
           const {handoffId,data} = props ?? {};
 
           return  confirmVehicleHandoffLabelsPrinted(handoffId,data,requestOptions)
@@ -3562,18 +3716,18 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
   return  { mutationFn, ...mutationOptions }}
 
     export type ConfirmVehicleHandoffLabelsPrintedMutationResult = NonNullable<Awaited<ReturnType<typeof confirmVehicleHandoffLabelsPrinted>>>
-    export type ConfirmVehicleHandoffLabelsPrintedMutationBody = BodyType<VehicleHandoffTransitionInput> | undefined
+    export type ConfirmVehicleHandoffLabelsPrintedMutationBody = BodyType<VehicleHandoffOperationInput>
     export type ConfirmVehicleHandoffLabelsPrintedMutationError = ErrorType<ErrorResponse>
 
     /**
- * @summary Transition a prepared handoff to labels_printed
+ * @summary Confirm labels printed (first print or reprint) for a handoff
  */
 export const useConfirmVehicleHandoffLabelsPrinted = <TError = ErrorType<ErrorResponse>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmVehicleHandoffLabelsPrinted>>, TError,{handoffId: number;data?: BodyType<VehicleHandoffTransitionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmVehicleHandoffLabelsPrinted>>, TError,{handoffId: number;data: BodyType<VehicleHandoffOperationInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof confirmVehicleHandoffLabelsPrinted>>,
         TError,
-        {handoffId: number;data?: BodyType<VehicleHandoffTransitionInput>},
+        {handoffId: number;data: BodyType<VehicleHandoffOperationInput>},
         TContext
       > => {
       return useMutation(getConfirmVehicleHandoffLabelsPrintedMutationOptions(options));

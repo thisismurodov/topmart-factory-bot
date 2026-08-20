@@ -53,6 +53,9 @@ const botEnv = {
   DATABASE_URL: tmpUrl(),
   TELEGRAM_BOT_TOKEN: "123456:TEST_TOKEN_VEHICLE_HANDOFF",
   VEHICLE_DISTRIBUTION_SCHEMA_APPROVED: "1",
+  // F4: bring up public.production_labels (+ immutability trigger + the VH
+  // partial unique index) via the real bot init_db so the label endpoints work.
+  PRODUCTION_LABELS_SCHEMA_APPROVED: "1",
 };
 
 const BOT_KEY = "super-secret-bot-key-1234567890";
@@ -188,43 +191,6 @@ async function setStock(
   );
 }
 
-// Seed valid cross-handoff label claims for a handoff item (F4 will generate
-// these in production; F3 tests seed them directly per the spec).
-let labelCounter = 1000;
-async function seedClaims(
-  vehicleId: number,
-  handoffId: number,
-  handoffItemId: number,
-  mahsulotId: number,
-  sku: string,
-  unitWeightKg: number,
-  count: number,
-  keyPrefix: string,
-): Promise<number[]> {
-  const ids: number[] = [];
-  for (let i = 0; i < count; i++) {
-    const labelId = ++labelCounter;
-    const r = await client.query(
-      `INSERT INTO distribution.vehicle_label_claims
-         (vehicle_id, handoff_id, handoff_item_id, production_label_id, barcode,
-          mahsulot_id, sku, unit_weight_kg, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'prepared') RETURNING id`,
-      [
-        vehicleId,
-        handoffId,
-        handoffItemId,
-        labelId,
-        `${keyPrefix}-BC-${labelId}`,
-        mahsulotId,
-        sku,
-        unitWeightKg,
-      ],
-    );
-    ids.push(Number(r.rows[0].id));
-  }
-  return ids;
-}
-
 // ── HTTP harness — dedicated handoff router with its OWN auth wall only ───────
 function makeApp(): http.Server {
   const app = express();
@@ -292,10 +258,41 @@ function opKey(): string {
 
 async function cleanHandoffs(): Promise<void> {
   await client.query(`DELETE FROM distribution.vehicle_unit_events`);
+  await client.query(`DELETE FROM distribution.vehicle_label_print_sessions`);
+  await client.query(`DELETE FROM distribution.vehicle_label_prepare_sessions`);
   await client.query(`DELETE FROM distribution.vehicle_label_claims`);
   await client.query(`DELETE FROM distribution.vehicle_handoff_items`);
   await client.query(`DELETE FROM distribution.vehicle_handoffs`);
   await client.query(`DELETE FROM stock_movements`);
+  // Immutable trigger blocks UPDATE not DELETE — safe to clear VH passports.
+  await client.query(`DELETE FROM production_labels WHERE batch_code LIKE 'VH-%'`);
+}
+
+// F4: drive the real prepare endpoint to materialise passports/claims/events.
+async function prepareLabels(
+  handoffId: number,
+  opts: { token?: string; botKey?: string } = { token: adminToken },
+): Promise<Resp> {
+  return call(
+    "POST",
+    `/vehicle-distribution/handoffs/${handoffId}/labels/prepare`,
+    { ...opts, body: { operationKey: opKey() } },
+  );
+}
+
+// F4: confirm helper that always supplies a fresh operationKey.
+async function confirmPrinted(
+  handoffId: number,
+  opts: { token?: string; botKey?: string; operationKey?: string } = {
+    token: adminToken,
+  },
+): Promise<Resp> {
+  const { operationKey, ...rest } = opts;
+  return call(
+    "POST",
+    `/vehicle-distribution/handoffs/${handoffId}/confirm-labels-printed`,
+    { ...rest, body: { operationKey: operationKey ?? opKey() } },
+  );
 }
 
 beforeAll(async () => {
@@ -325,6 +322,7 @@ beforeAll(async () => {
   process.env.VEHICLE_DISTRIBUTION_ENABLED = "1";
   process.env.VEHICLE_DISTRIBUTION_SCHEMA_APPROVED = "1";
   process.env.VEHICLE_DISTRIBUTION_BOT_KEY = BOT_KEY;
+  process.env.PRODUCTION_LABELS_SCHEMA_APPROVED = "1";
 
   await bootstrapPilot();
 
@@ -360,6 +358,7 @@ beforeEach(async () => {
   process.env.VEHICLE_DISTRIBUTION_ENABLED = "1";
   process.env.VEHICLE_DISTRIBUTION_SCHEMA_APPROVED = "1";
   process.env.VEHICLE_DISTRIBUTION_BOT_KEY = BOT_KEY;
+  process.env.PRODUCTION_LABELS_SCHEMA_APPROVED = "1";
   await cleanHandoffs();
   await setStock(erpWarehouseId, prodA.name, 100, 250);
   await setStock(erpWarehouseId, prodB.name, 100, 100);
@@ -427,6 +426,296 @@ describe("feature gate (fail-closed, after auth)", () => {
       token: adminToken,
     });
     expect(r.status).toBe(503);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// F4: labels prepare / get / confirm (production-label gate + passport contract)
+// ─────────────────────────────────────────────────────────────────────────────
+const BARCODE_RE = /^TM[A-Z2-7]{16}$/;
+
+describe("F4 production-label gate", () => {
+  it("prepare → 503 when PRODUCTION_LABELS_SCHEMA_APPROVED unset (no DB write)", async () => {
+    const { handoffId } = await makePrepared(2);
+    delete process.env.PRODUCTION_LABELS_SCHEMA_APPROVED;
+    const r = await call(
+      "POST",
+      `/vehicle-distribution/handoffs/${handoffId}/labels/prepare`,
+      { token: adminToken, body: { operationKey: opKey() } },
+    );
+    expect(r.status).toBe(503);
+    // No passports or claims written.
+    const n = await client.query(
+      `SELECT COUNT(*)::int AS n FROM distribution.vehicle_label_claims WHERE handoff_id=$1`,
+      [handoffId],
+    );
+    expect(Number(n.rows[0].n)).toBe(0);
+  });
+
+  it("GET labels → 503 when production schema unset", async () => {
+    const { handoffId } = await makePrepared(1);
+    delete process.env.PRODUCTION_LABELS_SCHEMA_APPROVED;
+    const r = await call(
+      "GET",
+      `/vehicle-distribution/handoffs/${handoffId}/labels`,
+      { token: adminToken },
+    );
+    expect(r.status).toBe(503);
+  });
+
+  it("confirm → 503 when production schema unset", async () => {
+    const { handoffId } = await makePreparedWithLabels(1);
+    delete process.env.PRODUCTION_LABELS_SCHEMA_APPROVED;
+    const r = await call(
+      "POST",
+      `/vehicle-distribution/handoffs/${handoffId}/confirm-labels-printed`,
+      { token: adminToken, body: { operationKey: opKey() } },
+    );
+    expect(r.status).toBe(503);
+  });
+});
+
+describe("F4 prepare labels", () => {
+  it("rejects missing operationKey (400)", async () => {
+    const { handoffId } = await makePrepared(1);
+    const r = await call(
+      "POST",
+      `/vehicle-distribution/handoffs/${handoffId}/labels/prepare`,
+      { token: adminToken, body: {} },
+    );
+    expect(r.status).toBe(400);
+  });
+
+  it("rejects unknown body properties (400)", async () => {
+    const { handoffId } = await makePrepared(1);
+    const r = await call(
+      "POST",
+      `/vehicle-distribution/handoffs/${handoffId}/labels/prepare`,
+      { token: adminToken, body: { operationKey: opKey(), extra: 1 } },
+    );
+    expect(r.status).toBe(400);
+  });
+
+  it("first prepare: exact counts of passports, claims, events + barcode identity", async () => {
+    const r = await call("POST", "/vehicle-distribution/handoffs", {
+      token: adminToken,
+      body: {
+        sourceWarehouseId: erpWarehouseId,
+        items: [
+          { mahsulotId: prodA.mahsulotId, quantity: 3 },
+          { mahsulotId: prodB.mahsulotId, quantity: 2 },
+        ],
+        operationKey: opKey(),
+      },
+    });
+    const handoffId = r.body.id as number;
+
+    const p = await prepareLabels(handoffId);
+    expect(p.status).toBe(200);
+    expect(p.body.totalLabels).toBe(5);
+    expect(p.body.labels).toHaveLength(5);
+
+    // One production_labels row per unit.
+    const pl = await client.query(
+      `SELECT COUNT(*)::int AS n FROM production_labels WHERE batch_code=$1`,
+      [p.body.batchCode],
+    );
+    expect(Number(pl.rows[0].n)).toBe(5);
+    // One claim per unit, status='prepared'.
+    const cl = await client.query(
+      `SELECT COUNT(*)::int AS n FROM distribution.vehicle_label_claims WHERE handoff_id=$1 AND status='prepared'`,
+      [handoffId],
+    );
+    expect(Number(cl.rows[0].n)).toBe(5);
+    // One label_prepared event per unit.
+    const ev = await client.query(
+      `SELECT COUNT(*)::int AS n FROM distribution.vehicle_unit_events WHERE handoff_id=$1 AND event_type='label_prepared'`,
+      [handoffId],
+    );
+    expect(Number(ev.rows[0].n)).toBe(5);
+    // One prepare session.
+    const ps = await client.query(
+      `SELECT COUNT(*)::int AS n FROM distribution.vehicle_label_prepare_sessions WHERE handoff_id=$1`,
+      [handoffId],
+    );
+    expect(Number(ps.rows[0].n)).toBe(1);
+
+    // Every barcode matches the RFC4648 Base32 contract and is unique.
+    const barcodes = p.body.labels.map((l: any) => l.barcodeValue as string);
+    for (const bc of barcodes) expect(bc).toMatch(BARCODE_RE);
+    expect(new Set(barcodes).size).toBe(barcodes.length);
+
+    // Global label numbering 1..5.
+    const nums = p.body.labels
+      .map((l: any) => l.labelNumber)
+      .sort((a: number, b: number) => a - b);
+    expect(nums).toEqual([1, 2, 3, 4, 5]);
+    for (const l of p.body.labels) expect(l.totalLabels).toBe(5);
+  });
+
+  it("prepare does not mutate inventory or move stock", async () => {
+    const { handoffId } = await makePrepared(2);
+    await prepareLabels(handoffId);
+    const veh = await client.query(
+      `SELECT COALESCE(SUM(quantity),0)::float8 AS q FROM inventory WHERE warehouse_id=$1`,
+      [vehicleWarehouseId],
+    );
+    expect(Number(veh.rows[0].q)).toBe(0);
+    const src = await client.query(
+      `SELECT quantity FROM inventory WHERE warehouse_id=$1 AND product=$2`,
+      [erpWarehouseId, prodA.name],
+    );
+    expect(Number(src.rows[0].quantity)).toBe(100);
+    const led = await client.query(`SELECT COUNT(*)::int AS n FROM stock_movements`);
+    expect(Number(led.rows[0].n)).toBe(0);
+  });
+
+  it("replay with the same operationKey → idempotent, no duplicate passports", async () => {
+    const { handoffId } = await makePrepared(2);
+    const key = opKey();
+    const p1 = await call(
+      "POST",
+      `/vehicle-distribution/handoffs/${handoffId}/labels/prepare`,
+      { token: adminToken, body: { operationKey: key } },
+    );
+    const p2 = await call(
+      "POST",
+      `/vehicle-distribution/handoffs/${handoffId}/labels/prepare`,
+      { token: adminToken, body: { operationKey: key } },
+    );
+    expect(p1.status).toBe(200);
+    expect(p2.status).toBe(200);
+    const bc1 = p1.body.labels.map((l: any) => l.barcodeValue).sort();
+    const bc2 = p2.body.labels.map((l: any) => l.barcodeValue).sort();
+    expect(bc2).toEqual(bc1); // same persisted barcodes
+    const cl = await client.query(
+      `SELECT COUNT(*)::int AS n FROM distribution.vehicle_label_claims WHERE handoff_id=$1`,
+      [handoffId],
+    );
+    expect(Number(cl.rows[0].n)).toBe(2); // not 4
+  });
+
+  it("second prepare with a DIFFERENT key on same handoff → 409 (fingerprint)", async () => {
+    const { handoffId } = await makePrepared(2);
+    await prepareLabels(handoffId);
+    const r = await call(
+      "POST",
+      `/vehicle-distribution/handoffs/${handoffId}/labels/prepare`,
+      { token: adminToken, body: { operationKey: opKey() } },
+    );
+    expect(r.status).toBe(409);
+  });
+
+  it("same operationKey reused on ANOTHER handoff → 409", async () => {
+    const a = await makePrepared(1);
+    const b = await makePrepared(1);
+    const key = opKey();
+    const r1 = await call(
+      "POST",
+      `/vehicle-distribution/handoffs/${a.handoffId}/labels/prepare`,
+      { token: adminToken, body: { operationKey: key } },
+    );
+    expect(r1.status).toBe(200);
+    const r2 = await call(
+      "POST",
+      `/vehicle-distribution/handoffs/${b.handoffId}/labels/prepare`,
+      { token: adminToken, body: { operationKey: key } },
+    );
+    expect(r2.status).toBe(409);
+  });
+});
+
+describe("F4 get labels payload", () => {
+  it("returns the prepared passport payload", async () => {
+    const { handoffId } = await makePreparedWithLabels(2);
+    const r = await call(
+      "GET",
+      `/vehicle-distribution/handoffs/${handoffId}/labels`,
+      { token: adminToken },
+    );
+    expect(r.status).toBe(200);
+    expect(r.body.totalLabels).toBe(2);
+    expect(r.body.labels).toHaveLength(2);
+    expect(String(r.body.batchCode)).toMatch(/^VH-/);
+    for (const l of r.body.labels) {
+      expect(l.barcodeValue).toMatch(BARCODE_RE);
+      expect(typeof l.producedAt).toBe("string");
+      expect(l.productSku).toBe(prodA.sku);
+    }
+  });
+
+  it("GET labels before prepare → empty payload (no passports)", async () => {
+    const { handoffId } = await makePrepared(1);
+    const r = await call(
+      "GET",
+      `/vehicle-distribution/handoffs/${handoffId}/labels`,
+      { token: adminToken },
+    );
+    expect(r.status).toBe(200);
+    expect(r.body.totalLabels).toBe(0);
+    expect(r.body.labels).toHaveLength(0);
+  });
+});
+
+describe("F4 confirm: first print + reprint", () => {
+  it("first confirm transitions prepared → labels_printed, isReprint=false", async () => {
+    const { handoffId } = await makePreparedWithLabels(2);
+    const c = await confirmPrinted(handoffId);
+    expect(c.status).toBe(200);
+    expect(c.body.handoff.status).toBe("labels_printed");
+    expect(c.body.isReprint).toBe(false);
+    expect(c.body.atLeastOnce).toBe(true);
+    const pc = await client.query(
+      `SELECT COALESCE(SUM(print_count),0)::int AS n FROM production_labels WHERE batch_code=$1`,
+      [c.body.labels[0].batchCode],
+    );
+    expect(Number(pc.rows[0].n)).toBeGreaterThanOrEqual(2);
+  });
+
+  it("same-key confirm retry → no print_count increment", async () => {
+    const { handoffId } = await makePreparedWithLabels(1);
+    const key = opKey();
+    const c1 = await confirmPrinted(handoffId, { token: adminToken, operationKey: key });
+    expect(c1.status).toBe(200);
+    const batchCode = c1.body.labels[0].batchCode;
+    const after1 = await client.query(
+      `SELECT COALESCE(SUM(print_count),0)::int AS n FROM production_labels WHERE batch_code=$1`,
+      [batchCode],
+    );
+    const c2 = await confirmPrinted(handoffId, { token: adminToken, operationKey: key });
+    expect(c2.status).toBe(200);
+    const after2 = await client.query(
+      `SELECT COALESCE(SUM(print_count),0)::int AS n FROM production_labels WHERE batch_code=$1`,
+      [batchCode],
+    );
+    expect(Number(after2.rows[0].n)).toBe(Number(after1.rows[0].n));
+  });
+
+  it("reprint with a NEW key → isReprint=true, print_count increments", async () => {
+    const { handoffId } = await makePreparedWithLabels(1);
+    const c1 = await confirmPrinted(handoffId);
+    const batchCode = c1.body.labels[0].batchCode;
+    const after1 = await client.query(
+      `SELECT COALESCE(SUM(print_count),0)::int AS n FROM production_labels WHERE batch_code=$1`,
+      [batchCode],
+    );
+    const c2 = await confirmPrinted(handoffId); // fresh key
+    expect(c2.status).toBe(200);
+    expect(c2.body.isReprint).toBe(true);
+    const after2 = await client.query(
+      `SELECT COALESCE(SUM(print_count),0)::int AS n FROM production_labels WHERE batch_code=$1`,
+      [batchCode],
+    );
+    expect(Number(after2.rows[0].n)).toBeGreaterThan(Number(after1.rows[0].n));
+  });
+
+  it("confirm on a cancelled handoff → 409", async () => {
+    const { handoffId } = await makePreparedWithLabels(1);
+    await call(`POST`, `/vehicle-distribution/handoffs/${handoffId}/cancel`, {
+      token: adminToken,
+    });
+    const c = await confirmPrinted(handoffId);
+    expect(c.status).toBe(409);
   });
 });
 
@@ -597,11 +886,11 @@ describe("create prepared handoff", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Helper: create a prepared handoff + seed claims
+// Helper: create a prepared handoff (status='prepared', no labels yet)
 // ─────────────────────────────────────────────────────────────────────────────
 async function makePrepared(
   qtyA: number,
-): Promise<{ handoffId: number; itemId: number; claimIds: number[] }> {
+): Promise<{ handoffId: number; itemId: number }> {
   const r = await call("POST", "/vehicle-distribution/handoffs", {
     token: adminToken,
     body: {
@@ -613,42 +902,38 @@ async function makePrepared(
   expect(r.status).toBe(200);
   const handoffId = r.body.id as number;
   const itemId = r.body.items[0].id as number;
-  const claimIds = await seedClaims(
-    vehicleId,
-    handoffId,
-    itemId,
-    prodA.mahsulotId,
-    prodA.sku,
-    2.5,
-    qtyA,
-    `H${handoffId}I${itemId}`,
-  );
-  return { handoffId, itemId, claimIds };
+  return { handoffId, itemId };
+}
+
+// Create a prepared handoff AND run the real prepare endpoint so labels/claims
+// exist — the F4 pre-requisite for a confirm.
+async function makePreparedWithLabels(
+  qtyA: number,
+): Promise<{ handoffId: number; itemId: number }> {
+  const base = await makePrepared(qtyA);
+  const p = await prepareLabels(base.handoffId);
+  expect(p.status).toBe(200);
+  return base;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Transition matrix + claim invariants
 // ─────────────────────────────────────────────────────────────────────────────
 describe("lifecycle transitions", () => {
-  it("confirm-labels-printed requires exactly one claim per unit (409 if short)", async () => {
-    // Create a prepared handoff needing 2 units, but seed only ONE claim.
-    const r0 = await call("POST", "/vehicle-distribution/handoffs", {
-      token: adminToken,
-      body: {
-        sourceWarehouseId: erpWarehouseId,
-        items: [{ mahsulotId: prodA.mahsulotId, quantity: 2 }],
-        operationKey: opKey(),
-      },
-    });
-    const handoffId = r0.body.id as number;
-    const itemId = r0.body.items[0].id as number;
-    await seedClaims(vehicleId, handoffId, itemId, prodA.mahsulotId, prodA.sku, 2.5, 1, `short${handoffId}`);
+  it("confirm before prepare → 409 (labels not prepared)", async () => {
+    const { handoffId } = await makePrepared(2);
+    const r = await confirmPrinted(handoffId);
+    expect(r.status).toBe(409);
+  });
+
+  it("confirm without operationKey → 400", async () => {
+    const { handoffId } = await makePreparedWithLabels(1);
     const r = await call(
       "POST",
       `/vehicle-distribution/handoffs/${handoffId}/confirm-labels-printed`,
-      { token: adminToken },
+      { token: adminToken, body: {} },
     );
-    expect(r.status).toBe(409);
+    expect(r.status).toBe(400);
   });
 
   it("cannot skip states: prepared → handed-over rejected (409)", async () => {
@@ -692,16 +977,16 @@ describe("lifecycle transitions", () => {
     const handoffId = r.body.id as number;
     const itemA = r.body.items.find((i: any) => i.mahsulotId === prodA.mahsulotId);
     const itemB = r.body.items.find((i: any) => i.mahsulotId === prodB.mahsulotId);
-    await seedClaims(vehicleId, handoffId, itemA.id, prodA.mahsulotId, prodA.sku, 2.5, 3, `A${handoffId}`);
-    await seedClaims(vehicleId, handoffId, itemB.id, prodB.mahsulotId, prodB.sku, 1.0, 2, `B${handoffId}`);
 
-    const p = await call(
-      "POST",
-      `/vehicle-distribution/handoffs/${handoffId}/confirm-labels-printed`,
-      { token: adminToken },
-    );
+    const prep = await prepareLabels(handoffId);
+    expect(prep.status).toBe(200);
+    expect(prep.body.totalLabels).toBe(5);
+
+    const p = await confirmPrinted(handoffId);
     expect(p.status).toBe(200);
-    expect(p.body.status).toBe("labels_printed");
+    expect(p.body.handoff.status).toBe("labels_printed");
+    expect(p.body.isReprint).toBe(false);
+    expect(p.body.atLeastOnce).toBe(true);
 
     const h = await call(
       "POST",
@@ -780,9 +1065,8 @@ describe("lifecycle transitions", () => {
       },
     });
     const handoffId = r.body.id as number;
-    const itemId = r.body.items[0].id as number;
-    await seedClaims(vehicleId, handoffId, itemId, prodA.mahsulotId, prodA.sku, 2.5, 2, `R${handoffId}`);
-    await call(`POST`, `/vehicle-distribution/handoffs/${handoffId}/confirm-labels-printed`, { token: adminToken });
+    await prepareLabels(handoffId);
+    await confirmPrinted(handoffId);
     await call(`POST`, `/vehicle-distribution/handoffs/${handoffId}/handed-over`, { token: adminToken });
     const s1 = await call(`POST`, `/vehicle-distribution/handoffs/${handoffId}/stock-transferred`, { token: adminToken });
     const s2 = await call(`POST`, `/vehicle-distribution/handoffs/${handoffId}/stock-transferred`, { token: adminToken });
@@ -814,9 +1098,8 @@ describe("lifecycle transitions", () => {
       },
     });
     const handoffId = r.body.id as number;
-    const itemId = r.body.items[0].id as number;
-    await seedClaims(vehicleId, handoffId, itemId, prodA.mahsulotId, prodA.sku, 2.5, 5, `INS${handoffId}`);
-    await call(`POST`, `/vehicle-distribution/handoffs/${handoffId}/confirm-labels-printed`, { token: adminToken });
+    await prepareLabels(handoffId);
+    await confirmPrinted(handoffId);
     await call(`POST`, `/vehicle-distribution/handoffs/${handoffId}/handed-over`, { token: adminToken });
     const s = await call(`POST`, `/vehicle-distribution/handoffs/${handoffId}/stock-transferred`, { token: adminToken });
     expect(s.status).toBe(409);
@@ -880,30 +1163,17 @@ describe("cross-handoff claim invariant", () => {
     ).rejects.toThrow(/uq_vehicle_label_claims_production_label|duplicate/i);
   });
 
-  it("claim with wrong SKU/weight is rejected at confirm (409)", async () => {
-    const r = await call("POST", "/vehicle-distribution/handoffs", {
-      token: adminToken,
-      body: {
-        sourceWarehouseId: erpWarehouseId,
-        items: [{ mahsulotId: prodA.mahsulotId, quantity: 1 }],
-        operationKey: opKey(),
-      },
-    });
-    const handoffId = r.body.id as number;
-    const itemId = r.body.items[0].id as number;
-    // Seed a claim with the wrong unit weight.
+  it("confirm rejected (409) when a prepared passport is void", async () => {
+    const { handoffId } = await makePreparedWithLabels(1);
+    // Void the single passport out-of-band (immutable trigger allows status
+    // change to void; it only freezes identity/snapshot columns).
     await client.query(
-      `INSERT INTO distribution.vehicle_label_claims
-         (vehicle_id, handoff_id, handoff_item_id, production_label_id, barcode,
-          mahsulot_id, sku, unit_weight_kg, status)
-       VALUES ($1,$2,$3,$4,'BC-WRONG-1',$5,$6,9.9,'prepared')`,
-      [vehicleId, handoffId, itemId, 66660001, prodA.mahsulotId, prodA.sku],
+      `UPDATE production_labels SET status='void'
+        WHERE id IN (SELECT production_label_id
+                       FROM distribution.vehicle_label_claims WHERE handoff_id=$1)`,
+      [handoffId],
     );
-    const c = await call(
-      `POST`,
-      `/vehicle-distribution/handoffs/${handoffId}/confirm-labels-printed`,
-      { token: adminToken },
-    );
+    const c = await confirmPrinted(handoffId);
     expect(c.status).toBe(409);
   });
 });
@@ -932,9 +1202,8 @@ describe("cancellation", () => {
       },
     });
     const handoffId = r.body.id as number;
-    const itemId = r.body.items[0].id as number;
-    await seedClaims(vehicleId, handoffId, itemId, prodA.mahsulotId, prodA.sku, 2.5, 1, `CX${handoffId}`);
-    await call(`POST`, `/vehicle-distribution/handoffs/${handoffId}/confirm-labels-printed`, { token: adminToken });
+    await prepareLabels(handoffId);
+    await confirmPrinted(handoffId);
     await call(`POST`, `/vehicle-distribution/handoffs/${handoffId}/handed-over`, { token: adminToken });
     await call(`POST`, `/vehicle-distribution/handoffs/${handoffId}/stock-transferred`, { token: adminToken });
     const c = await call(`POST`, `/vehicle-distribution/handoffs/${handoffId}/cancel`, { token: adminToken });
@@ -956,9 +1225,8 @@ describe("concurrency", () => {
       },
     });
     const handoffId = r.body.id as number;
-    const itemId = r.body.items[0].id as number;
-    await seedClaims(vehicleId, handoffId, itemId, prodA.mahsulotId, prodA.sku, 2.5, 2, `CC${handoffId}`);
-    await call(`POST`, `/vehicle-distribution/handoffs/${handoffId}/confirm-labels-printed`, { token: adminToken });
+    await prepareLabels(handoffId);
+    await confirmPrinted(handoffId);
     await call(`POST`, `/vehicle-distribution/handoffs/${handoffId}/handed-over`, { token: adminToken });
     const [a, b] = await Promise.all([
       call(`POST`, `/vehicle-distribution/handoffs/${handoffId}/stock-transferred`, { token: adminToken }),
@@ -988,9 +1256,8 @@ describe("concurrency", () => {
         },
       });
       const handoffId = r.body.id as number;
-      const itemId = r.body.items[0].id as number;
-      await seedClaims(vehicleId, handoffId, itemId, prodB.mahsulotId, prodB.sku, 1.0, 2, `LIM${handoffId}`);
-      await call(`POST`, `/vehicle-distribution/handoffs/${handoffId}/confirm-labels-printed`, { token: adminToken });
+      await prepareLabels(handoffId);
+      await confirmPrinted(handoffId);
       await call(`POST`, `/vehicle-distribution/handoffs/${handoffId}/handed-over`, { token: adminToken });
       return handoffId;
     };
@@ -1224,8 +1491,8 @@ describe("deterministic movement_reference (Fix 3)", () => {
     });
     const handoffId = r.body.id as number;
     const itemId = r.body.items[0].id as number;
-    await seedClaims(vehicleId, handoffId, itemId, prodA.mahsulotId, prodA.sku, 2.5, 1, `DET${handoffId}`);
-    await call(`POST`, `/vehicle-distribution/handoffs/${handoffId}/confirm-labels-printed`, { token: adminToken });
+    await prepareLabels(handoffId);
+    await confirmPrinted(handoffId);
     await call(`POST`, `/vehicle-distribution/handoffs/${handoffId}/handed-over`, { token: adminToken });
     const s = await call(`POST`, `/vehicle-distribution/handoffs/${handoffId}/stock-transferred`, { token: adminToken });
     expect(s.status).toBe(200);
@@ -1262,8 +1529,8 @@ describe("deterministic movement_reference (Fix 3)", () => {
     });
     const handoffId = r.body.id as number;
     const itemId = r.body.items[0].id as number;
-    await seedClaims(vehicleId, handoffId, itemId, prodA.mahsulotId, prodA.sku, 2.5, 1, `RETR${handoffId}`);
-    await call(`POST`, `/vehicle-distribution/handoffs/${handoffId}/confirm-labels-printed`, { token: adminToken });
+    await prepareLabels(handoffId);
+    await confirmPrinted(handoffId);
     await call(`POST`, `/vehicle-distribution/handoffs/${handoffId}/handed-over`, { token: adminToken });
     const s1 = await call(`POST`, `/vehicle-distribution/handoffs/${handoffId}/stock-transferred`, { token: adminToken });
     const s2 = await call(`POST`, `/vehicle-distribution/handoffs/${handoffId}/stock-transferred`, { token: adminToken });

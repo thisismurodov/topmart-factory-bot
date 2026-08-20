@@ -8,9 +8,91 @@ import logging
 import urllib.error
 import urllib.request
 
-from .config import API_BASE_URL, AI_INTERNAL_KEY
+from .config import API_BASE_URL, AI_INTERNAL_KEY, VEHICLE_DISTRIBUTION_BOT_KEY
 
 _log = logging.getLogger(__name__)
+
+
+# ── Vehicle-distribution dedicated-key helpers ───────────────────────────────
+# These endpoints authenticate with the dedicated x-vehicle-distribution-bot-key
+# header — NEVER the AI_INTERNAL_KEY. All return (ok, data_or_error).
+
+def _vehicle_headers() -> dict:
+    headers = {"Content-Type": "application/json"}
+    if VEHICLE_DISTRIBUTION_BOT_KEY:
+        headers["x-vehicle-distribution-bot-key"] = VEHICLE_DISTRIBUTION_BOT_KEY
+    return headers
+
+
+def _vehicle_request(
+    method: str,
+    path: str,
+    payload: dict | None = None,
+) -> tuple[bool, object]:
+    """Dedicated-key HTTP call to a vehicle-distribution endpoint.
+
+    Returns (True, parsed_json) on success, (False, error_message) otherwise.
+    """
+    if not API_BASE_URL:
+        return False, "API_BASE_URL o'rnatilmagan"
+    if not VEHICLE_DISTRIBUTION_BOT_KEY:
+        return False, "VEHICLE_DISTRIBUTION_BOT_KEY o'rnatilmagan"
+
+    url = API_BASE_URL.rstrip("/") + path
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    req = urllib.request.Request(
+        url, data=data, headers=_vehicle_headers(), method=method
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = resp.read().decode("utf-8")
+            return True, (json.loads(raw) if raw else {})
+    except urllib.error.HTTPError as exc:
+        try:
+            body = json.loads(exc.read().decode("utf-8"))
+            return False, body.get("error") or f"HTTP {exc.code}"
+        except Exception:
+            return False, f"HTTP {exc.code}"
+    except Exception as exc:
+        _log.warning("vehicle %s %s so'rovida xato: %s", method, path, exc)
+        return False, str(exc)
+
+
+def vehicle_get(path: str) -> tuple[bool, object]:
+    """Generic dedicated-key GET to a vehicle-distribution endpoint."""
+    return _vehicle_request("GET", path)
+
+
+def vehicle_post(path: str, payload: dict | None = None) -> tuple[bool, object]:
+    """Generic dedicated-key POST to a vehicle-distribution endpoint."""
+    return _vehicle_request("POST", path, payload)
+
+
+def prepare_handoff_labels(
+    handoff_id: int, operation_key: str
+) -> tuple[bool, object]:
+    """POST /vehicle-distribution/handoffs/:id/labels/prepare — idempotent."""
+    return vehicle_post(
+        f"/vehicle-distribution/handoffs/{int(handoff_id)}/labels/prepare",
+        {"operationKey": operation_key},
+    )
+
+
+def get_handoff_labels(handoff_id: int) -> tuple[bool, object]:
+    """GET /vehicle-distribution/handoffs/:id/labels — printable payload."""
+    return vehicle_get(
+        f"/vehicle-distribution/handoffs/{int(handoff_id)}/labels"
+    )
+
+
+def confirm_handoff_labels_printed(
+    handoff_id: int, operation_key: str
+) -> tuple[bool, object]:
+    """POST /vehicle-distribution/handoffs/:id/confirm-labels-printed."""
+    return vehicle_post(
+        f"/vehicle-distribution/handoffs/{int(handoff_id)}/confirm-labels-printed",
+        {"operationKey": operation_key},
+    )
 
 
 def adjust_inventory(

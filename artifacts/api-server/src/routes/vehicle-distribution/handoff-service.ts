@@ -559,100 +559,10 @@ async function assertPilotOwnership(
   return pilot;
 }
 
-// ── confirm-labels-printed: prepared → labels_printed ────────────────────────
-
-export async function confirmLabelsPrintedInTx(
-  client: PoolClient,
-  handoffId: number,
-  actor: HandoffActor,
-): Promise<HandoffDetail> {
-  const row = await lockHandoff(client, handoffId);
-  await assertPilotOwnership(client, row);
-  const status = String(row.status);
-
-  if (status === "labels_printed") {
-    // Same-state retry is idempotent.
-    return (await loadHandoffDetail(client, handoffId))!;
-  }
-  if (status !== "prepared") {
-    throw new HandoffConflictError(
-      `Cannot confirm labels printed from status '${status}'`,
-    );
-  }
-
-  const items = await readItems(client, handoffId);
-
-  // For each item, require exactly `quantity` cross-handoff label claims that
-  // match item/product/SKU/weight and are in prepared|printed status. Lock the
-  // claim rows so concurrent confirms cannot double-consume.
-  for (const it of items) {
-    const { rows: claims } = await client.query(
-      `SELECT id, status, mahsulot_id, sku, unit_weight_kg
-         FROM distribution.vehicle_label_claims
-        WHERE handoff_item_id = $1
-        ORDER BY id
-        FOR UPDATE`,
-      [it.id],
-    );
-    if (claims.length !== it.quantity) {
-      throw new HandoffConflictError(
-        `Item ${it.id} requires ${it.quantity} label claim(s) but found ${claims.length}`,
-      );
-    }
-    for (const c of claims) {
-      if (
-        Number(c.mahsulot_id) !== it.mahsulotId ||
-        String(c.sku) !== it.sku ||
-        (it.unitWeightKg != null &&
-          Number(c.unit_weight_kg) !== it.unitWeightKg) ||
-        !["prepared", "printed"].includes(String(c.status))
-      ) {
-        throw new HandoffConflictError(
-          `Label claim ${c.id} does not match item ${it.id} (product/SKU/weight/status)`,
-        );
-      }
-    }
-
-    // Atomically mark claims printed + insert idempotent label_printed events.
-    for (const c of claims) {
-      await client.query(
-        `UPDATE distribution.vehicle_label_claims
-            SET status = 'printed', updated_at = NOW()
-          WHERE id = $1`,
-        [c.id],
-      );
-      const opKey = `label_printed:${handoffId}:${c.id}`;
-      await client.query(
-        `INSERT INTO distribution.vehicle_unit_events
-           (vehicle_id, handoff_id, handoff_item_id, mahsulot_id, sku, event_type,
-            quantity, actor_id, label_claim_id, operation_key)
-         VALUES ($1, $2, $3, $4, $5, 'label_printed', 1, $6, $7, $8)
-         ON CONFLICT (operation_key) WHERE operation_key IS NOT NULL DO NOTHING`,
-        [
-          Number(row.vehicle_id),
-          handoffId,
-          it.id,
-          it.mahsulotId,
-          it.sku,
-          actor.actorId,
-          c.id,
-          opKey,
-        ],
-      );
-    }
-  }
-
-  await client.query(
-    `UPDATE distribution.vehicle_handoffs
-        SET status = 'labels_printed',
-            labels_printed_at = NOW(),
-            labels_printed_by = $2
-      WHERE id = $1`,
-    [handoffId, actor.actorId],
-  );
-
-  return (await loadHandoffDetail(client, handoffId))!;
-}
+// NOTE: F4 owns the prepared→labels_printed transition through the label
+// service (confirmLabelsPrintedInTx in ./label-service). The old F3 confirm
+// path that required pre-seeded claims has been removed; there is exactly one
+// confirmation path now.
 
 // ── handed-over: labels_printed → handed_over ────────────────────────────────
 

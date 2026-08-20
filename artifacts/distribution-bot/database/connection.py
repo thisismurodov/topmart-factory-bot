@@ -464,6 +464,41 @@ CREATE INDEX IF NOT EXISTS idx_vehicle_label_claims_handoff_item ON distribution
 CREATE INDEX IF NOT EXISTS idx_vehicle_label_claims_vehicle      ON distribution.vehicle_label_claims (vehicle_id, status);
 CREATE INDEX IF NOT EXISTS idx_vehicle_label_claims_mahsulot     ON distribution.vehicle_label_claims (mahsulot_id, status);
 
+-- F4: label PREPARE session. Exactly one per handoff (handoff_id UNIQUE); the
+-- server-side idempotency operation_key is globally unique. request_fingerprint
+-- is a canonical SHA256 over the handoff + items snapshot so a replay with the
+-- same key but a mutated payload is rejected.
+CREATE TABLE IF NOT EXISTS distribution.vehicle_label_prepare_sessions (
+    id                   SERIAL PRIMARY KEY,
+    handoff_id           INTEGER NOT NULL,
+    operation_key        TEXT NOT NULL,
+    request_fingerprint  TEXT NOT NULL,
+    label_count          INTEGER NOT NULL,
+    actor_type           TEXT NOT NULL,
+    actor_ref            TEXT NOT NULL,
+    created_at           TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    CONSTRAINT vehicle_label_prepare_sessions_count_check CHECK (label_count > 0)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_label_prepare_sessions_handoff       ON distribution.vehicle_label_prepare_sessions (handoff_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_label_prepare_sessions_operation_key ON distribution.vehicle_label_prepare_sessions (operation_key);
+
+-- F4: label PRINT/confirm session. Many per handoff (first print + reprints);
+-- operation_key globally unique for confirm idempotency. is_reprint marks a
+-- reprint confirm (handoff already at/past labels_printed).
+CREATE TABLE IF NOT EXISTS distribution.vehicle_label_print_sessions (
+    id                   SERIAL PRIMARY KEY,
+    handoff_id           INTEGER NOT NULL,
+    operation_key        TEXT NOT NULL,
+    label_count          INTEGER NOT NULL,
+    is_reprint           BOOLEAN NOT NULL DEFAULT FALSE,
+    actor_type           TEXT NOT NULL,
+    actor_ref            TEXT NOT NULL,
+    confirmed_at         TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    CONSTRAINT vehicle_label_print_sessions_count_check CHECK (label_count > 0)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_label_print_sessions_operation_key ON distribution.vehicle_label_print_sessions (operation_key);
+CREATE INDEX        IF NOT EXISTS idx_vehicle_label_print_sessions_handoff       ON distribution.vehicle_label_print_sessions (handoff_id);
+
 CREATE TABLE IF NOT EXISTS distribution.vehicle_sale_allocations (
     id                  SERIAL PRIMARY KEY,
     handoff_id          INTEGER NOT NULL,

@@ -990,16 +990,20 @@ paths:
           description: Enabled but schema not approved
           content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
 
-  /vehicle-distribution/handoffs/{handoffId}/confirm-labels-printed:
+  /vehicle-distribution/handoffs/{handoffId}/labels/prepare:
     post:
-      operationId: confirmVehicleHandoffLabelsPrinted
+      operationId: prepareVehicleHandoffLabels
       tags: [vehicle-distribution]
-      summary: Transition a prepared handoff to labels_printed
+      summary: Prepare printable production-label passports for a prepared handoff
       description: >-
-        Requires one cross-handoff vehicle_label_claim per physical unit
-        (matching item/product/SKU/weight, status prepared or printed). Marks
-        the claims printed, records idempotent label_printed unit events, and
-        advances the handoff to labels_printed. Same-state retry is idempotent.
+        Idempotently materialises one production_labels passport + one
+        vehicle_label_claim + one label_prepared unit event per physical unit of
+        a handoff in status 'prepared'. Requires PRODUCTION_LABELS_SCHEMA_APPROVED
+        at request time (503 otherwise). Strict {operationKey} body. Barcodes are
+        generated server-side (TS only). Replaying the same handoff + key +
+        fingerprint returns the existing payload; a different key on the same
+        handoff, the same key on another handoff, or a payload/fingerprint
+        mismatch yields 409. No inventory is mutated.
       parameters:
         - name: handoffId
           in: path
@@ -1007,15 +1011,96 @@ paths:
           schema:
             type: integer
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/VehicleHandoffTransitionInput"
+              $ref: "#/components/schemas/VehicleHandoffOperationInput"
       responses:
         "200":
           description: OK
-          content: { application/json: { schema: { $ref: "#/components/schemas/VehicleHandoffDetail" } } }
+          content: { application/json: { schema: { $ref: "#/components/schemas/VehicleHandoffLabelsPayload" } } }
+        "400":
+          description: Invalid body
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "401":
+          description: Unauthorized
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "404":
+          description: Feature disabled or handoff not found
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "409":
+          description: Wrong state or idempotency conflict
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "503":
+          description: Enabled but schema (vehicle or production labels) not approved
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+
+  /vehicle-distribution/handoffs/{handoffId}/labels:
+    get:
+      operationId: getVehicleHandoffLabels
+      tags: [vehicle-distribution]
+      summary: Read the immutable printable label payload for a handoff
+      description: >-
+        Returns the deterministic, ordered print payload (persisted barcodes +
+        all passport fields required by the PDF generator + print metadata) for a
+        handoff whose labels have been prepared. Requires
+        PRODUCTION_LABELS_SCHEMA_APPROVED at request time (503 otherwise).
+      parameters:
+        - name: handoffId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/VehicleHandoffLabelsPayload" } } }
+        "401":
+          description: Unauthorized
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "404":
+          description: Feature disabled, handoff not found, or labels not prepared
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "503":
+          description: Enabled but schema (vehicle or production labels) not approved
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+
+  /vehicle-distribution/handoffs/{handoffId}/confirm-labels-printed:
+    post:
+      operationId: confirmVehicleHandoffLabelsPrinted
+      tags: [vehicle-distribution]
+      summary: Confirm labels printed (first print or reprint) for a handoff
+      description: >-
+        Owns the full print-session contract. Requires
+        PRODUCTION_LABELS_SCHEMA_APPROVED at request time (503 otherwise). Strict
+        {operationKey} body. If a print session already exists for this
+        operationKey on this handoff, returns the current payload with no
+        increment. A first successful confirm on a 'prepared' handoff inserts a
+        print session, marks each production_label printed (print_count +1,
+        last_printed_at), advances claims prepared→printed, records idempotent
+        label_printed events, and advances the handoff to labels_printed. A
+        reprint confirm (allowed in labels_printed / handed_over /
+        stock_transferred) inserts a reprint session and increments each passport
+        once per NEW session, leaving handoff and loaded/sold claim states
+        untouched. Reports isReprint and atLeastOnce (never claims exactly-once
+        physical print). Cancelled/void/missing/mismatch yield 409.
+      parameters:
+        - name: handoffId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VehicleHandoffOperationInput"
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/VehicleHandoffConfirmLabelsResult" } } }
         "400":
           description: Invalid body
           content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
@@ -1418,6 +1503,144 @@ components:
           items:
             $ref: "#/components/schemas/VehicleHandoffDetail"
       required: [vehicleId, handoffs]
+
+    VehicleHandoffOperationInput:
+      type: object
+      description: >-
+        Strict operation body for F4 label prepare/confirm. Carries only a
+        required client idempotency operationKey; all other authority is
+        resolved server-side.
+      properties:
+        operationKey:
+          type: string
+          minLength: 1
+      required: [operationKey]
+      additionalProperties: false
+
+    VehicleHandoffLabelPassport:
+      type: object
+      description: >-
+        One immutable production-label passport row for a single physical unit,
+        carrying every field the PDF generator needs plus print metadata.
+      properties:
+        productionLabelId:
+          type: integer
+        handoffItemId:
+          type: integer
+        mahsulotId:
+          type: integer
+        barcodeValue:
+          type: string
+        batchCode:
+          type: string
+        labelType:
+          type: string
+        labelNumber:
+          type: integer
+        totalLabels:
+          type: integer
+        piecesInLabel:
+          type: integer
+        piecesPerBox:
+          type: integer
+        quantityTotal:
+          type: integer
+        weightKg:
+          type: number
+        lengthM:
+          type: ["number", "null"]
+        productName:
+          type: string
+        productSku:
+          type: string
+        workerName:
+          type: string
+        producedAt:
+          type: string
+        warehouseId:
+          type: ["integer", "null"]
+        warehouseName:
+          type: string
+        status:
+          type: string
+        printCount:
+          type: integer
+        lastPrintedAt:
+          type: ["string", "null"]
+      required:
+        - productionLabelId
+        - handoffItemId
+        - mahsulotId
+        - barcodeValue
+        - batchCode
+        - labelType
+        - labelNumber
+        - totalLabels
+        - piecesInLabel
+        - piecesPerBox
+        - quantityTotal
+        - weightKg
+        - lengthM
+        - productName
+        - productSku
+        - workerName
+        - producedAt
+        - warehouseId
+        - warehouseName
+        - status
+        - printCount
+        - lastPrintedAt
+      additionalProperties: false
+
+    VehicleHandoffLabelsPayload:
+      type: object
+      description: >-
+        Deterministic, ordered printable label payload for a handoff. labels are
+        globally ordered by label_number (1..totalLabels).
+      properties:
+        handoffId:
+          type: integer
+        vehicleId:
+          type: integer
+        batchCode:
+          type: string
+        totalLabels:
+          type: integer
+        preparedActorType:
+          type: ["string", "null"]
+        preparedActorRef:
+          type: ["string", "null"]
+        labels:
+          type: array
+          items:
+            $ref: "#/components/schemas/VehicleHandoffLabelPassport"
+      required:
+        - handoffId
+        - vehicleId
+        - batchCode
+        - totalLabels
+        - preparedActorType
+        - preparedActorRef
+        - labels
+      additionalProperties: false
+
+    VehicleHandoffConfirmLabelsResult:
+      type: object
+      description: >-
+        Result of a confirm-labels-printed call. isReprint indicates the confirm
+        was a reprint; atLeastOnce is always true on success and intentionally
+        does NOT claim exactly-once physical printing.
+      properties:
+        handoff:
+          $ref: "#/components/schemas/VehicleHandoffDetail"
+        labels:
+          $ref: "#/components/schemas/VehicleHandoffLabelsPayload"
+        isReprint:
+          type: boolean
+        atLeastOnce:
+          type: boolean
+      required: [handoff, labels, isReprint, atLeastOnce]
+      additionalProperties: false
 
     # ── Auth ────────────────────────────────────────────────────────
     LoginInput:

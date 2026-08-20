@@ -30,6 +30,10 @@ DATABASE_URL = os.environ["DATABASE_URL"]
 # AI_INTERNAL_KEY — bot ↔ API o'rtasidagi maxfiy kalit (API'dagi bilan bir xil bo'lishi shart).
 API_BASE_URL    = os.environ.get("API_BASE_URL", "http://localhost:80/api")
 AI_INTERNAL_KEY = os.environ.get("AI_INTERNAL_KEY", "")
+# VEHICLE_DISTRIBUTION_BOT_KEY — dedicated key for the vehicle-distribution
+# handoff endpoints (x-vehicle-distribution-bot-key header). NEVER reuse
+# AI_INTERNAL_KEY for vehicle calls. Left empty by default; deployment sets it.
+VEHICLE_DISTRIBUTION_BOT_KEY = os.environ.get("VEHICLE_DISTRIBUTION_BOT_KEY", "")
 # AI_HOUR — kunlik AI tahlil yuboriladigan soat (0-23, Asia/Tashkent). Standart: 20.
 try:
     AI_HOUR = int(os.environ.get("AI_HOUR", "20"))

@@ -144,6 +144,70 @@ export interface VehicleHandoffList {
   handoffs: VehicleHandoffDetail[];
 }
 
+/**
+ * Strict operation body for F4 label prepare/confirm. Carries only a required client idempotency operationKey; all other authority is resolved server-side.
+ */
+export interface VehicleHandoffOperationInput {
+  /** @minLength 1 */
+  operationKey: string;
+}
+
+/**
+ * One immutable production-label passport row for a single physical unit, carrying every field the PDF generator needs plus print metadata.
+ */
+export interface VehicleHandoffLabelPassport {
+  productionLabelId: number;
+  handoffItemId: number;
+  mahsulotId: number;
+  barcodeValue: string;
+  batchCode: string;
+  labelType: string;
+  labelNumber: number;
+  totalLabels: number;
+  piecesInLabel: number;
+  piecesPerBox: number;
+  quantityTotal: number;
+  weightKg: number;
+  /** @nullable */
+  lengthM: number | null;
+  productName: string;
+  productSku: string;
+  workerName: string;
+  producedAt: string;
+  /** @nullable */
+  warehouseId: number | null;
+  warehouseName: string;
+  status: string;
+  printCount: number;
+  /** @nullable */
+  lastPrintedAt: string | null;
+}
+
+/**
+ * Deterministic, ordered printable label payload for a handoff. labels are globally ordered by label_number (1..totalLabels).
+ */
+export interface VehicleHandoffLabelsPayload {
+  handoffId: number;
+  vehicleId: number;
+  batchCode: string;
+  totalLabels: number;
+  /** @nullable */
+  preparedActorType: string | null;
+  /** @nullable */
+  preparedActorRef: string | null;
+  labels: VehicleHandoffLabelPassport[];
+}
+
+/**
+ * Result of a confirm-labels-printed call. isReprint indicates the confirm was a reprint; atLeastOnce is always true on success and intentionally does NOT claim exactly-once physical printing.
+ */
+export interface VehicleHandoffConfirmLabelsResult {
+  handoff: VehicleHandoffDetail;
+  labels: VehicleHandoffLabelsPayload;
+  isReprint: boolean;
+  atLeastOnce: boolean;
+}
+
 export interface LoginInput {
   username: string;
   password: string;

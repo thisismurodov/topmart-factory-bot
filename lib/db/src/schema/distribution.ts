@@ -1,4 +1,4 @@
-import { pgSchema, serial, text, integer, bigint, doublePrecision, timestamp, uniqueIndex, index, check, numeric, date } from "drizzle-orm/pg-core";
+import { pgSchema, serial, text, integer, bigint, boolean, doublePrecision, timestamp, uniqueIndex, index, check, numeric, date } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
@@ -584,6 +584,51 @@ export const vehicleLabelClaimsTable = distribution.table(
       sql`${t.status} IN ('prepared','printed','loaded','sold','returned')`,
     ),
     check("vehicle_label_claims_weight_check", sql`${t.unitWeightKg} > 0`),
+  ],
+);
+
+/** F4: label PREPARE session. Exactly one per handoff (handoff_id UNIQUE);
+ *  operation_key globally unique for idempotency; request_fingerprint is a
+ *  canonical SHA256 over the handoff+items snapshot so a replay with the same
+ *  key but a mutated payload is rejected. */
+export const vehicleLabelPrepareSessionsTable = distribution.table(
+  "vehicle_label_prepare_sessions",
+  {
+    id: serial("id").primaryKey(),
+    handoffId: integer("handoff_id").notNull(),
+    operationKey: text("operation_key").notNull(),
+    requestFingerprint: text("request_fingerprint").notNull(),
+    labelCount: integer("label_count").notNull(),
+    actorType: text("actor_type").notNull(),
+    actorRef: text("actor_ref").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("uq_vehicle_label_prepare_sessions_handoff").on(t.handoffId),
+    uniqueIndex("uq_vehicle_label_prepare_sessions_operation_key").on(t.operationKey),
+    check("vehicle_label_prepare_sessions_count_check", sql`${t.labelCount} > 0`),
+  ],
+);
+
+/** F4: label PRINT/confirm session. Many per handoff (first print + reprints);
+ *  operation_key globally unique for confirm idempotency; is_reprint marks a
+ *  reprint confirm. */
+export const vehicleLabelPrintSessionsTable = distribution.table(
+  "vehicle_label_print_sessions",
+  {
+    id: serial("id").primaryKey(),
+    handoffId: integer("handoff_id").notNull(),
+    operationKey: text("operation_key").notNull(),
+    labelCount: integer("label_count").notNull(),
+    isReprint: boolean("is_reprint").notNull().default(false),
+    actorType: text("actor_type").notNull(),
+    actorRef: text("actor_ref").notNull(),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("uq_vehicle_label_print_sessions_operation_key").on(t.operationKey),
+    index("idx_vehicle_label_print_sessions_handoff").on(t.handoffId),
+    check("vehicle_label_print_sessions_count_check", sql`${t.labelCount} > 0`),
   ],
 );
 

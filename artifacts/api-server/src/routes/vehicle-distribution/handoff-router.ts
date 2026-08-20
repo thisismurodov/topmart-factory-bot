@@ -30,6 +30,10 @@ import {
   CreateVehicleHandoffResponse,
   GetVehicleHandoffResponse,
   ListVehicleHandoffsResponse,
+  PrepareVehicleHandoffLabelsBody,
+  PrepareVehicleHandoffLabelsResponse,
+  GetVehicleHandoffLabelsResponse,
+  ConfirmVehicleHandoffLabelsPrintedBody,
   ConfirmVehicleHandoffLabelsPrintedResponse,
   MarkVehicleHandoffHandedOverResponse,
   MarkVehicleHandoffStockTransferredResponse,
@@ -38,7 +42,6 @@ import {
 import { vehicleDistributionGate } from "./index";
 import {
   createHandoffInTx,
-  confirmLabelsPrintedInTx,
   markHandedOverInTx,
   markStockTransferredInTx,
   cancelHandoffInTx,
@@ -49,6 +52,11 @@ import {
   HandoffValidationError,
   type HandoffActor,
 } from "./handoff-service";
+import {
+  prepareLabelsInTx,
+  getLabelsPayload,
+  confirmLabelsPrintedInTx,
+} from "./label-service";
 
 const BOT_ACTOR_TYPE = "warehouse_bot";
 const BOT_ACTOR_REF = "vehicle-distribution-bot";
@@ -132,6 +140,26 @@ export function makeHandoffAuth(pool: Pool) {
 
 function actorOf(req: Request): HandoffActor {
   return (req as Request & { handoffActor: HandoffActor }).handoffActor;
+}
+
+/** F4 gate — production-labels schema must be approved at request time. Applied
+ *  to every prepare/list/confirm labels endpoint BEFORE any DB write; returns
+ *  503 (fail-closed) when missing. */
+function productionLabelsGate(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void {
+  if (process.env.PRODUCTION_LABELS_SCHEMA_APPROVED !== "1") {
+    req.log.warn(
+      "production-labels schema not approved — returning 503 for F4 labels endpoint",
+    );
+    res
+      .status(503)
+      .json({ error: "Production labels schema not approved" });
+    return;
+  }
+  next();
 }
 
 /** Map service errors to HTTP responses. */
@@ -275,13 +303,102 @@ export function createVehicleHandoffRouter(pool: Pool): IRouter {
     };
   }
 
+  // ── F4: POST prepare labels ─────────────────────────────────────────────────
+  router.post(
+    "/vehicle-distribution/handoffs/:handoffId/labels/prepare",
+    productionLabelsGate,
+    async (req, res): Promise<void> => {
+      const handoffId = parseHandoffId(req);
+      if (handoffId == null) {
+        res.status(404).json({ error: "Handoff not found" });
+        return;
+      }
+      const parsed = PrepareVehicleHandoffLabelsBody.strict().safeParse(
+        req.body ?? {},
+      );
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.message });
+        return;
+      }
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const payload = await prepareLabelsInTx(
+          client,
+          handoffId,
+          parsed.data.operationKey,
+          actorOf(req),
+        );
+        const out = PrepareVehicleHandoffLabelsResponse.parse(payload);
+        await client.query("COMMIT");
+        res.json(out);
+      } catch (e) {
+        await client.query("ROLLBACK").catch(() => {});
+        sendError(req, res, e, "Prepare labels");
+      } finally {
+        client.release();
+      }
+    },
+  );
+
+  // ── F4: GET labels payload ──────────────────────────────────────────────────
+  router.get(
+    "/vehicle-distribution/handoffs/:handoffId/labels",
+    productionLabelsGate,
+    async (req, res): Promise<void> => {
+      const handoffId = parseHandoffId(req);
+      if (handoffId == null) {
+        res.status(404).json({ error: "Handoff not found" });
+        return;
+      }
+      const client = await pool.connect();
+      try {
+        const payload = await getLabelsPayload(client, handoffId);
+        res.json(GetVehicleHandoffLabelsResponse.parse(payload));
+      } catch (e) {
+        sendError(req, res, e, "Get labels");
+      } finally {
+        client.release();
+      }
+    },
+  );
+
+  // ── F4: POST confirm labels printed (first print + reprint) ──────────────────
   router.post(
     "/vehicle-distribution/handoffs/:handoffId/confirm-labels-printed",
-    transition(
-      "Confirm labels printed",
-      confirmLabelsPrintedInTx,
-      ConfirmVehicleHandoffLabelsPrintedResponse,
-    ),
+    productionLabelsGate,
+    async (req, res): Promise<void> => {
+      const handoffId = parseHandoffId(req);
+      if (handoffId == null) {
+        res.status(404).json({ error: "Handoff not found" });
+        return;
+      }
+      const parsed = ConfirmVehicleHandoffLabelsPrintedBody.strict().safeParse(
+        req.body ?? {},
+      );
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.message });
+        return;
+      }
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const result = await confirmLabelsPrintedInTx(
+          client,
+          handoffId,
+          parsed.data.operationKey,
+          actorOf(req),
+        );
+        const out = ConfirmVehicleHandoffLabelsPrintedResponse.parse(result);
+        await client.query("COMMIT");
+        res.json(out);
+      } catch (e) {
+        await client.query("ROLLBACK").catch(() => {});
+        sendError(req, res, e, "Confirm labels printed");
+      } finally {
+        client.release();
+      }
+    },
   );
 
   router.post(

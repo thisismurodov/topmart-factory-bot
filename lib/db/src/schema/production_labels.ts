@@ -45,6 +45,10 @@ export const productionLabelsTable = pgTable("production_labels", {
   uniqueIndex("uq_production_labels_batch_number").on(t.batchId, t.labelNumber),
   index("idx_production_labels_batch_code").on(t.batchCode),
   index("idx_production_labels_product").on(t.productName),
+  // F4: one label_number per VH-<handoffId> batch when batch_id is NULL.
+  uniqueIndex("uq_production_labels_vh_batch_number")
+    .on(t.batchCode, t.labelNumber)
+    .where(sql`${t.batchId} IS NULL AND ${t.batchCode} LIKE 'VH-%'`),
   check("production_labels_barcode_check", sql`${t.barcodeValue} ~ '^TM[A-Z2-7]{16}$'`),
   check(
     "production_labels_number_check",

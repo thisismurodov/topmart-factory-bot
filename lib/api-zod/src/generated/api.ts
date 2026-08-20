@@ -854,18 +854,113 @@ export const GetVehicleHandoffResponse = zod.object({
 
 
 /**
- * Requires one cross-handoff vehicle_label_claim per physical unit (matching item/product/SKU/weight, status prepared or printed). Marks the claims printed, records idempotent label_printed unit events, and advances the handoff to labels_printed. Same-state retry is idempotent.
- * @summary Transition a prepared handoff to labels_printed
+ * Idempotently materialises one production_labels passport + one vehicle_label_claim + one label_prepared unit event per physical unit of a handoff in status 'prepared'. Requires PRODUCTION_LABELS_SCHEMA_APPROVED at request time (503 otherwise). Strict {operationKey} body. Barcodes are generated server-side (TS only). Replaying the same handoff + key + fingerprint returns the existing payload; a different key on the same handoff, the same key on another handoff, or a payload/fingerprint mismatch yields 409. No inventory is mutated.
+ * @summary Prepare printable production-label passports for a prepared handoff
+ */
+export const PrepareVehicleHandoffLabelsParams = zod.object({
+  "handoffId": zod.coerce.number()
+})
+
+
+
+
+export const PrepareVehicleHandoffLabelsBody = zod.object({
+  "operationKey": zod.string().min(1)
+}).describe('Strict operation body for F4 label prepare\/confirm. Carries only a required client idempotency operationKey; all other authority is resolved server-side.')
+
+export const PrepareVehicleHandoffLabelsResponse = zod.object({
+  "handoffId": zod.number(),
+  "vehicleId": zod.number(),
+  "batchCode": zod.string(),
+  "totalLabels": zod.number(),
+  "preparedActorType": zod.string().nullable(),
+  "preparedActorRef": zod.string().nullable(),
+  "labels": zod.array(zod.object({
+  "productionLabelId": zod.number(),
+  "handoffItemId": zod.number(),
+  "mahsulotId": zod.number(),
+  "barcodeValue": zod.string(),
+  "batchCode": zod.string(),
+  "labelType": zod.string(),
+  "labelNumber": zod.number(),
+  "totalLabels": zod.number(),
+  "piecesInLabel": zod.number(),
+  "piecesPerBox": zod.number(),
+  "quantityTotal": zod.number(),
+  "weightKg": zod.number(),
+  "lengthM": zod.number().nullable(),
+  "productName": zod.string(),
+  "productSku": zod.string(),
+  "workerName": zod.string(),
+  "producedAt": zod.string(),
+  "warehouseId": zod.number().nullable(),
+  "warehouseName": zod.string(),
+  "status": zod.string(),
+  "printCount": zod.number(),
+  "lastPrintedAt": zod.string().nullable()
+}).describe('One immutable production-label passport row for a single physical unit, carrying every field the PDF generator needs plus print metadata.'))
+}).describe('Deterministic, ordered printable label payload for a handoff. labels are globally ordered by label_number (1..totalLabels).')
+
+
+/**
+ * Returns the deterministic, ordered print payload (persisted barcodes + all passport fields required by the PDF generator + print metadata) for a handoff whose labels have been prepared. Requires PRODUCTION_LABELS_SCHEMA_APPROVED at request time (503 otherwise).
+ * @summary Read the immutable printable label payload for a handoff
+ */
+export const GetVehicleHandoffLabelsParams = zod.object({
+  "handoffId": zod.coerce.number()
+})
+
+export const GetVehicleHandoffLabelsResponse = zod.object({
+  "handoffId": zod.number(),
+  "vehicleId": zod.number(),
+  "batchCode": zod.string(),
+  "totalLabels": zod.number(),
+  "preparedActorType": zod.string().nullable(),
+  "preparedActorRef": zod.string().nullable(),
+  "labels": zod.array(zod.object({
+  "productionLabelId": zod.number(),
+  "handoffItemId": zod.number(),
+  "mahsulotId": zod.number(),
+  "barcodeValue": zod.string(),
+  "batchCode": zod.string(),
+  "labelType": zod.string(),
+  "labelNumber": zod.number(),
+  "totalLabels": zod.number(),
+  "piecesInLabel": zod.number(),
+  "piecesPerBox": zod.number(),
+  "quantityTotal": zod.number(),
+  "weightKg": zod.number(),
+  "lengthM": zod.number().nullable(),
+  "productName": zod.string(),
+  "productSku": zod.string(),
+  "workerName": zod.string(),
+  "producedAt": zod.string(),
+  "warehouseId": zod.number().nullable(),
+  "warehouseName": zod.string(),
+  "status": zod.string(),
+  "printCount": zod.number(),
+  "lastPrintedAt": zod.string().nullable()
+}).describe('One immutable production-label passport row for a single physical unit, carrying every field the PDF generator needs plus print metadata.'))
+}).describe('Deterministic, ordered printable label payload for a handoff. labels are globally ordered by label_number (1..totalLabels).')
+
+
+/**
+ * Owns the full print-session contract. Requires PRODUCTION_LABELS_SCHEMA_APPROVED at request time (503 otherwise). Strict {operationKey} body. If a print session already exists for this operationKey on this handoff, returns the current payload with no increment. A first successful confirm on a 'prepared' handoff inserts a print session, marks each production_label printed (print_count +1, last_printed_at), advances claims prepared→printed, records idempotent label_printed events, and advances the handoff to labels_printed. A reprint confirm (allowed in labels_printed / handed_over / stock_transferred) inserts a reprint session and increments each passport once per NEW session, leaving handoff and loaded/sold claim states untouched. Reports isReprint and atLeastOnce (never claims exactly-once physical print). Cancelled/void/missing/mismatch yield 409.
+ * @summary Confirm labels printed (first print or reprint) for a handoff
  */
 export const ConfirmVehicleHandoffLabelsPrintedParams = zod.object({
   "handoffId": zod.coerce.number()
 })
 
-export const ConfirmVehicleHandoffLabelsPrintedBody = zod.object({
 
-}).describe('Lifecycle transition body. Carries no overridable fields — actor and timestamps are server-assigned. Exists so transitions have a typed (empty) body contract.')
+
+
+export const ConfirmVehicleHandoffLabelsPrintedBody = zod.object({
+  "operationKey": zod.string().min(1)
+}).describe('Strict operation body for F4 label prepare\/confirm. Carries only a required client idempotency operationKey; all other authority is resolved server-side.')
 
 export const ConfirmVehicleHandoffLabelsPrintedResponse = zod.object({
+  "handoff": zod.object({
   "id": zod.number(),
   "vehicleId": zod.number(),
   "deliveryAgentId": zod.number(),
@@ -892,7 +987,42 @@ export const ConfirmVehicleHandoffLabelsPrintedResponse = zod.object({
   "unitWeightKg": zod.number().nullable(),
   "totalWeightKg": zod.number().nullable()
 }))
-})
+}),
+  "labels": zod.object({
+  "handoffId": zod.number(),
+  "vehicleId": zod.number(),
+  "batchCode": zod.string(),
+  "totalLabels": zod.number(),
+  "preparedActorType": zod.string().nullable(),
+  "preparedActorRef": zod.string().nullable(),
+  "labels": zod.array(zod.object({
+  "productionLabelId": zod.number(),
+  "handoffItemId": zod.number(),
+  "mahsulotId": zod.number(),
+  "barcodeValue": zod.string(),
+  "batchCode": zod.string(),
+  "labelType": zod.string(),
+  "labelNumber": zod.number(),
+  "totalLabels": zod.number(),
+  "piecesInLabel": zod.number(),
+  "piecesPerBox": zod.number(),
+  "quantityTotal": zod.number(),
+  "weightKg": zod.number(),
+  "lengthM": zod.number().nullable(),
+  "productName": zod.string(),
+  "productSku": zod.string(),
+  "workerName": zod.string(),
+  "producedAt": zod.string(),
+  "warehouseId": zod.number().nullable(),
+  "warehouseName": zod.string(),
+  "status": zod.string(),
+  "printCount": zod.number(),
+  "lastPrintedAt": zod.string().nullable()
+}).describe('One immutable production-label passport row for a single physical unit, carrying every field the PDF generator needs plus print metadata.'))
+}).describe('Deterministic, ordered printable label payload for a handoff. labels are globally ordered by label_number (1..totalLabels).'),
+  "isReprint": zod.boolean(),
+  "atLeastOnce": zod.boolean()
+}).describe('Result of a confirm-labels-printed call. isReprint indicates the confirm was a reprint; atLeastOnce is always true on success and intentionally does NOT claim exactly-once physical printing.')
 
 
 /**

@@ -1,0 +1,91 @@
+HU-260820-03	20 Aug 2026 at 10:37	Husnida	Sariq Arqon Ikki Qavat	7	20.85 kg	0 soʻm	
+
+
+HU-260820-03	20 Aug 2026 at 10:37	Husnida	Gilam tros kurtka tros	13	57.25 kg	0 soʻm	
+
+
+HU-260820-03	20 Aug 2026 at 10:37	Husnida	Ikki Qavat Arqon | 5 kg	6	28.3 kg	0 soʻm	
+
+
+HU-260820-03	20 Aug 2026 at 10:37	Husnida	Ikki Qavat Arqon | 4 kg	15	63.7 kg	0 soʻm	
+
+
+SO-260820-03	20 Aug 2026 at 10:36	Gullola	Sariq Arqon Ikki Qavat	2	6.35 kg	0 soʻm	
+
+
+SO-260820-03	20 Aug 2026 at 10:36	Gullola	Gilam tros kurtka tros	11	49.65 kg	0 soʻm	
+
+
+SO-260820-03	20 Aug 2026 at 10:36	Gullola	Ikki Qavat Arqon | 4 kg	18	71.9 kg	0 soʻm	
+
+
+AZ-260820-03	20 Aug 2026 at 10:35	Aziza	Sariq Arqon Ikki Qavat	2	5.95 kg	0 soʻm	
+
+
+AZ-260820-03	20 Aug 2026 at 10:35	Aziza	Gilam tros kurtka tros	8	46.6 kg	0 soʻm	
+
+
+AZ-260820-03	20 Aug 2026 at 10:35	Aziza	Ikki Qavat Arqon | 4 kg	14	55.6 kg	0 soʻm	
+
+
+HU-260820-02	20 Aug 2026 at 10:34	Husnida	Sariq Arqon Ikki Qavat	9	27.4 kg	0 soʻm	
+
+
+HU-260820-02	20 Aug 2026 at 10:34	Husnida	Gilam tros kurtka tros	10	40.8 kg	0 soʻm	
+
+
+HU-260820-02	20 Aug 2026 at 10:34	Husnida	Ikki Qavat Arqon | 5 kg	4	18.9 kg	0 soʻm	
+
+
+HU-260820-02	20 Aug 2026 at 10:34	Husnida	Ikki Qavat Arqon | 4 kg	13	51 kg	0 soʻm	
+
+
+SO-260820-02	20 Aug 2026 at 10:32	Gullola	Gilam tros kurtka tros	10	45.5 kg	0 soʻm	
+
+
+SO-260820-02	20 Aug 2026 at 10:32	Gullola	Ikki Qavat Arqon | 5 kg	3	15.15 kg	0 soʻm	
+
+
+SO-260820-02	20 Aug 2026 at 10:32	Gullola	Ikki Qavat Arqon | 4 kg	14	55.6 kg	0 soʻm	
+
+
+AZ-260820-02	20 Aug 2026 at 10:31	Aziza	Sariq Arqon Ikki Qavat	3	8.25 kg	0 soʻm	
+
+
+AZ-260820-02	20 Aug 2026 at 10:31	Aziza	Gilam tros kurtka tros	10	56.8 kg	0 soʻm	
+
+
+AZ-260820-02	20 Aug 2026 at 10:31	Aziza	Ikki Qavat Arqon | 4 kg	12	47.3 kg	0 soʻm	
+
+
+HU-260820-01	20 Aug 2026 at 10:29	Husnida	Sariq Arqon Ikki Qavat	9	28 kg	0 soʻm	
+
+
+HU-260820-01	20 Aug 2026 at 10:29	Husnida	Gilam tros kurtka tros	12	54.5 kg	0 soʻm	
+
+
+HU-260820-01	20 Aug 2026 at 10:29	Husnida	Ikki Qavat Arqon | 5 kg	2	10.55 kg	0 soʻm	
+
+
+HU-260820-01	20 Aug 2026 at 10:29	Husnida	Ikki Qavat Arqon | 4 kg	20	65.65 kg	0 soʻm	
+
+
+SO-260820-01	20 Aug 2026 at 10:22	Gullola	Gilam tros kurtka tros	10	54.5 kg	0 soʻm	
+
+
+SO-260820-01	20 Aug 2026 at 10:22	Gullola	Ikki Qavat Arqon | 5 kg	2	11.2 kg	0 soʻm	
+
+
+SO-260820-01	20 Aug 2026 at 10:22	Gullola	Ikki Qavat Arqon | 4 kg	15	63.65 kg	0 soʻm	
+
+
+AZ-260820-01	20 Aug 2026 at 10:21	Aziza	Sariq Arqon Ikki Qavat	4	11.65 kg	0 soʻm	
+
+
+AZ-260820-01	20 Aug 2026 at 10:21	Aziza	Gilam tros kurtka tros	10	53.35 kg	0 soʻm	
+
+
+AZ-260820-01	20 Aug 2026 at 10:21	Aziza	Ikki Qavat Arqon | 5 kg	4	19.9 kg	0 soʻm	
+
+
+AZ-260820-01	20 Aug 2026 at 10:21	Aziza	Ikki Qavat Arqon | 4 kg	9	35.65 kg	0 soʻm

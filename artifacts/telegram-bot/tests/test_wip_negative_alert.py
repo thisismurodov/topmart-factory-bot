@@ -1,11 +1,8 @@
-"""Manfiy WIP balans Telegram ogohlantirishi testlari (yozuvchi tomonda).
+"""Bot batchining WIP ogohlantirishidan ajratilganini tekshiradi.
 
-Real yozuvchi orqali tekshiradi: `create_batch_session` commit'dan keyin
-sessiya tegib o'tgan liniyalarning haqiqiy balansini o'qiydi va minus bo'lsa
-adminlarga Telegram xabar yuboradi (soxta Telegram HTTP serveriga) —
-dashboard /ombor/flow endpointi chaqirilmasdan.
-
-Dedupe: wip_negative_alerts jadvali orqali kuniga liniya boshiga 1 marta.
+Production Flow hozir manual dashboard oqimi bo'lib qoladi. Telegram botdagi
+`create_batch_session` WIP ledgerni o'qimaydi, PRODUCE yozmaydi va tarixiy
+manfiy balans uchun alert/dedupe yozuvi yaratmaydi.
 
 Izolyatsiya: throwaway sxema (search_path) — test_inventory_weight.py bilan
 bir xil naqsh; DATABASE_URL env'iga tegilmaydi (bot.database globalini patch).
@@ -257,41 +254,31 @@ class NegativeWipAlertTest(unittest.TestCase):
         conn.close()
 
     # ── testlar ───────────────────────────────────────────────────────────
-    def test_batch_writer_alerts_admins_when_balance_is_negative(self):
-        """Real yozuvchi (create_batch_session) manfiy balansni topib xabar yuboradi.
-
-        Manfiy balans tarixiy/qo'lda yozuvdan keladi (himoya kiritilishidan
-        oldingi PRODUCE) — yangi partiya yozuvi o'sha liniyaga tegishi bilan
-        commit'dan keyin adminlarga xabar ketishi kerak.
-        """
+    def test_batch_writer_ignores_historical_negative_wip(self):
         line_id = self._mk_line("Makaron bo'limi (neg)")
         self._add_wip(line_id, "RECEIVE", 10)
         self._add_wip(line_id, "PRODUCE", 15)  # tarixiy yozuv → balans −5
-        # Og'irliksiz mahsulot: produce_kg=0 — WIP himoyasi bloklamaydi,
-        # lekin liniya sessiyada "tegilgan" bo'ladi.
         self._mk_product("Etiketka (0 kg)", line_id, 0)
 
         db.create_batch_session(
             "Tester", "TS", [{"product": "Etiketka (0 kg)", "quantity": 3, "weight_kg": 0}],
         )
 
-        self.assertEqual(len(SENT), 2)
-        self.assertEqual({s["chat_id"] for s in SENT}, {ADMIN_CHAT_1, ADMIN_CHAT_2})
-        for s in SENT:
-            self.assertIn("Makaron bo'limi (neg)", s["text"])
-            self.assertIn("5.00 kg", s["text"])
-            self.assertIn("minus", s["text"])
-            self.assertIn("/bottest-token/sendMessage", s["path"])
-
+        self.assertEqual(SENT, [])
         conn = _conn()
         cur = conn.cursor()
-        cur.execute("SELECT line_id FROM wip_negative_alerts")
+        cur.execute("SELECT COUNT(*) FROM wip_negative_alerts")
+        self.assertEqual(cur.fetchone()[0], 0)
+        cur.execute(
+            "SELECT movement_type, weight_kg FROM wip_movements WHERE line_id=%s ORDER BY id",
+            (line_id,),
+        )
         rows = cur.fetchall()
         cur.close()
         conn.close()
-        self.assertEqual([r[0] for r in rows], [line_id])
+        self.assertEqual([(r[0], float(r[1])) for r in rows], [("RECEIVE", 10.0), ("PRODUCE", 15.0)])
 
-    def test_no_duplicate_alert_same_day(self):
+    def test_repeated_batches_never_create_wip_alert_rows(self):
         line_id = self._mk_line("Makaron bo'limi (dedupe)")
         self._add_wip(line_id, "RECEIVE", 10)
         self._add_wip(line_id, "PRODUCE", 15)
@@ -299,9 +286,14 @@ class NegativeWipAlertTest(unittest.TestCase):
 
         item = [{"product": "Etiketka (dedupe)", "quantity": 1, "weight_kg": 0}]
         db.create_batch_session("Tester", "TS", item)
-        self.assertEqual(len(SENT), 2)
-        db.create_batch_session("Tester", "TS", item)  # o'sha kun — dedupe
-        self.assertEqual(len(SENT), 2)
+        db.create_batch_session("Tester", "TS", item)
+        self.assertEqual(SENT, [])
+        conn = _conn()
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM wip_negative_alerts")
+        self.assertEqual(cur.fetchone()[0], 0)
+        cur.close()
+        conn.close()
 
     def test_no_alert_when_balance_stays_non_negative(self):
         line_id = self._mk_line("Makaron bo'limi (ok)")
@@ -310,13 +302,17 @@ class NegativeWipAlertTest(unittest.TestCase):
 
         db.create_batch_session(
             "Tester", "TS", [{"product": "Makaron 5kg (ok)", "quantity": 1, "weight_kg": 5}],
-        )  # balans 20 − 5 = 15
+        )  # WIP balansi 20 kg bo'lib qoladi.
 
         self.assertEqual(SENT, [])
         conn = _conn()
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM wip_negative_alerts")
         self.assertEqual(cur.fetchone()[0], 0)
+        cur.execute("SELECT COUNT(*), SUM(weight_kg) FROM wip_movements WHERE line_id=%s", (line_id,))
+        count, total = cur.fetchone()
+        self.assertEqual(count, 1)
+        self.assertEqual(float(total), 20.0)
         cur.close()
         conn.close()
 

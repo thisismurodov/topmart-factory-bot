@@ -5,10 +5,9 @@ import type { AddressInfo } from "node:net";
 import type { Pool } from "pg";
 
 // ── WIP balance guard parity test ──────────────────────────────────────────
-// The Telegram bot's create_batch_session guard is covered by
-// artifacts/telegram-bot/tests/test_wip_balance_guard.py. This file covers the
-// sibling guard in POST /ombor/flow/produce so the dashboard side can never
-// drift and let an operator overstate output:
+// Telegram bot batches intentionally bypass WIP while warehouses are not ready
+// for Production Flow (covered by test_wip_bypass.py). This file only protects
+// the explicit manual POST /ombor/flow/produce action:
 //   • produce with EMPTY WIP history → 400, nothing written anywhere.
 //   • produce > current WIP balance  → 400, nothing written anywhere.
 //   • produce <= balance             → 200, PRODUCE ledger row + inventory,
@@ -183,7 +182,7 @@ async function expectNothingWritten(): Promise<void> {
   expect(rows[0].c).toBe(0);
 }
 
-describe("POST /ombor/flow/produce — WIP balance guard (parity with bot create_batch_session)", () => {
+describe("POST /ombor/flow/produce — manual Production Flow WIP guard", () => {
   it("rejects produce when the WIP history is empty, writing nothing", async () => {
     const res = await post("/ombor/flow/produce", {
       lineId, warehouseId: finishedWarehouseId, product: PRODUCT, quantity: 10, kg: 50,

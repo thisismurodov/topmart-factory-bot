@@ -15,8 +15,7 @@ from ..database import (
     get_product_method, get_containers, get_product_pieces_per_box,
     get_product_label_info,
     mark_batch_labels_printed,
-    get_worker_production_role, WipBalanceError, RawStockError,
-    get_line_wip_balance,
+    get_worker_production_role, RawStockError,
 )
 from ..config import calc_earnings, SUPERADMIN_CHAT_ID
 from ..label_generator import TASHKENT_TZ, generate_batch_session_pdf
@@ -76,21 +75,8 @@ async def choose_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await query.answer()
     product = query.data.split(":", 1)[1]
     context.user_data["product"] = product
-    # Informatsion: liniyaga bog'langan mahsulot uchun bo'limdagi WIP balansi.
-    # Operator qiymatlarni kiritishdan OLDIN ko'radi — WIP guard rad etishining
-    # oldini oladi. Xato bo'lsa jim o'tamiz (bu qat'iy himoya emas).
-    wip_line = ""
-    try:
-        wip = get_line_wip_balance(product)
-        if wip is not None:
-            wip_line = (
-                f"\n🏭 *{wip['line_name']}* bo'limida mavjud: "
-                f"*{wip['wip_kg']:.1f} kg*\n"
-            )
-    except Exception:
-        pass
     await query.edit_message_text(
-        f"📦 *{product}*\n{wip_line}\n🔢 *Necha dona?*",
+        f"📦 *{product}*\n\n🔢 *Necha dona?*",
         parse_mode="Markdown",
         reply_markup=cancel_keyboard(),
     )
@@ -115,17 +101,8 @@ async def enter_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     payroll_method = get_product_method(product)
 
     if rate_type == "kg":
-        # Og'irlik kiritishdan oldin bo'limdagi WIP balansini eslatamiz —
-        # operator limitdan oshiq qiymat kiritib xato olmasin (informatsion).
-        wip_hint = ""
-        try:
-            wip = get_line_wip_balance(product)
-            if wip is not None:
-                wip_hint = f"\n🏭 Bo'limda mavjud: *{wip['wip_kg']:.1f} kg*"
-        except Exception:
-            pass
         await update.message.reply_text(
-            f"⚖️ *Jami og'irlik (kg):*\n_Masalan: 205.5_{wip_hint}",
+            "⚖️ *Jami og'irlik (kg):*\n_Masalan: 205.5_",
             parse_mode="Markdown",
             reply_markup=cancel_keyboard(),
         )
@@ -373,15 +350,6 @@ async def _finalize(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             reply_markup=stock_confirm_keyboard(),
         )
         return CONFIRM_STOCK
-    except WipBalanceError as e:
-        await message.reply_text(
-            f"❌ *Partiya yaratilmadi!*\n\n{e}",
-            parse_mode="Markdown",
-            reply_markup=kb,
-        )
-        context.user_data.clear()
-        return ConversationHandler.END
-
     batch_code    = result["batch_code"]
     total         = result["total_earnings"]
     low_materials = result["low_materials"]

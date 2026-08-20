@@ -866,14 +866,16 @@ router.post("/payroll/close-day", async (_req, res): Promise<void> => {
         const kg = isIndividual ? (ownKgByWorker[m.worker_name] ?? 0) : totalKg;
         const n = counts[role] ?? 0;
         const amount = isIndividual ? kg * rate : (n > 0 ? (totalKg * rate) / n : 0);
-        await client.query(
+        const insertResult = await client.query(
           `INSERT INTO salary_entries
              (scope, line_id, worker, role, source_type, work_date, kg, rate, amount)
            VALUES ($1, $2, $3, $4, 'daily_shared', $5, $6, $7, $8)
            ON CONFLICT (scope, worker, role, work_date) WHERE source_type = 'daily_shared'
-           DO NOTHING`,
+           DO NOTHING
+           RETURNING id`,
           [SCOPE, lineId, m.worker_name, role, workDate, kg, rate, amount]
         );
+        if (insertResult.rowCount !== 1) continue;
         entries.push({ worker: m.worker_name, role, rate, amount });
         newEntries.push({ worker: m.worker_name, role, rate, amount, lineName });
       }

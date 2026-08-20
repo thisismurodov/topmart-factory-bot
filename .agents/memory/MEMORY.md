@@ -14,7 +14,7 @@
 - [gpt-5 empty completion output](gpt5-empty-output.md) — gpt-5* spend max_completion_tokens on reasoning first; small budget → empty content (200 OK). Fix: reasoning_effort:minimal + bigger budget.
 - [Env vars vs secrets](env-vars-vs-secrets.md) — setEnvVars writes to tracked .replit; credentials (incl. self-generated shared keys) must use requestEnvVar→Secrets store, not env.
 - [Container inventory weight](container-inventory-weight.md) — existence = qty>0 OR weight>0 (raw ham!); bot record_movement dual-mode (kg vs dona) + atomic availability guard in txn; stock = inventory, never batches−sales.
-- [Material Flow two-step WIP](material-flow-wip.md) — dept WIP = SUM(RECEIVE)−SUM(PRODUCE) over wip_movements ledger only; raw-in is the single entry point that syncs container inventory + raw_materials.
+- [Material Flow two-step WIP](material-flow-wip.md) — manual-only for now: bot batches ignore WIP; dashboard RECEIVE/PRODUCE owns the ledger; raw-in syncs container + global stock.
 - [Distribution bot integration](distribution-integration.md) — SQLite bot folded into monorepo on central Postgres `distribution` schema via psycopg2 shim; watch SQLite→PG GROUP BY strictness + GROUP_CONCAT.
 - [Dual init schema (bot + API + Drizzle)](dual-init-schema.md) — new columns/tables sync in THREE places: bot init_db (py), API initDb (ts), lib/db Drizzle; schema-drift workflow catches misses.
 - [Fresh-DB boot ordering](fresh-db-boot-ordering.md) — empty DB exposes ALTER-before-CREATE (42P01, not caught) + never-created tables (sale_items); guard test runs bot init_db()+API initDb() on a throwaway Railway DB.

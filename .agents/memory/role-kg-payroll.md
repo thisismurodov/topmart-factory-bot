@@ -72,8 +72,8 @@ Enforced by a global `UNIQUE(worker_name, role)` index on `production_line_worke
 *different* role on another line, but not the *same* role on two lines.
 **Why:** `salary_entries` daily-shared uniqueness is `(scope, worker, role, work_date)`
 — NOT line-aware. Without this constraint, the same worker in the same shared role on
-two lines makes the 2nd close-day insert `DO NOTHING` while both the API and bot still
-report/notify it → false Telegram messages + missing pay.
+two lines makes the 2nd close-day insert `DO NOTHING`, causing missing pay. Actual-insert
+gating prevents a false Telegram message, but cannot recover the missing second-line pay.
 **How to apply:** index added in Drizzle schema AND bot `init_db()` AND applied to the
 Railway runtime DB. API add-worker catches `23505` → role-aware 409. Dashboard filters
 preparation/packaging dropdowns GLOBALLY (like producers) so an already-assigned worker
@@ -112,7 +112,10 @@ recomputing/overwriting and WITHOUT re-notifying workers.
 and re-notify would double-message workers.
 **How to apply:** runs/uniqueness are keyed per `(scope, work_date, line_id)`; first-close
 inserts use `ON CONFLICT DO NOTHING`; a `pg_advisory_xact_lock` keyed on the line+date
-serializes concurrent double-clicks. Close-day runs from BOTH bot and dashboard.
+serializes concurrent double-clicks. Salary inserts use `RETURNING id`/`rowCount`; append
+to result and notify only when a row was actually inserted. A pre-existing salary row
+without its run may be frozen into a run, but must not be reported or notified as new.
+Close-day runs from BOTH bot and dashboard.
 
 ## Shared pay basis uses the batch's snapshotted method, attribution via product line
 Daily line totals (for shared/role pay) filter on each batch's snapshot

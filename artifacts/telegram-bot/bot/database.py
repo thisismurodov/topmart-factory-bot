@@ -16,10 +16,6 @@ _log = logging.getLogger(__name__)
 _MAX_RETRIES = 5
 
 
-class WipBalanceError(Exception):
-    """Bo'limda yetarli xom ashyo yo'q (PRODUCE > RECEIVE − PRODUCE)."""
-
-
 class RawStockError(Exception):
     """Xom ashyo zahirasi (current_stock) BOM talabidan kam.
 
@@ -1044,12 +1040,10 @@ def get_line_role_rate_strict(worker_name: str, product_name: str) -> tuple:
 def close_day(closed_by: str, scope: str = "arqon") -> dict:
     """Kunni yopadi — har bir ishlab chiqarish liniyasi uchun alohida (idempotent).
 
-    Har liniya uchun bugungi ROLE_BASED_KG partiyalar jami kg (liniya snapshot
-    bo'yicha) hisoblanadi; tayyorlash va upakovka POOL'lari liniyadagi shu roldagi
-    xodimlar soniga BO'LINADI:
-        tayyorlash:  (jami_kg × stavka) ÷ tayyorlovchilar_soni
-        upakovka:    (jami_kg × stavka) ÷ upakovkachilar_soni
-    Ishlab chiqaruvchilar har partiyada darhol to'lanadi (bu yerda qayta yozilmaydi).
+    Config liniyada har bir individual rol xodimi o'zi kiritgan ish birligi ×
+    stavka bo'yicha to'lanadi. Pooled rollar esa liniyaning jami ish birligi ×
+    stavka fondini shu roldagi xodimlar soniga teng bo'lib oladi. Legacy
+    liniyalarda ishlab chiqaruvchi partiyada, yordamchi rollar shu yerda to'lanadi.
     Sana Asia/Tashkent. Liniya bo'yicha kun yopilgach yozuvlar MUZLATILADI: qayta
     chaqirilsa snapshot o'zgarmaydi va xodimlar qayta xabardor qilinmaydi.
 
@@ -1192,9 +1186,12 @@ def close_day(closed_by: str, scope: str = "arqon") -> dict:
                            (scope, line_id, worker, role, source_type, work_date, kg, rate, amount)
                        VALUES (%s,%s,%s,%s,'daily_shared',%s,%s,%s,%s)
                        ON CONFLICT (scope, worker, role, work_date) WHERE source_type='daily_shared'
-                       DO NOTHING""",
+                       DO NOTHING
+                       RETURNING id""",
                     (scope, line_id, m["worker_name"], role, work_date, kg, rate, amount),
                 )
+                if cur.fetchone() is None:
+                    continue
                 entries.append({"worker": m["worker_name"], "role": role, "rate": rate, "amount": amount})
                 new_entries.append({
                     "line_id": line_id, "line_name": line_name,
@@ -1433,14 +1430,6 @@ def create_batch_session(
 
         line_entries: list[dict] = []  # Xabarnoma uchun: [{worker, role, amount}]
 
-        # WIP balans himoyasi: har bir liniya uchun bir marta qulf olamiz va
-        # qolgan balansni sessiya davomida kuzatamiz (bir nechta mahsulot bir
-        # liniyada bo'lishi mumkin).
-        locked_line_balance: dict[int, float] = {}
-        # Sessiya tegib o'tgan liniyalar — commit'dan keyin manfiy balans
-        # tekshiruvi uchun (Telegram ogohlantirish, bot/wip_alerts.py).
-        touched_line_ids: set[int] = set()
-
         for it in items:
             product   = it["product"]
             quantity  = int(it["quantity"])
@@ -1457,10 +1446,9 @@ def create_batch_session(
 
             # Liniyani mahsulot orqali aniqlaymiz (config liniya attribusiyasi);
             # mahsulotda line_id bo'lmasa ishlab chiqaruvchi liniyasiga qaytamiz.
-            cur.execute("SELECT line_id, weight FROM products WHERE name=%s", (product,))
+            cur.execute("SELECT line_id FROM products WHERE name=%s", (product,))
             _plrow = cur.fetchone()
             prod_line_id = (_plrow["line_id"] if _plrow and _plrow["line_id"] else None) or producer_line_id
-            product_weight = float(_plrow["weight"]) if _plrow and _plrow.get("weight") is not None else 0.0
 
             # Config liniyami? (line_role_config mavjud). Bunday liniyada ROLE_BASED_KG
             # maoshi kun yopilganda rol bo'yicha hisoblanadi — shu bois partiya
@@ -1549,51 +1537,6 @@ def create_batch_session(
                     (wh_id, product, quantity, weight_kg, quantity, weight_kg),
                 )
 
-            # Ish jarayoni (WIP) — bo'lim tayyor mahsulot chiqardi: PRODUCE (-kg).
-            # Ishlab chiqarilgan og'irlik: aniq weight_kg bo'lsa o'shani, aks holda
-            # dona × dona-og'irligi (products.weight). Faqat liniya aniqlangan bo'lsa.
-            if prod_line_id:
-                touched_line_ids.add(int(prod_line_id))
-                produce_kg = weight_kg if weight_kg > 0 else quantity * product_weight
-                if produce_kg > 0:
-                    # WIP balans himoyasi — API /ombor/flow/produce bilan bir xil.
-                    # Liniyani birinchi marta lock qilamiz va balansni olamiz;
-                    # keyingi mahsulotlar uchun allaqachon lock qilingan balansdan
-                    # ayirib boramiz (bir sessiya = bitta tranzaksiya).
-                    if prod_line_id not in locked_line_balance:
-                        cur.execute(
-                            "SELECT id FROM production_lines WHERE id=%s FOR UPDATE",
-                            (prod_line_id,),
-                        )
-                        cur.execute(
-                            """SELECT COALESCE(SUM(
-                                   CASE WHEN movement_type='RECEIVE' THEN weight_kg
-                                        WHEN movement_type='PRODUCE' THEN -weight_kg
-                                        ELSE 0 END
-                               ), 0)::numeric AS wip_kg
-                               FROM wip_movements WHERE line_id=%s""",
-                            (prod_line_id,),
-                        )
-                        locked_line_balance[prod_line_id] = float(cur.fetchone()["wip_kg"] or 0)
-
-                    available = locked_line_balance[prod_line_id]
-                    if produce_kg > available + 1e-9:
-                        raise WipBalanceError(
-                            f"Bo'limda yetarli xom ashyo yo'q: mavjud {available:.2f} kg, "
-                            f"so'ralgan {produce_kg:.2f} kg ({product}). "
-                            f"Avval bo'limga xom ashyo bering."
-                        )
-                    # Balansni real yozuv kiritilmasdan avval kamaytirish — keyingi
-                    # mahsulotlar uchun ham to'g'ri chegirmani ta'minlaydi.
-                    locked_line_balance[prod_line_id] = available - produce_kg
-
-                    cur.execute(
-                        """INSERT INTO wip_movements
-                             (line_id, movement_type, product, weight_kg, note, created_by)
-                           VALUES (%s,'PRODUCE',%s,%s,%s,%s)""",
-                        (prod_line_id, product, produce_kg, f"Partiya: {batch_code}", worker),
-                    )
-
             # Xom ashyo zahirasini BOM (product_materials) bo'yicha kamaytirish
             cur.execute(
                 """SELECT pm.raw_material_id, pm.quantity_required,
@@ -1634,13 +1577,6 @@ def create_batch_session(
                         "minimum_stock": min_stock,
                         "unit":          req["unit"] or "",
                     }
-
-    # COMMIT'dan keyin: sessiya tegib o'tgan liniyalarning haqiqiy balansi
-    # minusga tushgan bo'lsa adminlarga Telegram ogohlantirish (best-effort,
-    # kuniga liniya boshiga 1 marta — wip_negative_alerts dedupe).
-    if touched_line_ids:
-        from bot.wip_alerts import check_and_notify_negative_wip
-        check_and_notify_negative_wip(touched_line_ids)
 
     return {
         "batch_code":    batch_code,

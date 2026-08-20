@@ -644,3 +644,89 @@ export const GetInventoryResponseItem = zod.object({
 export const GetInventoryResponse = zod.array(GetInventoryResponseItem)
 
 
+/**
+ * Authenticated read-only view of the single pilot vehicle (DM-001 / DAMAS), its home warehouse balance summary, and the active agent assignment. Fails closed (404) unless the vehicle-distribution feature is enabled, and returns 503 when enabled without schema approval. When the pilot has not been bootstrapped, returns a deterministic not-bootstrapped payload without performing any writes.
+ * @summary Read the pilot vehicle, warehouse balance summary and active assignment
+ */
+export const GetVehicleDistributionPilotResponse = zod.object({
+  "bootstrapped": zod.boolean(),
+  "agent": zod.union([zod.object({
+  "id": zod.number(),
+  "name": zod.string()
+}),zod.null()]),
+  "vehicle": zod.union([zod.object({
+  "id": zod.number(),
+  "plateNumber": zod.string(),
+  "vehicleType": zod.string(),
+  "status": zod.string(),
+  "capacityKg": zod.number().nullable(),
+  "warehouseId": zod.number()
+}),zod.null()]),
+  "warehouse": zod.union([zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "locationType": zod.string(),
+  "purpose": zod.string(),
+  "active": zod.boolean()
+}),zod.null()]),
+  "balance": zod.union([zod.object({
+  "warehouseId": zod.number(),
+  "skuCount": zod.number(),
+  "totalQuantity": zod.number(),
+  "totalWeightKg": zod.number()
+}).describe('Public warehouse balance summary for the vehicle\'s home warehouse.'),zod.null()]),
+  "assignment": zod.union([zod.object({
+  "id": zod.number(),
+  "vehicleId": zod.number(),
+  "deliveryAgentId": zod.number(),
+  "status": zod.string(),
+  "assignedAt": zod.string().nullable()
+}),zod.null()])
+})
+
+
+/**
+ * Admin-only. Idempotently provisions the exact pilot state (agent NAVRUZBEK, vehicle DM-001 / DAMAS, one vehicle warehouse) and the single active assignment. All server constants are fixed; the request body carries no overridable fields. Retries and concurrent double-clicks return the same state with no duplicate rows.
+ * @summary Idempotently create/reuse the pilot vehicle, warehouse and assignment
+ */
+export const BootstrapVehicleDistributionPilotBody = zod.object({
+
+}).describe('Bootstrap carries no overridable fields — all pilot constants (agent NAVRUZBEK, vehicle DM-001, type DAMAS) are fixed server-side. This object exists so the endpoint has a typed (empty) body contract.')
+
+export const BootstrapVehicleDistributionPilotResponse = zod.object({
+  "bootstrapped": zod.boolean(),
+  "agent": zod.union([zod.object({
+  "id": zod.number(),
+  "name": zod.string()
+}),zod.null()]),
+  "vehicle": zod.union([zod.object({
+  "id": zod.number(),
+  "plateNumber": zod.string(),
+  "vehicleType": zod.string(),
+  "status": zod.string(),
+  "capacityKg": zod.number().nullable(),
+  "warehouseId": zod.number()
+}),zod.null()]),
+  "warehouse": zod.union([zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "locationType": zod.string(),
+  "purpose": zod.string(),
+  "active": zod.boolean()
+}),zod.null()]),
+  "balance": zod.union([zod.object({
+  "warehouseId": zod.number(),
+  "skuCount": zod.number(),
+  "totalQuantity": zod.number(),
+  "totalWeightKg": zod.number()
+}).describe('Public warehouse balance summary for the vehicle\'s home warehouse.'),zod.null()]),
+  "assignment": zod.union([zod.object({
+  "id": zod.number(),
+  "vehicleId": zod.number(),
+  "deliveryAgentId": zod.number(),
+  "status": zod.string(),
+  "assignedAt": zod.string().nullable()
+}),zod.null()])
+})
+
+

@@ -192,21 +192,29 @@ export async function buildFlowGraph(pool: Pool): Promise<FlowGraphResponse> {
     // Yagona izchil snapshot + yozishdan DB darajasida himoya.
     await client.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
 
+    // Vehicle warehouses (location_type='vehicle') belong to the vehicle-
+    // distribution pilot; their stock is NOT part of the production flow graph.
+    // Exclude them (and their inventory) from every generic warehouse/inventory
+    // loader below so nodes and KPI totals never surface DM-001. Ordinary /
+    // container / ayvon warehouses are unaffected.
     const containersQ = await client.query(`
       SELECT w.id, w.name, w.purpose, w.location_type AS loc, w.capacity_kg::float8 AS cap,
              COALESCE(SUM(i.weight_kg), 0)::float8 AS kg,
              COALESCE(SUM(i.quantity), 0)::float8 AS dona
       FROM warehouses w
       LEFT JOIN inventory i ON i.warehouse_id = w.id
+      WHERE COALESCE(w.location_type,'general') != 'vehicle'
       GROUP BY w.id, w.name, w.purpose, w.location_type, w.capacity_kg
       ORDER BY w.name
     `);
     const positionsQ = await client.query(`
-      SELECT warehouse_id AS wid, product, quantity::float8 AS qty,
-             weight_kg::float8 AS kg, product_type AS ptype
-      FROM inventory
-      WHERE quantity > 0 OR weight_kg > 0
-      ORDER BY warehouse_id, product
+      SELECT i.warehouse_id AS wid, i.product, i.quantity::float8 AS qty,
+             i.weight_kg::float8 AS kg, i.product_type AS ptype
+      FROM inventory i
+      JOIN warehouses w ON w.id = i.warehouse_id
+      WHERE (i.quantity > 0 OR i.weight_kg > 0)
+        AND COALESCE(w.location_type,'general') != 'vehicle'
+      ORDER BY i.warehouse_id, i.product
     `);
     const linesQ = await client.query(`SELECT id, name FROM production_lines ORDER BY id`);
     const lineWorkersQ = await client.query(`
@@ -275,10 +283,17 @@ export async function buildFlowGraph(pool: Pool): Promise<FlowGraphResponse> {
       GROUP BY lw.line_id, sp.worker
       ORDER BY total DESC
     `);
+    // KPI counts also exclude vehicle warehouses / vehicle inventory rows so
+    // the flow graph totals stay consistent with the loaders above.
     const countsQ = await client.query(`
       SELECT
-        (SELECT COUNT(*) FROM inventory)::int AS inventory_rows,
-        (SELECT COUNT(*) FROM inventory WHERE quantity > 0 OR weight_kg > 0)::int AS inventory_nonzero,
+        (SELECT COUNT(*) FROM inventory i
+           JOIN warehouses w ON w.id = i.warehouse_id
+          WHERE COALESCE(w.location_type,'general') != 'vehicle')::int AS inventory_rows,
+        (SELECT COUNT(*) FROM inventory i
+           JOIN warehouses w ON w.id = i.warehouse_id
+          WHERE (i.quantity > 0 OR i.weight_kg > 0)
+            AND COALESCE(w.location_type,'general') != 'vehicle')::int AS inventory_nonzero,
         (SELECT COUNT(*) FROM wip_movements)::int AS wip_total,
         (SELECT COUNT(*) FROM wip_movements
           WHERE product_item_id IS NOT NULL OR raw_material_item_id IS NOT NULL)::int AS wip_linked,
@@ -289,7 +304,7 @@ export async function buildFlowGraph(pool: Pool): Promise<FlowGraphResponse> {
         (SELECT COUNT(*) FROM products)::int AS products_total,
         (SELECT COUNT(*) FROM products WHERE item_id IS NOT NULL)::int AS products_linked,
         (SELECT COUNT(*) FROM items)::int AS items_total,
-        (SELECT COUNT(*) FROM warehouses)::int AS warehouses_total,
+        (SELECT COUNT(*) FROM warehouses WHERE COALESCE(location_type,'general') != 'vehicle')::int AS warehouses_total,
         (SELECT COUNT(*) FROM warehouses WHERE location_type = 'container')::int AS containers_total
     `);
 

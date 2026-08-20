@@ -13,6 +13,62 @@ export interface ErrorResponse {
   error: string;
 }
 
+/**
+ * Bootstrap carries no overridable fields — all pilot constants (agent NAVRUZBEK, vehicle DM-001, type DAMAS) are fixed server-side. This object exists so the endpoint has a typed (empty) body contract.
+ */
+export interface VehicleDistributionBootstrapInput { [key: string]: unknown }
+
+export interface VehicleDistributionAgent {
+  id: number;
+  name: string;
+}
+
+export interface VehicleDistributionVehicle {
+  id: number;
+  plateNumber: string;
+  vehicleType: string;
+  status: string;
+  /** @nullable */
+  capacityKg: number | null;
+  warehouseId: number;
+}
+
+export interface VehicleDistributionWarehouse {
+  id: number;
+  name: string;
+  locationType: string;
+  purpose: string;
+  active: boolean;
+}
+
+/**
+ * Public warehouse balance summary for the vehicle's home warehouse.
+ */
+export interface VehicleDistributionBalanceSummary {
+  warehouseId: number;
+  skuCount: number;
+  totalQuantity: number;
+  totalWeightKg: number;
+}
+
+export interface VehicleDistributionAssignment {
+  id: number;
+  vehicleId: number;
+  deliveryAgentId: number;
+  status: string;
+  /** @nullable */
+  assignedAt: string | null;
+}
+
+export interface VehicleDistributionPilot {
+  bootstrapped: boolean;
+  agent: VehicleDistributionAgent | null;
+  vehicle: VehicleDistributionVehicle | null;
+  warehouse: VehicleDistributionWarehouse | null;
+  balance: VehicleDistributionBalanceSummary | null;
+  assignment: VehicleDistributionAssignment | null;
+}
+
 export interface LoginInput {
   username: string;
   password: string;

@@ -5,7 +5,7 @@ const router: IRouter = Router();
 
 router.get("/warehouses", async (_req, res): Promise<void> => {
   const result = await pool.query(
-    "SELECT id, name, active FROM warehouses WHERE active = TRUE ORDER BY id"
+    "SELECT id, name, active FROM warehouses WHERE active = TRUE AND COALESCE(location_type,'general') != 'vehicle' ORDER BY id"
   );
   res.json(result.rows);
 });

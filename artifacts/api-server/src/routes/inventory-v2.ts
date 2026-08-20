@@ -8,7 +8,13 @@ const router: IRouter = Router();
 router.get("/inventory/stock", async (req, res): Promise<void> => {
   const warehouseId = req.query.warehouse_id ? Number(req.query.warehouse_id) : null;
 
-  const whereClause = warehouseId ? "WHERE i.warehouse_id = $1" : "";
+  // When an explicit warehouse_id is provided, show that warehouse as-is
+  // (the caller knows what they asked for). When listing all warehouses,
+  // exclude vehicle warehouses: their stock is managed by the vehicle-
+  // distribution pilot and must not appear in generic ERP inventory views.
+  const whereClause = warehouseId
+    ? "WHERE i.warehouse_id = $1"
+    : "WHERE COALESCE(w.location_type,'general') != 'vehicle'";
   const params = warehouseId ? [warehouseId] : [];
 
   const result = await pool.query(
@@ -37,15 +43,33 @@ router.get("/inventory/stock", async (req, res): Promise<void> => {
 
 /* ── GET /inventory/summary  — overall summary ── */
 router.get("/inventory/summary", async (_req, res): Promise<void> => {
+  // Vehicle warehouses (location_type='vehicle') hold vehicle-distribution
+  // pilot stock and must be excluded from every generic ERP inventory KPI.
+  // skuCount / totalStock / lowStock all join warehouses to filter them out;
+  // warehouseCount already excludes vehicle warehouses.
   const [skuRes, stockRes, warehouseRes, lowRes] = await Promise.all([
-    pool.query("SELECT COUNT(DISTINCT product)::int AS sku_count FROM inventory WHERE quantity > 0"),
-    pool.query("SELECT COALESCE(SUM(quantity),0) AS total FROM inventory"),
-    pool.query("SELECT COUNT(*)::int AS cnt FROM warehouses WHERE active=TRUE"),
     pool.query(
-      `SELECT product, SUM(quantity) AS qty
-       FROM inventory GROUP BY product
-       HAVING SUM(quantity) < 50 AND SUM(quantity) >= 0
-       ORDER BY SUM(quantity) ASC LIMIT 10`
+      `SELECT COUNT(DISTINCT i.product)::int AS sku_count
+         FROM inventory i
+         JOIN warehouses w ON w.id = i.warehouse_id
+        WHERE i.quantity > 0
+          AND COALESCE(w.location_type,'general') != 'vehicle'`
+    ),
+    pool.query(
+      `SELECT COALESCE(SUM(i.quantity),0) AS total
+         FROM inventory i
+         JOIN warehouses w ON w.id = i.warehouse_id
+        WHERE COALESCE(w.location_type,'general') != 'vehicle'`
+    ),
+    pool.query("SELECT COUNT(*)::int AS cnt FROM warehouses WHERE active=TRUE AND COALESCE(location_type,'general') != 'vehicle'"),
+    pool.query(
+      `SELECT i.product AS product, SUM(i.quantity) AS qty
+         FROM inventory i
+         JOIN warehouses w ON w.id = i.warehouse_id
+        WHERE COALESCE(w.location_type,'general') != 'vehicle'
+        GROUP BY i.product
+       HAVING SUM(i.quantity) < 50 AND SUM(i.quantity) >= 0
+       ORDER BY SUM(i.quantity) ASC LIMIT 10`
     ),
   ]);
   res.json({

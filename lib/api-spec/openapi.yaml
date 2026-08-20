@@ -20,6 +20,7 @@ tags:
   - name: customers
   - name: sales
   - name: inventory
+  - name: vehicle-distribution
 
 paths:
   /healthz:
@@ -806,6 +807,100 @@ paths:
                 items:
                   $ref: "#/components/schemas/InventoryItem"
 
+  # ── Vehicle Distribution (F2 pilot) ───────────────────────────────────
+  /vehicle-distribution/pilot:
+    get:
+      operationId: getVehicleDistributionPilot
+      tags: [vehicle-distribution]
+      summary: Read the pilot vehicle, warehouse balance summary and active assignment
+      description: >-
+        Authenticated read-only view of the single pilot vehicle (DM-001 / DAMAS),
+        its home warehouse balance summary, and the active agent assignment.
+        Fails closed (404) unless the vehicle-distribution feature is enabled, and
+        returns 503 when enabled without schema approval. When the pilot has not
+        been bootstrapped, returns a deterministic not-bootstrapped payload without
+        performing any writes.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleDistributionPilot"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Feature disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Enabled but schema not approved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /vehicle-distribution/pilot/bootstrap:
+    post:
+      operationId: bootstrapVehicleDistributionPilot
+      tags: [vehicle-distribution]
+      summary: Idempotently create/reuse the pilot vehicle, warehouse and assignment
+      description: >-
+        Admin-only. Idempotently provisions the exact pilot state (agent NAVRUZBEK,
+        vehicle DM-001 / DAMAS, one vehicle warehouse) and the single active
+        assignment. All server constants are fixed; the request body carries no
+        overridable fields. Retries and concurrent double-clicks return the same
+        state with no duplicate rows.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VehicleDistributionBootstrapInput"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleDistributionPilot"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Admin role required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Feature disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Conflicting or ambiguous existing state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Enabled but schema not approved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   schemas:
     HealthStatus:
@@ -821,6 +916,113 @@ components:
         error:
           type: string
       required: [error]
+
+    # ── Vehicle Distribution (F2 pilot) ─────────────────────────────
+    VehicleDistributionBootstrapInput:
+      type: object
+      description: >-
+        Bootstrap carries no overridable fields — all pilot constants (agent
+        NAVRUZBEK, vehicle DM-001, type DAMAS) are fixed server-side. This
+        object exists so the endpoint has a typed (empty) body contract.
+      properties: {}
+      additionalProperties: false
+
+    VehicleDistributionAgent:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+      required: [id, name]
+
+    VehicleDistributionVehicle:
+      type: object
+      properties:
+        id:
+          type: integer
+        plateNumber:
+          type: string
+        vehicleType:
+          type: string
+        status:
+          type: string
+        capacityKg:
+          type: ["number", "null"]
+        warehouseId:
+          type: integer
+      required: [id, plateNumber, vehicleType, status, capacityKg, warehouseId]
+
+    VehicleDistributionWarehouse:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        locationType:
+          type: string
+        purpose:
+          type: string
+        active:
+          type: boolean
+      required: [id, name, locationType, purpose, active]
+
+    VehicleDistributionBalanceSummary:
+      type: object
+      description: Public warehouse balance summary for the vehicle's home warehouse.
+      properties:
+        warehouseId:
+          type: integer
+        skuCount:
+          type: integer
+        totalQuantity:
+          type: number
+        totalWeightKg:
+          type: number
+      required: [warehouseId, skuCount, totalQuantity, totalWeightKg]
+
+    VehicleDistributionAssignment:
+      type: object
+      properties:
+        id:
+          type: integer
+        vehicleId:
+          type: integer
+        deliveryAgentId:
+          type: integer
+        status:
+          type: string
+        assignedAt:
+          type: ["string", "null"]
+      required: [id, vehicleId, deliveryAgentId, status, assignedAt]
+
+    VehicleDistributionPilot:
+      type: object
+      properties:
+        bootstrapped:
+          type: boolean
+        agent:
+          oneOf:
+            - $ref: "#/components/schemas/VehicleDistributionAgent"
+            - type: "null"
+        vehicle:
+          oneOf:
+            - $ref: "#/components/schemas/VehicleDistributionVehicle"
+            - type: "null"
+        warehouse:
+          oneOf:
+            - $ref: "#/components/schemas/VehicleDistributionWarehouse"
+            - type: "null"
+        balance:
+          oneOf:
+            - $ref: "#/components/schemas/VehicleDistributionBalanceSummary"
+            - type: "null"
+        assignment:
+          oneOf:
+            - $ref: "#/components/schemas/VehicleDistributionAssignment"
+            - type: "null"
+      required: [bootstrapped, agent, vehicle, warehouse, balance, assignment]
 
     # ── Auth ────────────────────────────────────────────────────────
     LoginInput:

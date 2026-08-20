@@ -452,4 +452,57 @@ describe("GET /ombor/flow/graph (F2)", () => {
     expect(w6.balanceKg).toBe(-70.5); // 30 − 100.5 — hali ham manfiy, hali ham ko'rinadi
     expect(w6.status).toBe("NEGATIVE");
   });
+
+  // OXIRGI izolyatsiya isboti: location_type='vehicle' ombor (DM-001 mashina
+  // ombori) va uning NOL bo'lmagan inventar qatorlari flow grafiga
+  // (nodelar VA KPI totallar) HECH QACHON tushmasligi shart. Oddiy /
+  // container / viloyat omborlariga ta'siri yo'q.
+  it("vehicle ombor (DM-001) grafdan tashqarida: nodelar + KPI totallar o'zgarmaydi", async () => {
+    const before = await getGraph();
+
+    // Vehicle ombor + katta hajmli inventar (qasddan nonzero, qty/kg).
+    const vh = await pool.query(
+      `INSERT INTO warehouses (name, location_type, purpose) VALUES ($1, 'vehicle', 'finished') RETURNING id`,
+      ["DM-001 mashina ombori"],
+    );
+    const vehicleWid = vh.rows[0].id;
+    await pool.query(
+      `INSERT INTO inventory (warehouse_id, product, quantity, weight_kg, product_type) VALUES
+         ($1, 'Vehicle Only Mahsulot', 999, 4321, 'finished'),
+         ($1, 'Vehicle Only Xom', 0, 777, 'raw')`,
+      [vehicleWid],
+    );
+
+    const after = await getGraph();
+
+    // Grafning barcha node ro'yxatlari va KPI totallari o'zgarmadi.
+    expect(after.nodes).toEqual(before.nodes);
+    expect(after.meta.counts).toEqual(before.meta.counts);
+    expect(after.edges).toEqual(before.edges);
+    expect(after.supplyEdges).toEqual(before.supplyEdges);
+
+    // Vehicle ombor hech qanday konteyner/viloyat nodesida ko'rinmaydi.
+    const allContainers = [
+      ...after.nodes.containersRaw,
+      ...after.nodes.containersFinished,
+      ...after.nodes.emptyContainers,
+    ];
+    for (const c of allContainers) {
+      expect(c.id).not.toBe(vehicleWid);
+      expect(c.name).not.toContain("DM-001");
+    }
+    // Vehicle mahsulotlari mahsulot nodelariga aylanmaydi.
+    for (const p of after.nodes.products) {
+      expect(p.name).not.toContain("Vehicle Only");
+    }
+    // KPI totallari vehicle ombor/inventarni sanamaydi (DB'da esa mavjud).
+    const rawWh = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM warehouses`,
+    );
+    const rawInv = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM inventory`,
+    );
+    expect(rawWh.rows[0].n).toBeGreaterThan(after.meta.counts.warehouses);
+    expect(rawInv.rows[0].n).toBeGreaterThan(after.meta.counts.inventoryRows);
+  });
 });

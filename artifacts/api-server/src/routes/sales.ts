@@ -319,7 +319,7 @@ router.post("/sales", async (req, res): Promise<void> => {
           // (ortiqcha sotilgani ko'rinib turadi).
           if (remainingKg > 0) {
             const { rows: whRows } = await client.query(
-              "SELECT id FROM warehouses WHERE active=TRUE ORDER BY id LIMIT 1",
+              "SELECT id FROM warehouses WHERE active=TRUE AND COALESCE(location_type,'general') != 'vehicle' ORDER BY id LIMIT 1",
             );
             const whId = whRows[0]?.id ?? null;
             if (whId) {
@@ -377,7 +377,7 @@ router.post("/sales", async (req, res): Promise<void> => {
         // (ombor manfiyga tushadi — ortiqcha sotilgani ko'rinib turadi).
         if (remaining > 0) {
           const { rows: whRows } = await client.query(
-            "SELECT id FROM warehouses WHERE active=TRUE ORDER BY id LIMIT 1",
+            "SELECT id FROM warehouses WHERE active=TRUE AND COALESCE(location_type,'general') != 'vehicle' ORDER BY id LIMIT 1",
           );
           const whId = whRows[0]?.id ?? null;
           if (whId) {

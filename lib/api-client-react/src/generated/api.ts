@@ -56,6 +56,8 @@ import type {
   SaleInput,
   SaleList,
   SaleStatusInput,
+  VehicleDistributionBootstrapInput,
+  VehicleDistributionPilot,
   Worker,
   WorkerDeleteInput,
   WorkerInput,
@@ -3122,4 +3124,154 @@ export function useGetInventory<TData = Awaited<ReturnType<typeof getInventory>>
 
 
 
+
+export const getGetVehicleDistributionPilotUrl = () => {
+
+
+
+
+  return `/api/vehicle-distribution/pilot`
+}
+
+/**
+ * Authenticated read-only view of the single pilot vehicle (DM-001 / DAMAS), its home warehouse balance summary, and the active agent assignment. Fails closed (404) unless the vehicle-distribution feature is enabled, and returns 503 when enabled without schema approval. When the pilot has not been bootstrapped, returns a deterministic not-bootstrapped payload without performing any writes.
+ * @summary Read the pilot vehicle, warehouse balance summary and active assignment
+ */
+export const getVehicleDistributionPilot = async ( options?: RequestInit): Promise<VehicleDistributionPilot> => {
+
+  return customFetch<VehicleDistributionPilot>(getGetVehicleDistributionPilotUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetVehicleDistributionPilotQueryKey = () => {
+    return [
+    `/api/vehicle-distribution/pilot`
+    ] as const;
+    }
+
+
+export const getGetVehicleDistributionPilotQueryOptions = <TData = Awaited<ReturnType<typeof getVehicleDistributionPilot>>, TError = ErrorType<ErrorResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getVehicleDistributionPilot>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetVehicleDistributionPilotQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getVehicleDistributionPilot>>> = ({ signal }) => getVehicleDistributionPilot({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getVehicleDistributionPilot>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetVehicleDistributionPilotQueryResult = NonNullable<Awaited<ReturnType<typeof getVehicleDistributionPilot>>>
+export type GetVehicleDistributionPilotQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary Read the pilot vehicle, warehouse balance summary and active assignment
+ */
+
+export function useGetVehicleDistributionPilot<TData = Awaited<ReturnType<typeof getVehicleDistributionPilot>>, TError = ErrorType<ErrorResponse>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getVehicleDistributionPilot>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetVehicleDistributionPilotQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getBootstrapVehicleDistributionPilotUrl = () => {
+
+
+
+
+  return `/api/vehicle-distribution/pilot/bootstrap`
+}
+
+/**
+ * Admin-only. Idempotently provisions the exact pilot state (agent NAVRUZBEK, vehicle DM-001 / DAMAS, one vehicle warehouse) and the single active assignment. All server constants are fixed; the request body carries no overridable fields. Retries and concurrent double-clicks return the same state with no duplicate rows.
+ * @summary Idempotently create/reuse the pilot vehicle, warehouse and assignment
+ */
+export const bootstrapVehicleDistributionPilot = async (vehicleDistributionBootstrapInput?: VehicleDistributionBootstrapInput, options?: RequestInit): Promise<VehicleDistributionPilot> => {
+
+  return customFetch<VehicleDistributionPilot>(getBootstrapVehicleDistributionPilotUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      vehicleDistributionBootstrapInput,)
+  }
+);}
+
+
+
+
+export const getBootstrapVehicleDistributionPilotMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof bootstrapVehicleDistributionPilot>>, TError,{data?: BodyType<VehicleDistributionBootstrapInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof bootstrapVehicleDistributionPilot>>, TError,{data?: BodyType<VehicleDistributionBootstrapInput>}, TContext> => {
+
+const mutationKey = ['bootstrapVehicleDistributionPilot'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof bootstrapVehicleDistributionPilot>>, {data?: BodyType<VehicleDistributionBootstrapInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  bootstrapVehicleDistributionPilot(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type BootstrapVehicleDistributionPilotMutationResult = NonNullable<Awaited<ReturnType<typeof bootstrapVehicleDistributionPilot>>>
+    export type BootstrapVehicleDistributionPilotMutationBody = BodyType<VehicleDistributionBootstrapInput> | undefined
+    export type BootstrapVehicleDistributionPilotMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Idempotently create/reuse the pilot vehicle, warehouse and assignment
+ */
+export const useBootstrapVehicleDistributionPilot = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof bootstrapVehicleDistributionPilot>>, TError,{data?: BodyType<VehicleDistributionBootstrapInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof bootstrapVehicleDistributionPilot>>,
+        TError,
+        {data?: BodyType<VehicleDistributionBootstrapInput>},
+        TContext
+      > => {
+      return useMutation(getBootstrapVehicleDistributionPilotMutationOptions(options));
+    }
 

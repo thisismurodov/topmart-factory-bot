@@ -27,6 +27,7 @@ import omborRouter from "./ombor";
 import auditRouter from "./audit";
 import distributionRouter, { distributionSuggestionsRouter } from "./distribution";
 import fieldRouter from "./field";
+import vehicleDistributionRouter from "./vehicle-distribution";
 
 const router: IRouter = Router();
 
@@ -76,5 +77,6 @@ router.use(productMaterialsRouter);
 router.use(packerProductAssignmentsRouter);
 router.use(auditRouter);
 router.use(distributionRouter);
+router.use(vehicleDistributionRouter);
 
 export default router;

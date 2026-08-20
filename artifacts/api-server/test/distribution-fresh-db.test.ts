@@ -51,11 +51,14 @@ const mainPySource = readFileSync(path.join(botDir, "main.py"), "utf8");
 // sslmode=require when it is set — the throwaway DB lives on the same server,
 // so SSL behavior matches production). The token is never used for network
 // calls here; TeleBot() construction and handler registration are offline.
+// Vehicle pilot: always enabled on throwaway DBs so fresh-DB validation
+// covers all vehicle tables (the gate only guards production databases).
 const botEnv = {
   ...process.env,
   RAILWAY_DATABASE_URL: tmpUrl(),
   DATABASE_URL: tmpUrl(),
   TELEGRAM_BOT_TOKEN: "123456:TEST_TOKEN_FRESH_DB_GUARD",
+  VEHICLE_DISTRIBUTION_SCHEMA_APPROVED: "1",
 };
 
 let client: pg.Client;
@@ -133,6 +136,17 @@ const REQUIRED: Record<string, string[]> = {
   // Field Assistant Mini App idempotency jurnali — API yozadi, lekin bot
   // init_db() yaratishi shart (uch nusxa DDL sinxron bo'lishi kerak).
   field_ops: ["id", "client_op_id", "agent_id", "op_type", "dokon_id", "result_id", "created_at"],
+  // Vehicle Distribution Pilot — F1 schema (always created on throwaway DBs)
+  vehicles: ["id", "plate_number", "vehicle_type", "description", "capacity_kg", "status", "warehouse_id", "created_at"],
+  vehicle_assignments: ["id", "vehicle_id", "delivery_agent_id", "assigned_at", "unassigned_at", "status", "notes", "created_at"],
+  vehicle_handoffs: ["id", "vehicle_id", "delivery_agent_id", "source_warehouse_id", "vehicle_warehouse_id", "handoff_date", "status", "labels_printed_at", "labels_printed_by", "handed_over_at", "handed_over_by", "stock_transferred_at", "stock_transferred_by", "cancelled_at", "cancelled_by", "movement_reference", "notes", "created_at"],
+  vehicle_handoff_items: ["id", "handoff_id", "mahsulot_id", "sku", "quantity_dispatched", "unit_cost", "created_at"],
+  vehicle_unit_events: ["id", "vehicle_id", "handoff_id", "handoff_item_id", "mahsulot_id", "sku", "event_type", "quantity", "actor_id", "production_label_id", "barcode", "event_at", "notes", "created_at"],
+  vehicle_sale_allocations: ["id", "handoff_id", "savdo_id", "savdo_tafsilot_id", "mahsulot_id", "product_name", "product_sku", "vehicle_id", "allocated_quantity", "allocated_weight_kg", "production_label_id", "barcode", "source_unit_event_id", "operation_key", "allocated_at", "created_at"],
+  vehicle_stock_targets: ["id", "vehicle_id", "mahsulot_id", "sku", "target_quantity", "min_quantity", "effective_from", "effective_to", "created_at"],
+  vehicle_replenishment_requests: ["id", "vehicle_id", "requested_by", "mahsulot_id", "sku", "requested_quantity", "approved_quantity", "status", "requested_at", "resolved_at", "notes", "created_at"],
+  vehicle_reconciliations: ["id", "vehicle_id", "delivery_agent_id", "reconciliation_date", "status", "approved_by", "approved_at", "applied_by", "applied_at", "notes", "created_at"],
+  vehicle_reconciliation_items: ["id", "reconciliation_id", "mahsulot_id", "sku", "expected_quantity", "actual_quantity", "discrepancy", "adjustment_reference", "notes", "created_at"],
 };
 
 // Words the table-name regex can catch that are not distribution tables.
@@ -301,7 +315,10 @@ print(json.dumps({"checked": checked, "failures": failures, "skipped": skipped})
     // Statements assembled from fragments we cannot resolve statically. Keep
     // this list tiny and known — a growing list means new dynamic SQL is
     // escaping the sweep.
-    expect(r.skipped.length).toBeLessThanOrEqual(3);
+    // The vehicle pilot added one extra: cur.execute(_VEHICLE_DDL) in
+    // database/connection.py is a variable reference, not a string literal.
+    // Together with _INIT_DDL and two main.py dynamic f-strings, the total is 4.
+    expect(r.skipped.length).toBeLessThanOrEqual(4);
   }, 120_000);
 });
 
@@ -747,4 +764,376 @@ print(json.dumps({
     expect(r.olmagan_qaytish).toBe("2026-07-18");
     expect(r.olmagan_lat).toBeCloseTo(41.311081, 5);
   }, 60_000);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Vehicle F1 schema — behavioral assertions
+//
+// These tests run against the same throwaway DB created in beforeAll and prove
+// that the constraints, partial unique indexes, and CHECK values enforced by
+// the runtime DDL actually fire correctly. They cover the six architect-required
+// scenarios: warehouse uniqueness, exact status sets, allocation replay
+// idempotency, open-replenishment conflict, and reconciliation
+// adjustment_reference single-apply.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("Vehicle F1 schema: constraint and partial-index behavioral assertions", () => {
+  it("vehicles.warehouse_id is UNIQUE — second vehicle with same warehouse_id is rejected", async () => {
+    await client.query(`
+      INSERT INTO distribution.vehicles
+        (plate_number, vehicle_type, status, warehouse_id, capacity_kg)
+      VALUES ('01A001AA', 'DAMAS', 'active', 9901, 500)
+    `);
+    await expect(
+      client.query(`
+        INSERT INTO distribution.vehicles
+          (plate_number, vehicle_type, status, warehouse_id, capacity_kg)
+        VALUES ('01A002AA', 'LABO', 'active', 9901, 800)
+      `),
+    ).rejects.toThrow(/unique/i);
+  });
+
+  it("vehicles CHECK: only canonical vehicle_type values accepted", async () => {
+    await expect(
+      client.query(`
+        INSERT INTO distribution.vehicles
+          (plate_number, vehicle_type, status, warehouse_id, capacity_kg)
+        VALUES ('01B001BB', 'truck', 'active', 9902, 500)
+      `),
+    ).rejects.toThrow(/vehicles_type_check/i);
+  });
+
+  it("vehicles CHECK: only canonical status values accepted", async () => {
+    await expect(
+      client.query(`
+        INSERT INTO distribution.vehicles
+          (plate_number, vehicle_type, status, warehouse_id, capacity_kg)
+        VALUES ('01B002BB', 'DAMAS', 'available', 9903, 500)
+      `),
+    ).rejects.toThrow(/vehicles_status_check/i);
+  });
+
+  it("vehicle_handoffs: only exact status values accepted (prepared/labels_printed/handed_over/stock_transferred/cancelled)", async () => {
+    // Insert a valid vehicle to reference
+    await client.query(`
+      INSERT INTO distribution.vehicles
+        (plate_number, vehicle_type, status, warehouse_id, capacity_kg)
+      VALUES ('01C001CC', 'DAMAS', 'active', 9904, 500)
+    `);
+    const vRes = await client.query(
+      `SELECT id FROM distribution.vehicles WHERE plate_number = '01C001CC'`
+    );
+    const vId = vRes.rows[0].id;
+
+    // Old rejected status 'pending' should fail
+    await expect(
+      client.query(`
+        INSERT INTO distribution.vehicle_handoffs
+          (vehicle_id, delivery_agent_id, source_warehouse_id, vehicle_warehouse_id,
+           handoff_date, status)
+        VALUES ($1, 1, 9904, 9904, '2026-08-01', 'pending')
+      `, [vId]),
+    ).rejects.toThrow(/vehicle_handoffs_status_check/i);
+
+    // Old rejected status 'confirmed' should fail
+    await expect(
+      client.query(`
+        INSERT INTO distribution.vehicle_handoffs
+          (vehicle_id, delivery_agent_id, source_warehouse_id, vehicle_warehouse_id,
+           handoff_date, status)
+        VALUES ($1, 1, 9904, 9904, '2026-08-01', 'confirmed')
+      `, [vId]),
+    ).rejects.toThrow(/vehicle_handoffs_status_check/i);
+
+    // Valid status 'prepared' succeeds
+    await client.query(`
+      INSERT INTO distribution.vehicle_handoffs
+        (vehicle_id, delivery_agent_id, source_warehouse_id, vehicle_warehouse_id,
+         handoff_date, status)
+      VALUES ($1, 1, 9904, 9904, '2026-08-01', 'prepared')
+    `, [vId]);
+
+    // Valid status 'stock_transferred' succeeds
+    await client.query(`
+      INSERT INTO distribution.vehicle_handoffs
+        (vehicle_id, delivery_agent_id, source_warehouse_id, vehicle_warehouse_id,
+         handoff_date, status)
+      VALUES ($1, 1, 9904, 9904, '2026-08-02', 'stock_transferred')
+    `, [vId]);
+  });
+
+  it("vehicle_sale_allocations: operation_key is UNIQUE — replay with same key is rejected", async () => {
+    await client.query(`
+      INSERT INTO distribution.vehicle_sale_allocations
+        (handoff_id, savdo_id, savdo_tafsilot_id, mahsulot_id,
+         product_name, product_sku, vehicle_id,
+         allocated_quantity, allocated_weight_kg, operation_key)
+      VALUES (1, 1, 1, 1, 'Arqon', 'SKU-1', 1, 2, 1.5, 'op-key-replay-test-001')
+    `);
+    await expect(
+      client.query(`
+        INSERT INTO distribution.vehicle_sale_allocations
+          (handoff_id, savdo_id, savdo_tafsilot_id, mahsulot_id,
+           product_name, product_sku, vehicle_id,
+           allocated_quantity, allocated_weight_kg, operation_key)
+        VALUES (1, 2, 2, 1, 'Arqon', 'SKU-1', 1, 3, 2.0, 'op-key-replay-test-001')
+      `),
+    ).rejects.toThrow(/unique/i);
+  });
+
+  it("vehicle_sale_allocations CHECK: allocated_quantity and allocated_weight_kg must be positive", async () => {
+    await expect(
+      client.query(`
+        INSERT INTO distribution.vehicle_sale_allocations
+          (handoff_id, savdo_id, savdo_tafsilot_id, mahsulot_id,
+           product_name, product_sku, vehicle_id,
+           allocated_quantity, allocated_weight_kg, operation_key)
+        VALUES (1, 3, 3, 1, 'Arqon', 'SKU-1', 1, 0, 1.0, 'op-key-qty-zero')
+      `),
+    ).rejects.toThrow(/vehicle_sale_allocations_qty_check/i);
+
+    await expect(
+      client.query(`
+        INSERT INTO distribution.vehicle_sale_allocations
+          (handoff_id, savdo_id, savdo_tafsilot_id, mahsulot_id,
+           product_name, product_sku, vehicle_id,
+           allocated_quantity, allocated_weight_kg, operation_key)
+        VALUES (1, 4, 4, 1, 'Arqon', 'SKU-1', 1, 1, 0, 'op-key-weight-zero')
+      `),
+    ).rejects.toThrow(/vehicle_sale_allocations_weight_check/i);
+  });
+
+  it("vehicle_sale_allocations: partial unique on source_unit_event_id — one load event supplies at most one allocation", async () => {
+    // First unit-tracked allocation referencing load event 42001 succeeds
+    await client.query(`
+      INSERT INTO distribution.vehicle_sale_allocations
+        (handoff_id, savdo_id, savdo_tafsilot_id, mahsulot_id,
+         product_name, product_sku, vehicle_id,
+         allocated_quantity, allocated_weight_kg, source_unit_event_id, operation_key)
+      VALUES (1, 10, 10, 1, 'Arqon', 'SKU-1', 1, 1, 0.5, 42001, 'op-key-src-unit-a')
+    `);
+
+    // Second allocation with a DIFFERENT operation_key but the SAME
+    // source_unit_event_id is rejected by the partial unique index.
+    await expect(
+      client.query(`
+        INSERT INTO distribution.vehicle_sale_allocations
+          (handoff_id, savdo_id, savdo_tafsilot_id, mahsulot_id,
+           product_name, product_sku, vehicle_id,
+           allocated_quantity, allocated_weight_kg, source_unit_event_id, operation_key)
+        VALUES (1, 11, 11, 1, 'Arqon', 'SKU-1', 1, 1, 0.5, 42001, 'op-key-src-unit-b')
+      `),
+    ).rejects.toThrow(/unique/i);
+
+    // Aggregate allocations (NULL source_unit_event_id) remain allowed and may
+    // coexist multiple times — the partial predicate excludes NULLs.
+    await client.query(`
+      INSERT INTO distribution.vehicle_sale_allocations
+        (handoff_id, savdo_id, savdo_tafsilot_id, mahsulot_id,
+         product_name, product_sku, vehicle_id,
+         allocated_quantity, allocated_weight_kg, operation_key)
+      VALUES (1, 12, 12, 1, 'Arqon', 'SKU-1', 1, 2, 1.0, 'op-key-src-unit-null-1')
+    `);
+    await client.query(`
+      INSERT INTO distribution.vehicle_sale_allocations
+        (handoff_id, savdo_id, savdo_tafsilot_id, mahsulot_id,
+         product_name, product_sku, vehicle_id,
+         allocated_quantity, allocated_weight_kg, operation_key)
+      VALUES (1, 13, 13, 1, 'Arqon', 'SKU-1', 1, 3, 1.5, 'op-key-src-unit-null-2')
+    `);
+  });
+
+  it("vehicle_replenishment_requests: partial unique prevents two open requests for same vehicle+mahsulot", async () => {
+    // First open request succeeds
+    await client.query(`
+      INSERT INTO distribution.vehicle_replenishment_requests
+        (vehicle_id, requested_by, mahsulot_id, requested_quantity, status)
+      VALUES (1, 111, 1, 10, 'pending')
+    `);
+    // Second open request for same vehicle+mahsulot rejected
+    await expect(
+      client.query(`
+        INSERT INTO distribution.vehicle_replenishment_requests
+          (vehicle_id, requested_by, mahsulot_id, requested_quantity, status)
+        VALUES (1, 111, 1, 5, 'approved')
+      `),
+    ).rejects.toThrow(/unique/i);
+    // Closed request (fulfilled) for same vehicle+mahsulot is allowed
+    await client.query(`
+      INSERT INTO distribution.vehicle_replenishment_requests
+        (vehicle_id, requested_by, mahsulot_id, requested_quantity, status)
+      VALUES (1, 111, 1, 3, 'fulfilled')
+    `);
+  });
+
+  it("vehicle_reconciliations: only exact status values accepted (draft/approved/applied/disputed/cancelled)", async () => {
+    await expect(
+      client.query(`
+        INSERT INTO distribution.vehicle_reconciliations
+          (vehicle_id, delivery_agent_id, reconciliation_date, status)
+        VALUES (1, 1, '2026-08-10', 'confirmed')
+      `),
+    ).rejects.toThrow(/vehicle_reconciliations_status_check/i);
+
+    // Valid statuses
+    await client.query(`
+      INSERT INTO distribution.vehicle_reconciliations
+        (vehicle_id, delivery_agent_id, reconciliation_date, status)
+      VALUES (1, 1, '2026-08-10', 'draft')
+    `);
+  });
+
+  it("vehicle_reconciliation_items: adjustment_reference partial unique prevents double-apply", async () => {
+    // Insert a reconciliation to reference
+    const rRes = await client.query(`
+      SELECT id FROM distribution.vehicle_reconciliations
+      WHERE vehicle_id = 1 AND reconciliation_date = '2026-08-10'
+    `);
+    const recId = rRes.rows[0].id;
+
+    // First apply — succeeds
+    await client.query(`
+      INSERT INTO distribution.vehicle_reconciliation_items
+        (reconciliation_id, mahsulot_id, expected_quantity, actual_quantity,
+         discrepancy, adjustment_reference)
+      VALUES ($1, 1, 10, 8, -2, 'adj-ref-single-apply-001')
+    `, [recId]);
+
+    // Second apply of same adjustment_reference — rejected by partial unique
+    await expect(
+      client.query(`
+        INSERT INTO distribution.vehicle_reconciliation_items
+          (reconciliation_id, mahsulot_id, expected_quantity, actual_quantity,
+           discrepancy, adjustment_reference)
+        VALUES ($1, 2, 5, 5, 0, 'adj-ref-single-apply-001')
+      `, [recId]),
+    ).rejects.toThrow(/unique/i);
+
+    // NULL adjustment_reference (not yet applied) can appear multiple times
+    await client.query(`
+      INSERT INTO distribution.vehicle_reconciliation_items
+        (reconciliation_id, mahsulot_id, expected_quantity, actual_quantity, discrepancy)
+      VALUES ($1, 3, 6, 6, 0)
+    `, [recId]);
+    await client.query(`
+      INSERT INTO distribution.vehicle_reconciliation_items
+        (reconciliation_id, mahsulot_id, expected_quantity, actual_quantity, discrepancy)
+      VALUES ($1, 4, 7, 7, 0)
+    `, [recId]);
+  });
+
+  it("vehicle_assignments: partial unique prevents two active assignments for the same agent", async () => {
+    // Insert two distinct vehicles to assign
+    await client.query(`
+      INSERT INTO distribution.vehicles
+        (plate_number, vehicle_type, status, warehouse_id, capacity_kg)
+      VALUES ('01D001DD', 'DAMAS', 'active', 9910, 500),
+             ('01D002DD', 'LABO',  'active', 9911, 800)
+    `);
+    const vRes = await client.query(
+      `SELECT id FROM distribution.vehicles WHERE plate_number IN ('01D001DD','01D002DD') ORDER BY plate_number`
+    );
+    const [v1, v2] = vRes.rows.map((r: { id: number }) => r.id);
+
+    // First active assignment for agent 7001 succeeds
+    await client.query(`
+      INSERT INTO distribution.vehicle_assignments (vehicle_id, delivery_agent_id, status)
+      VALUES ($1, 7001, 'active')
+    `, [v1]);
+
+    // Second active assignment for the SAME agent (different vehicle) rejected
+    await expect(
+      client.query(`
+        INSERT INTO distribution.vehicle_assignments (vehicle_id, delivery_agent_id, status)
+        VALUES ($1, 7001, 'active')
+      `, [v2]),
+    ).rejects.toThrow(/unique/i);
+
+    // An ENDED assignment for the same agent is allowed (partial predicate excludes it)
+    await client.query(`
+      INSERT INTO distribution.vehicle_assignments (vehicle_id, delivery_agent_id, status)
+      VALUES ($1, 7001, 'ended')
+    `, [v2]);
+  });
+
+  it("vehicle_unit_events: multiple DISTINCT labels attach to one handoff item; duplicate label/barcode load rejected", async () => {
+    // Set up a vehicle + handoff + aggregate handoff item to reference
+    await client.query(`
+      INSERT INTO distribution.vehicles
+        (plate_number, vehicle_type, status, warehouse_id, capacity_kg)
+      VALUES ('01E001EE', 'DAMAS', 'active', 9920, 500)
+    `);
+    const vRes = await client.query(
+      `SELECT id FROM distribution.vehicles WHERE plate_number = '01E001EE'`
+    );
+    const vId = vRes.rows[0].id;
+
+    await client.query(`
+      INSERT INTO distribution.vehicle_handoffs
+        (vehicle_id, delivery_agent_id, source_warehouse_id, vehicle_warehouse_id,
+         handoff_date, status)
+      VALUES ($1, 1, 9920, 9920, '2026-09-01', 'prepared')
+    `, [vId]);
+    const hRes = await client.query(`
+      SELECT id FROM distribution.vehicle_handoffs
+      WHERE vehicle_id = $1 AND handoff_date = '2026-09-01'
+    `, [vId]);
+    const hId = hRes.rows[0].id;
+
+    // Aggregate handoff item — one row for the whole product line, no label/barcode
+    await client.query(`
+      INSERT INTO distribution.vehicle_handoff_items
+        (handoff_id, mahsulot_id, sku, quantity_dispatched, unit_cost)
+      VALUES ($1, 1, 'SKU-AGG', 3, 100)
+    `, [hId]);
+    const hiRes = await client.query(`
+      SELECT id FROM distribution.vehicle_handoff_items
+      WHERE handoff_id = $1 AND mahsulot_id = 1
+    `, [hId]);
+    const hiId = hiRes.rows[0].id;
+
+    // Three DISTINCT units (labels + barcodes) all attach to the SAME handoff item
+    // via load events — proving unit cardinality lives on vehicle_unit_events.
+    for (let i = 1; i <= 3; i++) {
+      await client.query(`
+        INSERT INTO distribution.vehicle_unit_events
+          (vehicle_id, handoff_id, handoff_item_id, mahsulot_id, sku,
+           event_type, quantity, actor_id, production_label_id, barcode)
+        VALUES ($1, $2, $3, 1, 'SKU-AGG', 'load', 1, 555, $4, $5)
+      `, [vId, hId, hiId, 1000 + i, `BC-${i}`]);
+    }
+    const cnt = await client.query(`
+      SELECT COUNT(*)::int AS n FROM distribution.vehicle_unit_events
+      WHERE handoff_item_id = $1 AND event_type = 'load'
+    `, [hiId]);
+    expect(cnt.rows[0].n).toBe(3);
+
+    // Duplicate production_label_id load in the SAME handoff is rejected
+    await expect(
+      client.query(`
+        INSERT INTO distribution.vehicle_unit_events
+          (vehicle_id, handoff_id, handoff_item_id, mahsulot_id, sku,
+           event_type, quantity, actor_id, production_label_id, barcode)
+        VALUES ($1, $2, $3, 1, 'SKU-AGG', 'load', 1, 555, 1001, 'BC-NEW')
+      `, [vId, hId, hiId]),
+    ).rejects.toThrow(/unique/i);
+
+    // Duplicate barcode load in the SAME handoff is rejected
+    await expect(
+      client.query(`
+        INSERT INTO distribution.vehicle_unit_events
+          (vehicle_id, handoff_id, handoff_item_id, mahsulot_id, sku,
+           event_type, quantity, actor_id, production_label_id, barcode)
+        VALUES ($1, $2, $3, 1, 'SKU-AGG', 'load', 1, 555, 9999, 'BC-1')
+      `, [vId, hId, hiId]),
+    ).rejects.toThrow(/unique/i);
+
+    // A NON-load event with the same label/barcode is allowed (partial predicate
+    // only guards event_type='load').
+    await client.query(`
+      INSERT INTO distribution.vehicle_unit_events
+        (vehicle_id, handoff_id, handoff_item_id, mahsulot_id, sku,
+         event_type, quantity, actor_id, production_label_id, barcode)
+      VALUES ($1, $2, $3, 1, 'SKU-AGG', 'sale', -1, 555, 1001, 'BC-1')
+    `, [vId, hId, hiId]);
+  });
 });

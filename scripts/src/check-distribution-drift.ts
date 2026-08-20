@@ -29,6 +29,16 @@ import {
   revisitlarTable,
   savdolarTable,
   savdoTafsilotTable,
+  vehiclesTable,
+  vehicleAssignmentsTable,
+  vehicleHandoffsTable,
+  vehicleHandoffItemsTable,
+  vehicleUnitEventsTable,
+  vehicleSaleAllocationsTable,
+  vehicleStockTargetsTable,
+  vehicleReplenishmentRequestsTable,
+  vehicleReconciliationsTable,
+  vehicleReconciliationItemsTable,
 } from "@workspace/db";
 
 // Distribution sxemasi UCH joyda ta'riflangan va qo'lda sinxron saqlanadi:
@@ -54,6 +64,11 @@ import {
 // mirror to'liq bo'lishi shart.
 // Parallel validation'lar bir-birining bazasini DROP qilmasligi uchun nom
 // har bir ishga tushirishda unikal (pid + timestamp).
+//
+// Vehicle Distribution Pilot: throwaway DBs always set
+// VEHICLE_DISTRIBUTION_SCHEMA_APPROVED=1 so all vehicle tables are created and
+// validated against the Drizzle mirror. The gate only guards the production/
+// Railway databases.
 const RUN_ID = `${process.pid}_${Date.now()}`;
 const BOT_DB = `dist_drift_bot_${RUN_ID}`;
 const TS_DB = `dist_drift_ts_${RUN_ID}`;
@@ -78,6 +93,17 @@ const TABLES = {
   savdo_tafsilot: savdoTafsilotTable,
   savdolar: savdolarTable,
   users: distUsersTable,
+  // Vehicle Distribution Pilot tables (always included in throwaway validation)
+  vehicles: vehiclesTable,
+  vehicle_assignments: vehicleAssignmentsTable,
+  vehicle_handoffs: vehicleHandoffsTable,
+  vehicle_handoff_items: vehicleHandoffItemsTable,
+  vehicle_unit_events: vehicleUnitEventsTable,
+  vehicle_sale_allocations: vehicleSaleAllocationsTable,
+  vehicle_stock_targets: vehicleStockTargetsTable,
+  vehicle_replenishment_requests: vehicleReplenishmentRequestsTable,
+  vehicle_reconciliations: vehicleReconciliationsTable,
+  vehicle_reconciliation_items: vehicleReconciliationItemsTable,
 } as const;
 
 type ColSpec = { type: string; notNull: boolean; def: string | null };
@@ -92,7 +118,9 @@ function indexKey(s: IndexSpec): string {
 }
 
 /**
- * Extract all non-PK indexes from a live throwaway DB via pg_catalog.
+ * Extract all non-PK, non-partial indexes from a live throwaway DB via pg_catalog.
+ * Partial unique indexes on vehicle tables are excluded here — they are
+ * validated separately by compareVehicleChecksAndPartialIndexes().
  * Returns a Map<key, IndexSpec> where key = indexKey(spec).
  */
 async function readActualIndexes(pool: pg.Pool): Promise<Map<string, IndexSpec>> {
@@ -116,6 +144,9 @@ async function readActualIndexes(pool: pg.Pool): Promise<Map<string, IndexSpec>>
     JOIN pg_attribute a  ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
     WHERE n.nspname = 'distribution'
       AND NOT ix.indisprimary
+      -- Exclude partial indexes on vehicle tables: they are validated separately
+      -- by compareVehicleChecksAndPartialIndexes() which checks predicates too.
+      AND NOT (t.relname LIKE 'vehicle%' AND ix.indpred IS NOT NULL)
     GROUP BY ix.indexrelid, t.relname, ix.indisunique
     ORDER BY t.relname
   `);
@@ -346,6 +377,246 @@ function compare(
   return drift;
 }
 
+// ── Vehicle CHECK + partial-index predicate catalog validation ────────────────
+//
+// The Drizzle index() API cannot express WHERE predicates, so partial unique
+// indexes (vehicle_assignments active-vehicle guard, replenishment open-request
+// guard, reconciliation_items adjustment_reference single-apply) and named
+// CHECK constraints cannot be validated via drizzleExpectedIndexes(). Instead
+// we query pg_catalog directly on each throwaway DB and assert:
+//   • Every expected named CHECK constraint exists with the correct expression.
+//   • Every expected partial unique index exists with the correct predicate.
+//
+// Both sources (bot DDL and init-distribution.ts) must materialise identical
+// catalog entries. A mismatch → non-zero exit.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type CheckSpec = { table: string; name: string; expr: string };
+type PartialIdxSpec = { table: string; name: string; predicate: string };
+
+/**
+ * Normalize a pg_catalog CHECK expression or index predicate for stable
+ * comparison across PostgreSQL's internal rewriting:
+ *
+ *   col IN ('a','b')  →  stored as col = any (array['a'::text, ...])
+ *   x >= 0            →  stored as x >= (0)::numeric
+ *   (a is null) or (b >= 0)  →  OR compound, parens per sub-expr
+ *   (status = 'active'       →  pg_get_expr partial index predicates lack closing paren
+ *
+ * Strategy: lower-case, collapse whitespace, strip type casts on numeric/string
+ * literals, convert `= any (array[...])` → `in (...)`, remove all
+ * parentheses (both balanced and the trailing-paren-missing pg_get_expr case),
+ * then re-normalise whitespace around keywords.
+ */
+function normalizeExpr(raw: string): string {
+  let s = raw.trim().toLowerCase();
+  // Strip CHECK(...) wrapper from pg_get_constraintdef output.
+  s = s.replace(/^check\s*\(/, "").replace(/\)\s*$/, "").trim();
+  // Collapse whitespace.
+  s = s.replace(/\s+/g, " ").trim();
+  // Strip type casts on numeric literals: (0)::numeric → 0
+  s = s.replace(/\(\s*(-?\d+(?:\.\d+)?)\s*\)::[a-z_]+/g, "$1");
+  // Strip bare casts on string literals: 'foo'::text → 'foo'
+  s = s.replace(/'([^']*)'::[a-z_ ]+/g, "'$1'");
+  // Convert `= any (array['a', 'b'])` → `in ('a','b')`
+  s = s.replace(
+    /=\s*any\s*\(\s*array\s*\[\s*(.*?)\s*\]\s*\)/g,
+    (_m, items: string) => `in (${items.replace(/\s*,\s*/g, ",")})`,
+  );
+  // Remove all parentheses — PostgreSQL wraps each sub-expression differently
+  // across versions and expr types; we compare the token sequence only.
+  s = s.replace(/[()]/g, " ").replace(/\s+/g, " ").trim();
+  return s;
+}
+
+/** Read named CHECK constraints from the distribution schema's vehicle tables. */
+async function readActualChecks(pool: pg.Pool): Promise<Map<string, CheckSpec>> {
+  const { rows } = await pool.query<{ table_name: string; conname: string; consrc: string }>(`
+    SELECT c.relname AS table_name, con.conname, pg_get_constraintdef(con.oid) AS consrc
+    FROM pg_constraint con
+    JOIN pg_class     c   ON c.oid = con.conrelid
+    JOIN pg_namespace n   ON n.oid = c.relnamespace
+    WHERE n.nspname = 'distribution'
+      AND con.contype = 'c'
+      AND c.relname LIKE 'vehicle%'
+    ORDER BY c.relname, con.conname
+  `);
+  const out = new Map<string, CheckSpec>();
+  for (const r of rows) {
+    const spec: CheckSpec = {
+      table: r.table_name,
+      name: r.conname,
+      expr: normalizeExpr(r.consrc),
+    };
+    out.set(r.conname, spec);
+  }
+  return out;
+}
+
+/** Read partial unique indexes from the distribution schema's vehicle tables. */
+async function readActualPartialIndexes(pool: pg.Pool): Promise<Map<string, PartialIdxSpec>> {
+  const { rows } = await pool.query<{
+    table_name: string;
+    index_name: string;
+    predicate: string;
+  }>(`
+    SELECT c.relname AS table_name, i.relname AS index_name,
+           pg_get_expr(ix.indpred, ix.indrelid) AS predicate
+    FROM pg_index     ix
+    JOIN pg_class     c  ON c.oid  = ix.indrelid
+    JOIN pg_class     i  ON i.oid  = ix.indexrelid
+    JOIN pg_namespace n  ON n.oid  = c.relnamespace
+    WHERE n.nspname = 'distribution'
+      AND ix.indisunique
+      AND ix.indpred IS NOT NULL
+      AND c.relname LIKE 'vehicle%'
+    ORDER BY c.relname, i.relname
+  `);
+  const out = new Map<string, PartialIdxSpec>();
+  for (const r of rows) {
+    const spec: PartialIdxSpec = {
+      table: r.table_name,
+      name: r.index_name,
+      predicate: normalizeExpr(r.predicate),
+    };
+    out.set(r.index_name, spec);
+  }
+  return out;
+}
+
+// Canonical expected CHECKs for vehicle tables — kept in sync with VEHICLE_DDL.
+const EXPECTED_CHECKS: CheckSpec[] = [
+  { table: "vehicles", name: "vehicles_type_check",     expr: normalizeExpr("vehicle_type IN ('DAMAS','LABO','NEXIA','SPARK','COBALT','OTHER')") },
+  { table: "vehicles", name: "vehicles_status_check",   expr: normalizeExpr("status IN ('active','inactive','in_warehouse','on_route','maintenance')") },
+  { table: "vehicles", name: "vehicles_capacity_check", expr: normalizeExpr("capacity_kg >= 0") },
+  { table: "vehicle_assignments", name: "vehicle_assignments_status_check", expr: normalizeExpr("status IN ('active','ended')") },
+  { table: "vehicle_handoffs", name: "vehicle_handoffs_status_check", expr: normalizeExpr("status IN ('prepared','labels_printed','handed_over','stock_transferred','cancelled')") },
+  { table: "vehicle_handoff_items", name: "vehicle_handoff_items_qty_check",  expr: normalizeExpr("quantity_dispatched > 0") },
+  { table: "vehicle_handoff_items", name: "vehicle_handoff_items_cost_check", expr: normalizeExpr("unit_cost >= 0") },
+  { table: "vehicle_unit_events", name: "vehicle_unit_events_type_check", expr: normalizeExpr("event_type IN ('load','unload','return','adjustment','sale')") },
+  { table: "vehicle_unit_events", name: "vehicle_unit_events_qty_check",  expr: normalizeExpr("quantity <> 0") },
+  { table: "vehicle_sale_allocations", name: "vehicle_sale_allocations_qty_check",    expr: normalizeExpr("allocated_quantity > 0") },
+  { table: "vehicle_sale_allocations", name: "vehicle_sale_allocations_weight_check", expr: normalizeExpr("allocated_weight_kg > 0") },
+  { table: "vehicle_stock_targets", name: "vehicle_stock_targets_qty_check", expr: normalizeExpr("target_quantity > 0") },
+  { table: "vehicle_stock_targets", name: "vehicle_stock_targets_min_check", expr: normalizeExpr("min_quantity >= 0") },
+  { table: "vehicle_replenishment_requests", name: "vehicle_replenishment_status_check",   expr: normalizeExpr("status IN ('pending','approved','fulfilled','rejected','cancelled')") },
+  { table: "vehicle_replenishment_requests", name: "vehicle_replenishment_qty_check",      expr: normalizeExpr("requested_quantity > 0") },
+  { table: "vehicle_replenishment_requests", name: "vehicle_replenishment_approved_check", expr: normalizeExpr("approved_quantity IS NULL OR approved_quantity >= 0") },
+  { table: "vehicle_reconciliations", name: "vehicle_reconciliations_status_check", expr: normalizeExpr("status IN ('draft','approved','applied','disputed','cancelled')") },
+  { table: "vehicle_reconciliation_items", name: "vehicle_reconciliation_items_expected_check", expr: normalizeExpr("expected_quantity >= 0") },
+  { table: "vehicle_reconciliation_items", name: "vehicle_reconciliation_items_actual_check",   expr: normalizeExpr("actual_quantity >= 0") },
+];
+
+// Canonical expected partial unique indexes for vehicle tables.
+const EXPECTED_PARTIAL_INDEXES: PartialIdxSpec[] = [
+  {
+    table: "vehicle_assignments",
+    name: "uq_vehicle_assignments_active_vehicle",
+    predicate: normalizeExpr("status = 'active'"),
+  },
+  {
+    table: "vehicle_assignments",
+    name: "uq_vehicle_assignments_active_agent",
+    predicate: normalizeExpr("status = 'active'"),
+  },
+  {
+    table: "vehicle_unit_events",
+    name: "uq_vehicle_unit_events_load_label",
+    predicate: normalizeExpr("event_type = 'load' AND production_label_id IS NOT NULL"),
+  },
+  {
+    table: "vehicle_unit_events",
+    name: "uq_vehicle_unit_events_load_barcode",
+    predicate: normalizeExpr("event_type = 'load' AND barcode IS NOT NULL"),
+  },
+  {
+    table: "vehicle_sale_allocations",
+    name: "uq_vehicle_sale_allocations_source_unit_event",
+    predicate: normalizeExpr("source_unit_event_id IS NOT NULL"),
+  },
+  {
+    table: "vehicle_replenishment_requests",
+    name: "uq_vehicle_replenishment_open",
+    predicate: normalizeExpr("status IN ('pending','approved')"),
+  },
+  {
+    table: "vehicle_reconciliation_items",
+    name: "uq_vehicle_reconciliation_items_adj_ref",
+    predicate: normalizeExpr("adjustment_reference IS NOT NULL"),
+  },
+];
+
+/**
+ * Compare expected vehicle CHECK constraints and partial-index predicates
+ * against a live throwaway DB. Returns true if drift was found.
+ */
+async function compareVehicleChecksAndPartialIndexes(
+  label: string,
+  pool: pg.Pool,
+): Promise<boolean> {
+  const [actualChecks, actualPartial] = await Promise.all([
+    readActualChecks(pool),
+    readActualPartialIndexes(pool),
+  ]);
+  let drift = false;
+
+  for (const exp of EXPECTED_CHECKS) {
+    const act = actualChecks.get(exp.name);
+    if (!act) {
+      console.error(`✗ [${label}] CHECK yo'q: ${exp.table}.${exp.name}`);
+      drift = true;
+      continue;
+    }
+    // pg wraps the expression in CHECK (...) — strip it before comparing.
+    const actExpr = normalizeExpr(act.expr.replace(/^check\s*/i, ""));
+    if (actExpr !== exp.expr) {
+      console.error(
+        `✗ [${label}] CHECK ifoda mos emas: ${exp.name}\n` +
+          `    kutilgan: ${exp.expr}\n` +
+          `    haqiqiy:  ${actExpr}`,
+      );
+      drift = true;
+    }
+  }
+  for (const name of actualChecks.keys()) {
+    if (!EXPECTED_CHECKS.find((e) => e.name === name)) {
+      console.error(`✗ [${label}] Kutilmagan CHECK: ${name}`);
+      drift = true;
+    }
+  }
+
+  for (const exp of EXPECTED_PARTIAL_INDEXES) {
+    const act = actualPartial.get(exp.name);
+    if (!act) {
+      console.error(`✗ [${label}] Partial unique index yo'q: ${exp.table}.${exp.name}`);
+      drift = true;
+      continue;
+    }
+    if (normalizeExpr(act.predicate) !== exp.predicate) {
+      console.error(
+        `✗ [${label}] Partial index predikati mos emas: ${exp.name}\n` +
+          `    kutilgan: ${exp.predicate}\n` +
+          `    haqiqiy:  ${normalizeExpr(act.predicate)}`,
+      );
+      drift = true;
+    }
+  }
+  for (const name of actualPartial.keys()) {
+    if (!EXPECTED_PARTIAL_INDEXES.find((e) => e.name === name)) {
+      console.error(`✗ [${label}] Kutilmagan partial unique index: ${name}`);
+      drift = true;
+    }
+  }
+
+  if (!drift) {
+    console.log(
+      `✓ [${label}] ${EXPECTED_CHECKS.length} vehicle CHECK + ` +
+        `${EXPECTED_PARTIAL_INDEXES.length} partial unique index mos`,
+    );
+  }
+  return drift;
+}
+
 async function main(): Promise<void> {
   const adminUrl = process.env.DATABASE_URL;
   if (!adminUrl) throw new Error("DATABASE_URL must be set");
@@ -363,9 +634,19 @@ async function main(): Promise<void> {
 
   // Bola jarayonlar throwaway bazaga ulanishi shart; lib/db va bot
   // RAILWAY_DATABASE_URL ni birinchi o'ringa qo'yadi — olib tashlaymiz.
-  const botEnv: NodeJS.ProcessEnv = { ...process.env, DATABASE_URL: botUrl };
+  // Vehicle pilot: throwaway DBs always enable vehicle tables so drift
+  // validation covers all 28 distribution tables including vehicle ones.
+  const botEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    DATABASE_URL: botUrl,
+    VEHICLE_DISTRIBUTION_SCHEMA_APPROVED: "1",
+  };
   delete botEnv["RAILWAY_DATABASE_URL"];
-  const tsEnv: NodeJS.ProcessEnv = { ...process.env, DATABASE_URL: tsUrl };
+  const tsEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    DATABASE_URL: tsUrl,
+    VEHICLE_DISTRIBUTION_SCHEMA_APPROVED: "1",
+  };
   delete tsEnv["RAILWAY_DATABASE_URL"];
 
   // 2a. Distribution bot runtime DDL (python _INIT_DDL)
@@ -405,6 +686,7 @@ async function main(): Promise<void> {
     readActual(botPool),
     readActualIndexes(botPool),
   ]);
+  const botCheckDrift = await compareVehicleChecksAndPartialIndexes("bot _INIT_DDL", botPool);
   await botPool.end();
 
   const tsPool = new pg.Pool({ connectionString: tsUrl });
@@ -412,6 +694,7 @@ async function main(): Promise<void> {
     readActual(tsPool),
     readActualIndexes(tsPool),
   ]);
+  const tsCheckDrift = await compareVehicleChecksAndPartialIndexes("init-distribution.ts", tsPool);
   await tsPool.end();
 
   const botDrift = compare("bot _INIT_DDL", expected, botActual);
@@ -426,7 +709,7 @@ async function main(): Promise<void> {
   }
   await cleanupPool.end();
 
-  if (botDrift || tsDrift || botIndexDrift || tsIndexDrift) {
+  if (botDrift || tsDrift || botIndexDrift || tsIndexDrift || botCheckDrift || tsCheckDrift) {
     console.error(
       "\nDistribution sxema drifti aniqlandi. UCHALA nusxani ham yangilang: " +
         "artifacts/distribution-bot/database/connection.py (_INIT_DDL), " +
@@ -436,7 +719,7 @@ async function main(): Promise<void> {
   }
 
   console.log(
-    "\nDistribution sxema mos — drift yo'q (bot DDL ↔ init skript ↔ Drizzle mirror; ustunlar + indekslar).",
+    "\nDistribution sxema mos — drift yo'q (bot DDL ↔ init skript ↔ Drizzle mirror; ustunlar + indekslar + vehicle CHECK + partial-index predicates).",
   );
 }
 

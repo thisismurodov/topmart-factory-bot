@@ -1,4 +1,5 @@
-import { pgSchema, serial, text, integer, bigint, doublePrecision, timestamp, uniqueIndex, index } from "drizzle-orm/pg-core";
+import { pgSchema, serial, text, integer, bigint, doublePrecision, timestamp, uniqueIndex, index, check, numeric, date } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -266,3 +267,386 @@ export type DistNasiya = typeof nasiyaTable.$inferSelect;
 export type DistAgent = typeof distUsersTable.$inferSelect;
 export type DeliveryAgent = typeof deliveryAgentsTable.$inferSelect;
 export type _DistInsertDokon = z.infer<typeof insertDokonSchema>;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Vehicle Distribution Pilot — F1 schema
+//
+// Gate: these tables are only created at runtime when
+//   VEHICLE_DISTRIBUTION_SCHEMA_APPROVED=1
+// is set in the environment. The Drizzle mirror is always present here for
+// type-safety; runtime DDL is gated in all three DDL sources.
+//
+// Cross-schema references: warehouse_id and production_label_id/barcode are
+// LOGICAL references to public.warehouses and public.production_labels; no FK
+// constraints cross schema boundaries.
+//
+// Partial unique indexes (replenishment open-request guard, reconciliation
+// adjustment_reference single-apply) cannot be expressed in Drizzle's index()
+// API without WHERE support. They are enforced in the runtime DDL and validated
+// by the dedicated catalog check in check-distribution-drift.ts
+// (compareVehicleChecksAndPartialIndexes).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Vehicle master registry.
+ *
+ *  warehouse_id: UNIQUE logical ref to public.warehouses — each vehicle has
+ *  exactly one home warehouse at a time. No cross-schema FK.
+ *
+ *  vehicle_type: canonical fleet types used by this pilot.
+ *  status:       lifecycle state of the physical vehicle.
+ */
+export const vehiclesTable = distribution.table(
+  "vehicles",
+  {
+    id: serial("id").primaryKey(),
+    /** Human-readable plate or fleet number — must be unique. */
+    plateNumber: text("plate_number").notNull(),
+    vehicleType: text("vehicle_type").notNull().default("DAMAS"),
+    /** Free-form description / make+model. */
+    description: text("description"),
+    capacityKg: numeric("capacity_kg", { precision: 12, scale: 3 }).notNull().default("0"),
+    /** Lifecycle state. */
+    status: text("status").notNull().default("active"),
+    /** Logical ref to public.warehouses.id — UNIQUE (one vehicle ↔ one home warehouse). */
+    warehouseId: integer("warehouse_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("uq_vehicles_plate").on(t.plateNumber),
+    uniqueIndex("uq_vehicles_warehouse").on(t.warehouseId),
+    index("idx_vehicles_status").on(t.status),
+    check(
+      "vehicles_type_check",
+      sql`${t.vehicleType} IN ('DAMAS','LABO','NEXIA','SPARK','COBALT','OTHER')`,
+    ),
+    check(
+      "vehicles_status_check",
+      sql`${t.status} IN ('active','inactive','in_warehouse','on_route','maintenance')`,
+    ),
+    check("vehicles_capacity_check", sql`${t.capacityKg} >= 0`),
+  ],
+);
+
+/** Active assignment: which delivery agent drives which vehicle.
+ *  Only one active assignment per vehicle at a time, AND only one active
+ *  assignment per delivery agent at a time. Both are partial unique indexes
+ *  (vehicle_id WHERE status='active'; delivery_agent_id WHERE status='active')
+ *  enforced in runtime DDL and validated via pg_catalog — WHERE predicates are
+ *  not expressible in Drizzle's index() API. */
+export const vehicleAssignmentsTable = distribution.table(
+  "vehicle_assignments",
+  {
+    id: serial("id").primaryKey(),
+    vehicleId: integer("vehicle_id").notNull(),
+    /** References distribution.delivery_agents.id (logical, no cross-schema FK). */
+    deliveryAgentId: integer("delivery_agent_id").notNull(),
+    assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull().defaultNow(),
+    unassignedAt: timestamp("unassigned_at", { withTimezone: true }),
+    /** 'active' | 'ended' */
+    status: text("status").notNull().default("active"),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("idx_vehicle_assignments_vehicle").on(t.vehicleId, t.status),
+    index("idx_vehicle_assignments_agent").on(t.deliveryAgentId, t.status),
+    check("vehicle_assignments_status_check", sql`${t.status} IN ('active','ended')`),
+  ],
+);
+
+/** Handoff session: warehouse prepares and physically transfers goods to a vehicle.
+ *
+ *  Lifecycle: prepared → labels_printed → handed_over → stock_transferred | cancelled
+ *
+ *  source_warehouse_id:   snapshot of the issuing warehouse at creation time.
+ *  vehicle_warehouse_id:  snapshot of the vehicle's home warehouse at creation time.
+ *  movement_reference:    opaque reference to the stock-movement record created
+ *                         when status transitions to stock_transferred.
+ */
+export const vehicleHandoffsTable = distribution.table(
+  "vehicle_handoffs",
+  {
+    id: serial("id").primaryKey(),
+    vehicleId: integer("vehicle_id").notNull(),
+    deliveryAgentId: integer("delivery_agent_id").notNull(),
+    /** Logical ref to public.warehouses.id (issuing warehouse). */
+    sourceWarehouseId: integer("source_warehouse_id").notNull(),
+    /** Snapshot of vehicle's home warehouse at handoff creation. */
+    vehicleWarehouseId: integer("vehicle_warehouse_id").notNull(),
+    /** ISO date the handoff was initiated. */
+    handoffDate: date("handoff_date").notNull(),
+    status: text("status").notNull().default("prepared"),
+    labelsPrintedAt: timestamp("labels_printed_at", { withTimezone: true }),
+    labelsPrintedBy: integer("labels_printed_by"),
+    handedOverAt: timestamp("handed_over_at", { withTimezone: true }),
+    handedOverBy: integer("handed_over_by"),
+    stockTransferredAt: timestamp("stock_transferred_at", { withTimezone: true }),
+    stockTransferredBy: integer("stock_transferred_by"),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    cancelledBy: integer("cancelled_by"),
+    /** Opaque ref to the stock-movement record created on stock_transferred. */
+    movementReference: text("movement_reference"),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("idx_vehicle_handoffs_vehicle_date").on(t.vehicleId, t.handoffDate),
+    index("idx_vehicle_handoffs_status").on(t.status, t.handoffDate),
+    check(
+      "vehicle_handoffs_status_check",
+      sql`${t.status} IN ('prepared','labels_printed','handed_over','stock_transferred','cancelled')`,
+    ),
+  ],
+);
+
+/** Line items of a handoff: AGGREGATE product quantities dispatched.
+ *
+ *  This is an aggregate (one row per handoff+product), so it deliberately holds
+ *  NO single production_label_id/barcode — a dispatched product line can cover
+ *  many individual units. Per-unit label/barcode identity lives on
+ *  vehicle_unit_events (event_type='load') instead. */
+export const vehicleHandoffItemsTable = distribution.table(
+  "vehicle_handoff_items",
+  {
+    id: serial("id").primaryKey(),
+    handoffId: integer("handoff_id").notNull(),
+    /** Logical reference to distribution.mahsulotlar.id. */
+    mahsulotId: integer("mahsulot_id").notNull(),
+    /** SKU string for cross-referencing public.products (logical, no FK). */
+    sku: text("sku").notNull().default(""),
+    quantityDispatched: numeric("quantity_dispatched", { precision: 12, scale: 3 }).notNull(),
+    unitCost: numeric("unit_cost", { precision: 12, scale: 2 }).notNull().default("0"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("idx_vehicle_handoff_items_handoff").on(t.handoffId),
+    index("idx_vehicle_handoff_items_mahsulot").on(t.mahsulotId),
+    uniqueIndex("uq_vehicle_handoff_items_handoff_mahsulot").on(t.handoffId, t.mahsulotId),
+    check("vehicle_handoff_items_qty_check", sql`${t.quantityDispatched} > 0`),
+    check("vehicle_handoff_items_cost_check", sql`${t.unitCost} >= 0`),
+  ],
+);
+
+/** Per-unit lifecycle events on a vehicle (load, unload, return, adjustment, sale).
+ *
+ *  This is where individual-unit identity lives (production_label_id / barcode),
+ *  as opposed to the aggregate vehicle_handoff_items. A 'load' event links a
+ *  specific unit to a handoff via handoff_item_id, and the two partial unique
+ *  load-identity indexes (production_label_id, barcode — both WHERE
+ *  event_type='load') prevent the same non-null unit from being loaded twice in
+ *  the same handoff. Those WHERE predicates live in runtime DDL only. */
+export const vehicleUnitEventsTable = distribution.table(
+  "vehicle_unit_events",
+  {
+    id: serial("id").primaryKey(),
+    vehicleId: integer("vehicle_id").notNull(),
+    handoffId: integer("handoff_id"),
+    /** Logical ref to distribution.vehicle_handoff_items.id (nullable). */
+    handoffItemId: integer("handoff_item_id"),
+    mahsulotId: integer("mahsulot_id").notNull(),
+    sku: text("sku").notNull().default(""),
+    eventType: text("event_type").notNull(),
+    quantity: numeric("quantity", { precision: 12, scale: 3 }).notNull(),
+    /** Actor (delivery agent telegram_id or user id) who recorded the event. */
+    actorId: bigint("actor_id", { mode: "number" }).notNull(),
+    /** Logical ref to public.production_labels.id (nullable). */
+    productionLabelId: integer("production_label_id"),
+    /** Snapshot of public.production_labels.barcode_value (nullable). */
+    barcode: text("barcode"),
+    eventAt: timestamp("event_at", { withTimezone: true }).notNull().defaultNow(),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("idx_vehicle_unit_events_vehicle_at").on(t.vehicleId, t.eventAt),
+    index("idx_vehicle_unit_events_mahsulot").on(t.mahsulotId, t.eventType),
+    index("idx_vehicle_unit_events_handoff").on(t.handoffId),
+    index("idx_vehicle_unit_events_handoff_item").on(t.handoffItemId),
+    check(
+      "vehicle_unit_events_type_check",
+      sql`${t.eventType} IN ('load','unload','return','adjustment','sale')`,
+    ),
+    check("vehicle_unit_events_qty_check", sql`${t.quantity} <> 0`),
+  ],
+);
+
+/** Links a sale line item to the handoff that supplied its goods.
+ *
+ *  Append-only. Each row is identified by operation_key (UNIQUE) — a
+ *  client-generated idempotency token — so retried writes are safe.
+ *  savdo_id + savdo_tafsilot_id together identify the exact sale line;
+ *  product_name/product_sku are snapshots for audit durability.
+ *  allocated_quantity and allocated_weight_kg must both be positive.
+ *  production_label_id/barcode are optional logical refs to public.production_labels.
+ */
+export const vehicleSaleAllocationsTable = distribution.table(
+  "vehicle_sale_allocations",
+  {
+    id: serial("id").primaryKey(),
+    handoffId: integer("handoff_id").notNull(),
+    /** References distribution.savdolar.id (logical). */
+    savdoId: bigint("savdo_id", { mode: "number" }).notNull(),
+    /** References distribution.savdo_tafsilot.id — identifies the exact line. */
+    savdoTafsilotId: bigint("savdo_tafsilot_id", { mode: "number" }).notNull(),
+    /** References distribution.mahsulotlar.id (logical). */
+    mahsulotId: integer("mahsulot_id").notNull(),
+    /** Snapshot of product name at allocation time (audit durability). */
+    productName: text("product_name").notNull(),
+    /** Snapshot of product SKU at allocation time. */
+    productSku: text("product_sku").notNull().default(""),
+    vehicleId: integer("vehicle_id").notNull(),
+    allocatedQuantity: numeric("allocated_quantity", { precision: 12, scale: 3 }).notNull(),
+    allocatedWeightKg: numeric("allocated_weight_kg", { precision: 12, scale: 3 }).notNull(),
+    /** Logical ref to public.production_labels.id (nullable). */
+    productionLabelId: integer("production_label_id"),
+    /** Logical ref to public.production_labels.barcode_value (nullable). */
+    barcode: text("barcode"),
+    /** Logical ref to distribution.vehicle_unit_events.id — the 'load' event
+     *  that supplied this unit-tracked sale (nullable). A partial unique index
+     *  (source_unit_event_id WHERE source_unit_event_id IS NOT NULL) enforces
+     *  that each unit-tracked load supplies at most one allocation; NULL
+     *  (aggregate) allocations are exempt. That WHERE predicate is enforced in
+     *  runtime DDL and validated via pg_catalog — not expressible in Drizzle. */
+    sourceUnitEventId: integer("source_unit_event_id"),
+    /** Client-generated idempotency token — UNIQUE, prevents duplicate allocation. */
+    operationKey: text("operation_key").notNull(),
+    allocatedAt: timestamp("allocated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("uq_vehicle_sale_allocations_op_key").on(t.operationKey),
+    index("idx_vehicle_sale_allocations_handoff").on(t.handoffId),
+    index("idx_vehicle_sale_allocations_savdo").on(t.savdoId),
+    index("idx_vehicle_sale_allocations_vehicle").on(t.vehicleId),
+    check("vehicle_sale_allocations_qty_check", sql`${t.allocatedQuantity} > 0`),
+    check("vehicle_sale_allocations_weight_check", sql`${t.allocatedWeightKg} > 0`),
+  ],
+);
+
+/** Target stock levels per vehicle and product. */
+export const vehicleStockTargetsTable = distribution.table(
+  "vehicle_stock_targets",
+  {
+    id: serial("id").primaryKey(),
+    vehicleId: integer("vehicle_id").notNull(),
+    mahsulotId: integer("mahsulot_id").notNull(),
+    sku: text("sku").notNull().default(""),
+    targetQuantity: numeric("target_quantity", { precision: 12, scale: 3 }).notNull(),
+    minQuantity: numeric("min_quantity", { precision: 12, scale: 3 }).notNull().default("0"),
+    effectiveFrom: date("effective_from").notNull(),
+    effectiveTo: date("effective_to"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("idx_vehicle_stock_targets_vehicle").on(t.vehicleId, t.mahsulotId),
+    uniqueIndex("uq_vehicle_stock_targets_vehicle_mahsulot_from").on(
+      t.vehicleId,
+      t.mahsulotId,
+      t.effectiveFrom,
+    ),
+    check("vehicle_stock_targets_qty_check", sql`${t.targetQuantity} > 0`),
+    check("vehicle_stock_targets_min_check", sql`${t.minQuantity} >= 0`),
+  ],
+);
+
+/** Replenishment request raised by a delivery agent for a vehicle.
+ *
+ *  Partial unique index in runtime DDL prevents two open (pending/approved)
+ *  requests for the same vehicle+product simultaneously. Enforced via
+ *  pg_catalog in check-distribution-drift.ts — not expressible in Drizzle.
+ */
+export const vehicleReplenishmentRequestsTable = distribution.table(
+  "vehicle_replenishment_requests",
+  {
+    id: serial("id").primaryKey(),
+    vehicleId: integer("vehicle_id").notNull(),
+    requestedBy: bigint("requested_by", { mode: "number" }).notNull(),
+    mahsulotId: integer("mahsulot_id").notNull(),
+    sku: text("sku").notNull().default(""),
+    requestedQuantity: numeric("requested_quantity", { precision: 12, scale: 3 }).notNull(),
+    approvedQuantity: numeric("approved_quantity", { precision: 12, scale: 3 }),
+    status: text("status").notNull().default("pending"),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("idx_vehicle_replenishment_vehicle_status").on(t.vehicleId, t.status),
+    index("idx_vehicle_replenishment_mahsulot").on(t.mahsulotId, t.status),
+    check(
+      "vehicle_replenishment_status_check",
+      sql`${t.status} IN ('pending','approved','fulfilled','rejected','cancelled')`,
+    ),
+    check("vehicle_replenishment_qty_check", sql`${t.requestedQuantity} > 0`),
+    check(
+      "vehicle_replenishment_approved_check",
+      sql`${t.approvedQuantity} IS NULL OR ${t.approvedQuantity} >= 0`,
+    ),
+  ],
+);
+
+/** Reconciliation session header: end-of-day vehicle stock reconciliation.
+ *
+ *  Lifecycle: draft → approved → applied | disputed | cancelled
+ *  approved_by/at: who signed off on the counts.
+ *  applied_by/at:  who pushed the adjustments into stock movements.
+ */
+export const vehicleReconciliationsTable = distribution.table(
+  "vehicle_reconciliations",
+  {
+    id: serial("id").primaryKey(),
+    vehicleId: integer("vehicle_id").notNull(),
+    deliveryAgentId: integer("delivery_agent_id").notNull(),
+    reconciliationDate: date("reconciliation_date").notNull(),
+    status: text("status").notNull().default("draft"),
+    approvedBy: integer("approved_by"),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    appliedBy: integer("applied_by"),
+    appliedAt: timestamp("applied_at", { withTimezone: true }),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("uq_vehicle_reconciliations_vehicle_date").on(t.vehicleId, t.reconciliationDate),
+    index("idx_vehicle_reconciliations_status_date").on(t.status, t.reconciliationDate),
+    index("idx_vehicle_reconciliations_agent").on(t.deliveryAgentId, t.reconciliationDate),
+    check(
+      "vehicle_reconciliations_status_check",
+      sql`${t.status} IN ('draft','approved','applied','disputed','cancelled')`,
+    ),
+  ],
+);
+
+/** Line items of a reconciliation: expected vs actual per product.
+ *
+ *  adjustment_reference: opaque token written when the discrepancy is pushed
+ *  into stock movements. Partial unique (WHERE NOT NULL) in runtime DDL
+ *  prevents double-apply of the same adjustment. Validated via pg_catalog in
+ *  check-distribution-drift.ts — not expressible in Drizzle.
+ */
+export const vehicleReconciliationItemsTable = distribution.table(
+  "vehicle_reconciliation_items",
+  {
+    id: serial("id").primaryKey(),
+    reconciliationId: integer("reconciliation_id").notNull(),
+    mahsulotId: integer("mahsulot_id").notNull(),
+    sku: text("sku").notNull().default(""),
+    expectedQuantity: numeric("expected_quantity", { precision: 12, scale: 3 }).notNull(),
+    actualQuantity: numeric("actual_quantity", { precision: 12, scale: 3 }).notNull(),
+    discrepancy: numeric("discrepancy", { precision: 12, scale: 3 }).notNull().default("0"),
+    /** Written when the discrepancy is applied to stock movements. UNIQUE WHERE NOT NULL. */
+    adjustmentReference: text("adjustment_reference"),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("uq_vehicle_reconciliation_items_rec_mahsulot").on(
+      t.reconciliationId,
+      t.mahsulotId,
+    ),
+    index("idx_vehicle_reconciliation_items_reconciliation").on(t.reconciliationId),
+    check("vehicle_reconciliation_items_expected_check", sql`${t.expectedQuantity} >= 0`),
+    check("vehicle_reconciliation_items_actual_check", sql`${t.actualQuantity} >= 0`),
+  ],
+);

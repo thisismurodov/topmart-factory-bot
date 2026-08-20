@@ -15,7 +15,7 @@ from ..database import (
     get_product_method, get_containers, get_product_pieces_per_box,
     get_product_label_info,
     mark_batch_labels_printed,
-    get_worker_production_role, RawStockError,
+    get_worker_production_role, RawStockError, ClosedPayrollDayError,
 )
 from ..config import calc_earnings, SUPERADMIN_CHAT_ID
 from ..label_generator import TASHKENT_TZ, generate_batch_session_pdf
@@ -334,6 +334,18 @@ async def _finalize(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             worker, prefix, items, warehouse_id=warehouse_id,
             allow_negative_stock=context.user_data.get("allow_negative_stock", False),
         )
+    except ClosedPayrollDayError as e:
+        line_names = ", ".join(e.line_names)
+        await message.reply_text(
+            "❌ *Bu liniyaning bugungi kuni yopilgan.*\n\n"
+            f"📦 Liniya: *{line_names}*\n"
+            "Yangi ROLE_BASED_KG partiyasi kiritib bo'lmaydi. "
+            "Admin bilan bog'laning.",
+            parse_mode="Markdown",
+            reply_markup=kb,
+        )
+        context.user_data.clear()
+        return ConversationHandler.END
     except RawStockError as e:
         # Zahira yetmasa — ayirish bajarilmadi (tranzaksiya bekor). Operator
         # ogohlantirishni ko'radi va davom etish yoki bekor qilishni tanlaydi.

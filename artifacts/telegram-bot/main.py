@@ -12,7 +12,7 @@ from telegram.ext import ApplicationBuilder, PicklePersistence, ContextTypes
 from bot.database import init_db
 from bot.handlers.input_handler import build_conversation_handler
 from bot.handlers.admin import build_admin_handler, register_cleardata
-from bot.handlers.packer import build_packer_handler
+from bot.handlers.packer import build_packer_handler, register_close_day_handlers
 from bot.handlers.start import register as register_start_handlers
 from bot.handlers.labels import register as register_label_handlers
 from bot.handlers.kpi import register as register_kpi_handlers
@@ -80,6 +80,7 @@ def main() -> None:
     app.add_handler(build_inventory_handler())
     app.add_handler(build_admin_handler())
     app.add_handler(build_packer_handler())
+    register_close_day_handlers(app)
     app.add_handler(build_conversation_handler())
     register_label_handlers(app)
     register_kpi_handlers(app)

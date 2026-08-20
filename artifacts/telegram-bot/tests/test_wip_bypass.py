@@ -10,6 +10,7 @@ Izolyatsiya: barcha so'rovlar bir martalik throwaway sxemada bajariladi.
 """
 
 import os
+import threading
 import time
 import unittest
 
@@ -60,6 +61,16 @@ class WipBypassTest(unittest.TestCase):
             CREATE TABLE line_role_config (
                 line_id INTEGER NOT NULL,
                 role TEXT NOT NULL DEFAULT ''
+            );
+            CREATE TABLE daily_payroll_runs (
+                id SERIAL PRIMARY KEY,
+                scope TEXT NOT NULL,
+                line_id INTEGER NOT NULL,
+                work_date DATE NOT NULL,
+                total_kg NUMERIC NOT NULL,
+                status TEXT NOT NULL,
+                closed_by TEXT NOT NULL,
+                UNIQUE (scope, work_date, line_id)
             );
             CREATE TABLE raw_materials (
                 id SERIAL PRIMARY KEY,
@@ -154,7 +165,8 @@ class WipBypassTest(unittest.TestCase):
         self.cur = self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         self.cur.execute(
             """TRUNCATE production_labels, inventory, stock_movements, batches,
-                        wip_movements, product_materials, raw_materials
+                        wip_movements, product_materials, raw_materials,
+                        daily_payroll_runs
                RESTART IDENTITY"""
         )
         self.cur.execute(
@@ -220,6 +232,52 @@ class WipBypassTest(unittest.TestCase):
         inventory = self.cur.fetchone()
         self.assertEqual(float(inventory["quantity"]), 4.0)
         self.assertAlmostEqual(float(inventory["weight_kg"]), 55.6, places=3)
+
+    def test_close_and_batch_share_line_day_lock(self):
+        """Close birinchi bo'lsa, parallel batch kutadi va maoshsiz yozilmaydi."""
+        lock_acquired = threading.Event()
+        thread_errors: list[Exception] = []
+
+        def close_line_first():
+            conn = _conn()
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            try:
+                cur.execute(
+                    "SELECT (NOW() AT TIME ZONE 'Asia/Tashkent')::date AS d"
+                )
+                work_date = cur.fetchone()["d"]
+                cur.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                    (f"close_day:arqon:{self.line}:{work_date}",),
+                )
+                cur.execute(
+                    """INSERT INTO daily_payroll_runs
+                         (scope, line_id, work_date, total_kg, status, closed_by)
+                       VALUES ('arqon', %s, %s, 0, 'closed', 'test-close')""",
+                    (self.line, work_date),
+                )
+                lock_acquired.set()
+                time.sleep(0.35)
+                conn.commit()
+            except Exception as exc:
+                conn.rollback()
+                thread_errors.append(exc)
+                lock_acquired.set()
+            finally:
+                cur.close()
+                conn.close()
+
+        closer = threading.Thread(target=close_line_first)
+        closer.start()
+        self.assertTrue(lock_acquired.wait(timeout=3))
+
+        with self.assertRaises(db.ClosedPayrollDayError):
+            self._batch(10.0)
+
+        closer.join(timeout=3)
+        self.assertFalse(closer.is_alive())
+        self.assertEqual(thread_errors, [])
+        self.assertEqual(self._count("batches"), 0)
 
     def test_existing_receive_is_not_consumed_or_followed_by_produce(self):
         self._receive(100.0)

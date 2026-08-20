@@ -58,6 +58,17 @@ class LinePayrollCloseDayTest(unittest.TestCase):
                 worker_name TEXT NOT NULL,
                 role TEXT NOT NULL
             );
+            CREATE TABLE user_roles (
+                chat_id BIGINT PRIMARY KEY,
+                worker_name TEXT NOT NULL,
+                role TEXT NOT NULL
+            );
+            CREATE TABLE packer_assignments (
+                id SERIAL PRIMARY KEY,
+                packer_chat_id BIGINT NOT NULL,
+                worker_name TEXT NOT NULL,
+                UNIQUE (packer_chat_id, worker_name)
+            );
             CREATE TABLE products (
                 name TEXT PRIMARY KEY,
                 rate_type TEXT NOT NULL,
@@ -123,7 +134,8 @@ class LinePayrollCloseDayTest(unittest.TestCase):
         self.cur.execute(
             """TRUNCATE salary_entries, daily_payroll_runs, batches,
                         production_line_workers, line_role_config, products,
-                        production_lines, payroll_role_rates
+                        production_lines, payroll_role_rates, packer_assignments,
+                        user_roles
                RESTART IDENTITY"""
         )
         self.cur.execute(
@@ -174,6 +186,144 @@ class LinePayrollCloseDayTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.cur.close()
         self.conn.close()
+
+    def _add_second_line(self) -> int:
+        self.cur.execute(
+            "INSERT INTO production_lines (name) VALUES ('Qop Ip') RETURNING id"
+        )
+        line_id = int(self.cur.fetchone()["id"])
+        self.cur.execute(
+            """INSERT INTO line_role_config
+                 (line_id, role_key, label, rate, max_workers, pay_mode)
+               VALUES (%s, 'qop_producer', 'Qop ishlab chiqaruvchi',
+                       900, 1, 'individual')""",
+            (line_id,),
+        )
+        self.cur.execute(
+            """INSERT INTO production_line_workers (line_id, worker_name, role)
+               VALUES (%s, 'Other Worker', 'qop_producer')""",
+            (line_id,),
+        )
+        self.cur.execute(
+            """INSERT INTO products (name, rate_type, line_id)
+               VALUES ('Qop mahsulot', 'kg', %s)""",
+            (line_id,),
+        )
+        self.cur.execute(
+            """INSERT INTO batches
+                 (worker, product, quantity, weight_kg, payroll_method,
+                  production_line_id, created_at)
+               VALUES ('Other Worker', 'Qop mahsulot', 1, 12,
+                       'ROLE_BASED_KG', %s, NOW())""",
+            (line_id,),
+        )
+        self.conn.commit()
+        return line_id
+
+    def test_packer_lines_use_exact_valid_memberships_and_support_multiple_lines(self):
+        second_line = self._add_second_line()
+        self.cur.executemany(
+            "INSERT INTO user_roles (chat_id, worker_name, role) VALUES (%s,%s,%s)",
+            [
+                (101, "Madina M", "packer"),
+                (102, "Assigned Packer", "packer"),
+                (103, "Multi Packer", "packer"),
+                (104, "Aziza", "worker"),
+                (105, "Lowercase Packer", "packer"),
+            ],
+        )
+        self.cur.executemany(
+            """INSERT INTO packer_assignments (packer_chat_id, worker_name)
+               VALUES (%s,%s)""",
+            [
+                (102, "Aziza"),
+                (102, "/start/"),
+                (102, "📋 Bugungi partiyalar"),
+                (103, "Aziza"),
+                (103, "Other Worker"),
+                (104, "Aziza"),
+                (105, "aziza"),
+            ],
+        )
+        self.conn.commit()
+
+        direct = db.get_packer_lines(101)
+        self.assertEqual(
+            [(int(line["id"]), line["name"]) for line in direct],
+            [(self.line, "Arqon Bo'lim 3")],
+        )
+        assigned = db.get_packer_lines(102)
+        self.assertEqual([int(line["id"]) for line in assigned], [self.line])
+        multiple = db.get_packer_lines(103)
+        self.assertEqual(
+            {int(line["id"]) for line in multiple},
+            {self.line, second_line},
+        )
+        self.assertEqual(db.get_packer_lines(104), [])
+        self.assertEqual(db.get_packer_lines(105), [])
+
+    def test_packer_closes_only_authorized_line_and_rerun_is_frozen(self):
+        second_line = self._add_second_line()
+        self.cur.executemany(
+            "INSERT INTO user_roles (chat_id, worker_name, role) VALUES (%s,%s,%s)",
+            [
+                (201, "Arqon Packer", "packer"),
+                (202, "Qop Packer", "packer"),
+                (203, "Fake Packer", "worker"),
+            ],
+        )
+        self.cur.executemany(
+            """INSERT INTO packer_assignments (packer_chat_id, worker_name)
+               VALUES (%s,%s)""",
+            [
+                (201, "Aziza"),
+                (202, "Other Worker"),
+                (203, "Other Worker"),
+            ],
+        )
+        self.conn.commit()
+
+        first = db.close_day(
+            "telegram-packer:201:Arqon Packer",
+            line_id=self.line,
+            authorized_packer_chat_id=201,
+        )
+        self.assertFalse(first["already_closed"])
+        self.assertEqual(len(first["lines"]), 1)
+        self.assertEqual(first["lines"][0]["line_id"], self.line)
+        self.assertEqual(len(first["new_entries"]), 6)
+
+        self.cur.execute(
+            "SELECT line_id FROM daily_payroll_runs ORDER BY line_id"
+        )
+        self.assertEqual(
+            [int(row["line_id"]) for row in self.cur.fetchall()],
+            [self.line],
+        )
+
+        repeated = db.close_day(
+            "telegram-packer:201:Arqon Packer",
+            line_id=self.line,
+            authorized_packer_chat_id=201,
+        )
+        self.assertTrue(repeated["already_closed"])
+        self.assertEqual(repeated["new_entries"], [])
+
+        with self.assertRaises(db.PackerLineAccessError):
+            db.close_day(
+                "telegram-packer:201:Arqon Packer",
+                line_id=second_line,
+                authorized_packer_chat_id=201,
+            )
+        with self.assertRaises(db.PackerLineAccessError):
+            db.close_day(
+                "telegram-worker:203",
+                line_id=second_line,
+                authorized_packer_chat_id=203,
+            )
+
+        self.cur.execute("SELECT COUNT(*) AS c FROM daily_payroll_runs")
+        self.assertEqual(int(self.cur.fetchone()["c"]), 1)
 
     def test_individual_producers_and_equal_pooled_helpers_are_frozen(self):
         first = db.close_day("test-admin")

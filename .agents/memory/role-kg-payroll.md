@@ -115,7 +115,13 @@ inserts use `ON CONFLICT DO NOTHING`; a `pg_advisory_xact_lock` keyed on the lin
 serializes concurrent double-clicks. Salary inserts use `RETURNING id`/`rowCount`; append
 to result and notify only when a row was actually inserted. A pre-existing salary row
 without its run may be frozen into a run, but must not be reported or notified as new.
-Close-day runs from BOTH bot and dashboard.
+Close-day runs from BOTH bot and dashboard. ROLE_BASED_KG batch creation MUST acquire the
+same per-line/Tashkent-date lock before it writes: batch-first is included by the close,
+while close-first rejects the late batch instead of silently leaving it unpaid.
+**Why:** a close query can otherwise read pooled and individual aggregates from different
+committed snapshots, then freeze an internally inconsistent payroll run.
+**How to apply:** coordinate every ROLE_BASED_KG batch writer with the close lock; after
+acquiring it, reject a line/day that already has a closed run. Test both lock orderings.
 
 ## Shared pay basis uses the batch's snapshotted method, attribution via product line
 Daily line totals (for shared/role pay) filter on each batch's snapshot

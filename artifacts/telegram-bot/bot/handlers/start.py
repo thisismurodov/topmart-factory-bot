@@ -10,7 +10,8 @@ from ..database import (
     get_user_role, set_user_role, find_user_by_phone,
     get_packer_workers, save_pending_user, get_pending_user,
     delete_pending_user, add_worker, assign_packer_workers,
-    get_workers,
+    get_workers, get_packer_lines, get_packer_line_preview,
+    PackerLineAccessError,
 )
 from ..config import normalize_phone, SUPERADMIN_CHAT_ID
 
@@ -283,7 +284,54 @@ async def today_batches_handler(update: Update, context: ContextTypes.DEFAULT_TY
     lines.append(f"\n📦 Jami: *{total_qty} dona*")
     if total_kg > 0:
         lines.append(f"⚖️ Jami og'irlik: *{total_kg:.1f} kg*")
-    lines.append(f"💰 Jami haq: *{total_earnings:,.0f} so'm*")
+    has_line_payroll = any(
+        row.get("payroll_method") == "ROLE_BASED_KG"
+        for row in rows
+    )
+    if user_row and user_row["role"] == "packer" and has_line_payroll:
+        if total_earnings > 0:
+            lines.append(
+                f"💰 Partiya bo'yicha haq: *{total_earnings:,.0f} so'm*"
+            )
+
+        relevant_line_ids = {
+            int(row["production_line_id"])
+            for row in rows
+            if row.get("payroll_method") == "ROLE_BASED_KG"
+            and row.get("production_line_id") is not None
+        }
+        statuses = []
+        for line in get_packer_lines(chat_id):
+            line_id = int(line["id"])
+            if relevant_line_ids and line_id not in relevant_line_ids:
+                continue
+            try:
+                statuses.append(get_packer_line_preview(chat_id, line_id))
+            except PackerLineAccessError:
+                continue
+
+        lines.append("\n💰 *Kunlik liniya maoshi:*")
+        if not statuses:
+            lines.append(
+                "⚠️ Liniya biriktirilmagan. Admin biriktirishni tekshirsin."
+            )
+        for status in statuses:
+            if status["already_closed"]:
+                amount = sum(
+                    float(entry["amount"])
+                    for entry in status["entries"]
+                )
+                lines.append(
+                    f"✅ {status['line_name']}: "
+                    f"*{amount:,.0f} so'm* hisoblandi"
+                )
+            else:
+                lines.append(
+                    f"⏳ {status['line_name']}: "
+                    "liniya yopilganda hisoblanadi"
+                )
+    else:
+        lines.append(f"💰 Jami haq: *{total_earnings:,.0f} so'm*")
 
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=kb)
 

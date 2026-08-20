@@ -36,6 +36,7 @@ def packer_menu_keyboard() -> ReplyKeyboardMarkup:
         [
             ["🏭 Tovar kiritish"],
             ["📋 Bugungi partiyalar", "🏷️ Etiketka"],
+            ["✅ Bugungi partiyalar tugadi"],
             ["👷 Hodim qo'shish"],
         ],
         resize_keyboard=True,

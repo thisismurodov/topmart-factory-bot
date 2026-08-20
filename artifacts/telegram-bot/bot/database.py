@@ -34,6 +34,22 @@ class RawStockError(Exception):
         super().__init__(f"Xom ashyo zahirasi yetarli emas:\n{lines}")
 
 
+class PackerLineAccessError(PermissionError):
+    """Packer tanlangan ishlab chiqarish liniyasini yopishga haqli emas."""
+
+
+class ClosedPayrollDayError(RuntimeError):
+    """ROLE_BASED_KG partiyasi allaqachon yopilgan liniya/kun uchun kiritildi."""
+
+    def __init__(self, line_names: list[str], work_date):
+        self.line_names = line_names
+        self.work_date = work_date
+        joined = ", ".join(line_names)
+        super().__init__(
+            f"{joined}: {work_date} kuni yopilgan, yangi partiya kiritib bo'lmaydi."
+        )
+
+
 def _connect_with_retry() -> psycopg2.extensions.connection:
     """psycopg2.connect + exponential backoff (1 2 4 8 16 s)."""
     delay = 1
@@ -1037,7 +1053,117 @@ def get_line_role_rate_strict(worker_name: str, product_name: str) -> tuple:
     return None, 0.0
 
 
-def close_day(closed_by: str, scope: str = "arqon") -> dict:
+def _fetch_packer_lines(cur, packer_chat_id: int) -> list[dict]:
+    """Faqat haqiqiy liniya a'zolariga mos packer liniyalarini qaytaradi."""
+    cur.execute(
+        """
+        WITH packer AS (
+            SELECT chat_id, worker_name
+            FROM user_roles
+            WHERE chat_id = %s AND role = 'packer'
+        ),
+        eligible_lines AS (
+            SELECT plw.line_id
+            FROM packer
+            JOIN production_line_workers plw
+              ON plw.worker_name = packer.worker_name
+            UNION
+            SELECT plw.line_id
+            FROM packer
+            JOIN packer_assignments pa
+              ON pa.packer_chat_id = packer.chat_id
+            JOIN production_line_workers plw
+              ON plw.worker_name = pa.worker_name
+        )
+        SELECT DISTINCT pl.id, pl.name
+        FROM eligible_lines eligible
+        JOIN production_lines pl ON pl.id = eligible.line_id
+        ORDER BY pl.name, pl.id
+        """,
+        (packer_chat_id,),
+    )
+    return cur.fetchall()
+
+
+def get_packer_lines(packer_chat_id: int) -> list[dict]:
+    """Packer bevosita yoki biriktirilgan ishchilari orqali tegishli liniyalar."""
+    with get_conn() as (conn, cur):
+        return _fetch_packer_lines(cur, packer_chat_id)
+
+
+def get_packer_line_preview(
+    packer_chat_id: int,
+    line_id: int,
+    scope: str = "arqon",
+) -> dict:
+    """Packerga ruxsatli liniyaning bugungi yopilish holatini ko'rsatadi."""
+    with get_conn() as (conn, cur):
+        lines = _fetch_packer_lines(cur, packer_chat_id)
+        line = next((ln for ln in lines if int(ln["id"]) == int(line_id)), None)
+        if line is None:
+            raise PackerLineAccessError("Bu liniyani yopishga ruxsat yo'q.")
+
+        cur.execute("SELECT (NOW() AT TIME ZONE 'Asia/Tashkent')::date AS d")
+        work_date = cur.fetchone()["d"]
+        cur.execute(
+            """SELECT COALESCE(
+                        SUM(CASE WHEN p.rate_type='kg' THEN b.weight_kg ELSE b.quantity END), 0
+                      ) AS total_units
+               FROM batches b
+               JOIN products p ON p.name = b.product
+               WHERE b.payroll_method = 'ROLE_BASED_KG'
+                 AND COALESCE(b.production_line_id, p.line_id) = %s
+                 AND (b.created_at AT TIME ZONE 'Asia/Tashkent')::date = %s""",
+            (line_id, work_date),
+        )
+        live_total = float(cur.fetchone()["total_units"])
+        cur.execute(
+            """SELECT total_kg
+               FROM daily_payroll_runs
+               WHERE scope=%s AND line_id=%s AND work_date=%s""",
+            (scope, line_id, work_date),
+        )
+        existing = cur.fetchone()
+        entries: list[dict] = []
+        if existing is not None:
+            cur.execute(
+                """SELECT worker, role, rate, amount
+                   FROM salary_entries
+                   WHERE scope=%s AND line_id=%s AND work_date=%s
+                     AND source_type='daily_shared'
+                   ORDER BY role, worker""",
+                (scope, line_id, work_date),
+            )
+            entries = [
+                {
+                    "worker": row["worker"],
+                    "role": row["role"],
+                    "rate": float(row["rate"]),
+                    "amount": float(row["amount"]),
+                }
+                for row in cur.fetchall()
+            ]
+
+        return {
+            "line_id": int(line["id"]),
+            "line_name": line["name"],
+            "work_date": work_date,
+            "total_kg": (
+                float(existing["total_kg"])
+                if existing is not None
+                else live_total
+            ),
+            "already_closed": existing is not None,
+            "entries": entries,
+        }
+
+
+def close_day(
+    closed_by: str,
+    scope: str = "arqon",
+    line_id: int | None = None,
+    authorized_packer_chat_id: int | None = None,
+) -> dict:
     """Kunni yopadi — har bir ishlab chiqarish liniyasi uchun alohida (idempotent).
 
     Config liniyada har bir individual rol xodimi o'zi kiritgan ish birligi ×
@@ -1055,14 +1181,32 @@ def close_day(closed_by: str, scope: str = "arqon") -> dict:
     }
     """
     with get_conn() as (conn, cur):
+        if authorized_packer_chat_id is not None:
+            if line_id is None:
+                raise PackerLineAccessError("Packer faqat bitta liniyani yopishi mumkin.")
+            eligible_ids = {
+                int(line["id"])
+                for line in _fetch_packer_lines(cur, authorized_packer_chat_id)
+            }
+            if int(line_id) not in eligible_ids:
+                raise PackerLineAccessError("Bu liniyani yopishga ruxsat yo'q.")
+
         cur.execute("SELECT (NOW() AT TIME ZONE 'Asia/Tashkent')::date AS d")
         work_date = cur.fetchone()["d"]
 
         cur.execute("SELECT role, rate FROM payroll_role_rates WHERE scope=%s", (scope,))
         rates = {r["role"]: float(r["rate"]) for r in cur.fetchall()}
 
-        cur.execute("SELECT id, name FROM production_lines ORDER BY id")
+        if line_id is None:
+            cur.execute("SELECT id, name FROM production_lines ORDER BY id")
+        else:
+            cur.execute(
+                "SELECT id, name FROM production_lines WHERE id=%s",
+                (line_id,),
+            )
         lines = cur.fetchall()
+        if line_id is not None and not lines:
+            raise ValueError("Ishlab chiqarish liniyasi topilmadi.")
 
         result_lines: list[dict] = []
         new_entries: list[dict] = []
@@ -1390,6 +1534,57 @@ def create_batch_session(
         _lrow = cur.fetchone()
         producer_line_id = _lrow["line_id"] if _lrow else None
 
+        # ROLE_BASED_KG batch va kun-yopish BITTA liniya/sana lockini ishlatadi.
+        # Batch lockni birinchi olsa close_day uni kutadi va yangi batchni snapshotga
+        # qo'shadi. close_day birinchi bo'lsa batch kutadi, so'ng yopilgan kun uchun
+        # yozishni rad etadi — hech bir partiya maoshsiz qolmaydi.
+        resolved_payroll: list[tuple[str, int | None]] = []
+        role_line_ids: set[int] = set()
+        for it in items:
+            cur.execute(
+                "SELECT payroll_method, line_id FROM products WHERE name=%s",
+                (it["product"],),
+            )
+            product_row = cur.fetchone()
+            method = (
+                it.get("payroll_method")
+                or (
+                    product_row["payroll_method"]
+                    if product_row and product_row["payroll_method"]
+                    else "PRODUCT_RATE"
+                )
+            )
+            prod_line_id = (
+                product_row["line_id"]
+                if product_row and product_row["line_id"]
+                else None
+            ) or producer_line_id
+            resolved_payroll.append((method, prod_line_id))
+            if method == "ROLE_BASED_KG" and prod_line_id is not None:
+                role_line_ids.add(int(prod_line_id))
+
+        if role_line_ids:
+            cur.execute("SELECT (NOW() AT TIME ZONE 'Asia/Tashkent')::date AS d")
+            work_date = cur.fetchone()["d"]
+            for role_line_id in sorted(role_line_ids):
+                cur.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                    (f"close_day:arqon:{role_line_id}:{work_date}",),
+                )
+            cur.execute(
+                """SELECT pl.name
+                   FROM daily_payroll_runs run
+                   JOIN production_lines pl ON pl.id = run.line_id
+                   WHERE run.scope='arqon'
+                     AND run.work_date=%s
+                     AND run.line_id = ANY(%s)
+                   ORDER BY pl.name""",
+                (work_date, list(role_line_ids)),
+            )
+            closed_lines = [row["name"] for row in cur.fetchall()]
+            if closed_lines:
+                raise ClosedPayrollDayError(closed_lines, work_date)
+
         # ── Xom ashyo zahirasi tekshiruvi (ayirishdan OLDIN) ─────────────
         # Sessiya bo'yicha jami BOM talabini xom ashyo kesimida yig'amiz va
         # current_stock bilan solishtiramiz. Yetmasa RawStockError — hech narsa
@@ -1430,25 +1625,15 @@ def create_batch_session(
 
         line_entries: list[dict] = []  # Xabarnoma uchun: [{worker, role, amount}]
 
-        for it in items:
+        for item_index, it in enumerate(items):
             product   = it["product"]
             quantity  = int(it["quantity"])
             weight_kg = float(it.get("weight_kg") or 0.0)
             earnings  = float(it.get("earnings") or 0.0)
             total_earnings += earnings
 
-            # Maosh usulini partiya yaratilgan paytda snapshot qilamiz.
-            method = it.get("payroll_method")
-            if not method:
-                cur.execute("SELECT payroll_method FROM products WHERE name=%s", (product,))
-                _prow = cur.fetchone()
-                method = (_prow["payroll_method"] if _prow and _prow["payroll_method"] else "PRODUCT_RATE")
-
-            # Liniyani mahsulot orqali aniqlaymiz (config liniya attribusiyasi);
-            # mahsulotda line_id bo'lmasa ishlab chiqaruvchi liniyasiga qaytamiz.
-            cur.execute("SELECT line_id FROM products WHERE name=%s", (product,))
-            _plrow = cur.fetchone()
-            prod_line_id = (_plrow["line_id"] if _plrow and _plrow["line_id"] else None) or producer_line_id
+            # Maosh usuli va liniya lockdan oldin snapshot qilingan.
+            method, prod_line_id = resolved_payroll[item_index]
 
             # Config liniyami? (line_role_config mavjud). Bunday liniyada ROLE_BASED_KG
             # maoshi kun yopilganda rol bo'yicha hisoblanadi — shu bois partiya
@@ -1594,14 +1779,16 @@ def get_today_batches(worker_filter: list[str] | None = None) -> list[dict]:
             placeholders = ",".join(["%s"] * len(worker_filter))
             cur.execute(
                 f"""SELECT b.id, b.batch_code, b.worker, b.product, b.quantity,
-                           b.weight_kg, b.earnings, b.created_at,
+                           b.weight_kg, b.earnings, b.payroll_method, b.created_at,
+                           COALESCE(b.production_line_id, p.line_id) AS production_line_id,
                            COALESCE(p.pieces_per_box, 1) AS pieces_per_box,
                            COALESCE(p.sku, '') AS sku,
                    COALESCE(p.weight, 1) AS profile_kg,
                    COALESCE(p.roll_length_m, 0) AS roll_length_m
                     FROM batches b
                     LEFT JOIN products p ON p.name = b.product
-                    WHERE b.created_at::date = CURRENT_DATE
+                     WHERE (b.created_at AT TIME ZONE 'Asia/Tashkent')::date =
+                           (NOW() AT TIME ZONE 'Asia/Tashkent')::date
                       AND b.worker IN ({placeholders})
                     ORDER BY b.id""",
                 worker_filter,
@@ -1609,14 +1796,16 @@ def get_today_batches(worker_filter: list[str] | None = None) -> list[dict]:
         else:
             cur.execute(
                 """SELECT b.id, b.batch_code, b.worker, b.product, b.quantity,
-                          b.weight_kg, b.earnings, b.created_at,
+                           b.weight_kg, b.earnings, b.payroll_method, b.created_at,
+                           COALESCE(b.production_line_id, p.line_id) AS production_line_id,
                           COALESCE(p.pieces_per_box, 1) AS pieces_per_box,
                           COALESCE(p.sku, '') AS sku,
                    COALESCE(p.weight, 1) AS profile_kg,
                    COALESCE(p.roll_length_m, 0) AS roll_length_m
                    FROM batches b
                    LEFT JOIN products p ON p.name = b.product
-                   WHERE b.created_at::date = CURRENT_DATE
+                    WHERE (b.created_at AT TIME ZONE 'Asia/Tashkent')::date =
+                          (NOW() AT TIME ZONE 'Asia/Tashkent')::date
                    ORDER BY b.id"""
             )
         return cur.fetchall()

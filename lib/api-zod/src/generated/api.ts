@@ -730,3 +730,294 @@ export const BootstrapVehicleDistributionPilotResponse = zod.object({
 })
 
 
+/**
+ * Returns the prepared/lifecycle handoffs for the single active pilot vehicle (server-resolved). Authenticated via the dedicated vehicle-handoff auth wall (admin Bearer session OR the vehicle-distribution bot key). Fails closed (404) unless enabled, 503 when enabled without schema approval.
+ * @summary List handoffs for the pilot vehicle
+ */
+export const ListVehicleHandoffsResponse = zod.object({
+  "vehicleId": zod.number(),
+  "handoffs": zod.array(zod.object({
+  "id": zod.number(),
+  "vehicleId": zod.number(),
+  "deliveryAgentId": zod.number(),
+  "sourceWarehouseId": zod.number(),
+  "vehicleWarehouseId": zod.number(),
+  "handoffDate": zod.string(),
+  "status": zod.string(),
+  "operationKey": zod.string().nullable(),
+  "movementReference": zod.string().nullable(),
+  "preparedActorType": zod.string().nullable(),
+  "preparedActorRef": zod.string().nullable(),
+  "notes": zod.string().nullable(),
+  "labelsPrintedAt": zod.string().nullable(),
+  "handedOverAt": zod.string().nullable(),
+  "stockTransferredAt": zod.string().nullable(),
+  "cancelledAt": zod.string().nullable(),
+  "createdAt": zod.string(),
+  "items": zod.array(zod.object({
+  "id": zod.number(),
+  "mahsulotId": zod.number(),
+  "sku": zod.string(),
+  "productName": zod.string().nullable(),
+  "quantity": zod.number(),
+  "unitWeightKg": zod.number().nullable(),
+  "totalWeightKg": zod.number().nullable()
+}))
+}))
+})
+
+
+/**
+ * Creates a prepared (not yet loaded) handoff. The actor, agent, vehicle and vehicle-warehouse target are all resolved server-side; only the source warehouse, line items, notes and a client operationKey are accepted. Idempotent on operationKey — replaying the same key returns the same handoff, while a payload mismatch on replay yields 409. No inventory is mutated.
+ * @summary Create a prepared handoff for the pilot vehicle
+ */
+
+
+
+
+
+export const CreateVehicleHandoffBody = zod.object({
+  "sourceWarehouseId": zod.number(),
+  "items": zod.array(zod.object({
+  "mahsulotId": zod.number(),
+  "quantity": zod.number().min(1)
+}).describe('A requested handoff line — a distribution product and the positive integer number of physical units to dispatch.')).min(1),
+  "notes": zod.string().nullish(),
+  "operationKey": zod.string().min(1)
+}).describe('Strict prepared-handoff creation body. Only these fields are accepted; agent, vehicle and vehicle-warehouse targets plus the actor are all resolved server-side. operationKey is a required client idempotency token.')
+
+export const CreateVehicleHandoffResponse = zod.object({
+  "id": zod.number(),
+  "vehicleId": zod.number(),
+  "deliveryAgentId": zod.number(),
+  "sourceWarehouseId": zod.number(),
+  "vehicleWarehouseId": zod.number(),
+  "handoffDate": zod.string(),
+  "status": zod.string(),
+  "operationKey": zod.string().nullable(),
+  "movementReference": zod.string().nullable(),
+  "preparedActorType": zod.string().nullable(),
+  "preparedActorRef": zod.string().nullable(),
+  "notes": zod.string().nullable(),
+  "labelsPrintedAt": zod.string().nullable(),
+  "handedOverAt": zod.string().nullable(),
+  "stockTransferredAt": zod.string().nullable(),
+  "cancelledAt": zod.string().nullable(),
+  "createdAt": zod.string(),
+  "items": zod.array(zod.object({
+  "id": zod.number(),
+  "mahsulotId": zod.number(),
+  "sku": zod.string(),
+  "productName": zod.string().nullable(),
+  "quantity": zod.number(),
+  "unitWeightKg": zod.number().nullable(),
+  "totalWeightKg": zod.number().nullable()
+}))
+})
+
+
+/**
+ * @summary Read a single handoff for the pilot vehicle
+ */
+export const GetVehicleHandoffParams = zod.object({
+  "handoffId": zod.coerce.number()
+})
+
+export const GetVehicleHandoffResponse = zod.object({
+  "id": zod.number(),
+  "vehicleId": zod.number(),
+  "deliveryAgentId": zod.number(),
+  "sourceWarehouseId": zod.number(),
+  "vehicleWarehouseId": zod.number(),
+  "handoffDate": zod.string(),
+  "status": zod.string(),
+  "operationKey": zod.string().nullable(),
+  "movementReference": zod.string().nullable(),
+  "preparedActorType": zod.string().nullable(),
+  "preparedActorRef": zod.string().nullable(),
+  "notes": zod.string().nullable(),
+  "labelsPrintedAt": zod.string().nullable(),
+  "handedOverAt": zod.string().nullable(),
+  "stockTransferredAt": zod.string().nullable(),
+  "cancelledAt": zod.string().nullable(),
+  "createdAt": zod.string(),
+  "items": zod.array(zod.object({
+  "id": zod.number(),
+  "mahsulotId": zod.number(),
+  "sku": zod.string(),
+  "productName": zod.string().nullable(),
+  "quantity": zod.number(),
+  "unitWeightKg": zod.number().nullable(),
+  "totalWeightKg": zod.number().nullable()
+}))
+})
+
+
+/**
+ * Requires one cross-handoff vehicle_label_claim per physical unit (matching item/product/SKU/weight, status prepared or printed). Marks the claims printed, records idempotent label_printed unit events, and advances the handoff to labels_printed. Same-state retry is idempotent.
+ * @summary Transition a prepared handoff to labels_printed
+ */
+export const ConfirmVehicleHandoffLabelsPrintedParams = zod.object({
+  "handoffId": zod.coerce.number()
+})
+
+export const ConfirmVehicleHandoffLabelsPrintedBody = zod.object({
+
+}).describe('Lifecycle transition body. Carries no overridable fields — actor and timestamps are server-assigned. Exists so transitions have a typed (empty) body contract.')
+
+export const ConfirmVehicleHandoffLabelsPrintedResponse = zod.object({
+  "id": zod.number(),
+  "vehicleId": zod.number(),
+  "deliveryAgentId": zod.number(),
+  "sourceWarehouseId": zod.number(),
+  "vehicleWarehouseId": zod.number(),
+  "handoffDate": zod.string(),
+  "status": zod.string(),
+  "operationKey": zod.string().nullable(),
+  "movementReference": zod.string().nullable(),
+  "preparedActorType": zod.string().nullable(),
+  "preparedActorRef": zod.string().nullable(),
+  "notes": zod.string().nullable(),
+  "labelsPrintedAt": zod.string().nullable(),
+  "handedOverAt": zod.string().nullable(),
+  "stockTransferredAt": zod.string().nullable(),
+  "cancelledAt": zod.string().nullable(),
+  "createdAt": zod.string(),
+  "items": zod.array(zod.object({
+  "id": zod.number(),
+  "mahsulotId": zod.number(),
+  "sku": zod.string(),
+  "productName": zod.string().nullable(),
+  "quantity": zod.number(),
+  "unitWeightKg": zod.number().nullable(),
+  "totalWeightKg": zod.number().nullable()
+}))
+})
+
+
+/**
+ * Exact labels_printed → handed_over transition. Server actor/timestamp; no stock movement. Same-state retry is idempotent.
+ * @summary Transition labels_printed to handed_over
+ */
+export const MarkVehicleHandoffHandedOverParams = zod.object({
+  "handoffId": zod.coerce.number()
+})
+
+export const MarkVehicleHandoffHandedOverBody = zod.object({
+
+}).describe('Lifecycle transition body. Carries no overridable fields — actor and timestamps are server-assigned. Exists so transitions have a typed (empty) body contract.')
+
+export const MarkVehicleHandoffHandedOverResponse = zod.object({
+  "id": zod.number(),
+  "vehicleId": zod.number(),
+  "deliveryAgentId": zod.number(),
+  "sourceWarehouseId": zod.number(),
+  "vehicleWarehouseId": zod.number(),
+  "handoffDate": zod.string(),
+  "status": zod.string(),
+  "operationKey": zod.string().nullable(),
+  "movementReference": zod.string().nullable(),
+  "preparedActorType": zod.string().nullable(),
+  "preparedActorRef": zod.string().nullable(),
+  "notes": zod.string().nullable(),
+  "labelsPrintedAt": zod.string().nullable(),
+  "handedOverAt": zod.string().nullable(),
+  "stockTransferredAt": zod.string().nullable(),
+  "cancelledAt": zod.string().nullable(),
+  "createdAt": zod.string(),
+  "items": zod.array(zod.object({
+  "id": zod.number(),
+  "mahsulotId": zod.number(),
+  "sku": zod.string(),
+  "productName": zod.string().nullable(),
+  "quantity": zod.number(),
+  "unitWeightKg": zod.number().nullable(),
+  "totalWeightKg": zod.number().nullable()
+}))
+})
+
+
+/**
+ * Exact handed_over → stock_transferred transition. Atomically moves physical stock from the source warehouse to the vehicle warehouse: verifies exact snapshot quantity and total weight are available (no GREATEST masking), subtracts source and adds vehicle, writes one stock_movements ledger row per item with a deterministic per-item reference and a batch movement_reference, marks claims loaded, records idempotent load unit events, then sets the terminal state. Any failure rolls back the whole transaction. Same-state retry is idempotent.
+ * @summary Transition handed_over to stock_transferred (moves inventory)
+ */
+export const MarkVehicleHandoffStockTransferredParams = zod.object({
+  "handoffId": zod.coerce.number()
+})
+
+export const MarkVehicleHandoffStockTransferredBody = zod.object({
+
+}).describe('Lifecycle transition body. Carries no overridable fields — actor and timestamps are server-assigned. Exists so transitions have a typed (empty) body contract.')
+
+export const MarkVehicleHandoffStockTransferredResponse = zod.object({
+  "id": zod.number(),
+  "vehicleId": zod.number(),
+  "deliveryAgentId": zod.number(),
+  "sourceWarehouseId": zod.number(),
+  "vehicleWarehouseId": zod.number(),
+  "handoffDate": zod.string(),
+  "status": zod.string(),
+  "operationKey": zod.string().nullable(),
+  "movementReference": zod.string().nullable(),
+  "preparedActorType": zod.string().nullable(),
+  "preparedActorRef": zod.string().nullable(),
+  "notes": zod.string().nullable(),
+  "labelsPrintedAt": zod.string().nullable(),
+  "handedOverAt": zod.string().nullable(),
+  "stockTransferredAt": zod.string().nullable(),
+  "cancelledAt": zod.string().nullable(),
+  "createdAt": zod.string(),
+  "items": zod.array(zod.object({
+  "id": zod.number(),
+  "mahsulotId": zod.number(),
+  "sku": zod.string(),
+  "productName": zod.string().nullable(),
+  "quantity": zod.number(),
+  "unitWeightKg": zod.number().nullable(),
+  "totalWeightKg": zod.number().nullable()
+}))
+})
+
+
+/**
+ * Cancels a handoff in any pre-terminal state (prepared, labels_printed, handed_over). Rejected once stock_transferred. No stock is mutated. Same cancelled-state retry is idempotent.
+ * @summary Cancel a pre-terminal handoff
+ */
+export const CancelVehicleHandoffParams = zod.object({
+  "handoffId": zod.coerce.number()
+})
+
+export const CancelVehicleHandoffBody = zod.object({
+
+}).describe('Lifecycle transition body. Carries no overridable fields — actor and timestamps are server-assigned. Exists so transitions have a typed (empty) body contract.')
+
+export const CancelVehicleHandoffResponse = zod.object({
+  "id": zod.number(),
+  "vehicleId": zod.number(),
+  "deliveryAgentId": zod.number(),
+  "sourceWarehouseId": zod.number(),
+  "vehicleWarehouseId": zod.number(),
+  "handoffDate": zod.string(),
+  "status": zod.string(),
+  "operationKey": zod.string().nullable(),
+  "movementReference": zod.string().nullable(),
+  "preparedActorType": zod.string().nullable(),
+  "preparedActorRef": zod.string().nullable(),
+  "notes": zod.string().nullable(),
+  "labelsPrintedAt": zod.string().nullable(),
+  "handedOverAt": zod.string().nullable(),
+  "stockTransferredAt": zod.string().nullable(),
+  "cancelledAt": zod.string().nullable(),
+  "createdAt": zod.string(),
+  "items": zod.array(zod.object({
+  "id": zod.number(),
+  "mahsulotId": zod.number(),
+  "sku": zod.string(),
+  "productName": zod.string().nullable(),
+  "quantity": zod.number(),
+  "unitWeightKg": zod.number().nullable(),
+  "totalWeightKg": zod.number().nullable()
+}))
+})
+
+

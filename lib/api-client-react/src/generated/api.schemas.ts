@@ -69,6 +69,81 @@ export interface VehicleDistributionPilot {
   assignment: VehicleDistributionAssignment | null;
 }
 
+/**
+ * A requested handoff line — a distribution product and the positive integer number of physical units to dispatch.
+ */
+export interface CreateVehicleHandoffItemInput {
+  mahsulotId: number;
+  /** @minimum 1 */
+  quantity: number;
+}
+
+/**
+ * Strict prepared-handoff creation body. Only these fields are accepted; agent, vehicle and vehicle-warehouse targets plus the actor are all resolved server-side. operationKey is a required client idempotency token.
+ */
+export interface CreateVehicleHandoffInput {
+  sourceWarehouseId: number;
+  /** @minItems 1 */
+  items: CreateVehicleHandoffItemInput[];
+  /** @nullable */
+  notes?: string | null;
+  /** @minLength 1 */
+  operationKey: string;
+}
+
+/**
+ * Lifecycle transition body. Carries no overridable fields — actor and timestamps are server-assigned. Exists so transitions have a typed (empty) body contract.
+ */
+export interface VehicleHandoffTransitionInput { [key: string]: unknown }
+
+export interface VehicleHandoffItem {
+  id: number;
+  mahsulotId: number;
+  sku: string;
+  /** @nullable */
+  productName: string | null;
+  quantity: number;
+  /** @nullable */
+  unitWeightKg: number | null;
+  /** @nullable */
+  totalWeightKg: number | null;
+}
+
+export interface VehicleHandoffDetail {
+  id: number;
+  vehicleId: number;
+  deliveryAgentId: number;
+  sourceWarehouseId: number;
+  vehicleWarehouseId: number;
+  handoffDate: string;
+  status: string;
+  /** @nullable */
+  operationKey: string | null;
+  /** @nullable */
+  movementReference: string | null;
+  /** @nullable */
+  preparedActorType: string | null;
+  /** @nullable */
+  preparedActorRef: string | null;
+  /** @nullable */
+  notes: string | null;
+  /** @nullable */
+  labelsPrintedAt: string | null;
+  /** @nullable */
+  handedOverAt: string | null;
+  /** @nullable */
+  stockTransferredAt: string | null;
+  /** @nullable */
+  cancelledAt: string | null;
+  createdAt: string;
+  items: VehicleHandoffItem[];
+}
+
+export interface VehicleHandoffList {
+  vehicleId: number;
+  handoffs: VehicleHandoffDetail[];
+}
+
 export interface LoginInput {
   username: string;
   password: string;

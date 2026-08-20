@@ -22,6 +22,7 @@ import type {
 import type {
   AdminUser,
   BatchList,
+  CreateVehicleHandoffInput,
   Customer,
   CustomerInput,
   DailyChartPoint,
@@ -58,6 +59,9 @@ import type {
   SaleStatusInput,
   VehicleDistributionBootstrapInput,
   VehicleDistributionPilot,
+  VehicleHandoffDetail,
+  VehicleHandoffList,
+  VehicleHandoffTransitionInput,
   Worker,
   WorkerDeleteInput,
   WorkerInput,
@@ -3273,5 +3277,524 @@ export const useBootstrapVehicleDistributionPilot = <TError = ErrorType<ErrorRes
         TContext
       > => {
       return useMutation(getBootstrapVehicleDistributionPilotMutationOptions(options));
+    }
+
+export const getListVehicleHandoffsUrl = () => {
+
+
+
+
+  return `/api/vehicle-distribution/handoffs`
+}
+
+/**
+ * Returns the prepared/lifecycle handoffs for the single active pilot vehicle (server-resolved). Authenticated via the dedicated vehicle-handoff auth wall (admin Bearer session OR the vehicle-distribution bot key). Fails closed (404) unless enabled, 503 when enabled without schema approval.
+ * @summary List handoffs for the pilot vehicle
+ */
+export const listVehicleHandoffs = async ( options?: RequestInit): Promise<VehicleHandoffList> => {
+
+  return customFetch<VehicleHandoffList>(getListVehicleHandoffsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListVehicleHandoffsQueryKey = () => {
+    return [
+    `/api/vehicle-distribution/handoffs`
+    ] as const;
+    }
+
+
+export const getListVehicleHandoffsQueryOptions = <TData = Awaited<ReturnType<typeof listVehicleHandoffs>>, TError = ErrorType<ErrorResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listVehicleHandoffs>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListVehicleHandoffsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listVehicleHandoffs>>> = ({ signal }) => listVehicleHandoffs({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listVehicleHandoffs>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListVehicleHandoffsQueryResult = NonNullable<Awaited<ReturnType<typeof listVehicleHandoffs>>>
+export type ListVehicleHandoffsQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary List handoffs for the pilot vehicle
+ */
+
+export function useListVehicleHandoffs<TData = Awaited<ReturnType<typeof listVehicleHandoffs>>, TError = ErrorType<ErrorResponse>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listVehicleHandoffs>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListVehicleHandoffsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getCreateVehicleHandoffUrl = () => {
+
+
+
+
+  return `/api/vehicle-distribution/handoffs`
+}
+
+/**
+ * Creates a prepared (not yet loaded) handoff. The actor, agent, vehicle and vehicle-warehouse target are all resolved server-side; only the source warehouse, line items, notes and a client operationKey are accepted. Idempotent on operationKey — replaying the same key returns the same handoff, while a payload mismatch on replay yields 409. No inventory is mutated.
+ * @summary Create a prepared handoff for the pilot vehicle
+ */
+export const createVehicleHandoff = async (createVehicleHandoffInput: CreateVehicleHandoffInput, options?: RequestInit): Promise<VehicleHandoffDetail> => {
+
+  return customFetch<VehicleHandoffDetail>(getCreateVehicleHandoffUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      createVehicleHandoffInput,)
+  }
+);}
+
+
+
+
+export const getCreateVehicleHandoffMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createVehicleHandoff>>, TError,{data: BodyType<CreateVehicleHandoffInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createVehicleHandoff>>, TError,{data: BodyType<CreateVehicleHandoffInput>}, TContext> => {
+
+const mutationKey = ['createVehicleHandoff'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createVehicleHandoff>>, {data: BodyType<CreateVehicleHandoffInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createVehicleHandoff(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateVehicleHandoffMutationResult = NonNullable<Awaited<ReturnType<typeof createVehicleHandoff>>>
+    export type CreateVehicleHandoffMutationBody = BodyType<CreateVehicleHandoffInput>
+    export type CreateVehicleHandoffMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Create a prepared handoff for the pilot vehicle
+ */
+export const useCreateVehicleHandoff = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createVehicleHandoff>>, TError,{data: BodyType<CreateVehicleHandoffInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createVehicleHandoff>>,
+        TError,
+        {data: BodyType<CreateVehicleHandoffInput>},
+        TContext
+      > => {
+      return useMutation(getCreateVehicleHandoffMutationOptions(options));
+    }
+
+export const getGetVehicleHandoffUrl = (handoffId: number,) => {
+
+
+
+
+  return `/api/vehicle-distribution/handoffs/${handoffId}`
+}
+
+/**
+ * @summary Read a single handoff for the pilot vehicle
+ */
+export const getVehicleHandoff = async (handoffId: number, options?: RequestInit): Promise<VehicleHandoffDetail> => {
+
+  return customFetch<VehicleHandoffDetail>(getGetVehicleHandoffUrl(handoffId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetVehicleHandoffQueryKey = (handoffId: number,) => {
+    return [
+    `/api/vehicle-distribution/handoffs/${handoffId}`
+    ] as const;
+    }
+
+
+export const getGetVehicleHandoffQueryOptions = <TData = Awaited<ReturnType<typeof getVehicleHandoff>>, TError = ErrorType<ErrorResponse>>(handoffId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getVehicleHandoff>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetVehicleHandoffQueryKey(handoffId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getVehicleHandoff>>> = ({ signal }) => getVehicleHandoff(handoffId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(handoffId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getVehicleHandoff>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetVehicleHandoffQueryResult = NonNullable<Awaited<ReturnType<typeof getVehicleHandoff>>>
+export type GetVehicleHandoffQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary Read a single handoff for the pilot vehicle
+ */
+
+export function useGetVehicleHandoff<TData = Awaited<ReturnType<typeof getVehicleHandoff>>, TError = ErrorType<ErrorResponse>>(
+ handoffId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getVehicleHandoff>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetVehicleHandoffQueryOptions(handoffId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getConfirmVehicleHandoffLabelsPrintedUrl = (handoffId: number,) => {
+
+
+
+
+  return `/api/vehicle-distribution/handoffs/${handoffId}/confirm-labels-printed`
+}
+
+/**
+ * Requires one cross-handoff vehicle_label_claim per physical unit (matching item/product/SKU/weight, status prepared or printed). Marks the claims printed, records idempotent label_printed unit events, and advances the handoff to labels_printed. Same-state retry is idempotent.
+ * @summary Transition a prepared handoff to labels_printed
+ */
+export const confirmVehicleHandoffLabelsPrinted = async (handoffId: number,
+    vehicleHandoffTransitionInput?: VehicleHandoffTransitionInput, options?: RequestInit): Promise<VehicleHandoffDetail> => {
+
+  return customFetch<VehicleHandoffDetail>(getConfirmVehicleHandoffLabelsPrintedUrl(handoffId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      vehicleHandoffTransitionInput,)
+  }
+);}
+
+
+
+
+export const getConfirmVehicleHandoffLabelsPrintedMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmVehicleHandoffLabelsPrinted>>, TError,{handoffId: number;data?: BodyType<VehicleHandoffTransitionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof confirmVehicleHandoffLabelsPrinted>>, TError,{handoffId: number;data?: BodyType<VehicleHandoffTransitionInput>}, TContext> => {
+
+const mutationKey = ['confirmVehicleHandoffLabelsPrinted'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof confirmVehicleHandoffLabelsPrinted>>, {handoffId: number;data?: BodyType<VehicleHandoffTransitionInput>}> = (props) => {
+          const {handoffId,data} = props ?? {};
+
+          return  confirmVehicleHandoffLabelsPrinted(handoffId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ConfirmVehicleHandoffLabelsPrintedMutationResult = NonNullable<Awaited<ReturnType<typeof confirmVehicleHandoffLabelsPrinted>>>
+    export type ConfirmVehicleHandoffLabelsPrintedMutationBody = BodyType<VehicleHandoffTransitionInput> | undefined
+    export type ConfirmVehicleHandoffLabelsPrintedMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Transition a prepared handoff to labels_printed
+ */
+export const useConfirmVehicleHandoffLabelsPrinted = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmVehicleHandoffLabelsPrinted>>, TError,{handoffId: number;data?: BodyType<VehicleHandoffTransitionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof confirmVehicleHandoffLabelsPrinted>>,
+        TError,
+        {handoffId: number;data?: BodyType<VehicleHandoffTransitionInput>},
+        TContext
+      > => {
+      return useMutation(getConfirmVehicleHandoffLabelsPrintedMutationOptions(options));
+    }
+
+export const getMarkVehicleHandoffHandedOverUrl = (handoffId: number,) => {
+
+
+
+
+  return `/api/vehicle-distribution/handoffs/${handoffId}/handed-over`
+}
+
+/**
+ * Exact labels_printed → handed_over transition. Server actor/timestamp; no stock movement. Same-state retry is idempotent.
+ * @summary Transition labels_printed to handed_over
+ */
+export const markVehicleHandoffHandedOver = async (handoffId: number,
+    vehicleHandoffTransitionInput?: VehicleHandoffTransitionInput, options?: RequestInit): Promise<VehicleHandoffDetail> => {
+
+  return customFetch<VehicleHandoffDetail>(getMarkVehicleHandoffHandedOverUrl(handoffId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      vehicleHandoffTransitionInput,)
+  }
+);}
+
+
+
+
+export const getMarkVehicleHandoffHandedOverMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof markVehicleHandoffHandedOver>>, TError,{handoffId: number;data?: BodyType<VehicleHandoffTransitionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof markVehicleHandoffHandedOver>>, TError,{handoffId: number;data?: BodyType<VehicleHandoffTransitionInput>}, TContext> => {
+
+const mutationKey = ['markVehicleHandoffHandedOver'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof markVehicleHandoffHandedOver>>, {handoffId: number;data?: BodyType<VehicleHandoffTransitionInput>}> = (props) => {
+          const {handoffId,data} = props ?? {};
+
+          return  markVehicleHandoffHandedOver(handoffId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type MarkVehicleHandoffHandedOverMutationResult = NonNullable<Awaited<ReturnType<typeof markVehicleHandoffHandedOver>>>
+    export type MarkVehicleHandoffHandedOverMutationBody = BodyType<VehicleHandoffTransitionInput> | undefined
+    export type MarkVehicleHandoffHandedOverMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Transition labels_printed to handed_over
+ */
+export const useMarkVehicleHandoffHandedOver = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof markVehicleHandoffHandedOver>>, TError,{handoffId: number;data?: BodyType<VehicleHandoffTransitionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof markVehicleHandoffHandedOver>>,
+        TError,
+        {handoffId: number;data?: BodyType<VehicleHandoffTransitionInput>},
+        TContext
+      > => {
+      return useMutation(getMarkVehicleHandoffHandedOverMutationOptions(options));
+    }
+
+export const getMarkVehicleHandoffStockTransferredUrl = (handoffId: number,) => {
+
+
+
+
+  return `/api/vehicle-distribution/handoffs/${handoffId}/stock-transferred`
+}
+
+/**
+ * Exact handed_over → stock_transferred transition. Atomically moves physical stock from the source warehouse to the vehicle warehouse: verifies exact snapshot quantity and total weight are available (no GREATEST masking), subtracts source and adds vehicle, writes one stock_movements ledger row per item with a deterministic per-item reference and a batch movement_reference, marks claims loaded, records idempotent load unit events, then sets the terminal state. Any failure rolls back the whole transaction. Same-state retry is idempotent.
+ * @summary Transition handed_over to stock_transferred (moves inventory)
+ */
+export const markVehicleHandoffStockTransferred = async (handoffId: number,
+    vehicleHandoffTransitionInput?: VehicleHandoffTransitionInput, options?: RequestInit): Promise<VehicleHandoffDetail> => {
+
+  return customFetch<VehicleHandoffDetail>(getMarkVehicleHandoffStockTransferredUrl(handoffId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      vehicleHandoffTransitionInput,)
+  }
+);}
+
+
+
+
+export const getMarkVehicleHandoffStockTransferredMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof markVehicleHandoffStockTransferred>>, TError,{handoffId: number;data?: BodyType<VehicleHandoffTransitionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof markVehicleHandoffStockTransferred>>, TError,{handoffId: number;data?: BodyType<VehicleHandoffTransitionInput>}, TContext> => {
+
+const mutationKey = ['markVehicleHandoffStockTransferred'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof markVehicleHandoffStockTransferred>>, {handoffId: number;data?: BodyType<VehicleHandoffTransitionInput>}> = (props) => {
+          const {handoffId,data} = props ?? {};
+
+          return  markVehicleHandoffStockTransferred(handoffId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type MarkVehicleHandoffStockTransferredMutationResult = NonNullable<Awaited<ReturnType<typeof markVehicleHandoffStockTransferred>>>
+    export type MarkVehicleHandoffStockTransferredMutationBody = BodyType<VehicleHandoffTransitionInput> | undefined
+    export type MarkVehicleHandoffStockTransferredMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Transition handed_over to stock_transferred (moves inventory)
+ */
+export const useMarkVehicleHandoffStockTransferred = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof markVehicleHandoffStockTransferred>>, TError,{handoffId: number;data?: BodyType<VehicleHandoffTransitionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof markVehicleHandoffStockTransferred>>,
+        TError,
+        {handoffId: number;data?: BodyType<VehicleHandoffTransitionInput>},
+        TContext
+      > => {
+      return useMutation(getMarkVehicleHandoffStockTransferredMutationOptions(options));
+    }
+
+export const getCancelVehicleHandoffUrl = (handoffId: number,) => {
+
+
+
+
+  return `/api/vehicle-distribution/handoffs/${handoffId}/cancel`
+}
+
+/**
+ * Cancels a handoff in any pre-terminal state (prepared, labels_printed, handed_over). Rejected once stock_transferred. No stock is mutated. Same cancelled-state retry is idempotent.
+ * @summary Cancel a pre-terminal handoff
+ */
+export const cancelVehicleHandoff = async (handoffId: number,
+    vehicleHandoffTransitionInput?: VehicleHandoffTransitionInput, options?: RequestInit): Promise<VehicleHandoffDetail> => {
+
+  return customFetch<VehicleHandoffDetail>(getCancelVehicleHandoffUrl(handoffId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      vehicleHandoffTransitionInput,)
+  }
+);}
+
+
+
+
+export const getCancelVehicleHandoffMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelVehicleHandoff>>, TError,{handoffId: number;data?: BodyType<VehicleHandoffTransitionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof cancelVehicleHandoff>>, TError,{handoffId: number;data?: BodyType<VehicleHandoffTransitionInput>}, TContext> => {
+
+const mutationKey = ['cancelVehicleHandoff'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof cancelVehicleHandoff>>, {handoffId: number;data?: BodyType<VehicleHandoffTransitionInput>}> = (props) => {
+          const {handoffId,data} = props ?? {};
+
+          return  cancelVehicleHandoff(handoffId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CancelVehicleHandoffMutationResult = NonNullable<Awaited<ReturnType<typeof cancelVehicleHandoff>>>
+    export type CancelVehicleHandoffMutationBody = BodyType<VehicleHandoffTransitionInput> | undefined
+    export type CancelVehicleHandoffMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Cancel a pre-terminal handoff
+ */
+export const useCancelVehicleHandoff = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelVehicleHandoff>>, TError,{handoffId: number;data?: BodyType<VehicleHandoffTransitionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof cancelVehicleHandoff>>,
+        TError,
+        {handoffId: number;data?: BodyType<VehicleHandoffTransitionInput>},
+        TContext
+      > => {
+      return useMutation(getCancelVehicleHandoffMutationOptions(options));
     }
 

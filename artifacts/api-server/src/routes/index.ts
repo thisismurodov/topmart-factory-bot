@@ -28,6 +28,7 @@ import auditRouter from "./audit";
 import distributionRouter, { distributionSuggestionsRouter } from "./distribution";
 import fieldRouter from "./field";
 import vehicleDistributionRouter from "./vehicle-distribution";
+import vehicleHandoffRouter from "./vehicle-distribution/handoff-router";
 
 const router: IRouter = Router();
 
@@ -52,6 +53,12 @@ router.use(requireAuthOrInternalKey, omborRouter);
 // ── Savdo tavsiyalari — Bearer session (dashboard) OR x-internal-key (savdo bot)
 // Savdo bot agentlarga kun boshida AI tavsiyalarni ko'rsatadi (?ai=1&agentId=...).
 router.use(requireAuthOrInternalKey, distributionSuggestionsRouter);
+
+// ── Vehicle handoff (F3) — dedicated auth wall (admin Bearer OR bot key) ──────
+// Mounted BEFORE the global requireAuth wall behind its own middleware so the
+// warehouse bot can drive the handoff lifecycle with x-vehicle-distribution-bot-key
+// while admins use a Bearer session. The actor is always assigned server-side.
+router.use(vehicleHandoffRouter);
 
 // ── Auth wall: everything below requires a valid session ──────────────────────
 router.use(requireAuth);

@@ -901,6 +901,264 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /vehicle-distribution/handoffs:
+    get:
+      operationId: listVehicleHandoffs
+      tags: [vehicle-distribution]
+      summary: List handoffs for the pilot vehicle
+      description: >-
+        Returns the prepared/lifecycle handoffs for the single active pilot
+        vehicle (server-resolved). Authenticated via the dedicated
+        vehicle-handoff auth wall (admin Bearer session OR the
+        vehicle-distribution bot key). Fails closed (404) unless enabled, 503
+        when enabled without schema approval.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleHandoffList"
+        "401":
+          description: Unauthorized
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "404":
+          description: Feature disabled
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "503":
+          description: Enabled but schema not approved
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+    post:
+      operationId: createVehicleHandoff
+      tags: [vehicle-distribution]
+      summary: Create a prepared handoff for the pilot vehicle
+      description: >-
+        Creates a prepared (not yet loaded) handoff. The actor, agent, vehicle
+        and vehicle-warehouse target are all resolved server-side; only the
+        source warehouse, line items, notes and a client operationKey are
+        accepted. Idempotent on operationKey — replaying the same key returns
+        the same handoff, while a payload mismatch on replay yields 409. No
+        inventory is mutated.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateVehicleHandoffInput"
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/VehicleHandoffDetail" } } }
+        "400":
+          description: Invalid body
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "401":
+          description: Unauthorized
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "404":
+          description: Feature disabled
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "409":
+          description: Conflicting state or idempotency payload mismatch
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "503":
+          description: Enabled but schema not approved
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+
+  /vehicle-distribution/handoffs/{handoffId}:
+    get:
+      operationId: getVehicleHandoff
+      tags: [vehicle-distribution]
+      summary: Read a single handoff for the pilot vehicle
+      parameters:
+        - name: handoffId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/VehicleHandoffDetail" } } }
+        "401":
+          description: Unauthorized
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "404":
+          description: Feature disabled or handoff not found
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "503":
+          description: Enabled but schema not approved
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+
+  /vehicle-distribution/handoffs/{handoffId}/confirm-labels-printed:
+    post:
+      operationId: confirmVehicleHandoffLabelsPrinted
+      tags: [vehicle-distribution]
+      summary: Transition a prepared handoff to labels_printed
+      description: >-
+        Requires one cross-handoff vehicle_label_claim per physical unit
+        (matching item/product/SKU/weight, status prepared or printed). Marks
+        the claims printed, records idempotent label_printed unit events, and
+        advances the handoff to labels_printed. Same-state retry is idempotent.
+      parameters:
+        - name: handoffId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VehicleHandoffTransitionInput"
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/VehicleHandoffDetail" } } }
+        "400":
+          description: Invalid body
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "401":
+          description: Unauthorized
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "404":
+          description: Feature disabled or handoff not found
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "409":
+          description: Wrong state or claim invariant not satisfied
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "503":
+          description: Enabled but schema not approved
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+
+  /vehicle-distribution/handoffs/{handoffId}/handed-over:
+    post:
+      operationId: markVehicleHandoffHandedOver
+      tags: [vehicle-distribution]
+      summary: Transition labels_printed to handed_over
+      description: >-
+        Exact labels_printed → handed_over transition. Server actor/timestamp;
+        no stock movement. Same-state retry is idempotent.
+      parameters:
+        - name: handoffId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VehicleHandoffTransitionInput"
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/VehicleHandoffDetail" } } }
+        "400":
+          description: Invalid body
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "401":
+          description: Unauthorized
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "404":
+          description: Feature disabled or handoff not found
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "409":
+          description: Wrong state
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "503":
+          description: Enabled but schema not approved
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+
+  /vehicle-distribution/handoffs/{handoffId}/stock-transferred:
+    post:
+      operationId: markVehicleHandoffStockTransferred
+      tags: [vehicle-distribution]
+      summary: Transition handed_over to stock_transferred (moves inventory)
+      description: >-
+        Exact handed_over → stock_transferred transition. Atomically moves
+        physical stock from the source warehouse to the vehicle warehouse:
+        verifies exact snapshot quantity and total weight are available (no
+        GREATEST masking), subtracts source and adds vehicle, writes one
+        stock_movements ledger row per item with a deterministic per-item
+        reference and a batch movement_reference, marks claims loaded, records
+        idempotent load unit events, then sets the terminal state. Any failure
+        rolls back the whole transaction. Same-state retry is idempotent.
+      parameters:
+        - name: handoffId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VehicleHandoffTransitionInput"
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/VehicleHandoffDetail" } } }
+        "400":
+          description: Invalid body
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "401":
+          description: Unauthorized
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "404":
+          description: Feature disabled or handoff not found
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "409":
+          description: Wrong state, claim invariant, or insufficient stock/weight
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "503":
+          description: Enabled but schema not approved
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+
+  /vehicle-distribution/handoffs/{handoffId}/cancel:
+    post:
+      operationId: cancelVehicleHandoff
+      tags: [vehicle-distribution]
+      summary: Cancel a pre-terminal handoff
+      description: >-
+        Cancels a handoff in any pre-terminal state (prepared, labels_printed,
+        handed_over). Rejected once stock_transferred. No stock is mutated.
+        Same cancelled-state retry is idempotent.
+      parameters:
+        - name: handoffId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VehicleHandoffTransitionInput"
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/VehicleHandoffDetail" } } }
+        "400":
+          description: Invalid body
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "401":
+          description: Unauthorized
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "404":
+          description: Feature disabled or handoff not found
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "409":
+          description: Already terminal (stock_transferred)
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "503":
+          description: Enabled but schema not approved
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+
 components:
   schemas:
     HealthStatus:
@@ -1023,6 +1281,143 @@ components:
             - $ref: "#/components/schemas/VehicleDistributionAssignment"
             - type: "null"
       required: [bootstrapped, agent, vehicle, warehouse, balance, assignment]
+
+    # ── Vehicle Distribution (F3 handoff) ───────────────────────────
+    CreateVehicleHandoffItemInput:
+      type: object
+      description: A requested handoff line — a distribution product and the
+        positive integer number of physical units to dispatch.
+      properties:
+        mahsulotId:
+          type: integer
+        quantity:
+          type: integer
+          minimum: 1
+      required: [mahsulotId, quantity]
+      additionalProperties: false
+
+    CreateVehicleHandoffInput:
+      type: object
+      description: >-
+        Strict prepared-handoff creation body. Only these fields are accepted;
+        agent, vehicle and vehicle-warehouse targets plus the actor are all
+        resolved server-side. operationKey is a required client idempotency
+        token.
+      properties:
+        sourceWarehouseId:
+          type: integer
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/CreateVehicleHandoffItemInput"
+        notes:
+          type: ["string", "null"]
+        operationKey:
+          type: string
+          minLength: 1
+      required: [sourceWarehouseId, items, operationKey]
+      additionalProperties: false
+
+    VehicleHandoffTransitionInput:
+      type: object
+      description: >-
+        Lifecycle transition body. Carries no overridable fields — actor and
+        timestamps are server-assigned. Exists so transitions have a typed
+        (empty) body contract.
+      properties: {}
+      additionalProperties: false
+
+    VehicleHandoffItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        mahsulotId:
+          type: integer
+        sku:
+          type: string
+        productName:
+          type: ["string", "null"]
+        quantity:
+          type: integer
+        unitWeightKg:
+          type: ["number", "null"]
+        totalWeightKg:
+          type: ["number", "null"]
+      required: [id, mahsulotId, sku, productName, quantity, unitWeightKg, totalWeightKg]
+
+    VehicleHandoffDetail:
+      type: object
+      properties:
+        id:
+          type: integer
+        vehicleId:
+          type: integer
+        deliveryAgentId:
+          type: integer
+        sourceWarehouseId:
+          type: integer
+        vehicleWarehouseId:
+          type: integer
+        handoffDate:
+          type: string
+        status:
+          type: string
+        operationKey:
+          type: ["string", "null"]
+        movementReference:
+          type: ["string", "null"]
+        preparedActorType:
+          type: ["string", "null"]
+        preparedActorRef:
+          type: ["string", "null"]
+        notes:
+          type: ["string", "null"]
+        labelsPrintedAt:
+          type: ["string", "null"]
+        handedOverAt:
+          type: ["string", "null"]
+        stockTransferredAt:
+          type: ["string", "null"]
+        cancelledAt:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/VehicleHandoffItem"
+      required:
+        - id
+        - vehicleId
+        - deliveryAgentId
+        - sourceWarehouseId
+        - vehicleWarehouseId
+        - handoffDate
+        - status
+        - operationKey
+        - movementReference
+        - preparedActorType
+        - preparedActorRef
+        - notes
+        - labelsPrintedAt
+        - handedOverAt
+        - stockTransferredAt
+        - cancelledAt
+        - createdAt
+        - items
+
+    VehicleHandoffList:
+      type: object
+      properties:
+        vehicleId:
+          type: integer
+        handoffs:
+          type: array
+          items:
+            $ref: "#/components/schemas/VehicleHandoffDetail"
+      required: [vehicleId, handoffs]
 
     # ── Auth ────────────────────────────────────────────────────────
     LoginInput:

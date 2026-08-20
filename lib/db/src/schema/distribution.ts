@@ -386,6 +386,13 @@ export const vehicleHandoffsTable = distribution.table(
     cancelledBy: integer("cancelled_by"),
     /** Opaque ref to the stock-movement record created on stock_transferred. */
     movementReference: text("movement_reference"),
+    /** F3: client idempotency token for prepared-handoff creation (nullable;
+     *  partial-unique on non-null values, enforced in runtime DDL only). */
+    operationKey: text("operation_key"),
+    /** F3: server-assigned actor that prepared the handoff (admin|warehouse_bot). */
+    preparedActorType: text("prepared_actor_type"),
+    /** F3: server-assigned actor ref (admin username or bot name). */
+    preparedActorRef: text("prepared_actor_ref"),
     notes: text("notes"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -416,6 +423,12 @@ export const vehicleHandoffItemsTable = distribution.table(
     sku: text("sku").notNull().default(""),
     quantityDispatched: numeric("quantity_dispatched", { precision: 12, scale: 3 }).notNull(),
     unitCost: numeric("unit_cost", { precision: 12, scale: 2 }).notNull().default("0"),
+    /** F3: snapshot of public.products name at prepare time (nullable). */
+    productName: text("product_name"),
+    /** F3: snapshot per-unit weight (kg) at prepare time (nullable, >=0 if set). */
+    unitWeightKg: numeric("unit_weight_kg", { precision: 12, scale: 3 }),
+    /** F3: snapshot total weight (kg) = unit_weight_kg * quantity (nullable, >=0). */
+    totalWeightKg: numeric("total_weight_kg", { precision: 12, scale: 3 }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -424,6 +437,8 @@ export const vehicleHandoffItemsTable = distribution.table(
     uniqueIndex("uq_vehicle_handoff_items_handoff_mahsulot").on(t.handoffId, t.mahsulotId),
     check("vehicle_handoff_items_qty_check", sql`${t.quantityDispatched} > 0`),
     check("vehicle_handoff_items_cost_check", sql`${t.unitCost} >= 0`),
+    check("vehicle_handoff_items_unit_weight_check", sql`${t.unitWeightKg} IS NULL OR ${t.unitWeightKg} >= 0`),
+    check("vehicle_handoff_items_total_weight_check", sql`${t.totalWeightKg} IS NULL OR ${t.totalWeightKg} >= 0`),
   ],
 );
 
@@ -453,6 +468,11 @@ export const vehicleUnitEventsTable = distribution.table(
     productionLabelId: integer("production_label_id"),
     /** Snapshot of public.production_labels.barcode_value (nullable). */
     barcode: text("barcode"),
+    /** F3: client idempotency token for label_printed/load events (nullable;
+     *  partial-unique on non-null, enforced in runtime DDL only). */
+    operationKey: text("operation_key"),
+    /** F3: logical ref to distribution.vehicle_label_claims.id (nullable). */
+    labelClaimId: integer("label_claim_id"),
     eventAt: timestamp("event_at", { withTimezone: true }).notNull().defaultNow(),
     notes: text("notes"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -462,9 +482,10 @@ export const vehicleUnitEventsTable = distribution.table(
     index("idx_vehicle_unit_events_mahsulot").on(t.mahsulotId, t.eventType),
     index("idx_vehicle_unit_events_handoff").on(t.handoffId),
     index("idx_vehicle_unit_events_handoff_item").on(t.handoffItemId),
+    index("idx_vehicle_unit_events_label_claim").on(t.labelClaimId),
     check(
       "vehicle_unit_events_type_check",
-      sql`${t.eventType} IN ('load','unload','return','adjustment','sale')`,
+      sql`${t.eventType} IN ('load','unload','return','adjustment','sale','label_prepared','label_printed')`,
     ),
     check("vehicle_unit_events_qty_check", sql`${t.quantity} <> 0`),
   ],
@@ -520,6 +541,49 @@ export const vehicleSaleAllocationsTable = distribution.table(
     index("idx_vehicle_sale_allocations_vehicle").on(t.vehicleId),
     check("vehicle_sale_allocations_qty_check", sql`${t.allocatedQuantity} > 0`),
     check("vehicle_sale_allocations_weight_check", sql`${t.allocatedWeightKg} > 0`),
+  ],
+);
+
+/** F3: cross-handoff physical-unit label claim.
+ *
+ *  One row per physical labelled unit (production_label_id), globally unique
+ *  across ALL handoffs — the cross-handoff invariant that a physical unit can
+ *  only ever be claimed by one handoff item. barcode/sku/unit_weight_kg are
+ *  self-describing snapshots. Partial unique on non-null operation_key is
+ *  enforced in runtime DDL only (predicate not expressible in Drizzle). */
+export const vehicleLabelClaimsTable = distribution.table(
+  "vehicle_label_claims",
+  {
+    id: serial("id").primaryKey(),
+    vehicleId: integer("vehicle_id").notNull(),
+    handoffId: integer("handoff_id").notNull(),
+    handoffItemId: integer("handoff_item_id").notNull(),
+    /** Logical ref to public.production_labels.id — globally unique. */
+    productionLabelId: integer("production_label_id").notNull(),
+    /** Snapshot of public.production_labels.barcode_value — globally unique. */
+    barcode: text("barcode").notNull(),
+    /** Logical ref to distribution.mahsulotlar.id. */
+    mahsulotId: integer("mahsulot_id").notNull(),
+    sku: text("sku").notNull().default(""),
+    unitWeightKg: numeric("unit_weight_kg", { precision: 12, scale: 3 }).notNull(),
+    status: text("status").notNull().default("prepared"),
+    /** Client idempotency token (nullable; partial-unique in runtime DDL). */
+    operationKey: text("operation_key"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("uq_vehicle_label_claims_production_label").on(t.productionLabelId),
+    uniqueIndex("uq_vehicle_label_claims_barcode").on(t.barcode),
+    index("idx_vehicle_label_claims_handoff").on(t.handoffId),
+    index("idx_vehicle_label_claims_handoff_item").on(t.handoffItemId),
+    index("idx_vehicle_label_claims_vehicle").on(t.vehicleId, t.status),
+    index("idx_vehicle_label_claims_mahsulot").on(t.mahsulotId, t.status),
+    check(
+      "vehicle_label_claims_status_check",
+      sql`${t.status} IN ('prepared','printed','loaded','sold','returned')`,
+    ),
+    check("vehicle_label_claims_weight_check", sql`${t.unitWeightKg} > 0`),
   ],
 );
 

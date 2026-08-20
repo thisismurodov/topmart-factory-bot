@@ -339,12 +339,23 @@ CREATE TABLE IF NOT EXISTS distribution.vehicle_handoffs (
     cancelled_at          TIMESTAMP WITH TIME ZONE,
     cancelled_by          INTEGER,
     movement_reference    TEXT,
+    operation_key         TEXT,
+    prepared_actor_type   TEXT,
+    prepared_actor_ref    TEXT,
     notes                 TEXT,
     created_at            TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     CONSTRAINT vehicle_handoffs_status_check CHECK (status IN ('prepared','labels_printed','handed_over','stock_transferred','cancelled'))
 );
+ALTER TABLE distribution.vehicle_handoffs ADD COLUMN IF NOT EXISTS operation_key       TEXT;
+ALTER TABLE distribution.vehicle_handoffs ADD COLUMN IF NOT EXISTS prepared_actor_type TEXT;
+ALTER TABLE distribution.vehicle_handoffs ADD COLUMN IF NOT EXISTS prepared_actor_ref  TEXT;
 CREATE INDEX IF NOT EXISTS idx_vehicle_handoffs_vehicle_date ON distribution.vehicle_handoffs (vehicle_id, handoff_date);
 CREATE INDEX IF NOT EXISTS idx_vehicle_handoffs_status       ON distribution.vehicle_handoffs (status, handoff_date);
+-- F3: partial unique on non-null idempotency operation_key and movement_reference.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_handoffs_operation_key
+    ON distribution.vehicle_handoffs (operation_key) WHERE operation_key IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_handoffs_movement_reference
+    ON distribution.vehicle_handoffs (movement_reference) WHERE movement_reference IS NOT NULL;
 
 -- Aggregate line items (one row per handoff+product). Deliberately holds NO
 -- single production_label_id/barcode — per-unit label/barcode identity lives on
@@ -356,10 +367,18 @@ CREATE TABLE IF NOT EXISTS distribution.vehicle_handoff_items (
     sku                  TEXT NOT NULL DEFAULT '',
     quantity_dispatched  NUMERIC(12,3) NOT NULL,
     unit_cost            NUMERIC(12,2) NOT NULL DEFAULT 0,
+    product_name         TEXT,
+    unit_weight_kg       NUMERIC(12,3),
+    total_weight_kg      NUMERIC(12,3),
     created_at           TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     CONSTRAINT vehicle_handoff_items_qty_check  CHECK (quantity_dispatched > 0),
-    CONSTRAINT vehicle_handoff_items_cost_check CHECK (unit_cost >= 0)
+    CONSTRAINT vehicle_handoff_items_cost_check CHECK (unit_cost >= 0),
+    CONSTRAINT vehicle_handoff_items_unit_weight_check  CHECK (unit_weight_kg  IS NULL OR unit_weight_kg  >= 0),
+    CONSTRAINT vehicle_handoff_items_total_weight_check CHECK (total_weight_kg IS NULL OR total_weight_kg >= 0)
 );
+ALTER TABLE distribution.vehicle_handoff_items ADD COLUMN IF NOT EXISTS product_name    TEXT;
+ALTER TABLE distribution.vehicle_handoff_items ADD COLUMN IF NOT EXISTS unit_weight_kg  NUMERIC(12,3);
+ALTER TABLE distribution.vehicle_handoff_items ADD COLUMN IF NOT EXISTS total_weight_kg NUMERIC(12,3);
 CREATE INDEX        IF NOT EXISTS idx_vehicle_handoff_items_handoff          ON distribution.vehicle_handoff_items (handoff_id);
 CREATE INDEX        IF NOT EXISTS idx_vehicle_handoff_items_mahsulot         ON distribution.vehicle_handoff_items (mahsulot_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_handoff_items_handoff_mahsulot  ON distribution.vehicle_handoff_items (handoff_id, mahsulot_id);
@@ -380,12 +399,25 @@ CREATE TABLE IF NOT EXISTS distribution.vehicle_unit_events (
     actor_id            BIGINT NOT NULL,
     production_label_id INTEGER,
     barcode             TEXT,
+    operation_key       TEXT,
+    label_claim_id      INTEGER,
     event_at            TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     notes               TEXT,
     created_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    CONSTRAINT vehicle_unit_events_type_check CHECK (event_type IN ('load','unload','return','adjustment','sale')),
+    CONSTRAINT vehicle_unit_events_type_check CHECK (event_type IN ('load','unload','return','adjustment','sale','label_prepared','label_printed')),
     CONSTRAINT vehicle_unit_events_qty_check  CHECK (quantity <> 0)
 );
+ALTER TABLE distribution.vehicle_unit_events ADD COLUMN IF NOT EXISTS operation_key  TEXT;
+ALTER TABLE distribution.vehicle_unit_events ADD COLUMN IF NOT EXISTS label_claim_id INTEGER;
+-- F3 upgrade migration: if this table was created by F1 DDL it has the old CHECK
+-- that only allows load/unload/return/adjustment/sale. Idempotently expand it to
+-- also allow label_prepared and label_printed (safe because old set ⊆ new set).
+-- DROP IF EXISTS + ADD is atomic within the transaction and safe to replay.
+ALTER TABLE distribution.vehicle_unit_events
+    DROP CONSTRAINT IF EXISTS vehicle_unit_events_type_check;
+ALTER TABLE distribution.vehicle_unit_events
+    ADD  CONSTRAINT vehicle_unit_events_type_check
+    CHECK (event_type IN ('load','unload','return','adjustment','sale','label_prepared','label_printed'));
 CREATE INDEX IF NOT EXISTS idx_vehicle_unit_events_vehicle_at   ON distribution.vehicle_unit_events (vehicle_id, event_at);
 CREATE INDEX IF NOT EXISTS idx_vehicle_unit_events_mahsulot     ON distribution.vehicle_unit_events (mahsulot_id, event_type);
 CREATE INDEX IF NOT EXISTS idx_vehicle_unit_events_handoff      ON distribution.vehicle_unit_events (handoff_id);
@@ -396,6 +428,41 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_unit_events_load_label
 CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_unit_events_load_barcode
     ON distribution.vehicle_unit_events (handoff_id, barcode)
     WHERE event_type = 'load' AND barcode IS NOT NULL;
+-- F3: partial unique on non-null idempotency operation_key (one event per key).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_unit_events_operation_key
+    ON distribution.vehicle_unit_events (operation_key)
+    WHERE operation_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_vehicle_unit_events_label_claim ON distribution.vehicle_unit_events (label_claim_id);
+
+-- F3: cross-handoff physical-unit label claim. One row per physical unit
+-- (production_label_id), globally unique across ALL handoffs. This is the
+-- cross-handoff invariant: a physical labelled unit can only ever be claimed
+-- by one handoff item. Weight/SKU snapshots make the claim self-describing.
+CREATE TABLE IF NOT EXISTS distribution.vehicle_label_claims (
+    id                  SERIAL PRIMARY KEY,
+    vehicle_id          INTEGER NOT NULL,
+    handoff_id          INTEGER NOT NULL,
+    handoff_item_id     INTEGER NOT NULL,
+    production_label_id INTEGER NOT NULL,
+    barcode             TEXT NOT NULL,
+    mahsulot_id         INTEGER NOT NULL,
+    sku                 TEXT NOT NULL DEFAULT '',
+    unit_weight_kg      NUMERIC(12,3) NOT NULL,
+    status              TEXT NOT NULL DEFAULT 'prepared',
+    operation_key       TEXT,
+    created_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    CONSTRAINT vehicle_label_claims_status_check CHECK (status IN ('prepared','printed','loaded','sold','returned')),
+    CONSTRAINT vehicle_label_claims_weight_check CHECK (unit_weight_kg > 0)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_label_claims_production_label ON distribution.vehicle_label_claims (production_label_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_label_claims_barcode         ON distribution.vehicle_label_claims (barcode);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_label_claims_operation_key
+    ON distribution.vehicle_label_claims (operation_key) WHERE operation_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_vehicle_label_claims_handoff      ON distribution.vehicle_label_claims (handoff_id);
+CREATE INDEX IF NOT EXISTS idx_vehicle_label_claims_handoff_item ON distribution.vehicle_label_claims (handoff_item_id);
+CREATE INDEX IF NOT EXISTS idx_vehicle_label_claims_vehicle      ON distribution.vehicle_label_claims (vehicle_id, status);
+CREATE INDEX IF NOT EXISTS idx_vehicle_label_claims_mahsulot     ON distribution.vehicle_label_claims (mahsulot_id, status);
 
 CREATE TABLE IF NOT EXISTS distribution.vehicle_sale_allocations (
     id                  SERIAL PRIMARY KEY,

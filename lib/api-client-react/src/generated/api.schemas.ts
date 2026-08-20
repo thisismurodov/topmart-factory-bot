@@ -274,6 +274,98 @@ export interface VehicleHandoffConfirmLabelsResult {
   atLeastOnce: boolean;
 }
 
+/**
+ * Strict draft-reconciliation creation body. Only these fields are accepted; the vehicle, warehouse, delivery agent and actor are resolved server-side. reconciliationDate is an ISO calendar date (YYYY-MM-DD).
+ */
+export interface CreateVehicleReconciliationInput {
+  /** ISO calendar date (YYYY-MM-DD). */
+  reconciliationDate: string;
+  /** @nullable */
+  notes?: string | null;
+}
+
+/**
+ * Lifecycle transition body for review / apply / cancel. Carries no overridable fields — actor and timestamps are server-assigned. Exists so transitions have a typed (empty) body contract.
+ */
+export interface VehicleReconciliationOperationInput { [key: string]: unknown }
+
+/**
+ * One physical count entry for a draft reconciliation line item.
+ */
+export interface PatchVehicleReconciliationItemEntry {
+  itemId: number;
+  /** @minimum 0 */
+  actualQuantity: number;
+  /** @nullable */
+  notes?: string | null;
+}
+
+/**
+ * A batch of physical count entries for a draft reconciliation.
+ */
+export interface PatchVehicleReconciliationItemsInput {
+  /** @minItems 1 */
+  items: PatchVehicleReconciliationItemEntry[];
+}
+
+export interface VehicleReconciliationItem {
+  id: number;
+  /** @nullable */
+  publicProductId: number | null;
+  /** @nullable */
+  mahsulotId: number | null;
+  /** @nullable */
+  productName: string | null;
+  sku: string;
+  expectedQuantity: number;
+  /** @nullable */
+  expectedWeightKg: number | null;
+  /** @nullable */
+  actualQuantity: number | null;
+  discrepancy: number;
+  /** @nullable */
+  countedBy: number | null;
+  /** @nullable */
+  countedAt: string | null;
+  /** @nullable */
+  notes: string | null;
+}
+
+export interface VehicleReconciliationDetail {
+  id: number;
+  vehicleId: number;
+  deliveryAgentId: number;
+  reconciliationDate: string;
+  status: string;
+  /** @nullable */
+  createdBy: number | null;
+  /** @nullable */
+  reviewedBy: number | null;
+  /** @nullable */
+  reviewedAt: string | null;
+  /** @nullable */
+  appliedBy: number | null;
+  /** @nullable */
+  appliedAt: string | null;
+  /** @nullable */
+  notes: string | null;
+  createdAt: string;
+  items: VehicleReconciliationItem[];
+}
+
+/**
+ * Wraps the reconciliation with a created flag. created=false when an existing same-date draft was returned instead of opening a new one.
+ */
+export interface VehicleReconciliationCreateResult {
+  created: boolean;
+  reconciliation: VehicleReconciliationDetail;
+}
+
+export interface VehicleReconciliationList {
+  vehicleId: number;
+  reconciliations: VehicleReconciliationDetail[];
+}
+
 export interface LoginInput {
   username: string;
   password: string;
@@ -697,5 +789,14 @@ limit?: number;
  * @minimum 1
  */
 beforeId?: number;
+};
+
+export type ListVehicleReconciliationsParams = {
+/**
+ * Maximum number of reconciliations to return (default 50, max 200).
+ * @minimum 1
+ * @maximum 200
+ */
+limit?: number;
 };
 

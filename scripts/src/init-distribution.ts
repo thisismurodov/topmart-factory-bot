@@ -515,6 +515,9 @@ CREATE TABLE IF NOT EXISTS distribution.vehicle_reconciliations (
   delivery_agent_id    INTEGER NOT NULL,
   reconciliation_date  DATE NOT NULL,
   status               TEXT NOT NULL DEFAULT 'draft',
+  created_by           BIGINT,
+  reviewed_by          BIGINT,
+  reviewed_at          TIMESTAMP WITH TIME ZONE,
   approved_by          INTEGER,
   approved_at          TIMESTAMP WITH TIME ZONE,
   applied_by           INTEGER,
@@ -523,6 +526,11 @@ CREATE TABLE IF NOT EXISTS distribution.vehicle_reconciliations (
   created_at           TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
   CONSTRAINT vehicle_reconciliations_status_check CHECK (status IN ('draft','approved','applied','disputed','cancelled'))
 );
+-- F6 upgrade: header actor columns on pre-existing tables (idempotent).
+ALTER TABLE distribution.vehicle_reconciliations
+  ADD COLUMN IF NOT EXISTS created_by  BIGINT,
+  ADD COLUMN IF NOT EXISTS reviewed_by BIGINT,
+  ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMP WITH TIME ZONE;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_reconciliations_vehicle_date  ON distribution.vehicle_reconciliations (vehicle_id, reconciliation_date);
 CREATE INDEX        IF NOT EXISTS idx_vehicle_reconciliations_status_date  ON distribution.vehicle_reconciliations (status, reconciliation_date);
 CREATE INDEX        IF NOT EXISTS idx_vehicle_reconciliations_agent        ON distribution.vehicle_reconciliations (delivery_agent_id, reconciliation_date);
@@ -530,18 +538,49 @@ CREATE INDEX        IF NOT EXISTS idx_vehicle_reconciliations_agent        ON di
 CREATE TABLE IF NOT EXISTS distribution.vehicle_reconciliation_items (
   id                    SERIAL PRIMARY KEY,
   reconciliation_id     INTEGER NOT NULL,
-  mahsulot_id           INTEGER NOT NULL,
+  mahsulot_id           INTEGER,
+  public_product_id     BIGINT,
+  product_name          TEXT,
   sku                   TEXT NOT NULL DEFAULT '',
   expected_quantity     NUMERIC(12,3) NOT NULL,
-  actual_quantity       NUMERIC(12,3) NOT NULL,
+  expected_weight_kg    NUMERIC(12,3),
+  actual_quantity       NUMERIC(12,3),
   discrepancy           NUMERIC(12,3) NOT NULL DEFAULT 0,
+  counted_by            BIGINT,
+  counted_at            TIMESTAMP WITH TIME ZONE,
   adjustment_reference  TEXT,
   notes                 TEXT,
   created_at            TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
   CONSTRAINT vehicle_reconciliation_items_expected_check CHECK (expected_quantity >= 0),
-  CONSTRAINT vehicle_reconciliation_items_actual_check   CHECK (actual_quantity >= 0)
+  CONSTRAINT vehicle_reconciliation_items_expected_weight_check CHECK (expected_weight_kg IS NULL OR expected_weight_kg >= 0),
+  CONSTRAINT vehicle_reconciliation_items_actual_check   CHECK (actual_quantity IS NULL OR actual_quantity >= 0),
+  CONSTRAINT vehicle_reconciliation_items_erp_line_check  CHECK (public_product_id IS NULL OR (product_name IS NOT NULL AND sku IS NOT NULL))
 );
-CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_reconciliation_items_rec_mahsulot ON distribution.vehicle_reconciliation_items (reconciliation_id, mahsulot_id);
+-- F6 upgrade: reshape a pre-existing legacy table (idempotent).
+ALTER TABLE distribution.vehicle_reconciliation_items
+  ADD COLUMN IF NOT EXISTS public_product_id  BIGINT,
+  ADD COLUMN IF NOT EXISTS product_name       TEXT,
+  ADD COLUMN IF NOT EXISTS expected_weight_kg NUMERIC(12,3),
+  ADD COLUMN IF NOT EXISTS counted_by         BIGINT,
+  ADD COLUMN IF NOT EXISTS counted_at         TIMESTAMP WITH TIME ZONE;
+ALTER TABLE distribution.vehicle_reconciliation_items ALTER COLUMN mahsulot_id     DROP NOT NULL;
+ALTER TABLE distribution.vehicle_reconciliation_items ALTER COLUMN actual_quantity DROP NOT NULL;
+-- Replace/ensure the F6 CHECK constraints (drop-then-add so each ALTER is idempotent).
+ALTER TABLE distribution.vehicle_reconciliation_items DROP CONSTRAINT IF EXISTS vehicle_reconciliation_items_actual_check;
+ALTER TABLE distribution.vehicle_reconciliation_items ADD CONSTRAINT vehicle_reconciliation_items_actual_check CHECK (actual_quantity IS NULL OR actual_quantity >= 0);
+ALTER TABLE distribution.vehicle_reconciliation_items DROP CONSTRAINT IF EXISTS vehicle_reconciliation_items_expected_weight_check;
+ALTER TABLE distribution.vehicle_reconciliation_items ADD CONSTRAINT vehicle_reconciliation_items_expected_weight_check CHECK (expected_weight_kg IS NULL OR expected_weight_kg >= 0);
+ALTER TABLE distribution.vehicle_reconciliation_items DROP CONSTRAINT IF EXISTS vehicle_reconciliation_items_erp_line_check;
+ALTER TABLE distribution.vehicle_reconciliation_items ADD CONSTRAINT vehicle_reconciliation_items_erp_line_check CHECK (public_product_id IS NULL OR (product_name IS NOT NULL AND sku IS NOT NULL));
+-- Legacy unique becomes partial (multi-NULL mahsulot_id must not collide).
+DROP INDEX IF EXISTS distribution.uq_vehicle_reconciliation_items_rec_mahsulot;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_reconciliation_items_rec_mahsulot
+  ON distribution.vehicle_reconciliation_items (reconciliation_id, mahsulot_id)
+  WHERE mahsulot_id IS NOT NULL;
+-- Partial unique: at most one F6 line per (reconciliation, public product).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_reconciliation_items_rec_public_product
+  ON distribution.vehicle_reconciliation_items (reconciliation_id, public_product_id)
+  WHERE public_product_id IS NOT NULL;
 CREATE INDEX        IF NOT EXISTS idx_vehicle_reconciliation_items_reconciliation ON distribution.vehicle_reconciliation_items (reconciliation_id);
 -- Partial unique: each adjustment_reference can only be applied once (prevents double-apply).
 -- Validated via pg_catalog in check-distribution-drift.ts.

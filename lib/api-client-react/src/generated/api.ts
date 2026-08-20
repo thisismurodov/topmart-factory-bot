@@ -23,6 +23,7 @@ import type {
   AdminUser,
   BatchList,
   CreateVehicleHandoffInput,
+  CreateVehicleReconciliationInput,
   Customer,
   CustomerInput,
   DailyChartPoint,
@@ -38,8 +39,10 @@ import type {
   InventoryItem,
   KgPayrollWorker,
   KgPayrollWorkerInput,
+  ListVehicleReconciliationsParams,
   LoginInput,
   LoginResult,
+  PatchVehicleReconciliationItemsInput,
   PayrollCloseResult,
   PayrollDayStatus,
   PayrollRoleRate,
@@ -68,6 +71,10 @@ import type {
   VehicleHandoffList,
   VehicleHandoffOperationInput,
   VehicleHandoffTransitionInput,
+  VehicleReconciliationCreateResult,
+  VehicleReconciliationDetail,
+  VehicleReconciliationList,
+  VehicleReconciliationOperationInput,
   Worker,
   WorkerDeleteInput,
   WorkerInput,
@@ -4116,5 +4123,531 @@ export const useCancelVehicleHandoff = <TError = ErrorType<ErrorResponse>,
         TContext
       > => {
       return useMutation(getCancelVehicleHandoffMutationOptions(options));
+    }
+
+export const getListVehicleReconciliationsUrl = (params?: ListVehicleReconciliationsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/vehicle-distribution/pilot/reconciliations?${stringifiedParams}` : `/api/vehicle-distribution/pilot/reconciliations`
+}
+
+/**
+ * Returns the reconciliation history for the single active pilot vehicle (server-resolved), newest first. Authenticated via the dedicated vehicle-distribution auth wall. Fails closed (404) unless enabled, 503 when enabled without schema approval.
+ * @summary List end-of-day reconciliations for the pilot vehicle
+ */
+export const listVehicleReconciliations = async (params?: ListVehicleReconciliationsParams, options?: RequestInit): Promise<VehicleReconciliationList> => {
+
+  return customFetch<VehicleReconciliationList>(getListVehicleReconciliationsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListVehicleReconciliationsQueryKey = (params?: ListVehicleReconciliationsParams,) => {
+    return [
+    `/api/vehicle-distribution/pilot/reconciliations`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListVehicleReconciliationsQueryOptions = <TData = Awaited<ReturnType<typeof listVehicleReconciliations>>, TError = ErrorType<ErrorResponse>>(params?: ListVehicleReconciliationsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listVehicleReconciliations>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListVehicleReconciliationsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listVehicleReconciliations>>> = ({ signal }) => listVehicleReconciliations(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listVehicleReconciliations>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListVehicleReconciliationsQueryResult = NonNullable<Awaited<ReturnType<typeof listVehicleReconciliations>>>
+export type ListVehicleReconciliationsQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary List end-of-day reconciliations for the pilot vehicle
+ */
+
+export function useListVehicleReconciliations<TData = Awaited<ReturnType<typeof listVehicleReconciliations>>, TError = ErrorType<ErrorResponse>>(
+ params?: ListVehicleReconciliationsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listVehicleReconciliations>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListVehicleReconciliationsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getCreateVehicleReconciliationUrl = () => {
+
+
+
+
+  return `/api/vehicle-distribution/pilot/reconciliations`
+}
+
+/**
+ * Admin-only. Opens a new draft reconciliation for the single active pilot vehicle. The vehicle, warehouse, delivery agent and the actor (created_by) are all resolved server-side; the body carries only a reconciliation date and optional notes. Snapshots every COMPLETE nonzero product currently in the pilot vehicle warehouse, resolving each product name to exactly one active public.products row (409 on a missing or ambiguous match), recording expected quantity + weight snapshots with actual quantity left NULL until counted. No inventory, stock, claim or label state is mutated. Rejects an existing non-terminal reconciliation (draft/approved/disputed); replaying the same date while a draft already exists for it returns the existing draft with created=false.
+ * @summary Open a draft reconciliation snapshotting the pilot vehicle inventory
+ */
+export const createVehicleReconciliation = async (createVehicleReconciliationInput: CreateVehicleReconciliationInput, options?: RequestInit): Promise<VehicleReconciliationCreateResult> => {
+
+  return customFetch<VehicleReconciliationCreateResult>(getCreateVehicleReconciliationUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      createVehicleReconciliationInput,)
+  }
+);}
+
+
+
+
+export const getCreateVehicleReconciliationMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createVehicleReconciliation>>, TError,{data: BodyType<CreateVehicleReconciliationInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createVehicleReconciliation>>, TError,{data: BodyType<CreateVehicleReconciliationInput>}, TContext> => {
+
+const mutationKey = ['createVehicleReconciliation'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createVehicleReconciliation>>, {data: BodyType<CreateVehicleReconciliationInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createVehicleReconciliation(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateVehicleReconciliationMutationResult = NonNullable<Awaited<ReturnType<typeof createVehicleReconciliation>>>
+    export type CreateVehicleReconciliationMutationBody = BodyType<CreateVehicleReconciliationInput>
+    export type CreateVehicleReconciliationMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Open a draft reconciliation snapshotting the pilot vehicle inventory
+ */
+export const useCreateVehicleReconciliation = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createVehicleReconciliation>>, TError,{data: BodyType<CreateVehicleReconciliationInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createVehicleReconciliation>>,
+        TError,
+        {data: BodyType<CreateVehicleReconciliationInput>},
+        TContext
+      > => {
+      return useMutation(getCreateVehicleReconciliationMutationOptions(options));
+    }
+
+export const getGetVehicleReconciliationUrl = (reconciliationId: number,) => {
+
+
+
+
+  return `/api/vehicle-distribution/pilot/reconciliations/${reconciliationId}`
+}
+
+/**
+ * @summary Read a single reconciliation for the pilot vehicle
+ */
+export const getVehicleReconciliation = async (reconciliationId: number, options?: RequestInit): Promise<VehicleReconciliationDetail> => {
+
+  return customFetch<VehicleReconciliationDetail>(getGetVehicleReconciliationUrl(reconciliationId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetVehicleReconciliationQueryKey = (reconciliationId: number,) => {
+    return [
+    `/api/vehicle-distribution/pilot/reconciliations/${reconciliationId}`
+    ] as const;
+    }
+
+
+export const getGetVehicleReconciliationQueryOptions = <TData = Awaited<ReturnType<typeof getVehicleReconciliation>>, TError = ErrorType<ErrorResponse>>(reconciliationId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getVehicleReconciliation>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetVehicleReconciliationQueryKey(reconciliationId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getVehicleReconciliation>>> = ({ signal }) => getVehicleReconciliation(reconciliationId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(reconciliationId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getVehicleReconciliation>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetVehicleReconciliationQueryResult = NonNullable<Awaited<ReturnType<typeof getVehicleReconciliation>>>
+export type GetVehicleReconciliationQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary Read a single reconciliation for the pilot vehicle
+ */
+
+export function useGetVehicleReconciliation<TData = Awaited<ReturnType<typeof getVehicleReconciliation>>, TError = ErrorType<ErrorResponse>>(
+ reconciliationId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getVehicleReconciliation>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetVehicleReconciliationQueryOptions(reconciliationId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getPatchVehicleReconciliationItemsUrl = (reconciliationId: number,) => {
+
+
+
+
+  return `/api/vehicle-distribution/pilot/reconciliations/${reconciliationId}/items`
+}
+
+/**
+ * Admin-only. Records the physically counted actual quantity on one or more line items of a DRAFT reconciliation belonging to the pilot vehicle. Each entry carries an itemId and a finite nonnegative actualQuantity (and optional notes); the discrepancy is recomputed server-side and the counted_by / counted_at actor stamp is assigned server-side. Only draft reconciliations are editable. No inventory, stock, claim or label state is mutated.
+ * @summary Enter physical counts on a draft reconciliation's line items
+ */
+export const patchVehicleReconciliationItems = async (reconciliationId: number,
+    patchVehicleReconciliationItemsInput: PatchVehicleReconciliationItemsInput, options?: RequestInit): Promise<VehicleReconciliationDetail> => {
+
+  return customFetch<VehicleReconciliationDetail>(getPatchVehicleReconciliationItemsUrl(reconciliationId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      patchVehicleReconciliationItemsInput,)
+  }
+);}
+
+
+
+
+export const getPatchVehicleReconciliationItemsMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof patchVehicleReconciliationItems>>, TError,{reconciliationId: number;data: BodyType<PatchVehicleReconciliationItemsInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof patchVehicleReconciliationItems>>, TError,{reconciliationId: number;data: BodyType<PatchVehicleReconciliationItemsInput>}, TContext> => {
+
+const mutationKey = ['patchVehicleReconciliationItems'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof patchVehicleReconciliationItems>>, {reconciliationId: number;data: BodyType<PatchVehicleReconciliationItemsInput>}> = (props) => {
+          const {reconciliationId,data} = props ?? {};
+
+          return  patchVehicleReconciliationItems(reconciliationId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PatchVehicleReconciliationItemsMutationResult = NonNullable<Awaited<ReturnType<typeof patchVehicleReconciliationItems>>>
+    export type PatchVehicleReconciliationItemsMutationBody = BodyType<PatchVehicleReconciliationItemsInput>
+    export type PatchVehicleReconciliationItemsMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Enter physical counts on a draft reconciliation's line items
+ */
+export const usePatchVehicleReconciliationItems = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof patchVehicleReconciliationItems>>, TError,{reconciliationId: number;data: BodyType<PatchVehicleReconciliationItemsInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof patchVehicleReconciliationItems>>,
+        TError,
+        {reconciliationId: number;data: BodyType<PatchVehicleReconciliationItemsInput>},
+        TContext
+      > => {
+      return useMutation(getPatchVehicleReconciliationItemsMutationOptions(options));
+    }
+
+export const getReviewVehicleReconciliationUrl = (reconciliationId: number,) => {
+
+
+
+
+  return `/api/vehicle-distribution/pilot/reconciliations/${reconciliationId}/review`
+}
+
+/**
+ * Admin-only. Reviews a DRAFT reconciliation once every line has been counted (409 otherwise). If every line matches (all discrepancies zero) the reconciliation becomes 'approved'; any nonzero discrepancy makes it 'disputed' (a terminal outcome). Records the reviewer + timestamp server-side. This is a label-preserving variance decision only — NO inventory, stock, claim, label or unit-event state is ever mutated. Strict empty body. Replaying against an already reviewed reconciliation is idempotent and returns the same outcome.
+ * @summary Review a fully counted draft reconciliation (approved or disputed)
+ */
+export const reviewVehicleReconciliation = async (reconciliationId: number,
+    vehicleReconciliationOperationInput?: VehicleReconciliationOperationInput, options?: RequestInit): Promise<VehicleReconciliationDetail> => {
+
+  return customFetch<VehicleReconciliationDetail>(getReviewVehicleReconciliationUrl(reconciliationId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      vehicleReconciliationOperationInput,)
+  }
+);}
+
+
+
+
+export const getReviewVehicleReconciliationMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reviewVehicleReconciliation>>, TError,{reconciliationId: number;data?: BodyType<VehicleReconciliationOperationInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof reviewVehicleReconciliation>>, TError,{reconciliationId: number;data?: BodyType<VehicleReconciliationOperationInput>}, TContext> => {
+
+const mutationKey = ['reviewVehicleReconciliation'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof reviewVehicleReconciliation>>, {reconciliationId: number;data?: BodyType<VehicleReconciliationOperationInput>}> = (props) => {
+          const {reconciliationId,data} = props ?? {};
+
+          return  reviewVehicleReconciliation(reconciliationId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReviewVehicleReconciliationMutationResult = NonNullable<Awaited<ReturnType<typeof reviewVehicleReconciliation>>>
+    export type ReviewVehicleReconciliationMutationBody = BodyType<VehicleReconciliationOperationInput> | undefined
+    export type ReviewVehicleReconciliationMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Review a fully counted draft reconciliation (approved or disputed)
+ */
+export const useReviewVehicleReconciliation = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reviewVehicleReconciliation>>, TError,{reconciliationId: number;data?: BodyType<VehicleReconciliationOperationInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof reviewVehicleReconciliation>>,
+        TError,
+        {reconciliationId: number;data?: BodyType<VehicleReconciliationOperationInput>},
+        TContext
+      > => {
+      return useMutation(getReviewVehicleReconciliationMutationOptions(options));
+    }
+
+export const getApplyVehicleReconciliationUrl = (reconciliationId: number,) => {
+
+
+
+
+  return `/api/vehicle-distribution/pilot/reconciliations/${reconciliationId}/apply`
+}
+
+/**
+ * Admin-only. Finalizes an APPROVED reconciliation. Re-locks the pilot vehicle inventory and re-compares the current COMPLETE nonzero rows against the snapshot; if any product was added, removed or changed since the snapshot the finalize is rejected as stale (409). On success the status becomes 'applied' with the actor + timestamp recorded. This is a label-preserving confirmation only — NO stock_movements, inventory, claim, label or unit-event state is ever mutated. Strict empty body. Replaying against an already applied reconciliation is idempotent.
+ * @summary Finalize an approved reconciliation after re-verifying the snapshot
+ */
+export const applyVehicleReconciliation = async (reconciliationId: number,
+    vehicleReconciliationOperationInput?: VehicleReconciliationOperationInput, options?: RequestInit): Promise<VehicleReconciliationDetail> => {
+
+  return customFetch<VehicleReconciliationDetail>(getApplyVehicleReconciliationUrl(reconciliationId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      vehicleReconciliationOperationInput,)
+  }
+);}
+
+
+
+
+export const getApplyVehicleReconciliationMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof applyVehicleReconciliation>>, TError,{reconciliationId: number;data?: BodyType<VehicleReconciliationOperationInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof applyVehicleReconciliation>>, TError,{reconciliationId: number;data?: BodyType<VehicleReconciliationOperationInput>}, TContext> => {
+
+const mutationKey = ['applyVehicleReconciliation'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof applyVehicleReconciliation>>, {reconciliationId: number;data?: BodyType<VehicleReconciliationOperationInput>}> = (props) => {
+          const {reconciliationId,data} = props ?? {};
+
+          return  applyVehicleReconciliation(reconciliationId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ApplyVehicleReconciliationMutationResult = NonNullable<Awaited<ReturnType<typeof applyVehicleReconciliation>>>
+    export type ApplyVehicleReconciliationMutationBody = BodyType<VehicleReconciliationOperationInput> | undefined
+    export type ApplyVehicleReconciliationMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Finalize an approved reconciliation after re-verifying the snapshot
+ */
+export const useApplyVehicleReconciliation = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof applyVehicleReconciliation>>, TError,{reconciliationId: number;data?: BodyType<VehicleReconciliationOperationInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof applyVehicleReconciliation>>,
+        TError,
+        {reconciliationId: number;data?: BodyType<VehicleReconciliationOperationInput>},
+        TContext
+      > => {
+      return useMutation(getApplyVehicleReconciliationMutationOptions(options));
+    }
+
+export const getCancelVehicleReconciliationUrl = (reconciliationId: number,) => {
+
+
+
+
+  return `/api/vehicle-distribution/pilot/reconciliations/${reconciliationId}/cancel`
+}
+
+/**
+ * Admin-only. Cancels a DRAFT reconciliation for the pilot vehicle. Rejected once the reconciliation has left draft (approved / applied / disputed). No inventory is mutated. Strict empty body. Replaying against an already cancelled reconciliation is idempotent.
+ * @summary Cancel a draft reconciliation
+ */
+export const cancelVehicleReconciliation = async (reconciliationId: number,
+    vehicleReconciliationOperationInput?: VehicleReconciliationOperationInput, options?: RequestInit): Promise<VehicleReconciliationDetail> => {
+
+  return customFetch<VehicleReconciliationDetail>(getCancelVehicleReconciliationUrl(reconciliationId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      vehicleReconciliationOperationInput,)
+  }
+);}
+
+
+
+
+export const getCancelVehicleReconciliationMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelVehicleReconciliation>>, TError,{reconciliationId: number;data?: BodyType<VehicleReconciliationOperationInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof cancelVehicleReconciliation>>, TError,{reconciliationId: number;data?: BodyType<VehicleReconciliationOperationInput>}, TContext> => {
+
+const mutationKey = ['cancelVehicleReconciliation'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof cancelVehicleReconciliation>>, {reconciliationId: number;data?: BodyType<VehicleReconciliationOperationInput>}> = (props) => {
+          const {reconciliationId,data} = props ?? {};
+
+          return  cancelVehicleReconciliation(reconciliationId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CancelVehicleReconciliationMutationResult = NonNullable<Awaited<ReturnType<typeof cancelVehicleReconciliation>>>
+    export type CancelVehicleReconciliationMutationBody = BodyType<VehicleReconciliationOperationInput> | undefined
+    export type CancelVehicleReconciliationMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Cancel a draft reconciliation
+ */
+export const useCancelVehicleReconciliation = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelVehicleReconciliation>>, TError,{reconciliationId: number;data?: BodyType<VehicleReconciliationOperationInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof cancelVehicleReconciliation>>,
+        TError,
+        {reconciliationId: number;data?: BodyType<VehicleReconciliationOperationInput>},
+        TContext
+      > => {
+      return useMutation(getCancelVehicleReconciliationMutationOptions(options));
     }
 

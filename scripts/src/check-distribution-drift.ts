@@ -516,7 +516,9 @@ const EXPECTED_CHECKS: CheckSpec[] = [
   { table: "vehicle_replenishment_requests", name: "vehicle_replenishment_approved_check", expr: normalizeExpr("approved_quantity IS NULL OR approved_quantity >= 0") },
   { table: "vehicle_reconciliations", name: "vehicle_reconciliations_status_check", expr: normalizeExpr("status IN ('draft','approved','applied','disputed','cancelled')") },
   { table: "vehicle_reconciliation_items", name: "vehicle_reconciliation_items_expected_check", expr: normalizeExpr("expected_quantity >= 0") },
-  { table: "vehicle_reconciliation_items", name: "vehicle_reconciliation_items_actual_check",   expr: normalizeExpr("actual_quantity >= 0") },
+  { table: "vehicle_reconciliation_items", name: "vehicle_reconciliation_items_expected_weight_check", expr: normalizeExpr("expected_weight_kg IS NULL OR expected_weight_kg >= 0") },
+  { table: "vehicle_reconciliation_items", name: "vehicle_reconciliation_items_actual_check",   expr: normalizeExpr("actual_quantity IS NULL OR actual_quantity >= 0") },
+  { table: "vehicle_reconciliation_items", name: "vehicle_reconciliation_items_erp_line_check", expr: normalizeExpr("public_product_id IS NULL OR (product_name IS NOT NULL AND sku IS NOT NULL)") },
 ];
 
 // Canonical expected partial unique indexes for vehicle tables.
@@ -575,6 +577,16 @@ const EXPECTED_PARTIAL_INDEXES: PartialIdxSpec[] = [
     table: "vehicle_reconciliation_items",
     name: "uq_vehicle_reconciliation_items_adj_ref",
     predicate: normalizeExpr("adjustment_reference IS NOT NULL"),
+  },
+  {
+    table: "vehicle_reconciliation_items",
+    name: "uq_vehicle_reconciliation_items_rec_mahsulot",
+    predicate: normalizeExpr("mahsulot_id IS NOT NULL"),
+  },
+  {
+    table: "vehicle_reconciliation_items",
+    name: "uq_vehicle_reconciliation_items_rec_public_product",
+    predicate: normalizeExpr("public_product_id IS NOT NULL"),
   },
 ];
 

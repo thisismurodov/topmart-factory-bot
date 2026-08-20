@@ -150,8 +150,8 @@ const REQUIRED: Record<string, string[]> = {
   vehicle_label_claims: ["id", "vehicle_id", "handoff_id", "handoff_item_id", "production_label_id", "barcode", "mahsulot_id", "sku", "unit_weight_kg", "status", "operation_key", "created_at", "updated_at"],
   vehicle_stock_targets: ["id", "vehicle_id", "mahsulot_id", "sku", "target_quantity", "min_quantity", "effective_from", "effective_to", "created_at"],
   vehicle_replenishment_requests: ["id", "vehicle_id", "requested_by", "mahsulot_id", "sku", "requested_quantity", "approved_quantity", "status", "requested_at", "resolved_at", "notes", "created_at"],
-  vehicle_reconciliations: ["id", "vehicle_id", "delivery_agent_id", "reconciliation_date", "status", "approved_by", "approved_at", "applied_by", "applied_at", "notes", "created_at"],
-  vehicle_reconciliation_items: ["id", "reconciliation_id", "mahsulot_id", "sku", "expected_quantity", "actual_quantity", "discrepancy", "adjustment_reference", "notes", "created_at"],
+  vehicle_reconciliations: ["id", "vehicle_id", "delivery_agent_id", "reconciliation_date", "status", "created_by", "reviewed_by", "reviewed_at", "approved_by", "approved_at", "applied_by", "applied_at", "notes", "created_at"],
+  vehicle_reconciliation_items: ["id", "reconciliation_id", "mahsulot_id", "public_product_id", "product_name", "sku", "expected_quantity", "expected_weight_kg", "actual_quantity", "discrepancy", "counted_by", "counted_at", "adjustment_reference", "notes", "created_at"],
 };
 
 // Words the table-name regex can catch that are not distribution tables.

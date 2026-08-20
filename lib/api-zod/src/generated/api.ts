@@ -1229,3 +1229,305 @@ export const CancelVehicleHandoffResponse = zod.object({
 })
 
 
+/**
+ * Returns the reconciliation history for the single active pilot vehicle (server-resolved), newest first. Authenticated via the dedicated vehicle-distribution auth wall. Fails closed (404) unless enabled, 503 when enabled without schema approval.
+ * @summary List end-of-day reconciliations for the pilot vehicle
+ */
+export const listVehicleReconciliationsQueryLimitDefault = 50;
+export const listVehicleReconciliationsQueryLimitMax = 200;
+
+
+
+export const ListVehicleReconciliationsQueryParams = zod.object({
+  "limit": zod.coerce.number().min(1).max(listVehicleReconciliationsQueryLimitMax).default(listVehicleReconciliationsQueryLimitDefault).describe('Maximum number of reconciliations to return (default 50, max 200).')
+})
+
+export const ListVehicleReconciliationsResponse = zod.object({
+  "vehicleId": zod.number(),
+  "reconciliations": zod.array(zod.object({
+  "id": zod.number(),
+  "vehicleId": zod.number(),
+  "deliveryAgentId": zod.number(),
+  "reconciliationDate": zod.string(),
+  "status": zod.string(),
+  "createdBy": zod.number().nullable(),
+  "reviewedBy": zod.number().nullable(),
+  "reviewedAt": zod.string().nullable(),
+  "appliedBy": zod.number().nullable(),
+  "appliedAt": zod.string().nullable(),
+  "notes": zod.string().nullable(),
+  "createdAt": zod.string(),
+  "items": zod.array(zod.object({
+  "id": zod.number(),
+  "publicProductId": zod.number().nullable(),
+  "mahsulotId": zod.number().nullable(),
+  "productName": zod.string().nullable(),
+  "sku": zod.string(),
+  "expectedQuantity": zod.number(),
+  "expectedWeightKg": zod.number().nullable(),
+  "actualQuantity": zod.number().nullable(),
+  "discrepancy": zod.number(),
+  "countedBy": zod.number().nullable(),
+  "countedAt": zod.string().nullable(),
+  "notes": zod.string().nullable()
+}))
+}))
+})
+
+
+/**
+ * Admin-only. Opens a new draft reconciliation for the single active pilot vehicle. The vehicle, warehouse, delivery agent and the actor (created_by) are all resolved server-side; the body carries only a reconciliation date and optional notes. Snapshots every COMPLETE nonzero product currently in the pilot vehicle warehouse, resolving each product name to exactly one active public.products row (409 on a missing or ambiguous match), recording expected quantity + weight snapshots with actual quantity left NULL until counted. No inventory, stock, claim or label state is mutated. Rejects an existing non-terminal reconciliation (draft/approved/disputed); replaying the same date while a draft already exists for it returns the existing draft with created=false.
+ * @summary Open a draft reconciliation snapshotting the pilot vehicle inventory
+ */
+export const CreateVehicleReconciliationBody = zod.object({
+  "reconciliationDate": zod.string().describe('ISO calendar date (YYYY-MM-DD).'),
+  "notes": zod.string().nullish()
+}).describe('Strict draft-reconciliation creation body. Only these fields are accepted; the vehicle, warehouse, delivery agent and actor are resolved server-side. reconciliationDate is an ISO calendar date (YYYY-MM-DD).')
+
+export const CreateVehicleReconciliationResponse = zod.object({
+  "created": zod.boolean(),
+  "reconciliation": zod.object({
+  "id": zod.number(),
+  "vehicleId": zod.number(),
+  "deliveryAgentId": zod.number(),
+  "reconciliationDate": zod.string(),
+  "status": zod.string(),
+  "createdBy": zod.number().nullable(),
+  "reviewedBy": zod.number().nullable(),
+  "reviewedAt": zod.string().nullable(),
+  "appliedBy": zod.number().nullable(),
+  "appliedAt": zod.string().nullable(),
+  "notes": zod.string().nullable(),
+  "createdAt": zod.string(),
+  "items": zod.array(zod.object({
+  "id": zod.number(),
+  "publicProductId": zod.number().nullable(),
+  "mahsulotId": zod.number().nullable(),
+  "productName": zod.string().nullable(),
+  "sku": zod.string(),
+  "expectedQuantity": zod.number(),
+  "expectedWeightKg": zod.number().nullable(),
+  "actualQuantity": zod.number().nullable(),
+  "discrepancy": zod.number(),
+  "countedBy": zod.number().nullable(),
+  "countedAt": zod.string().nullable(),
+  "notes": zod.string().nullable()
+}))
+})
+}).describe('Wraps the reconciliation with a created flag. created=false when an existing same-date draft was returned instead of opening a new one.')
+
+
+/**
+ * @summary Read a single reconciliation for the pilot vehicle
+ */
+export const GetVehicleReconciliationParams = zod.object({
+  "reconciliationId": zod.coerce.number()
+})
+
+export const GetVehicleReconciliationResponse = zod.object({
+  "id": zod.number(),
+  "vehicleId": zod.number(),
+  "deliveryAgentId": zod.number(),
+  "reconciliationDate": zod.string(),
+  "status": zod.string(),
+  "createdBy": zod.number().nullable(),
+  "reviewedBy": zod.number().nullable(),
+  "reviewedAt": zod.string().nullable(),
+  "appliedBy": zod.number().nullable(),
+  "appliedAt": zod.string().nullable(),
+  "notes": zod.string().nullable(),
+  "createdAt": zod.string(),
+  "items": zod.array(zod.object({
+  "id": zod.number(),
+  "publicProductId": zod.number().nullable(),
+  "mahsulotId": zod.number().nullable(),
+  "productName": zod.string().nullable(),
+  "sku": zod.string(),
+  "expectedQuantity": zod.number(),
+  "expectedWeightKg": zod.number().nullable(),
+  "actualQuantity": zod.number().nullable(),
+  "discrepancy": zod.number(),
+  "countedBy": zod.number().nullable(),
+  "countedAt": zod.string().nullable(),
+  "notes": zod.string().nullable()
+}))
+})
+
+
+/**
+ * Admin-only. Records the physically counted actual quantity on one or more line items of a DRAFT reconciliation belonging to the pilot vehicle. Each entry carries an itemId and a finite nonnegative actualQuantity (and optional notes); the discrepancy is recomputed server-side and the counted_by / counted_at actor stamp is assigned server-side. Only draft reconciliations are editable. No inventory, stock, claim or label state is mutated.
+ * @summary Enter physical counts on a draft reconciliation's line items
+ */
+export const PatchVehicleReconciliationItemsParams = zod.object({
+  "reconciliationId": zod.coerce.number()
+})
+
+export const patchVehicleReconciliationItemsBodyItemsItemActualQuantityMin = 0;
+
+
+
+
+export const PatchVehicleReconciliationItemsBody = zod.object({
+  "items": zod.array(zod.object({
+  "itemId": zod.number(),
+  "actualQuantity": zod.number().min(patchVehicleReconciliationItemsBodyItemsItemActualQuantityMin),
+  "notes": zod.string().nullish()
+}).describe('One physical count entry for a draft reconciliation line item.')).min(1)
+}).describe('A batch of physical count entries for a draft reconciliation.')
+
+export const PatchVehicleReconciliationItemsResponse = zod.object({
+  "id": zod.number(),
+  "vehicleId": zod.number(),
+  "deliveryAgentId": zod.number(),
+  "reconciliationDate": zod.string(),
+  "status": zod.string(),
+  "createdBy": zod.number().nullable(),
+  "reviewedBy": zod.number().nullable(),
+  "reviewedAt": zod.string().nullable(),
+  "appliedBy": zod.number().nullable(),
+  "appliedAt": zod.string().nullable(),
+  "notes": zod.string().nullable(),
+  "createdAt": zod.string(),
+  "items": zod.array(zod.object({
+  "id": zod.number(),
+  "publicProductId": zod.number().nullable(),
+  "mahsulotId": zod.number().nullable(),
+  "productName": zod.string().nullable(),
+  "sku": zod.string(),
+  "expectedQuantity": zod.number(),
+  "expectedWeightKg": zod.number().nullable(),
+  "actualQuantity": zod.number().nullable(),
+  "discrepancy": zod.number(),
+  "countedBy": zod.number().nullable(),
+  "countedAt": zod.string().nullable(),
+  "notes": zod.string().nullable()
+}))
+})
+
+
+/**
+ * Admin-only. Reviews a DRAFT reconciliation once every line has been counted (409 otherwise). If every line matches (all discrepancies zero) the reconciliation becomes 'approved'; any nonzero discrepancy makes it 'disputed' (a terminal outcome). Records the reviewer + timestamp server-side. This is a label-preserving variance decision only — NO inventory, stock, claim, label or unit-event state is ever mutated. Strict empty body. Replaying against an already reviewed reconciliation is idempotent and returns the same outcome.
+ * @summary Review a fully counted draft reconciliation (approved or disputed)
+ */
+export const ReviewVehicleReconciliationParams = zod.object({
+  "reconciliationId": zod.coerce.number()
+})
+
+export const ReviewVehicleReconciliationBody = zod.object({
+
+}).describe('Lifecycle transition body for review \/ apply \/ cancel. Carries no overridable fields — actor and timestamps are server-assigned. Exists so transitions have a typed (empty) body contract.')
+
+export const ReviewVehicleReconciliationResponse = zod.object({
+  "id": zod.number(),
+  "vehicleId": zod.number(),
+  "deliveryAgentId": zod.number(),
+  "reconciliationDate": zod.string(),
+  "status": zod.string(),
+  "createdBy": zod.number().nullable(),
+  "reviewedBy": zod.number().nullable(),
+  "reviewedAt": zod.string().nullable(),
+  "appliedBy": zod.number().nullable(),
+  "appliedAt": zod.string().nullable(),
+  "notes": zod.string().nullable(),
+  "createdAt": zod.string(),
+  "items": zod.array(zod.object({
+  "id": zod.number(),
+  "publicProductId": zod.number().nullable(),
+  "mahsulotId": zod.number().nullable(),
+  "productName": zod.string().nullable(),
+  "sku": zod.string(),
+  "expectedQuantity": zod.number(),
+  "expectedWeightKg": zod.number().nullable(),
+  "actualQuantity": zod.number().nullable(),
+  "discrepancy": zod.number(),
+  "countedBy": zod.number().nullable(),
+  "countedAt": zod.string().nullable(),
+  "notes": zod.string().nullable()
+}))
+})
+
+
+/**
+ * Admin-only. Finalizes an APPROVED reconciliation. Re-locks the pilot vehicle inventory and re-compares the current COMPLETE nonzero rows against the snapshot; if any product was added, removed or changed since the snapshot the finalize is rejected as stale (409). On success the status becomes 'applied' with the actor + timestamp recorded. This is a label-preserving confirmation only — NO stock_movements, inventory, claim, label or unit-event state is ever mutated. Strict empty body. Replaying against an already applied reconciliation is idempotent.
+ * @summary Finalize an approved reconciliation after re-verifying the snapshot
+ */
+export const ApplyVehicleReconciliationParams = zod.object({
+  "reconciliationId": zod.coerce.number()
+})
+
+export const ApplyVehicleReconciliationBody = zod.object({
+
+}).describe('Lifecycle transition body for review \/ apply \/ cancel. Carries no overridable fields — actor and timestamps are server-assigned. Exists so transitions have a typed (empty) body contract.')
+
+export const ApplyVehicleReconciliationResponse = zod.object({
+  "id": zod.number(),
+  "vehicleId": zod.number(),
+  "deliveryAgentId": zod.number(),
+  "reconciliationDate": zod.string(),
+  "status": zod.string(),
+  "createdBy": zod.number().nullable(),
+  "reviewedBy": zod.number().nullable(),
+  "reviewedAt": zod.string().nullable(),
+  "appliedBy": zod.number().nullable(),
+  "appliedAt": zod.string().nullable(),
+  "notes": zod.string().nullable(),
+  "createdAt": zod.string(),
+  "items": zod.array(zod.object({
+  "id": zod.number(),
+  "publicProductId": zod.number().nullable(),
+  "mahsulotId": zod.number().nullable(),
+  "productName": zod.string().nullable(),
+  "sku": zod.string(),
+  "expectedQuantity": zod.number(),
+  "expectedWeightKg": zod.number().nullable(),
+  "actualQuantity": zod.number().nullable(),
+  "discrepancy": zod.number(),
+  "countedBy": zod.number().nullable(),
+  "countedAt": zod.string().nullable(),
+  "notes": zod.string().nullable()
+}))
+})
+
+
+/**
+ * Admin-only. Cancels a DRAFT reconciliation for the pilot vehicle. Rejected once the reconciliation has left draft (approved / applied / disputed). No inventory is mutated. Strict empty body. Replaying against an already cancelled reconciliation is idempotent.
+ * @summary Cancel a draft reconciliation
+ */
+export const CancelVehicleReconciliationParams = zod.object({
+  "reconciliationId": zod.coerce.number()
+})
+
+export const CancelVehicleReconciliationBody = zod.object({
+
+}).describe('Lifecycle transition body for review \/ apply \/ cancel. Carries no overridable fields — actor and timestamps are server-assigned. Exists so transitions have a typed (empty) body contract.')
+
+export const CancelVehicleReconciliationResponse = zod.object({
+  "id": zod.number(),
+  "vehicleId": zod.number(),
+  "deliveryAgentId": zod.number(),
+  "reconciliationDate": zod.string(),
+  "status": zod.string(),
+  "createdBy": zod.number().nullable(),
+  "reviewedBy": zod.number().nullable(),
+  "reviewedAt": zod.string().nullable(),
+  "appliedBy": zod.number().nullable(),
+  "appliedAt": zod.string().nullable(),
+  "notes": zod.string().nullable(),
+  "createdAt": zod.string(),
+  "items": zod.array(zod.object({
+  "id": zod.number(),
+  "publicProductId": zod.number().nullable(),
+  "mahsulotId": zod.number().nullable(),
+  "productName": zod.string().nullable(),
+  "sku": zod.string(),
+  "expectedQuantity": zod.number(),
+  "expectedWeightKg": zod.number().nullable(),
+  "actualQuantity": zod.number().nullable(),
+  "discrepancy": zod.number(),
+  "countedBy": zod.number().nullable(),
+  "countedAt": zod.string().nullable(),
+  "notes": zod.string().nullable()
+}))
+})
+
+

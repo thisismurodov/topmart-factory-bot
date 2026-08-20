@@ -709,6 +709,11 @@ export const vehicleReconciliationsTable = distribution.table(
     deliveryAgentId: integer("delivery_agent_id").notNull(),
     reconciliationDate: date("reconciliation_date").notNull(),
     status: text("status").notNull().default("draft"),
+    /** F6: server actor that created the reconciliation (admin user id). */
+    createdBy: bigint("created_by", { mode: "number" }),
+    /** F6: server actor that reviewed (approved/disputed) the counts. */
+    reviewedBy: bigint("reviewed_by", { mode: "number" }),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
     approvedBy: integer("approved_by"),
     approvedAt: timestamp("approved_at", { withTimezone: true }),
     appliedBy: integer("applied_by"),
@@ -729,9 +734,19 @@ export const vehicleReconciliationsTable = distribution.table(
 
 /** Line items of a reconciliation: expected vs actual per product.
  *
- *  adjustment_reference: opaque token written when the discrepancy is pushed
- *  into stock movements. Partial unique (WHERE NOT NULL) in runtime DDL
- *  prevents double-apply of the same adjustment. Validated via pg_catalog in
+ *  Two coexisting shapes:
+ *    • Legacy/distribution rows keyed on `mahsulot_id` (nullable now).
+ *    • F6 ERP inventory rows keyed on `public_product_id` (a public.products id)
+ *      with `mahsulot_id = NULL`; they snapshot the public product name and the
+ *      expected quantity/weight at create time and leave `actual_quantity` NULL
+ *      until physically counted.
+ *
+ *  adjustment_reference: opaque token written when a discrepancy is pushed into
+ *  stock movements (legacy path). Partial unique (WHERE NOT NULL) in runtime
+ *  DDL prevents double-apply. Both partial uniques
+ *  (rec_id, mahsulot_id) WHERE mahsulot_id IS NOT NULL and
+ *  (rec_id, public_product_id) WHERE public_product_id IS NOT NULL and the
+ *  named CHECKs with WHERE/OR predicates are validated via pg_catalog in
  *  check-distribution-drift.ts — not expressible in Drizzle.
  */
 export const vehicleReconciliationItemsTable = distribution.table(
@@ -739,23 +754,36 @@ export const vehicleReconciliationItemsTable = distribution.table(
   {
     id: serial("id").primaryKey(),
     reconciliationId: integer("reconciliation_id").notNull(),
-    mahsulotId: integer("mahsulot_id").notNull(),
+    /** Legacy/distribution product id. NULL for F6 ERP inventory lines. */
+    mahsulotId: integer("mahsulot_id"),
+    /** F6: public.products id this line reconciles. NULL for legacy lines. */
+    publicProductId: bigint("public_product_id", { mode: "number" }),
+    /** F6: snapshot of the public product name at create time. */
+    productName: text("product_name"),
     sku: text("sku").notNull().default(""),
     expectedQuantity: numeric("expected_quantity", { precision: 12, scale: 3 }).notNull(),
-    actualQuantity: numeric("actual_quantity", { precision: 12, scale: 3 }).notNull(),
+    /** F6: snapshot of the expected on-vehicle weight. NULL for legacy lines. */
+    expectedWeightKg: numeric("expected_weight_kg", { precision: 12, scale: 3 }),
+    /** NULL until the line is physically counted (F6 patch). */
+    actualQuantity: numeric("actual_quantity", { precision: 12, scale: 3 }),
     discrepancy: numeric("discrepancy", { precision: 12, scale: 3 }).notNull().default("0"),
+    /** F6: server actor + timestamp that entered the physical count. */
+    countedBy: bigint("counted_by", { mode: "number" }),
+    countedAt: timestamp("counted_at", { withTimezone: true }),
     /** Written when the discrepancy is applied to stock movements. UNIQUE WHERE NOT NULL. */
     adjustmentReference: text("adjustment_reference"),
     notes: text("notes"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    uniqueIndex("uq_vehicle_reconciliation_items_rec_mahsulot").on(
-      t.reconciliationId,
-      t.mahsulotId,
-    ),
+    // NOTE: the two partial unique indexes
+    //   uq_vehicle_reconciliation_items_rec_mahsulot        WHERE mahsulot_id IS NOT NULL
+    //   uq_vehicle_reconciliation_items_rec_public_product  WHERE public_product_id IS NOT NULL
+    // live only in the runtime DDL and are validated (predicate + all) via
+    // pg_catalog in check-distribution-drift.ts (EXPECTED_PARTIAL_INDEXES),
+    // exactly like uq_vehicle_reconciliation_items_adj_ref — partial WHERE
+    // predicates are not expressible in Drizzle.
     index("idx_vehicle_reconciliation_items_reconciliation").on(t.reconciliationId),
     check("vehicle_reconciliation_items_expected_check", sql`${t.expectedQuantity} >= 0`),
-    check("vehicle_reconciliation_items_actual_check", sql`${t.actualQuantity} >= 0`),
   ],
 );

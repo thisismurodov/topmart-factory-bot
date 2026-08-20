@@ -19,6 +19,7 @@ import {
 import MapTab, { GeoNavLinks, sababLabel } from "@/components/distribution/MapTab";
 import RouteWeekMap from "@/components/distribution/RouteWeekMap";
 import AnalyticsTab from "@/components/distribution/AnalyticsTab";
+import VehicleStockTab from "@/components/distribution/VehicleStockTab";
 import BadCoordPanel from "@/components/distribution/BadCoordPanel";
 import ShopLocationEditor from "@/components/distribution/ShopLocationEditor";
 import { downloadCsv, toCsv } from "@/lib/csv";
@@ -1488,6 +1489,7 @@ export default function Distribution() {
               <TabsTrigger value="routes">Marshrut</TabsTrigger>
               <TabsTrigger value="map">Xarita</TabsTrigger>
               <TabsTrigger value="analytics">Tahlil</TabsTrigger>
+              <TabsTrigger value="vehicle-stock">Avto zaxira</TabsTrigger>
             </TabsList>
             <TabsContent value="visits" className="border rounded-md mt-4">
               <DailyVisitsTab f={f} active={f.tab === "visits"} onShop={setShopId} />
@@ -1520,6 +1522,9 @@ export default function Distribution() {
             </TabsContent>
             <TabsContent value="analytics" className="border rounded-md mt-4">
               <AnalyticsTab qs={filterQuery(f)} active={f.tab === "analytics"} />
+            </TabsContent>
+            <TabsContent value="vehicle-stock" className="mt-4">
+              <VehicleStockTab active={f.tab === "vehicle-stock"} />
             </TabsContent>
           </Tabs>
         </CardContent>

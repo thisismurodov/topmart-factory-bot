@@ -901,6 +901,119 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /vehicle-distribution/pilot/stock:
+    get:
+      operationId: getVehicleDistributionPilotStock
+      tags: [vehicle-distribution]
+      summary: Read the pilot vehicle warehouse stock cards (read model)
+      description: >-
+        Authenticated read-only stock view for the single pilot vehicle
+        (DM-001 / DAMAS / agent NAVRUZBEK). The pilot vehicle and its expected
+        vehicle warehouse are resolved entirely server-side — the request takes
+        no vehicle or warehouse input. Fails closed (404) unless the
+        vehicle-distribution feature is enabled, and returns 503 when enabled
+        without schema approval. When the pilot has not been bootstrapped (no
+        active NAVRUZBEK assignment on DM-001 with the exact expected vehicle
+        warehouse), returns a deterministic not-bootstrapped payload
+        (bootstrapped=false, null vehicle/warehouse, empty items, zeroed
+        totals) and NEVER falls back to a generic warehouse. Stock items include
+        only nonzero-quantity inventory rows (stock-card display semantics),
+        sorted by product name.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleDistributionPilotStock"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Feature disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Enabled but schema not approved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /vehicle-distribution/pilot/movements:
+    get:
+      operationId: getVehicleDistributionPilotMovements
+      tags: [vehicle-distribution]
+      summary: Read the pilot vehicle warehouse stock movements (read model)
+      description: >-
+        Authenticated read-only audit history of stock movements that touch the
+        single pilot vehicle warehouse (either as source or destination). The
+        pilot vehicle and its expected vehicle warehouse are resolved entirely
+        server-side — the request takes no vehicle or warehouse input. Only rows
+        where the pilot vehicle warehouse is the from OR to warehouse are ever
+        returned; global movements and other-warehouse-only rows are never
+        exposed. Ordered deterministically by id DESC and paginated via a
+        keyset cursor (beforeId → nextBeforeId). Fails closed (404) unless the
+        feature is enabled, 503 when enabled without schema approval. When the
+        pilot has not been bootstrapped, returns a deterministic
+        not-bootstrapped payload (bootstrapped=false, empty items, null
+        nextBeforeId).
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of movements to return (default 50, max 200).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: beforeId
+          in: query
+          required: false
+          description: >-
+            Keyset cursor — return only movements with id strictly less than
+            this positive integer. Omit for the first page.
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleDistributionPilotMovements"
+        "400":
+          description: Invalid pagination parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Feature disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Enabled but schema not approved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /vehicle-distribution/handoffs:
     get:
       operationId: listVehicleHandoffs
@@ -1366,6 +1479,130 @@ components:
             - $ref: "#/components/schemas/VehicleDistributionAssignment"
             - type: "null"
       required: [bootstrapped, agent, vehicle, warehouse, balance, assignment]
+
+    # ── Vehicle Distribution (F5 read models) ───────────────────────
+    VehicleDistributionPilotStockItem:
+      type: object
+      description: >-
+        One stock card line for the pilot vehicle warehouse. productSku is
+        nullable (and may be an empty string) because a matching catalog product
+        may not exist for a raw inventory row.
+      properties:
+        product:
+          type: string
+        productName:
+          type: string
+        productSku:
+          type: ["string", "null"]
+        quantity:
+          type: number
+        weightKg:
+          type: number
+        updatedAt:
+          type: ["string", "null"]
+      required: [product, productName, productSku, quantity, weightKg, updatedAt]
+
+    VehicleDistributionPilotStock:
+      type: object
+      description: >-
+        Read model of the pilot vehicle warehouse stock. When not bootstrapped,
+        vehicle and warehouse are null, items is empty, and every total is zero.
+        Stock items include only nonzero-quantity rows, sorted by productName.
+      properties:
+        bootstrapped:
+          type: boolean
+        vehicle:
+          oneOf:
+            - $ref: "#/components/schemas/VehicleDistributionVehicle"
+            - type: "null"
+        warehouse:
+          oneOf:
+            - $ref: "#/components/schemas/VehicleDistributionWarehouse"
+            - type: "null"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/VehicleDistributionPilotStockItem"
+        skuCount:
+          type: integer
+        totalQuantity:
+          type: number
+        totalWeightKg:
+          type: number
+      required:
+        - bootstrapped
+        - vehicle
+        - warehouse
+        - items
+        - skuCount
+        - totalQuantity
+        - totalWeightKg
+
+    VehicleDistributionPilotMovement:
+      type: object
+      description: >-
+        One stock movement touching the pilot vehicle warehouse (as source or
+        destination).
+      properties:
+        id:
+          type: integer
+        product:
+          type: string
+        quantity:
+          type: number
+        weightKg:
+          type: ["number", "null"]
+        movementType:
+          type: string
+        fromWarehouseId:
+          type: ["integer", "null"]
+        fromWarehouseName:
+          type: ["string", "null"]
+        toWarehouseId:
+          type: ["integer", "null"]
+        toWarehouseName:
+          type: ["string", "null"]
+        note:
+          type: ["string", "null"]
+        createdBy:
+          type: ["string", "null"]
+        reference:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+      required:
+        - id
+        - product
+        - quantity
+        - weightKg
+        - movementType
+        - fromWarehouseId
+        - fromWarehouseName
+        - toWarehouseId
+        - toWarehouseName
+        - note
+        - createdBy
+        - reference
+        - createdAt
+
+    VehicleDistributionPilotMovements:
+      type: object
+      description: >-
+        Keyset-paginated read model of movements touching the pilot vehicle
+        warehouse. When not bootstrapped, items is empty and nextBeforeId is
+        null.
+      properties:
+        bootstrapped:
+          type: boolean
+        vehicleWarehouseId:
+          type: ["integer", "null"]
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/VehicleDistributionPilotMovement"
+        nextBeforeId:
+          type: ["integer", "null"]
+      required: [bootstrapped, vehicleWarehouseId, items, nextBeforeId]
 
     # ── Vehicle Distribution (F3 handoff) ───────────────────────────
     CreateVehicleHandoffItemInput:

@@ -70,6 +70,72 @@ export interface VehicleDistributionPilot {
 }
 
 /**
+ * One stock card line for the pilot vehicle warehouse. productSku is nullable (and may be an empty string) because a matching catalog product may not exist for a raw inventory row.
+ */
+export interface VehicleDistributionPilotStockItem {
+  product: string;
+  productName: string;
+  /** @nullable */
+  productSku: string | null;
+  quantity: number;
+  weightKg: number;
+  /** @nullable */
+  updatedAt: string | null;
+}
+
+/**
+ * Read model of the pilot vehicle warehouse stock. When not bootstrapped, vehicle and warehouse are null, items is empty, and every total is zero. Stock items include only nonzero-quantity rows, sorted by productName.
+ */
+export interface VehicleDistributionPilotStock {
+  bootstrapped: boolean;
+  vehicle: VehicleDistributionVehicle | null;
+  warehouse: VehicleDistributionWarehouse | null;
+  items: VehicleDistributionPilotStockItem[];
+  skuCount: number;
+  totalQuantity: number;
+  totalWeightKg: number;
+}
+
+/**
+ * One stock movement touching the pilot vehicle warehouse (as source or destination).
+ */
+export interface VehicleDistributionPilotMovement {
+  id: number;
+  product: string;
+  quantity: number;
+  /** @nullable */
+  weightKg: number | null;
+  movementType: string;
+  /** @nullable */
+  fromWarehouseId: number | null;
+  /** @nullable */
+  fromWarehouseName: string | null;
+  /** @nullable */
+  toWarehouseId: number | null;
+  /** @nullable */
+  toWarehouseName: string | null;
+  /** @nullable */
+  note: string | null;
+  /** @nullable */
+  createdBy: string | null;
+  /** @nullable */
+  reference: string | null;
+  createdAt: string;
+}
+
+/**
+ * Keyset-paginated read model of movements touching the pilot vehicle warehouse. When not bootstrapped, items is empty and nextBeforeId is null.
+ */
+export interface VehicleDistributionPilotMovements {
+  bootstrapped: boolean;
+  /** @nullable */
+  vehicleWarehouseId: number | null;
+  items: VehicleDistributionPilotMovement[];
+  /** @nullable */
+  nextBeforeId: number | null;
+}
+
+/**
  * A requested handoff line — a distribution product and the positive integer number of physical units to dispatch.
  */
 export interface CreateVehicleHandoffItemInput {
@@ -617,5 +683,19 @@ customerId?: number | null;
 status?: string | null;
 limit?: number;
 offset?: number;
+};
+
+export type GetVehicleDistributionPilotMovementsParams = {
+/**
+ * Maximum number of movements to return (default 50, max 200).
+ * @minimum 1
+ * @maximum 200
+ */
+limit?: number;
+/**
+ * Keyset cursor — return only movements with id strictly less than this positive integer. Omit for the first page.
+ * @minimum 1
+ */
+beforeId?: number;
 };
 

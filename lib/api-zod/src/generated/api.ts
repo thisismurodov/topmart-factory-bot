@@ -737,6 +737,78 @@ export const BootstrapVehicleDistributionPilotResponse = zod.object({
 
 
 /**
+ * Authenticated read-only stock view for the single pilot vehicle (DM-001 / DAMAS / agent NAVRUZBEK). The pilot vehicle and its expected vehicle warehouse are resolved entirely server-side — the request takes no vehicle or warehouse input. Fails closed (404) unless the vehicle-distribution feature is enabled, and returns 503 when enabled without schema approval. When the pilot has not been bootstrapped (no active NAVRUZBEK assignment on DM-001 with the exact expected vehicle warehouse), returns a deterministic not-bootstrapped payload (bootstrapped=false, null vehicle/warehouse, empty items, zeroed totals) and NEVER falls back to a generic warehouse. Stock items include only nonzero-quantity inventory rows (stock-card display semantics), sorted by product name.
+ * @summary Read the pilot vehicle warehouse stock cards (read model)
+ */
+export const GetVehicleDistributionPilotStockResponse = zod.object({
+  "bootstrapped": zod.boolean(),
+  "vehicle": zod.union([zod.object({
+  "id": zod.number(),
+  "plateNumber": zod.string(),
+  "vehicleType": zod.string(),
+  "status": zod.string(),
+  "capacityKg": zod.number().nullable(),
+  "warehouseId": zod.number()
+}),zod.null()]),
+  "warehouse": zod.union([zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "locationType": zod.string(),
+  "purpose": zod.string(),
+  "active": zod.boolean()
+}),zod.null()]),
+  "items": zod.array(zod.object({
+  "product": zod.string(),
+  "productName": zod.string(),
+  "productSku": zod.string().nullable(),
+  "quantity": zod.number(),
+  "weightKg": zod.number(),
+  "updatedAt": zod.string().nullable()
+}).describe('One stock card line for the pilot vehicle warehouse. productSku is nullable (and may be an empty string) because a matching catalog product may not exist for a raw inventory row.')),
+  "skuCount": zod.number(),
+  "totalQuantity": zod.number(),
+  "totalWeightKg": zod.number()
+}).describe('Read model of the pilot vehicle warehouse stock. When not bootstrapped, vehicle and warehouse are null, items is empty, and every total is zero. Stock items include only nonzero-quantity rows, sorted by productName.')
+
+
+/**
+ * Authenticated read-only audit history of stock movements that touch the single pilot vehicle warehouse (either as source or destination). The pilot vehicle and its expected vehicle warehouse are resolved entirely server-side — the request takes no vehicle or warehouse input. Only rows where the pilot vehicle warehouse is the from OR to warehouse are ever returned; global movements and other-warehouse-only rows are never exposed. Ordered deterministically by id DESC and paginated via a keyset cursor (beforeId → nextBeforeId). Fails closed (404) unless the feature is enabled, 503 when enabled without schema approval. When the pilot has not been bootstrapped, returns a deterministic not-bootstrapped payload (bootstrapped=false, empty items, null nextBeforeId).
+ * @summary Read the pilot vehicle warehouse stock movements (read model)
+ */
+export const getVehicleDistributionPilotMovementsQueryLimitDefault = 50;
+export const getVehicleDistributionPilotMovementsQueryLimitMax = 200;
+
+
+
+
+export const GetVehicleDistributionPilotMovementsQueryParams = zod.object({
+  "limit": zod.coerce.number().min(1).max(getVehicleDistributionPilotMovementsQueryLimitMax).default(getVehicleDistributionPilotMovementsQueryLimitDefault).describe('Maximum number of movements to return (default 50, max 200).'),
+  "beforeId": zod.coerce.number().min(1).optional().describe('Keyset cursor — return only movements with id strictly less than this positive integer. Omit for the first page.')
+})
+
+export const GetVehicleDistributionPilotMovementsResponse = zod.object({
+  "bootstrapped": zod.boolean(),
+  "vehicleWarehouseId": zod.number().nullable(),
+  "items": zod.array(zod.object({
+  "id": zod.number(),
+  "product": zod.string(),
+  "quantity": zod.number(),
+  "weightKg": zod.number().nullable(),
+  "movementType": zod.string(),
+  "fromWarehouseId": zod.number().nullable(),
+  "fromWarehouseName": zod.string().nullable(),
+  "toWarehouseId": zod.number().nullable(),
+  "toWarehouseName": zod.string().nullable(),
+  "note": zod.string().nullable(),
+  "createdBy": zod.string().nullable(),
+  "reference": zod.string().nullable(),
+  "createdAt": zod.string()
+}).describe('One stock movement touching the pilot vehicle warehouse (as source or destination).')),
+  "nextBeforeId": zod.number().nullable()
+}).describe('Keyset-paginated read model of movements touching the pilot vehicle warehouse. When not bootstrapped, items is empty and nextBeforeId is null.')
+
+
+/**
  * Returns the prepared/lifecycle handoffs for the single active pilot vehicle (server-resolved). Authenticated via the dedicated vehicle-handoff auth wall (admin Bearer session OR the vehicle-distribution bot key). Fails closed (404) unless enabled, 503 when enabled without schema approval.
  * @summary List handoffs for the pilot vehicle
  */

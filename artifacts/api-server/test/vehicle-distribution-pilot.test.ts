@@ -10,6 +10,8 @@ import {
 } from "../src/routes/vehicle-distribution/index";
 import {
   readPilotState,
+  readPilotStock,
+  readPilotMovements,
   bootstrapPilotInTx,
   PilotConflictError,
   PilotAgentError,
@@ -19,6 +21,10 @@ import {
   PILOT_AGENT_NAME,
   PILOT_WAREHOUSE_NAME,
 } from "../src/routes/vehicle-distribution/service";
+import {
+  GetVehicleDistributionPilotStockResponse,
+  GetVehicleDistributionPilotMovementsResponse,
+} from "@workspace/api-zod";
 import {
   requireVehicleTestAdminUrl,
   childDbUrl,
@@ -117,6 +123,32 @@ async function createPublicTables(c: pg.Client): Promise<void> {
       token   TEXT PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE
     )`);
+  // Catalog products (bot-owned in prod) — needed so the F5 stock read model can
+  // LEFT JOIN products for productSku. Minimal shape: name + sku.
+  await c.query(`
+    CREATE TABLE IF NOT EXISTS products (
+      id   SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      sku  TEXT NOT NULL DEFAULT ''
+    )`);
+  // stock_movements (public ERP table) — mirror of the API initDb DDL so the F5
+  // movements read model has a real table to query against.
+  await c.query(`
+    CREATE TABLE IF NOT EXISTS stock_movements (
+      id                SERIAL PRIMARY KEY,
+      product           TEXT NOT NULL,
+      quantity          NUMERIC NOT NULL DEFAULT 0,
+      movement_type     TEXT NOT NULL CHECK (movement_type IN ('IN', 'OUT', 'TRANSFER', 'BASELINE')),
+      from_warehouse_id INTEGER REFERENCES warehouses(id),
+      to_warehouse_id   INTEGER REFERENCES warehouses(id),
+      note              TEXT NOT NULL DEFAULT '',
+      created_by        TEXT NOT NULL DEFAULT '',
+      product_type      TEXT NOT NULL DEFAULT 'finished',
+      created_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+      weight_kg         NUMERIC,
+      reference         TEXT,
+      reason            TEXT
+    )`);
 }
 
 async function seedAgent(name: string, faol = 1): Promise<number> {
@@ -206,7 +238,9 @@ async function call(
 async function resetPilot(): Promise<void> {
   await client.query(`DELETE FROM distribution.vehicle_assignments`);
   await client.query(`DELETE FROM distribution.vehicles`);
+  await client.query(`DELETE FROM stock_movements`);
   await client.query(`DELETE FROM inventory`);
+  await client.query(`DELETE FROM products`);
   await client.query(
     `DELETE FROM warehouses WHERE location_type = 'vehicle' OR name = 'DM-001 mashina ombori'`,
   );
@@ -1023,5 +1057,479 @@ describe("F2 finding (2) — validate response before commit", () => {
     expect(typeof body.warehouse?.locationType).toBe("string");
     expect(typeof body.balance?.skuCount).toBe("number");
     expect(typeof body.assignment?.status).toBe("string");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// F5 read models — pilot vehicle warehouse stock cards + stock movements.
+//
+// Contract highlights exercised below:
+//   • Same global auth wall + both request-time feature gates as the F2 router.
+//   • Exact server-side pilot resolution (DM-001 / DAMAS / NAVRUZBEK) with the
+//     expected vehicle warehouse — NO vehicle/warehouse request input.
+//   • Pre-bootstrap: deterministic empty payloads, zeroed totals, no writes, and
+//     NEVER a generic-warehouse fallback.
+//   • Stock: only nonzero-quantity rows, sorted by product, exact totals, SKU
+//     enrichment (nullable/empty), no other-warehouse leakage.
+//   • Movements: inbound + outbound included, unrelated rows excluded, id DESC,
+//     keyset pagination (limit default/max + beforeId) and 400 validation.
+//   • Responses validate against the generated Zod schemas.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Bootstrap the pilot and return the resolved vehicle-warehouse id.
+async function bootstrapAndGetWarehouseId(): Promise<number> {
+  const boot = await call(
+    "POST",
+    "/vehicle-distribution/pilot/bootstrap",
+    adminToken,
+  );
+  expect(boot.status).toBe(200);
+  const wh = await client.query(
+    `SELECT id FROM warehouses WHERE name = $1`,
+    [PILOT_WAREHOUSE_NAME],
+  );
+  return Number(wh.rows[0].id);
+}
+
+// A second, unrelated ERP warehouse (never the vehicle warehouse).
+async function seedErpWarehouse(name: string): Promise<number> {
+  const r = await client.query(
+    `INSERT INTO warehouses (name, active, location_type, purpose)
+     VALUES ($1, TRUE, 'general', 'finished')
+     ON CONFLICT (name) DO UPDATE SET active=TRUE
+     RETURNING id`,
+    [name],
+  );
+  return Number(r.rows[0].id);
+}
+
+describe("F5 stock — auth wall + feature gates", () => {
+  it("GET stock without a token → 401", async () => {
+    const r = await call("GET", "/vehicle-distribution/pilot/stock");
+    expect(r.status).toBe(401);
+  });
+  it("GET stock with invalid token → 401", async () => {
+    const r = await call("GET", "/vehicle-distribution/pilot/stock", "nope");
+    expect(r.status).toBe(401);
+  });
+  it("gate off → 404", async () => {
+    delete process.env.VEHICLE_DISTRIBUTION_ENABLED;
+    delete process.env.VEHICLE_DISTRIBUTION_SCHEMA_APPROVED;
+    const r = await call("GET", "/vehicle-distribution/pilot/stock", adminToken);
+    expect(r.status).toBe(404);
+  });
+  it("enabled without schema approval → 503", async () => {
+    process.env.VEHICLE_DISTRIBUTION_ENABLED = "1";
+    delete process.env.VEHICLE_DISTRIBUTION_SCHEMA_APPROVED;
+    const r = await call("GET", "/vehicle-distribution/pilot/stock", adminToken);
+    expect(r.status).toBe(503);
+  });
+});
+
+describe("F5 movements — auth wall + feature gates", () => {
+  it("GET movements without a token → 401", async () => {
+    const r = await call("GET", "/vehicle-distribution/pilot/movements");
+    expect(r.status).toBe(401);
+  });
+  it("GET movements with invalid token → 401", async () => {
+    const r = await call(
+      "GET",
+      "/vehicle-distribution/pilot/movements",
+      "nope",
+    );
+    expect(r.status).toBe(401);
+  });
+  it("gate off → 404", async () => {
+    delete process.env.VEHICLE_DISTRIBUTION_ENABLED;
+    delete process.env.VEHICLE_DISTRIBUTION_SCHEMA_APPROVED;
+    const r = await call(
+      "GET",
+      "/vehicle-distribution/pilot/movements",
+      adminToken,
+    );
+    expect(r.status).toBe(404);
+  });
+  it("enabled without schema approval → 503", async () => {
+    process.env.VEHICLE_DISTRIBUTION_ENABLED = "1";
+    delete process.env.VEHICLE_DISTRIBUTION_SCHEMA_APPROVED;
+    const r = await call(
+      "GET",
+      "/vehicle-distribution/pilot/movements",
+      adminToken,
+    );
+    expect(r.status).toBe(503);
+  });
+});
+
+describe("F5 pre-bootstrap — empty payloads + no writes + no fallback", () => {
+  beforeEach(async () => {
+    await resetPilot();
+  });
+
+  it("stock: not-bootstrapped, empty items, zeroed totals, null vehicle/warehouse", async () => {
+    // A generic ERP warehouse with stock must NEVER be used as a fallback.
+    const erp = await seedErpWarehouse("ERP-fallback-guard");
+    await client.query(
+      `INSERT INTO inventory (warehouse_id, product, quantity, weight_kg)
+       VALUES ($1, 'Noise', 42, 21)`,
+      [erp],
+    );
+
+    const before = await client.query(
+      `SELECT COUNT(*)::int AS n FROM distribution.vehicles`,
+    );
+    const r = await call(
+      "GET",
+      "/vehicle-distribution/pilot/stock",
+      adminToken,
+    );
+    expect(r.status).toBe(200);
+    const body = GetVehicleDistributionPilotStockResponse.parse(r.body);
+    expect(body.bootstrapped).toBe(false);
+    expect(body.vehicle).toBeNull();
+    expect(body.warehouse).toBeNull();
+    expect(body.items).toEqual([]);
+    expect(body.skuCount).toBe(0);
+    expect(body.totalQuantity).toBe(0);
+    expect(body.totalWeightKg).toBe(0);
+
+    const after = await client.query(
+      `SELECT COUNT(*)::int AS n FROM distribution.vehicles`,
+    );
+    expect(Number(after.rows[0].n)).toBe(Number(before.rows[0].n));
+  });
+
+  it("movements: not-bootstrapped, empty items, null nextBeforeId, no writes", async () => {
+    const before = await client.query(
+      `SELECT COUNT(*)::int AS n FROM stock_movements`,
+    );
+    const r = await call(
+      "GET",
+      "/vehicle-distribution/pilot/movements",
+      adminToken,
+    );
+    expect(r.status).toBe(200);
+    const body = GetVehicleDistributionPilotMovementsResponse.parse(r.body);
+    expect(body.bootstrapped).toBe(false);
+    expect(body.vehicleWarehouseId).toBeNull();
+    expect(body.items).toEqual([]);
+    expect(body.nextBeforeId).toBeNull();
+
+    const after = await client.query(
+      `SELECT COUNT(*)::int AS n FROM stock_movements`,
+    );
+    expect(Number(after.rows[0].n)).toBe(Number(before.rows[0].n));
+  });
+
+  it("service readPilotStock performs no writes when not bootstrapped", async () => {
+    const c = await testPool.connect();
+    try {
+      const before = await client.query(
+        `SELECT COUNT(*)::int AS n FROM inventory`,
+      );
+      const s = await readPilotStock(c);
+      expect(s.bootstrapped).toBe(false);
+      expect(s.items).toEqual([]);
+      const after = await client.query(
+        `SELECT COUNT(*)::int AS n FROM inventory`,
+      );
+      expect(Number(after.rows[0].n)).toBe(Number(before.rows[0].n));
+    } finally {
+      c.release();
+    }
+  });
+});
+
+describe("F5 stock — exact rows, totals, SKU, sorting, isolation", () => {
+  let vehicleWarehouseId = 0;
+  let erpWarehouseId = 0;
+
+  beforeEach(async () => {
+    await resetPilot();
+    vehicleWarehouseId = await bootstrapAndGetWarehouseId();
+    erpWarehouseId = await seedErpWarehouse("ERP-stock-isolation");
+  });
+
+  it("returns exactly the nonzero vehicle rows, sorted by product, exact totals", async () => {
+    // Catalog SKUs for two of the three products (third has no catalog row).
+    await client.query(
+      `INSERT INTO products (name, sku) VALUES ('Zeta', 'SKU-Z'), ('Alpha', 'SKU-A'), ('Beta', '')`,
+    );
+    // Vehicle inventory: two nonzero + one zero (must be excluded).
+    await client.query(
+      `INSERT INTO inventory (warehouse_id, product, quantity, weight_kg)
+       VALUES ($1,'Zeta',3,9.0),($1,'Alpha',10,25.5),($1,'Zeroed',0,0)`,
+      [vehicleWarehouseId],
+    );
+    // Unrelated warehouse stock — must never appear.
+    await client.query(
+      `INSERT INTO inventory (warehouse_id, product, quantity, weight_kg)
+       VALUES ($1,'Alpha',999,999)`,
+      [erpWarehouseId],
+    );
+
+    const r = await call(
+      "GET",
+      "/vehicle-distribution/pilot/stock",
+      adminToken,
+    );
+    expect(r.status).toBe(200);
+    const body = GetVehicleDistributionPilotStockResponse.parse(r.body);
+    expect(body.bootstrapped).toBe(true);
+    expect(body.vehicle?.plateNumber).toBe(PILOT_VEHICLE_PLATE);
+    expect(body.warehouse?.id).toBe(vehicleWarehouseId);
+
+    // Only the two nonzero rows, sorted by product name (Alpha < Zeta).
+    expect(body.items.map((i) => i.product)).toEqual(["Alpha", "Zeta"]);
+    // No zero row leaked in.
+    expect(body.items.some((i) => i.product === "Zeroed")).toBe(false);
+    // No other-warehouse noise (quantity 999) leaked.
+    expect(body.items.every((i) => i.quantity !== 999)).toBe(true);
+
+    const alpha = body.items.find((i) => i.product === "Alpha")!;
+    expect(alpha.productName).toBe("Alpha");
+    expect(alpha.productSku).toBe("SKU-A");
+    expect(alpha.quantity).toBe(10);
+    expect(alpha.weightKg).toBeCloseTo(25.5, 3);
+    expect(typeof alpha.updatedAt).toBe("string");
+
+    const zeta = body.items.find((i) => i.product === "Zeta")!;
+    expect(zeta.productSku).toBe("SKU-Z");
+
+    // Totals derived from the returned (nonzero) rows only.
+    expect(body.skuCount).toBe(2);
+    expect(body.totalQuantity).toBe(13);
+    expect(body.totalWeightKg).toBeCloseTo(34.5, 3);
+  });
+
+  it("productSku is null when no catalog product row exists", async () => {
+    await client.query(
+      `INSERT INTO inventory (warehouse_id, product, quantity, weight_kg)
+       VALUES ($1,'Orphan',5,2.5)`,
+      [vehicleWarehouseId],
+    );
+    const r = await call(
+      "GET",
+      "/vehicle-distribution/pilot/stock",
+      adminToken,
+    );
+    const body = GetVehicleDistributionPilotStockResponse.parse(r.body);
+    const orphan = body.items.find((i) => i.product === "Orphan")!;
+    expect(orphan.productSku).toBeNull();
+  });
+
+  it("productSku can be an empty string when the catalog SKU is empty", async () => {
+    await client.query(`INSERT INTO products (name, sku) VALUES ('Empty', '')`);
+    await client.query(
+      `INSERT INTO inventory (warehouse_id, product, quantity, weight_kg)
+       VALUES ($1,'Empty',4,1.0)`,
+      [vehicleWarehouseId],
+    );
+    const r = await call(
+      "GET",
+      "/vehicle-distribution/pilot/stock",
+      adminToken,
+    );
+    const body = GetVehicleDistributionPilotStockResponse.parse(r.body);
+    const empty = body.items.find((i) => i.product === "Empty")!;
+    expect(empty.productSku).toBe("");
+  });
+});
+
+describe("F5 movements — inbound/outbound inclusion, isolation, order, pagination", () => {
+  let vehicleWarehouseId = 0;
+  let erpWarehouseId = 0;
+
+  async function insMovement(opts: {
+    product: string;
+    from?: number | null;
+    to?: number | null;
+    type?: string;
+    weight?: number | null;
+    reference?: string | null;
+  }): Promise<number> {
+    const r = await client.query(
+      `INSERT INTO stock_movements
+         (product, quantity, movement_type, from_warehouse_id, to_warehouse_id,
+          note, created_by, weight_kg, reference)
+       VALUES ($1, 1, $2, $3, $4, 'n', 'tester', $5, $6)
+       RETURNING id`,
+      [
+        opts.product,
+        opts.type ?? "TRANSFER",
+        opts.from ?? null,
+        opts.to ?? null,
+        opts.weight ?? null,
+        opts.reference ?? null,
+      ],
+    );
+    return Number(r.rows[0].id);
+  }
+
+  beforeEach(async () => {
+    await resetPilot();
+    vehicleWarehouseId = await bootstrapAndGetWarehouseId();
+    erpWarehouseId = await seedErpWarehouse("ERP-mv-isolation");
+  });
+
+  it("includes inbound (to=vehicle) and outbound (from=vehicle); excludes unrelated", async () => {
+    const inbound = await insMovement({
+      product: "In",
+      from: erpWarehouseId,
+      to: vehicleWarehouseId,
+      type: "IN",
+      weight: 5,
+      reference: "REF-IN",
+    });
+    const outbound = await insMovement({
+      product: "Out",
+      from: vehicleWarehouseId,
+      to: erpWarehouseId,
+      type: "OUT",
+    });
+    // Unrelated: neither side is the vehicle warehouse.
+    const unrelated = await insMovement({
+      product: "Unrelated",
+      from: erpWarehouseId,
+      to: erpWarehouseId,
+    });
+
+    const r = await call(
+      "GET",
+      "/vehicle-distribution/pilot/movements",
+      adminToken,
+    );
+    expect(r.status).toBe(200);
+    const body = GetVehicleDistributionPilotMovementsResponse.parse(r.body);
+    expect(body.bootstrapped).toBe(true);
+    expect(body.vehicleWarehouseId).toBe(vehicleWarehouseId);
+    const ids = body.items.map((m) => m.id);
+    expect(ids).toContain(inbound);
+    expect(ids).toContain(outbound);
+    expect(ids).not.toContain(unrelated);
+
+    const inRow = body.items.find((m) => m.id === inbound)!;
+    expect(inRow.toWarehouseId).toBe(vehicleWarehouseId);
+    expect(inRow.toWarehouseName).toBe(PILOT_WAREHOUSE_NAME);
+    expect(inRow.fromWarehouseId).toBe(erpWarehouseId);
+    expect(inRow.weightKg).toBe(5);
+    expect(inRow.reference).toBe("REF-IN");
+    expect(typeof inRow.createdAt).toBe("string");
+  });
+
+  it("never exposes global movements with no warehouse ids", async () => {
+    const globalRow = await insMovement({
+      product: "Global",
+      from: null,
+      to: null,
+      type: "BASELINE",
+    });
+    const r = await call(
+      "GET",
+      "/vehicle-distribution/pilot/movements",
+      adminToken,
+    );
+    const body = GetVehicleDistributionPilotMovementsResponse.parse(r.body);
+    expect(body.items.map((m) => m.id)).not.toContain(globalRow);
+  });
+
+  it("orders deterministically by id DESC", async () => {
+    const first = await insMovement({ product: "A", to: vehicleWarehouseId });
+    const second = await insMovement({ product: "B", to: vehicleWarehouseId });
+    const third = await insMovement({ product: "C", to: vehicleWarehouseId });
+    const r = await call(
+      "GET",
+      "/vehicle-distribution/pilot/movements",
+      adminToken,
+    );
+    const body = GetVehicleDistributionPilotMovementsResponse.parse(r.body);
+    const ids = body.items.map((m) => m.id);
+    expect(ids).toEqual([third, second, first]);
+    // Strictly descending.
+    for (let i = 1; i < ids.length; i++) {
+      expect(ids[i]).toBeLessThan(ids[i - 1]);
+    }
+  });
+
+  it("paginates via limit + beforeId → nextBeforeId cursor", async () => {
+    const created: number[] = [];
+    for (let i = 0; i < 5; i++) {
+      created.push(
+        await insMovement({ product: `P${i}`, to: vehicleWarehouseId }),
+      );
+    }
+    const desc = [...created].reverse(); // id DESC
+
+    // First page of 2.
+    const p1 = await call(
+      "GET",
+      "/vehicle-distribution/pilot/movements?limit=2",
+      adminToken,
+    );
+    const b1 = GetVehicleDistributionPilotMovementsResponse.parse(p1.body);
+    expect(b1.items.map((m) => m.id)).toEqual([desc[0], desc[1]]);
+    expect(b1.nextBeforeId).toBe(desc[1]);
+
+    // Second page using the cursor.
+    const p2 = await call(
+      "GET",
+      `/vehicle-distribution/pilot/movements?limit=2&beforeId=${b1.nextBeforeId}`,
+      adminToken,
+    );
+    const b2 = GetVehicleDistributionPilotMovementsResponse.parse(p2.body);
+    expect(b2.items.map((m) => m.id)).toEqual([desc[2], desc[3]]);
+    expect(b2.nextBeforeId).toBe(desc[3]);
+
+    // Final (partial) page — no further cursor.
+    const p3 = await call(
+      "GET",
+      `/vehicle-distribution/pilot/movements?limit=2&beforeId=${b2.nextBeforeId}`,
+      adminToken,
+    );
+    const b3 = GetVehicleDistributionPilotMovementsResponse.parse(p3.body);
+    expect(b3.items.map((m) => m.id)).toEqual([desc[4]]);
+    expect(b3.nextBeforeId).toBeNull();
+  });
+
+  it("default limit is 50 (documented)", async () => {
+    for (let i = 0; i < 3; i++) {
+      await insMovement({ product: `D${i}`, to: vehicleWarehouseId });
+    }
+    // No limit param → default 50 applies; small dataset returns all with no cursor.
+    const c = await testPool.connect();
+    try {
+      const s = await readPilotMovements(c, { limit: 50 });
+      expect(s.items.length).toBe(3);
+      expect(s.nextBeforeId).toBeNull();
+    } finally {
+      c.release();
+    }
+  });
+
+  it("rejects limit above the max (200) with 400", async () => {
+    const r = await call(
+      "GET",
+      "/vehicle-distribution/pilot/movements?limit=201",
+      adminToken,
+    );
+    expect(r.status).toBe(400);
+  });
+
+  it("rejects a non-positive limit with 400", async () => {
+    const r = await call(
+      "GET",
+      "/vehicle-distribution/pilot/movements?limit=0",
+      adminToken,
+    );
+    expect(r.status).toBe(400);
+  });
+
+  it("rejects a non-positive beforeId with 400", async () => {
+    const r = await call(
+      "GET",
+      "/vehicle-distribution/pilot/movements?beforeId=0",
+      adminToken,
+    );
+    expect(r.status).toBe(400);
   });
 });

@@ -29,9 +29,14 @@ import {
   GetVehicleDistributionPilotResponse,
   BootstrapVehicleDistributionPilotResponse,
   BootstrapVehicleDistributionPilotBody,
+  GetVehicleDistributionPilotStockResponse,
+  GetVehicleDistributionPilotMovementsResponse,
+  GetVehicleDistributionPilotMovementsQueryParams,
 } from "@workspace/api-zod";
 import {
   readPilotState,
+  readPilotStock,
+  readPilotMovements,
   bootstrapPilotInTx,
   PilotConflictError,
   PilotAgentError,
@@ -77,6 +82,54 @@ export function createVehicleDistributionRouter(pool: Pool): IRouter {
       try {
         const state = await readPilotState(client);
         res.json(GetVehicleDistributionPilotResponse.parse(state));
+      } finally {
+        client.release();
+      }
+    },
+  );
+
+  // ── GET /vehicle-distribution/pilot/stock ─────────────────────────────────
+  // Authenticated read-only stock cards for the pilot vehicle warehouse. Pilot
+  // + expected vehicle warehouse are resolved server-side (no request input);
+  // never falls back to a generic warehouse. Not-bootstrapped → empty payload.
+  router.get(
+    "/vehicle-distribution/pilot/stock",
+    async (_req, res): Promise<void> => {
+      const client = await pool.connect();
+      try {
+        const state = await readPilotStock(client);
+        res.json(GetVehicleDistributionPilotStockResponse.parse(state));
+      } finally {
+        client.release();
+      }
+    },
+  );
+
+  // ── GET /vehicle-distribution/pilot/movements ─────────────────────────────
+  // Authenticated read-only, keyset-paginated audit history of movements that
+  // touch the pilot vehicle warehouse (from OR to). Server-resolved pilot; never
+  // exposes global or other-warehouse-only rows. Not-bootstrapped → empty.
+  router.get(
+    "/vehicle-distribution/pilot/movements",
+    async (req, res): Promise<void> => {
+      const parsed = GetVehicleDistributionPilotMovementsQueryParams.safeParse(
+        req.query ?? {},
+      );
+      if (!parsed.success) {
+        req.log.warn(
+          { err: parsed.error.message },
+          "invalid pilot movements query params",
+        );
+        res.status(400).json({ error: parsed.error.message });
+        return;
+      }
+      const client = await pool.connect();
+      try {
+        const state = await readPilotMovements(client, {
+          limit: parsed.data.limit,
+          beforeId: parsed.data.beforeId,
+        });
+        res.json(GetVehicleDistributionPilotMovementsResponse.parse(state));
       } finally {
         client.release();
       }

@@ -33,6 +33,7 @@ import type {
   GetDashboardMonthlyParams,
   GetSalaryReportParams,
   GetSalesParams,
+  GetVehicleDistributionPilotMovementsParams,
   HealthStatus,
   InventoryItem,
   KgPayrollWorker,
@@ -59,6 +60,8 @@ import type {
   SaleStatusInput,
   VehicleDistributionBootstrapInput,
   VehicleDistributionPilot,
+  VehicleDistributionPilotMovements,
+  VehicleDistributionPilotStock,
   VehicleHandoffConfirmLabelsResult,
   VehicleHandoffDetail,
   VehicleHandoffLabelsPayload,
@@ -3281,6 +3284,169 @@ export const useBootstrapVehicleDistributionPilot = <TError = ErrorType<ErrorRes
       > => {
       return useMutation(getBootstrapVehicleDistributionPilotMutationOptions(options));
     }
+
+export const getGetVehicleDistributionPilotStockUrl = () => {
+
+
+
+
+  return `/api/vehicle-distribution/pilot/stock`
+}
+
+/**
+ * Authenticated read-only stock view for the single pilot vehicle (DM-001 / DAMAS / agent NAVRUZBEK). The pilot vehicle and its expected vehicle warehouse are resolved entirely server-side — the request takes no vehicle or warehouse input. Fails closed (404) unless the vehicle-distribution feature is enabled, and returns 503 when enabled without schema approval. When the pilot has not been bootstrapped (no active NAVRUZBEK assignment on DM-001 with the exact expected vehicle warehouse), returns a deterministic not-bootstrapped payload (bootstrapped=false, null vehicle/warehouse, empty items, zeroed totals) and NEVER falls back to a generic warehouse. Stock items include only nonzero-quantity inventory rows (stock-card display semantics), sorted by product name.
+ * @summary Read the pilot vehicle warehouse stock cards (read model)
+ */
+export const getVehicleDistributionPilotStock = async ( options?: RequestInit): Promise<VehicleDistributionPilotStock> => {
+
+  return customFetch<VehicleDistributionPilotStock>(getGetVehicleDistributionPilotStockUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetVehicleDistributionPilotStockQueryKey = () => {
+    return [
+    `/api/vehicle-distribution/pilot/stock`
+    ] as const;
+    }
+
+
+export const getGetVehicleDistributionPilotStockQueryOptions = <TData = Awaited<ReturnType<typeof getVehicleDistributionPilotStock>>, TError = ErrorType<ErrorResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getVehicleDistributionPilotStock>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetVehicleDistributionPilotStockQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getVehicleDistributionPilotStock>>> = ({ signal }) => getVehicleDistributionPilotStock({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getVehicleDistributionPilotStock>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetVehicleDistributionPilotStockQueryResult = NonNullable<Awaited<ReturnType<typeof getVehicleDistributionPilotStock>>>
+export type GetVehicleDistributionPilotStockQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary Read the pilot vehicle warehouse stock cards (read model)
+ */
+
+export function useGetVehicleDistributionPilotStock<TData = Awaited<ReturnType<typeof getVehicleDistributionPilotStock>>, TError = ErrorType<ErrorResponse>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getVehicleDistributionPilotStock>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetVehicleDistributionPilotStockQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getGetVehicleDistributionPilotMovementsUrl = (params?: GetVehicleDistributionPilotMovementsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/vehicle-distribution/pilot/movements?${stringifiedParams}` : `/api/vehicle-distribution/pilot/movements`
+}
+
+/**
+ * Authenticated read-only audit history of stock movements that touch the single pilot vehicle warehouse (either as source or destination). The pilot vehicle and its expected vehicle warehouse are resolved entirely server-side — the request takes no vehicle or warehouse input. Only rows where the pilot vehicle warehouse is the from OR to warehouse are ever returned; global movements and other-warehouse-only rows are never exposed. Ordered deterministically by id DESC and paginated via a keyset cursor (beforeId → nextBeforeId). Fails closed (404) unless the feature is enabled, 503 when enabled without schema approval. When the pilot has not been bootstrapped, returns a deterministic not-bootstrapped payload (bootstrapped=false, empty items, null nextBeforeId).
+ * @summary Read the pilot vehicle warehouse stock movements (read model)
+ */
+export const getVehicleDistributionPilotMovements = async (params?: GetVehicleDistributionPilotMovementsParams, options?: RequestInit): Promise<VehicleDistributionPilotMovements> => {
+
+  return customFetch<VehicleDistributionPilotMovements>(getGetVehicleDistributionPilotMovementsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetVehicleDistributionPilotMovementsQueryKey = (params?: GetVehicleDistributionPilotMovementsParams,) => {
+    return [
+    `/api/vehicle-distribution/pilot/movements`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetVehicleDistributionPilotMovementsQueryOptions = <TData = Awaited<ReturnType<typeof getVehicleDistributionPilotMovements>>, TError = ErrorType<ErrorResponse>>(params?: GetVehicleDistributionPilotMovementsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getVehicleDistributionPilotMovements>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetVehicleDistributionPilotMovementsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getVehicleDistributionPilotMovements>>> = ({ signal }) => getVehicleDistributionPilotMovements(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getVehicleDistributionPilotMovements>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetVehicleDistributionPilotMovementsQueryResult = NonNullable<Awaited<ReturnType<typeof getVehicleDistributionPilotMovements>>>
+export type GetVehicleDistributionPilotMovementsQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary Read the pilot vehicle warehouse stock movements (read model)
+ */
+
+export function useGetVehicleDistributionPilotMovements<TData = Awaited<ReturnType<typeof getVehicleDistributionPilotMovements>>, TError = ErrorType<ErrorResponse>>(
+ params?: GetVehicleDistributionPilotMovementsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getVehicleDistributionPilotMovements>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetVehicleDistributionPilotMovementsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
 
 export const getListVehicleHandoffsUrl = () => {
 

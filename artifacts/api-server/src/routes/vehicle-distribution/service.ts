@@ -239,6 +239,296 @@ export async function readPilotState(client: PoolClient): Promise<PilotState> {
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// F5 read models — pilot vehicle warehouse stock cards + stock movements.
+//
+// Both endpoints resolve the EXACT pilot server-side (agent NAVRUZBEK, vehicle
+// DM-001 / DAMAS, and the vehicle warehouse whose identity matches every F2
+// constant) with NO vehicle/warehouse input from the request. Unlike the F3/F4
+// handoff paths, resolution here is SOFT: when the pilot is not bootstrapped (or
+// any identity constant does not line up), we return a deterministic
+// not-bootstrapped payload rather than throwing — and we NEVER fall back to a
+// generic warehouse.
+//
+// Documented inventory-inclusion choice: stock cards surface ONLY nonzero
+// inventory rows (quantity <> 0). This matches stock-card display semantics
+// used elsewhere in the ERP (the balance summary counts SKUs with quantity<>0);
+// there is no audit requirement here to show empty (zeroed-out) rows.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type PilotStockItem = {
+  product: string;
+  productName: string;
+  productSku: string | null;
+  quantity: number;
+  weightKg: number;
+  updatedAt: string | null;
+};
+
+export type PilotStockState = {
+  bootstrapped: boolean;
+  vehicle: PilotVehicle | null;
+  warehouse: PilotWarehouse | null;
+  items: PilotStockItem[];
+  skuCount: number;
+  totalQuantity: number;
+  totalWeightKg: number;
+};
+
+export type PilotMovement = {
+  id: number;
+  product: string;
+  quantity: number;
+  weightKg: number | null;
+  movementType: string;
+  fromWarehouseId: number | null;
+  fromWarehouseName: string | null;
+  toWarehouseId: number | null;
+  toWarehouseName: string | null;
+  note: string | null;
+  createdBy: string | null;
+  reference: string | null;
+  createdAt: string;
+};
+
+export type PilotMovementsState = {
+  bootstrapped: boolean;
+  vehicleWarehouseId: number | null;
+  items: PilotMovement[];
+  nextBeforeId: number | null;
+};
+
+const iso = (v: Date | string | null): string | null =>
+  v == null ? null : v instanceof Date ? v.toISOString() : String(v);
+
+/**
+ * Soft-resolve the exact pilot vehicle + its expected vehicle warehouse.
+ *
+ * Returns null (never throws, never falls back) when the pilot is not
+ * bootstrapped or any identity constant is off: no active NAVRUZBEK assignment,
+ * wrong plate/type, or a warehouse that does not match every F2 constant
+ * (active, location_type='vehicle', purpose='finished', exact name). This mirrors
+ * the strict F3/F4 identity checks but degrades to not-bootstrapped instead of
+ * raising a conflict, because F5 is a read model.
+ */
+async function resolvePilotSoft(
+  client: PoolClient,
+): Promise<{ vehicle: PilotVehicle; warehouse: PilotWarehouse } | null> {
+  const { rows } = await client.query(
+    `SELECT v.id            AS vehicle_id,
+            v.plate_number,
+            v.vehicle_type,
+            v.status        AS vehicle_status,
+            v.capacity_kg,
+            v.warehouse_id,
+            w.id            AS wh_id,
+            w.name          AS wh_name,
+            COALESCE(w.location_type,'general') AS wh_location_type,
+            w.purpose       AS wh_purpose,
+            w.active        AS wh_active
+       FROM distribution.vehicle_assignments a
+       JOIN distribution.vehicles v ON v.id = a.vehicle_id
+       JOIN distribution.delivery_agents ag ON ag.id = a.delivery_agent_id
+       JOIN warehouses w ON w.id = v.warehouse_id
+      WHERE a.status = 'active'
+        AND ag.faol = 1
+        AND UPPER(TRIM(ag.name)) = UPPER(TRIM($1))
+      ORDER BY a.id`,
+    [PILOT_AGENT_NAME],
+  );
+
+  // Exactly one active pilot assignment with the exact identity; anything else
+  // (zero, ambiguous, or a mismatch) degrades to not-bootstrapped.
+  if (rows.length !== 1) return null;
+  const r = rows[0];
+
+  if (String(r.plate_number) !== PILOT_VEHICLE_PLATE) return null;
+  if (String(r.vehicle_type) !== PILOT_VEHICLE_TYPE) return null;
+  if (!r.wh_active) return null;
+  if (String(r.wh_location_type) !== PILOT_WAREHOUSE_LOCATION_TYPE) return null;
+  if (String(r.wh_purpose) !== PILOT_WAREHOUSE_PURPOSE) return null;
+  if (String(r.wh_name) !== PILOT_WAREHOUSE_NAME) return null;
+
+  const vehicle = mapVehicle({
+    id: r.vehicle_id,
+    plate_number: r.plate_number,
+    vehicle_type: r.vehicle_type,
+    status: r.vehicle_status,
+    capacity_kg: r.capacity_kg,
+    warehouse_id: r.warehouse_id,
+  });
+  const warehouse = mapWarehouse({
+    id: r.wh_id,
+    name: r.wh_name,
+    location_type: r.wh_location_type,
+    purpose: r.wh_purpose,
+    active: r.wh_active,
+  });
+  return { vehicle, warehouse };
+}
+
+/**
+ * Read the pilot vehicle warehouse stock cards. Read-only.
+ *
+ * Includes only nonzero-quantity inventory rows (documented choice), sorted by
+ * product name, each enriched with the catalog product SKU when a matching
+ * products row exists (productSku is null otherwise; it may also be an empty
+ * string when the catalog row carries an empty SKU). Totals are computed from
+ * the same nonzero row set so skuCount/totalQuantity/totalWeightKg agree with
+ * the returned items exactly. When the pilot is not bootstrapped, returns a
+ * deterministic empty payload with zeroed totals and null vehicle/warehouse.
+ */
+export async function readPilotStock(
+  client: PoolClient,
+): Promise<PilotStockState> {
+  const resolved = await resolvePilotSoft(client);
+  if (!resolved) {
+    return {
+      bootstrapped: false,
+      vehicle: null,
+      warehouse: null,
+      items: [],
+      skuCount: 0,
+      totalQuantity: 0,
+      totalWeightKg: 0,
+    };
+  }
+
+  const { vehicle, warehouse } = resolved;
+
+  // Only nonzero-quantity rows (stock-card semantics). LEFT JOIN products so a
+  // raw inventory row without a catalog match still appears (productSku null).
+  const { rows } = await client.query(
+    `SELECT i.product           AS product,
+            i.quantity          AS quantity,
+            COALESCE(i.weight_kg, 0) AS weight_kg,
+            i.updated_at        AS updated_at,
+            p.sku               AS sku
+       FROM inventory i
+       LEFT JOIN products p ON p.name = i.product
+      WHERE i.warehouse_id = $1
+        AND i.quantity <> 0
+      ORDER BY i.product`,
+    [warehouse.id],
+  );
+
+  const items: PilotStockItem[] = rows.map((row) => ({
+    product: String(row.product),
+    productName: String(row.product),
+    productSku: row.sku == null ? null : String(row.sku),
+    quantity: Number(row.quantity),
+    weightKg: Number(row.weight_kg),
+    updatedAt: iso(row.updated_at),
+  }));
+
+  const skuCount = items.length;
+  const totalQuantity = items.reduce((s, it) => s + it.quantity, 0);
+  const totalWeightKg = items.reduce((s, it) => s + it.weightKg, 0);
+
+  return {
+    bootstrapped: true,
+    vehicle,
+    warehouse,
+    items,
+    skuCount,
+    totalQuantity,
+    totalWeightKg,
+  };
+}
+
+/**
+ * Read the pilot vehicle warehouse stock movements (audit history). Read-only.
+ *
+ * Returns only rows where the pilot vehicle warehouse is the from OR to
+ * warehouse (never global movements or other-warehouse-only rows), ordered
+ * deterministically by id DESC. Keyset-paginated: with an optional positive
+ * `beforeId`, only movements with a strictly smaller id are returned; up to
+ * `limit` rows come back plus `nextBeforeId` (the smallest returned id) when a
+ * further page may exist, else null. When the pilot is not bootstrapped, returns
+ * a deterministic empty payload.
+ */
+export async function readPilotMovements(
+  client: PoolClient,
+  opts: { limit: number; beforeId?: number },
+): Promise<PilotMovementsState> {
+  const resolved = await resolvePilotSoft(client);
+  if (!resolved) {
+    return {
+      bootstrapped: false,
+      vehicleWarehouseId: null,
+      items: [],
+      nextBeforeId: null,
+    };
+  }
+
+  const whId = resolved.warehouse.id;
+  const params: (number | undefined)[] = [whId];
+  let cursorClause = "";
+  if (opts.beforeId != null) {
+    params.push(opts.beforeId);
+    cursorClause = `AND m.id < $${params.length}`;
+  }
+  params.push(opts.limit);
+  const limitParamIndex = params.length;
+
+  const { rows } = await client.query(
+    `SELECT m.id                AS id,
+            m.product           AS product,
+            m.quantity          AS quantity,
+            m.weight_kg         AS weight_kg,
+            m.movement_type     AS movement_type,
+            m.from_warehouse_id AS from_warehouse_id,
+            fw.name             AS from_warehouse_name,
+            m.to_warehouse_id   AS to_warehouse_id,
+            tw.name             AS to_warehouse_name,
+            m.note              AS note,
+            m.created_by        AS created_by,
+            m.reference         AS reference,
+            m.created_at        AS created_at
+       FROM stock_movements m
+       LEFT JOIN warehouses fw ON fw.id = m.from_warehouse_id
+       LEFT JOIN warehouses tw ON tw.id = m.to_warehouse_id
+      WHERE (m.from_warehouse_id = $1 OR m.to_warehouse_id = $1)
+        ${cursorClause}
+      ORDER BY m.id DESC
+      LIMIT $${limitParamIndex}`,
+    params,
+  );
+
+  const items: PilotMovement[] = rows.map((row) => ({
+    id: Number(row.id),
+    product: String(row.product),
+    quantity: Number(row.quantity),
+    weightKg: row.weight_kg == null ? null : Number(row.weight_kg),
+    movementType: String(row.movement_type),
+    fromWarehouseId:
+      row.from_warehouse_id == null ? null : Number(row.from_warehouse_id),
+    fromWarehouseName:
+      row.from_warehouse_name == null ? null : String(row.from_warehouse_name),
+    toWarehouseId:
+      row.to_warehouse_id == null ? null : Number(row.to_warehouse_id),
+    toWarehouseName:
+      row.to_warehouse_name == null ? null : String(row.to_warehouse_name),
+    note: row.note == null ? null : String(row.note),
+    createdBy: row.created_by == null ? null : String(row.created_by),
+    reference: row.reference == null ? null : String(row.reference),
+    createdAt: iso(row.created_at) as string,
+  }));
+
+  // A further page may exist only when we filled the page exactly.
+  const nextBeforeId =
+    items.length === opts.limit && items.length > 0
+      ? items[items.length - 1].id
+      : null;
+
+  return {
+    bootstrapped: true,
+    vehicleWarehouseId: whId,
+    items,
+    nextBeforeId,
+  };
+}
+
 /** Find exactly one active delivery_agents row matching NAVRUZBEK
  *  (case-insensitive, trimmed). Throws PilotAgentError on zero/many. */
 async function findPilotAgent(client: PoolClient): Promise<PilotAgent> {

@@ -475,6 +475,40 @@ describe("F4 production-label gate", () => {
   });
 });
 
+describe("F4 schema shape (additive F3→F4 upgrade)", () => {
+  it("both session tables exist in the distribution schema", async () => {
+    const t = await client.query(
+      `SELECT to_regclass('distribution.vehicle_label_prepare_sessions') AS prep,
+              to_regclass('distribution.vehicle_label_print_sessions')   AS print`,
+    );
+    expect(t.rows[0].prep).not.toBeNull();
+    expect(t.rows[0].print).not.toBeNull();
+  });
+
+  it("existing F3 objects survive (claims table + immutability trigger reused)", async () => {
+    const claims = await client.query(
+      `SELECT to_regclass('distribution.vehicle_label_claims') AS c`,
+    );
+    expect(claims.rows[0].c).not.toBeNull();
+    const trig = await client.query(
+      `SELECT COUNT(*)::int AS n FROM pg_trigger
+        WHERE tgrelid = 'production_labels'::regclass AND NOT tgisinternal`,
+    );
+    expect(Number(trig.rows[0].n)).toBeGreaterThanOrEqual(1);
+  });
+
+  it("VH partial unique index on production_labels exists", async () => {
+    const idx = await client.query(
+      `SELECT indexdef FROM pg_indexes
+        WHERE tablename='production_labels'
+          AND indexname='uq_production_labels_vh_batch_number'`,
+    );
+    expect(idx.rows).toHaveLength(1);
+    expect(String(idx.rows[0].indexdef)).toContain("batch_id IS NULL");
+    expect(String(idx.rows[0].indexdef)).toContain("VH-%");
+  });
+});
+
 describe("F4 prepare labels", () => {
   it("rejects missing operationKey (400)", async () => {
     const { handoffId } = await makePrepared(1);

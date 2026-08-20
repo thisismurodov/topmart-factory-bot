@@ -130,6 +130,12 @@ export const GetBatchesResponse = zod.object({
   "quantity": zod.number(),
   "weightKg": zod.number(),
   "earnings": zod.number(),
+  "payrollMethod": zod.enum(['PRODUCT_RATE', 'ROLE_BASED_KG']),
+  "payrollStatus": zod.enum(['PRODUCT_RATE', 'OPEN', 'CLOSED', 'UNASSIGNED']),
+  "payrollLineId": zod.number().nullable(),
+  "payrollLineName": zod.string().nullable(),
+  "payrollWorkDate": zod.string(),
+  "frozenDailyEarnings": zod.number().nullable(),
   "createdAt": zod.string()
 })),
   "total": zod.number()

@@ -1751,9 +1751,37 @@ components:
           type: number
         earnings:
           type: number
+        payrollMethod:
+          type: string
+          enum: [PRODUCT_RATE, ROLE_BASED_KG]
+        payrollStatus:
+          type: string
+          enum: [PRODUCT_RATE, OPEN, CLOSED, UNASSIGNED]
+        payrollLineId:
+          type: ["integer", "null"]
+        payrollLineName:
+          type: ["string", "null"]
+        payrollWorkDate:
+          type: string
+        frozenDailyEarnings:
+          type: ["number", "null"]
         createdAt:
           type: string
-      required: [id, batchCode, worker, product, quantity, weightKg, earnings, createdAt]
+      required:
+        - id
+        - batchCode
+        - worker
+        - product
+        - quantity
+        - weightKg
+        - earnings
+        - payrollMethod
+        - payrollStatus
+        - payrollLineId
+        - payrollLineName
+        - payrollWorkDate
+        - frozenDailyEarnings
+        - createdAt
 
     BatchList:
       type: object

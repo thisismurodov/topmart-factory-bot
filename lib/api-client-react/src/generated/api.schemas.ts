@@ -256,6 +256,24 @@ export interface DailyChartPoint {
   earnings: number;
 }
 
+export type BatchPayrollMethod = typeof BatchPayrollMethod[keyof typeof BatchPayrollMethod];
+
+
+export const BatchPayrollMethod = {
+  PRODUCT_RATE: 'PRODUCT_RATE',
+  ROLE_BASED_KG: 'ROLE_BASED_KG',
+} as const;
+
+export type BatchPayrollStatus = typeof BatchPayrollStatus[keyof typeof BatchPayrollStatus];
+
+
+export const BatchPayrollStatus = {
+  PRODUCT_RATE: 'PRODUCT_RATE',
+  OPEN: 'OPEN',
+  CLOSED: 'CLOSED',
+  UNASSIGNED: 'UNASSIGNED',
+} as const;
+
 export interface Batch {
   id: number;
   batchCode: string;
@@ -264,6 +282,15 @@ export interface Batch {
   quantity: number;
   weightKg: number;
   earnings: number;
+  payrollMethod: BatchPayrollMethod;
+  payrollStatus: BatchPayrollStatus;
+  /** @nullable */
+  payrollLineId: number | null;
+  /** @nullable */
+  payrollLineName: string | null;
+  payrollWorkDate: string;
+  /** @nullable */
+  frozenDailyEarnings: number | null;
   createdAt: string;
 }
 

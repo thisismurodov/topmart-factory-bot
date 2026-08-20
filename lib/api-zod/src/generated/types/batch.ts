@@ -5,6 +5,8 @@
  * TopMart ERP API
  * OpenAPI spec version: 0.1.0
  */
+import type { BatchPayrollMethod } from './batchPayrollMethod';
+import type { BatchPayrollStatus } from './batchPayrollStatus';
 
 export interface Batch {
   id: number;
@@ -14,5 +16,14 @@ export interface Batch {
   quantity: number;
   weightKg: number;
   earnings: number;
+  payrollMethod: BatchPayrollMethod;
+  payrollStatus: BatchPayrollStatus;
+  /** @nullable */
+  payrollLineId: number | null;
+  /** @nullable */
+  payrollLineName: string | null;
+  payrollWorkDate: string;
+  /** @nullable */
+  frozenDailyEarnings: number | null;
   createdAt: string;
 }

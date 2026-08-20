@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PayrollCell } from "./batches-payroll-cell";
 
 export default function Batches() {
   const queryClient = useQueryClient();
@@ -383,7 +384,9 @@ export default function Batches() {
                     <TableCell>{batch.product}</TableCell>
                     <TableCell className="text-right font-mono">{formatNumber(batch.quantity)}</TableCell>
                     <TableCell className="text-right font-mono">{formatNumber(batch.weightKg)} kg</TableCell>
-                    <TableCell className="text-right font-mono font-medium">{formatCurrency(batch.earnings)}</TableCell>
+                    <TableCell className="min-w-[220px] text-right font-mono font-medium">
+                      <PayrollCell batch={batch} />
+                    </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
                         <Button

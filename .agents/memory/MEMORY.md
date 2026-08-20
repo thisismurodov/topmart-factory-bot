@@ -49,3 +49,4 @@
 - [Bot timestamps = Tashkent fixed +5](bot-timezone.md) — Railway+PG run UTC; render via timezone(timedelta(hours=5)) (tzdata absent on slim → no ZoneInfo); reprints must reuse original created_at or barcode identity drifts.
 - [C-17 Reja ip nomenclature](c17-reja-ip.md) — C-17 30/50/100g Oq/Qora/Sariq stock is Reja ip, never Qop ip; duplicate Reja rows are the same canonical stock.
 - [Production label passports live](production-label-passports-live.md) — migration applied 2026-08-19; no backfill; one 100×80 label per PDF page; only barcode identity changes.
+- [Dashboard TSX unit tests](dashboard-tsx-unit-tests.md) — pure Vitest runs skip Vite aliases/JSX plugins; isolate TSX under test with relative imports and explicit React.

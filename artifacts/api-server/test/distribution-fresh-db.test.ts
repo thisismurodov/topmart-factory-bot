@@ -4,6 +4,12 @@ import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import pg from "pg";
+import {
+  requireVehicleTestAdminUrl,
+  childDbUrl,
+  sslFor,
+  botDbEnv,
+} from "./helpers/vehicle-test-db";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Distribution-bot fresh-database boot guard.
@@ -31,16 +37,15 @@ import pg from "pg";
 
 const { Client } = pg;
 
-const adminUrl = process.env.RAILWAY_DATABASE_URL || process.env.DATABASE_URL;
-if (!adminUrl) throw new Error("RAILWAY_DATABASE_URL or DATABASE_URL must be set to run these tests");
+// Admin/provisioning URL comes ONLY from the dedicated isolated variable — never
+// from the runtime RAILWAY_DATABASE_URL / DATABASE_URL. Fails closed if absent.
+const adminUrl = requireVehicleTestAdminUrl();
 
 const TMP_DB = `topmart_dist_freshboot_${process.pid}_${Date.now()}`;
-const ssl = { rejectUnauthorized: false } as const;
+const ssl = sslFor(adminUrl);
 
 function tmpUrl(): string {
-  const u = new URL(adminUrl!);
-  u.pathname = `/${TMP_DB}`;
-  return u.toString();
+  return childDbUrl(adminUrl, TMP_DB);
 }
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -55,8 +60,7 @@ const mainPySource = readFileSync(path.join(botDir, "main.py"), "utf8");
 // covers all vehicle tables (the gate only guards production databases).
 const botEnv = {
   ...process.env,
-  RAILWAY_DATABASE_URL: tmpUrl(),
-  DATABASE_URL: tmpUrl(),
+  ...botDbEnv(tmpUrl()),
   TELEGRAM_BOT_TOKEN: "123456:TEST_TOKEN_FRESH_DB_GUARD",
   VEHICLE_DISTRIBUTION_SCHEMA_APPROVED: "1",
 };
@@ -470,10 +474,18 @@ describe("Distribution summary API: period nasiya (davr) vs nasiya qoldiq (outst
       `UPDATE distribution.nasiya SET tolangan = 4000, qoldiq = 20000, updated_at = '2026-07-12 09:00:00'`,
     );
 
-    // Point @workspace/db at the throwaway DB BEFORE importing the router —
-    // the pool binds its connection string at import time.
-    process.env.RAILWAY_DATABASE_URL = tmpUrl();
-    process.env.DATABASE_URL = tmpUrl();
+    // Point @workspace/db at the throwaway CHILD DB BEFORE importing the router
+    // — the pool binds its connection string at import time. Only a URL derived
+    // from the isolated admin URL is ever assigned here; any inherited runtime
+    // URL is removed. @workspace/db enables SSL iff RAILWAY_DATABASE_URL is set,
+    // so for a local (loopback) cluster we set only DATABASE_URL.
+    const childEnv = botDbEnv(tmpUrl());
+    if ("RAILWAY_DATABASE_URL" in childEnv) {
+      process.env.RAILWAY_DATABASE_URL = childEnv.RAILWAY_DATABASE_URL;
+    } else {
+      delete process.env.RAILWAY_DATABASE_URL;
+    }
+    process.env.DATABASE_URL = childEnv.DATABASE_URL;
 
     const [{ default: distributionRouter }, expressMod, pinoHttpMod, loggerMod, dbMod] =
       await Promise.all([

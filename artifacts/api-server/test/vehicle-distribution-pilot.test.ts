@@ -19,6 +19,12 @@ import {
   PILOT_AGENT_NAME,
   PILOT_WAREHOUSE_NAME,
 } from "../src/routes/vehicle-distribution/service";
+import {
+  requireVehicleTestAdminUrl,
+  childDbUrl,
+  sslFor,
+  botDbEnv,
+} from "./helpers/vehicle-test-db";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // F2 Vehicle + Assignment pilot — isolated throwaway-DB integration tests.
@@ -40,27 +46,22 @@ import {
 
 const { Client, Pool } = pg;
 
-const adminUrl = process.env.RAILWAY_DATABASE_URL || process.env.DATABASE_URL;
-if (!adminUrl)
-  throw new Error(
-    "RAILWAY_DATABASE_URL or DATABASE_URL must be set to run these tests",
-  );
+// Admin/provisioning URL comes ONLY from the dedicated isolated variable — never
+// from the runtime RAILWAY_DATABASE_URL / DATABASE_URL. Fails closed if absent.
+const adminUrl = requireVehicleTestAdminUrl();
 
 const TMP_DB = `topmart_vehicle_pilot_${process.pid}_${Date.now()}`;
-const ssl = { rejectUnauthorized: false } as const;
+const ssl = sslFor(adminUrl);
 
 function tmpUrl(): string {
-  const u = new URL(adminUrl!);
-  u.pathname = `/${TMP_DB}`;
-  return u.toString();
+  return childDbUrl(adminUrl, TMP_DB);
 }
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const botDir = path.resolve(here, "../../distribution-bot");
 const botEnv = {
   ...process.env,
-  RAILWAY_DATABASE_URL: tmpUrl(),
-  DATABASE_URL: tmpUrl(),
+  ...botDbEnv(tmpUrl()),
   TELEGRAM_BOT_TOKEN: "123456:TEST_TOKEN_VEHICLE_PILOT",
   VEHICLE_DISTRIBUTION_SCHEMA_APPROVED: "1",
 };

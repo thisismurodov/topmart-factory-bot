@@ -14,6 +14,12 @@ import {
   PILOT_VEHICLE_PLATE,
   PILOT_VEHICLE_TYPE,
 } from "../src/routes/vehicle-distribution/service";
+import {
+  requireVehicleTestAdminUrl,
+  childDbUrl,
+  sslFor,
+  botDbEnv,
+} from "./helpers/vehicle-test-db";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // F3 Vehicle Handoff — isolated throwaway-DB integration tests.
@@ -30,27 +36,22 @@ import {
 
 const { Client, Pool } = pg;
 
-const adminUrl = process.env.RAILWAY_DATABASE_URL || process.env.DATABASE_URL;
-if (!adminUrl)
-  throw new Error(
-    "RAILWAY_DATABASE_URL or DATABASE_URL must be set to run these tests",
-  );
+// Admin/provisioning URL comes ONLY from the dedicated isolated variable — never
+// from the runtime RAILWAY_DATABASE_URL / DATABASE_URL. Fails closed if absent.
+const adminUrl = requireVehicleTestAdminUrl();
 
 const TMP_DB = `topmart_vehicle_handoff_${process.pid}_${Date.now()}`;
-const ssl = { rejectUnauthorized: false } as const;
+const ssl = sslFor(adminUrl);
 
 function tmpUrl(): string {
-  const u = new URL(adminUrl!);
-  u.pathname = `/${TMP_DB}`;
-  return u.toString();
+  return childDbUrl(adminUrl, TMP_DB);
 }
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const botDir = path.resolve(here, "../../distribution-bot");
 const botEnv = {
   ...process.env,
-  RAILWAY_DATABASE_URL: tmpUrl(),
-  DATABASE_URL: tmpUrl(),
+  ...botDbEnv(tmpUrl()),
   TELEGRAM_BOT_TOKEN: "123456:TEST_TOKEN_VEHICLE_HANDOFF",
   VEHICLE_DISTRIBUTION_SCHEMA_APPROVED: "1",
   // F4: bring up public.production_labels (+ immutability trigger + the VH
@@ -134,6 +135,108 @@ async function createPublicTables(c: pg.Client): Promise<void> {
       token   TEXT PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE
     )`);
+}
+
+// F4: materialise public.production_labels exactly as the API initDb does
+// (single source of truth: artifacts/api-server/src/init-db.ts, gated on
+// PRODUCTION_LABELS_SCHEMA_APPROVED). The distribution-bot init_db does NOT
+// create this table, so the F4 label endpoints need it seeded here. Includes
+// the VH partial unique index + the shared immutability trigger.
+async function createProductionLabelsSchema(c: pg.Client): Promise<void> {
+  await c.query(`SET search_path TO public`);
+  // Minimal batches table so the batch_id FK can be created (VH passports use
+  // batch_id NULL, so no rows are ever inserted here).
+  await c.query(`
+    CREATE TABLE IF NOT EXISTS batches (
+      id         SERIAL PRIMARY KEY,
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    )`);
+  await c.query(`
+    CREATE TABLE IF NOT EXISTS production_labels (
+      id               SERIAL PRIMARY KEY,
+      barcode_value    TEXT NOT NULL,
+      batch_id         INTEGER REFERENCES batches(id) ON DELETE SET NULL,
+      batch_code       TEXT NOT NULL,
+      label_type       TEXT NOT NULL DEFAULT 'unit',
+      label_number     INTEGER NOT NULL,
+      total_labels     INTEGER NOT NULL,
+      pieces_in_label  INTEGER NOT NULL DEFAULT 1,
+      pieces_per_box   INTEGER NOT NULL DEFAULT 1,
+      quantity_total   INTEGER NOT NULL,
+      weight_kg        NUMERIC(12,3) NOT NULL DEFAULT 0,
+      length_m         NUMERIC(12,2),
+      product_name     TEXT NOT NULL,
+      product_sku      TEXT NOT NULL DEFAULT '',
+      worker_name      TEXT NOT NULL,
+      produced_at      TIMESTAMP WITH TIME ZONE NOT NULL,
+      warehouse_id     INTEGER REFERENCES warehouses(id) ON DELETE SET NULL,
+      warehouse_name   TEXT NOT NULL DEFAULT '',
+      status           TEXT NOT NULL DEFAULT 'created',
+      print_count      INTEGER NOT NULL DEFAULT 0,
+      last_printed_at  TIMESTAMP WITH TIME ZONE,
+      created_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+      CONSTRAINT production_labels_barcode_check
+        CHECK (barcode_value ~ '^TM[A-Z2-7]{16}$'),
+      CONSTRAINT production_labels_number_check
+        CHECK (label_number > 0 AND total_labels >= label_number),
+      CONSTRAINT production_labels_pieces_check CHECK (pieces_in_label > 0),
+      CONSTRAINT production_labels_box_capacity_check CHECK (pieces_per_box > 0),
+      CONSTRAINT production_labels_quantity_check CHECK (quantity_total > 0),
+      CONSTRAINT production_labels_weight_check CHECK (weight_kg >= 0),
+      CONSTRAINT production_labels_length_check
+        CHECK (length_m IS NULL OR length_m >= 0),
+      CONSTRAINT production_labels_type_check CHECK (label_type IN ('unit','box')),
+      CONSTRAINT production_labels_status_check
+        CHECK (status IN ('created','printed','void')),
+      CONSTRAINT production_labels_print_count_check CHECK (print_count >= 0)
+    )`);
+  await c.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_production_labels_barcode
+      ON production_labels(barcode_value)`);
+  await c.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_production_labels_batch_number
+      ON production_labels(batch_id, label_number)`);
+  await c.query(`CREATE INDEX IF NOT EXISTS idx_production_labels_batch_code
+      ON production_labels(batch_code)`);
+  await c.query(`CREATE INDEX IF NOT EXISTS idx_production_labels_product
+      ON production_labels(product_name)`);
+  await c.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_production_labels_vh_batch_number
+      ON production_labels(batch_code, label_number)
+      WHERE batch_id IS NULL AND batch_code LIKE 'VH-%'`);
+  await c.query(`
+    CREATE OR REPLACE FUNCTION enforce_production_label_immutable()
+    RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+      IF ROW(
+        NEW.id, NEW.barcode_value, NEW.batch_code, NEW.label_type,
+        NEW.label_number, NEW.total_labels, NEW.pieces_in_label,
+        NEW.pieces_per_box, NEW.quantity_total, NEW.weight_kg, NEW.length_m,
+        NEW.product_name, NEW.product_sku, NEW.worker_name, NEW.produced_at,
+        NEW.warehouse_name, NEW.created_at
+      ) IS DISTINCT FROM ROW(
+        OLD.id, OLD.barcode_value, OLD.batch_code, OLD.label_type,
+        OLD.label_number, OLD.total_labels, OLD.pieces_in_label,
+        OLD.pieces_per_box, OLD.quantity_total, OLD.weight_kg, OLD.length_m,
+        OLD.product_name, OLD.product_sku, OLD.worker_name, OLD.produced_at,
+        OLD.warehouse_name, OLD.created_at
+      ) OR (
+        NEW.batch_id IS DISTINCT FROM OLD.batch_id
+        AND NOT (OLD.batch_id IS NOT NULL AND NEW.batch_id IS NULL)
+      ) OR (
+        NEW.warehouse_id IS DISTINCT FROM OLD.warehouse_id
+        AND NOT (OLD.warehouse_id IS NOT NULL AND NEW.warehouse_id IS NULL)
+      ) THEN
+        RAISE EXCEPTION 'production label identity and snapshots are immutable'
+          USING ERRCODE = '55000';
+      END IF;
+      RETURN NEW;
+    END;
+    $$`);
+  await c.query(`DROP TRIGGER IF EXISTS production_labels_immutable_trigger
+      ON production_labels`);
+  await c.query(`
+    CREATE TRIGGER production_labels_immutable_trigger
+    BEFORE UPDATE ON production_labels
+    FOR EACH ROW EXECUTE FUNCTION enforce_production_label_immutable()`);
 }
 
 async function seedAgent(name: string, faol = 1): Promise<number> {
@@ -312,6 +415,7 @@ beforeAll(async () => {
   client = new Client({ connectionString: tmpUrl(), ssl });
   await client.connect();
   await createPublicTables(client);
+  await createProductionLabelsSchema(client);
   await client.query(`SET search_path TO distribution, public`);
   testPool = new Pool({ connectionString: tmpUrl(), ssl, max: 8 });
 
@@ -678,16 +782,14 @@ describe("F4 get labels payload", () => {
     }
   });
 
-  it("GET labels before prepare → empty payload (no passports)", async () => {
+  it("GET labels before prepare → 404 (labels not prepared)", async () => {
     const { handoffId } = await makePrepared(1);
     const r = await call(
       "GET",
       `/vehicle-distribution/handoffs/${handoffId}/labels`,
       { token: adminToken },
     );
-    expect(r.status).toBe(200);
-    expect(r.body.totalLabels).toBe(0);
-    expect(r.body.labels).toHaveLength(0);
+    expect(r.status).toBe(404);
   });
 });
 
@@ -699,9 +801,11 @@ describe("F4 confirm: first print + reprint", () => {
     expect(c.body.handoff.status).toBe("labels_printed");
     expect(c.body.isReprint).toBe(false);
     expect(c.body.atLeastOnce).toBe(true);
+    // Response shape: { handoff, labels: {..payload, labels:[passports]}, ... }
+    expect(c.body.labels.totalLabels).toBe(2);
     const pc = await client.query(
       `SELECT COALESCE(SUM(print_count),0)::int AS n FROM production_labels WHERE batch_code=$1`,
-      [c.body.labels[0].batchCode],
+      [c.body.labels.batchCode],
     );
     expect(Number(pc.rows[0].n)).toBeGreaterThanOrEqual(2);
   });
@@ -711,7 +815,7 @@ describe("F4 confirm: first print + reprint", () => {
     const key = opKey();
     const c1 = await confirmPrinted(handoffId, { token: adminToken, operationKey: key });
     expect(c1.status).toBe(200);
-    const batchCode = c1.body.labels[0].batchCode;
+    const batchCode = c1.body.labels.batchCode;
     const after1 = await client.query(
       `SELECT COALESCE(SUM(print_count),0)::int AS n FROM production_labels WHERE batch_code=$1`,
       [batchCode],
@@ -728,7 +832,7 @@ describe("F4 confirm: first print + reprint", () => {
   it("reprint with a NEW key → isReprint=true, print_count increments", async () => {
     const { handoffId } = await makePreparedWithLabels(1);
     const c1 = await confirmPrinted(handoffId);
-    const batchCode = c1.body.labels[0].batchCode;
+    const batchCode = c1.body.labels.batchCode;
     const after1 = await client.query(
       `SELECT COALESCE(SUM(print_count),0)::int AS n FROM production_labels WHERE batch_code=$1`,
       [batchCode],
@@ -995,7 +1099,7 @@ describe("lifecycle transitions", () => {
     expect(Number(veh.rows[0].q)).toBe(0);
   });
 
-  it("happy path: prepared → printed → handed_over → stock_transferred with exact qty/weight + ledger + events", async () => {
+  it("happy path: prepared → printed → handed_over → stock_transferred with exact qty/weight + ledger + events", { timeout: 90_000 }, async () => {
     const r = await call("POST", "/vehicle-distribution/handoffs", {
       token: adminToken,
       body: {

@@ -7,8 +7,10 @@ export default defineConfig({
     // DB integration tests open real connections; keep them serial and give
     // them a generous timeout so a slow first connect doesn't flake.
     fileParallelism: false,
-    testTimeout: 30000,
-    hookTimeout: 30000,
+    // Integration tests hit a shared remote Postgres; multi-step F4 flows
+    // (prepare N units + confirm + transitions) can take well over 30s there.
+    testTimeout: 90000,
+    hookTimeout: 60000,
     // Local (Neon) baza suite o'rtasidagi Railway-only bo'limda uxlab
     // qolmasligi uchun keepalive ping (flaky connect xatolarining oldini oladi).
     globalSetup: ["./test/global-setup.ts"],

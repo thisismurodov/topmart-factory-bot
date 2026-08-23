@@ -125,7 +125,7 @@ function indexKey(s: IndexSpec): string {
 
 /**
  * Extract all non-PK, non-partial indexes from a live throwaway DB via pg_catalog.
- * Partial unique indexes on vehicle tables are excluded here — they are
+ * Partial unique indexes are excluded here — they are
  * validated separately by compareVehicleChecksAndPartialIndexes().
  * Returns a Map<key, IndexSpec> where key = indexKey(spec).
  */
@@ -152,7 +152,7 @@ async function readActualIndexes(pool: pg.Pool): Promise<Map<string, IndexSpec>>
       AND NOT ix.indisprimary
       -- Exclude partial indexes on vehicle tables: they are validated separately
       -- by compareVehicleChecksAndPartialIndexes() which checks predicates too.
-      AND NOT (t.relname LIKE 'vehicle%' AND ix.indpred IS NOT NULL)
+      AND ix.indpred IS NULL
     GROUP BY ix.indexrelid, t.relname, ix.indisunique
     ORDER BY t.relname
   `);
@@ -194,6 +194,8 @@ function drizzleExpectedIndexes(): Map<string, IndexSpec> {
 
     // Named indexes declared in the table extra-config function
     for (const idx of cfg.indexes) {
+      // Partial indexes are compared separately with their predicates.
+      if (idx.config.where) continue;
       const cols: string[] = [];
       for (const c of idx.config.columns) {
         // IndexedColumn has a `name` property; SQL expressions do not — skip those.
@@ -475,7 +477,7 @@ async function readActualPartialIndexes(pool: pg.Pool): Promise<Map<string, Part
     WHERE n.nspname = 'distribution'
       AND ix.indisunique
       AND ix.indpred IS NOT NULL
-      AND c.relname LIKE 'vehicle%'
+      AND (c.relname LIKE 'vehicle%' OR c.relname = 'savdolar')
     ORDER BY c.relname, i.relname
   `);
   const out = new Map<string, PartialIdxSpec>();
@@ -504,6 +506,7 @@ const EXPECTED_CHECKS: CheckSpec[] = [
   { table: "vehicle_unit_events", name: "vehicle_unit_events_type_check", expr: normalizeExpr("event_type IN ('load','unload','return','adjustment','sale','label_prepared','label_printed')") },
   { table: "vehicle_unit_events", name: "vehicle_unit_events_qty_check",  expr: normalizeExpr("quantity <> 0") },
   { table: "vehicle_sale_allocations", name: "vehicle_sale_allocations_qty_check",    expr: normalizeExpr("allocated_quantity > 0") },
+  { table: "vehicle_sale_allocations", name: "vehicle_sale_allocations_concrete_qty_check", expr: normalizeExpr("label_claim_id IS NULL OR allocated_quantity = 1") },
   { table: "vehicle_sale_allocations", name: "vehicle_sale_allocations_weight_check", expr: normalizeExpr("allocated_weight_kg > 0") },
   { table: "vehicle_label_claims", name: "vehicle_label_claims_status_check", expr: normalizeExpr("status IN ('prepared','printed','loaded','sold','returned')") },
   { table: "vehicle_label_claims", name: "vehicle_label_claims_weight_check", expr: normalizeExpr("unit_weight_kg > 0") },
@@ -523,6 +526,11 @@ const EXPECTED_CHECKS: CheckSpec[] = [
 
 // Canonical expected partial unique indexes for vehicle tables.
 const EXPECTED_PARTIAL_INDEXES: PartialIdxSpec[] = [
+  {
+    table: "savdolar",
+    name: "uq_savdolar_operation_key",
+    predicate: normalizeExpr("operation_key IS NOT NULL"),
+  },
   {
     table: "vehicle_assignments",
     name: "uq_vehicle_assignments_active_vehicle",
@@ -567,6 +575,11 @@ const EXPECTED_PARTIAL_INDEXES: PartialIdxSpec[] = [
     table: "vehicle_sale_allocations",
     name: "uq_vehicle_sale_allocations_source_unit_event",
     predicate: normalizeExpr("source_unit_event_id IS NOT NULL"),
+  },
+  {
+    table: "vehicle_sale_allocations",
+    name: "uq_vehicle_sale_allocations_label_claim",
+    predicate: normalizeExpr("label_claim_id IS NOT NULL"),
   },
   {
     table: "vehicle_replenishment_requests",
@@ -664,6 +677,10 @@ async function compareVehicleChecksAndPartialIndexes(
 async function main(): Promise<void> {
   const adminUrl = process.env.DATABASE_URL;
   if (!adminUrl) throw new Error("DATABASE_URL must be set");
+  const adminHost = new URL(adminUrl).hostname;
+  if (!["localhost", "127.0.0.1", "::1"].includes(adminHost)) {
+    throw new Error("Distribution drift admin DATABASE_URL must use a loopback host");
+  }
 
   // 1. Ikkita throwaway baza yaratish
   const adminPool = new pg.Pool({ connectionString: adminUrl });

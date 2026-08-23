@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, numeric, timestamp, check } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, numeric, timestamp, check, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
@@ -31,6 +31,9 @@ export const stockMovementsTable = pgTable("stock_movements", {
   // Endi UCHALA manba bir xil CHECK'ni e'lon qiladi — schema-drift buni qo'riqlaydi.
   // R-C (2026-08-17): BASELINE tipi qo'shildi (inventar-reset boshlang'ich qoldiqlari).
   check("stock_movements_movement_type_check", sql`${table.movementType} IN ('IN', 'OUT', 'TRANSFER', 'BASELINE')`),
+  uniqueIndex("uq_stock_movements_vehicle_sale_reference")
+    .on(table.reference)
+    .where(sql`${table.reference} LIKE 'vehicle-sale:%'`),
 ]);
 
 export const insertStockMovementSchema = createInsertSchema(stockMovementsTable).omit({ id: true, createdAt: true });

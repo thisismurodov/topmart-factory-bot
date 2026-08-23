@@ -5,6 +5,7 @@ import psycopg2
 import csv
 import io
 import threading
+import uuid
 import schedule
 import time
 from datetime import datetime, date, timedelta
@@ -81,6 +82,7 @@ def clear_state(uid): user_state.pop(uid,None)
 from database import (
     get_user, get_balans, update_balans_delta, apply_balans_delta,
     update_dokon_repeat, create_sale, record_pul_olish, pay_nasiya_fifo,
+    create_vehicle_pilot_sale, VehiclePilotSaleError,
     get_admin_telegram_ids,
 )
 def is_admin(tid):
@@ -2383,7 +2385,8 @@ def tovar_berish(msg):
             bot.send_message(uid,"❗ Siz delivery agent sifatida bog'lanmagansiz."); return
         if status=="sunday":
             bot.send_message(uid,"😴 Bugun Juma — dam olish kuni. Marshrut yo'q."); return
-        set_state(uid,"savdo_dokon",{"mahsulotlar":mahsulotlar,"tanlangan":{}})
+        set_state(uid,"savdo_dokon",{"mahsulotlar":mahsulotlar,"tanlangan":{},
+                                      "operation_key":str(uuid.uuid4())})
         if n==0:
             bot.send_message(uid,
                 f"🚚 BUGUN — {day_name(_today_kun())}\n"
@@ -2401,7 +2404,8 @@ def tovar_berish(msg):
     # "reply markup is too long" limitidan saqlaydi (Elyorbek, 2026-08-04).
     kb,total,shown,page=_bosh_dokon_kb(uid)
     if total==0: bot.send_message(uid,"❗ Faol dokon yo'q."); return
-    set_state(uid,"savdo_dokon",{"mahsulotlar":mahsulotlar,"tanlangan":{},"dokon_page":page})
+    set_state(uid,"savdo_dokon",{"mahsulotlar":mahsulotlar,"tanlangan":{},
+                                  "dokon_page":page,"operation_key":str(uuid.uuid4())})
     bot.send_message(uid,_dokon_page_text(total,shown,page),reply_markup=kb)
 
 SAVDO_KB_MAX=80  # bundan ko'p dokonli agent uchun viloyat→hudud bosqichli tanlov
@@ -2543,6 +2547,9 @@ def s_savdo_miqdor(msg):
         if miqdor<=0: raise ValueError
     except:
         bot.send_message(uid,"❗ Iltimos, musbat son kiriting (masalan: 1.5):"); return
+    user=get_user(uid)
+    if user and str(user[2] or "").strip().upper()=="NAVRUZBEK" and not miqdor.is_integer():
+        bot.send_message(uid,"❗ Mashina savdosida miqdor faqat musbat butun dona bo'lishi kerak."); return
     mid=data["cur_mid"]; nomi=data["cur_nomi"]
     narx=data["cur_narx"]; birlik=data["cur_birlik"]
     prev=data["tanlangan"].get(mid,0)
@@ -2659,16 +2666,18 @@ def _check_balans_before_save(uid,data):
     # aks holda rad etilgan savdo baribir mijoz balansini kamaytirib qo'yadi
     if not _dokon_ruxsat_guard(uid,did): return
     balans=get_balans(did)
+    user=get_user(uid)
+    pilot=bool(user and str(user[2] or "").strip().upper()=="NAVRUZBEK")
     if balans>0 and tolov=="nasiya":
         jami=sum(m[2]*data["tanlangan"].get(m[0],0) for m in data["mahsulotlar"])
         deducted=min(balans,jami); yangi_balans=balans-deducted
-        apply_balans_delta(did,-deducted)
+        if not pilot: apply_balans_delta(did,-deducted)
         data["balans_ishlatildi"]=deducted; data["yangi_balans"]=yangi_balans
         bot.send_message(uid,f"✅ {fmt(deducted)} so'm balans nasiyadan ayirildi.\nQolgan balans: {fmt(yangi_balans)}")
         _save_savdo(uid,data)
     elif balans>0 and tolov=="aralash" and data.get("nasiya_qism",0)>0:
         nas=data["nasiya_qism"]; deducted=min(balans,nas); yangi_balans=balans-deducted
-        apply_balans_delta(did,-deducted)
+        if not pilot: apply_balans_delta(did,-deducted)
         data["nasiya_qism"]=nas-deducted
         data["balans_ishlatildi"]=deducted; data["yangi_balans"]=yangi_balans
         bot.send_message(uid,f"✅ {fmt(deducted)} so'm balans nasiyadan ayirildi.\nQolgan balans: {fmt(yangi_balans)}")
@@ -2694,7 +2703,9 @@ def s_savdo_balans_confirm(msg):
     if msg.text=="✅ Ha, ayirish":
         jami=sum(m[2]*data["tanlangan"].get(m[0],0) for m in data["mahsulotlar"])
         deducted=min(balans,jami); yangi_balans=balans-deducted
-        apply_balans_delta(data["dokon_id"],-deducted)
+        user=get_user(uid)
+        if not (user and str(user[2] or "").strip().upper()=="NAVRUZBEK"):
+            apply_balans_delta(data["dokon_id"],-deducted)
         data["balans_ishlatildi"]=deducted; data["yangi_balans"]=yangi_balans
         _save_savdo(uid,data)
     elif msg.text=="❌ Yo'q, to'liq to'lov":
@@ -2716,9 +2727,10 @@ def _save_savdo(uid,data):
     # MUHIM: bu nuqtaga kelguncha balans allaqachon yechilgan bo'lishi mumkin
     # (_check_balans_before_save / savdo_balans_confirm). Ruxsat rad etilsa,
     # yechilgan balans qaytariladi — aks holda mijoz savdo yozuvisiz pul yo'qotadi.
+    pilot=bool(user and str(user[2] or "").strip().upper()=="NAVRUZBEK")
     if not _dokon_ruxsat_guard(uid,data["dokon_id"],user):
         deducted=data.get("balans_ishlatildi",0)
-        if deducted>0:
+        if deducted>0 and not pilot:
             apply_balans_delta(data["dokon_id"],deducted)
         return
     jami=sum(m[2]*data["tanlangan"].get(m[0],0) for m in data["mahsulotlar"])
@@ -2734,8 +2746,24 @@ def _save_savdo(uid,data):
     if tolov=="nasiya": nasiya_summa=max(0,jami-balans_ishlatildi)
     elif tolov=="aralash": nasiya_summa=data.get("nasiya_qism",0)
     # Bitta tranzaksiyada: savdo + tafsilot + repeat statistika + revisit + nasiya
-    sid,owner_tg,jami_nasiya_qoldiq=create_sale(
-        data["dokon_id"],uid,items,jami,tolov,data.get("foto"),nasiya_summa)
+    try:
+        if pilot:
+            # F7: balance + both schemas use the same psycopg2 transaction.
+            # operation_key was created once at flow start and is preserved in
+            # state across save retries/duplicate Telegram delivery.
+            sid,owner_tg,jami_nasiya_qoldiq=create_vehicle_pilot_sale(
+                data["dokon_id"],uid,items,jami,tolov,data.get("foto"),
+                nasiya_summa,data["operation_key"],balans_ishlatildi,
+                {"naqd":data.get("naqd",0),"karta":data.get("karta",0),
+                 "nasiya":data.get("nasiya_qism",nasiya_summa)})
+        else:
+            sid,owner_tg,jami_nasiya_qoldiq=create_sale(
+                data["dokon_id"],uid,items,jami,tolov,data.get("foto"),nasiya_summa)
+    except VehiclePilotSaleError as exc:
+        # Keep state and operation key intact so a corrected/retried delivery
+        # cannot accidentally create a second sale.
+        bot.send_message(uid,"❗ Savdo saqlanmadi: "+str(exc))
+        return
     clear_state(uid)
     tolov_str=_tolov_info_str(data)
     foto_id=data.get("foto")

@@ -65,9 +65,20 @@ CREATE TABLE IF NOT EXISTS distribution.savdolar (
   jami_summa BIGINT,
   tolov_turi TEXT,
   foto TEXT,
-  created_at TEXT
+  created_at TEXT,
+  operation_key TEXT,
+  operation_fingerprint TEXT,
+  status TEXT DEFAULT 'active',
+  posted_at TIMESTAMP WITH TIME ZONE
 );
+ALTER TABLE distribution.savdolar
+  ADD COLUMN IF NOT EXISTS operation_key TEXT,
+  ADD COLUMN IF NOT EXISTS operation_fingerprint TEXT,
+  ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active',
+  ADD COLUMN IF NOT EXISTS posted_at TIMESTAMP WITH TIME ZONE;
 CREATE INDEX IF NOT EXISTS idx_savdolar_agent ON distribution.savdolar (agent_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_savdolar_operation_key
+  ON distribution.savdolar (operation_key) WHERE operation_key IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS distribution.savdo_tafsilot (
   id SERIAL PRIMARY KEY,
@@ -217,6 +228,34 @@ CREATE TABLE IF NOT EXISTS distribution.field_route_orders (
   updated_at TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_field_route_orders_agent_sana ON distribution.field_route_orders (delivery_agent_id, sana);
+
+CREATE OR REPLACE FUNCTION distribution.enforce_posted_vehicle_sale_immutable()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  IF OLD.operation_key LIKE 'vehicle-sale:%' AND OLD.status = 'posted' THEN
+    RAISE EXCEPTION 'posted vehicle sale is immutable' USING ERRCODE='55000';
+  END IF;
+  RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+END $$;
+DROP TRIGGER IF EXISTS savdolar_posted_vehicle_immutable ON distribution.savdolar;
+CREATE TRIGGER savdolar_posted_vehicle_immutable
+BEFORE UPDATE OR DELETE ON distribution.savdolar
+FOR EACH ROW EXECUTE FUNCTION distribution.enforce_posted_vehicle_sale_immutable();
+
+CREATE OR REPLACE FUNCTION distribution.enforce_posted_vehicle_sale_detail_immutable()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM distribution.savdolar s
+             WHERE s.id=OLD.savdo_id
+               AND s.operation_key LIKE 'vehicle-sale:%' AND s.status='posted') THEN
+    RAISE EXCEPTION 'posted vehicle sale detail is immutable' USING ERRCODE='55000';
+  END IF;
+  RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+END $$;
+DROP TRIGGER IF EXISTS savdo_tafsilot_posted_vehicle_immutable ON distribution.savdo_tafsilot;
+CREATE TRIGGER savdo_tafsilot_posted_vehicle_immutable
+BEFORE UPDATE OR DELETE ON distribution.savdo_tafsilot
+FOR EACH ROW EXECUTE FUNCTION distribution.enforce_posted_vehicle_sale_detail_immutable();
 `;
 
 // Vehicle Distribution Pilot — F1 schema DDL.
@@ -452,18 +491,31 @@ CREATE TABLE IF NOT EXISTS distribution.vehicle_sale_allocations (
   production_label_id INTEGER,
   barcode             TEXT,
   source_unit_event_id INTEGER,
+  label_claim_id      INTEGER,
   operation_key       TEXT NOT NULL,
   allocated_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
   created_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
   CONSTRAINT vehicle_sale_allocations_qty_check    CHECK (allocated_quantity > 0),
+  CONSTRAINT vehicle_sale_allocations_concrete_qty_check
+    CHECK (label_claim_id IS NULL OR allocated_quantity = 1),
   CONSTRAINT vehicle_sale_allocations_weight_check CHECK (allocated_weight_kg > 0)
 );
+ALTER TABLE distribution.vehicle_sale_allocations
+  ADD COLUMN IF NOT EXISTS label_claim_id INTEGER;
+ALTER TABLE distribution.vehicle_sale_allocations
+  DROP CONSTRAINT IF EXISTS vehicle_sale_allocations_concrete_qty_check;
+ALTER TABLE distribution.vehicle_sale_allocations
+  ADD CONSTRAINT vehicle_sale_allocations_concrete_qty_check
+  CHECK (label_claim_id IS NULL OR allocated_quantity = 1);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_sale_allocations_op_key ON distribution.vehicle_sale_allocations (operation_key);
 -- Partial unique: a unit-tracked load event supplies at most one allocation.
 -- NULL source_unit_event_id (aggregate allocations) are exempt.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_sale_allocations_source_unit_event
   ON distribution.vehicle_sale_allocations (source_unit_event_id)
   WHERE source_unit_event_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_sale_allocations_label_claim
+  ON distribution.vehicle_sale_allocations (label_claim_id)
+  WHERE label_claim_id IS NOT NULL;
 CREATE INDEX        IF NOT EXISTS idx_vehicle_sale_allocations_handoff ON distribution.vehicle_sale_allocations (handoff_id);
 CREATE INDEX        IF NOT EXISTS idx_vehicle_sale_allocations_savdo   ON distribution.vehicle_sale_allocations (savdo_id);
 CREATE INDEX        IF NOT EXISTS idx_vehicle_sale_allocations_vehicle ON distribution.vehicle_sale_allocations (vehicle_id);

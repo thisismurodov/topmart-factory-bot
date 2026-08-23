@@ -482,6 +482,13 @@ export async function initDb(): Promise<void> {
   await pool.query(`ALTER TABLE IF EXISTS stock_movements ADD COLUMN IF NOT EXISTS weight_kg NUMERIC`);
   await pool.query(`ALTER TABLE IF EXISTS stock_movements ADD COLUMN IF NOT EXISTS reference TEXT`);
   await pool.query(`ALTER TABLE IF EXISTS stock_movements ADD COLUMN IF NOT EXISTS reason TEXT`);
+  // F7: exactly one movement per deterministic vehicle-sale detail reference.
+  // Legacy/null/non-pilot references remain unconstrained.
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_movements_vehicle_sale_reference
+      ON public.stock_movements (reference)
+      WHERE reference LIKE 'vehicle-sale:%'
+  `);
   // Drift-tuzatish (2026-08-15, egasi buyrug'i): movement_type CHECK jonli
   // bazada azaldan bor, lekin initializer'lar uni yaratmasdi — yangi (fresh)
   // baza himoyasiz qolardi. Yangi baza inline CHECK oladi (yuqoridagi CREATE),

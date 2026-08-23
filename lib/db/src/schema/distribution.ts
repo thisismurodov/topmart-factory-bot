@@ -62,8 +62,17 @@ export const savdolarTable = distribution.table(
     tolovTuri: text("tolov_turi"),
     foto: text("foto"),
     createdAt: text("created_at"),
+    operationKey: text("operation_key"),
+    operationFingerprint: text("operation_fingerprint"),
+    status: text("status").default("active"),
+    postedAt: timestamp("posted_at", { withTimezone: true }),
   },
-  (t) => [index("idx_savdolar_agent").on(t.agentId)],
+  (t) => [
+    index("idx_savdolar_agent").on(t.agentId),
+    uniqueIndex("uq_savdolar_operation_key")
+      .on(t.operationKey)
+      .where(sql`${t.operationKey} IS NOT NULL`),
+  ],
 );
 
 // Savdo tafsilot (sale line items)
@@ -529,6 +538,8 @@ export const vehicleSaleAllocationsTable = distribution.table(
      *  (aggregate) allocations are exempt. That WHERE predicate is enforced in
      *  runtime DDL and validated via pg_catalog — not expressible in Drizzle. */
     sourceUnitEventId: integer("source_unit_event_id"),
+    /** F7 concrete physical-unit claim (partial unique when non-null). */
+    labelClaimId: integer("label_claim_id"),
     /** Client-generated idempotency token — UNIQUE, prevents duplicate allocation. */
     operationKey: text("operation_key").notNull(),
     allocatedAt: timestamp("allocated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -540,6 +551,10 @@ export const vehicleSaleAllocationsTable = distribution.table(
     index("idx_vehicle_sale_allocations_savdo").on(t.savdoId),
     index("idx_vehicle_sale_allocations_vehicle").on(t.vehicleId),
     check("vehicle_sale_allocations_qty_check", sql`${t.allocatedQuantity} > 0`),
+    check(
+      "vehicle_sale_allocations_concrete_qty_check",
+      sql`${t.labelClaimId} IS NULL OR ${t.allocatedQuantity} = 1`,
+    ),
     check("vehicle_sale_allocations_weight_check", sql`${t.allocatedWeightKg} > 0`),
   ],
 );

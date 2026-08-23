@@ -1351,10 +1351,17 @@ def cancel_h(msg):
     else:
         bot.send_message(uid,"❌ Bekor qilindi.",reply_markup=types.ReplyKeyboardRemove())
 
-BOT_VERSION="2026-08-04.2 (sahifalash + imlo-chidamli qidiruv + egasi bo'yicha takliflar)"
+BOT_VERSION="2026-08-23.1 (vehicle pilot return-ready)"
+DEPLOY_REVISION=(
+    os.environ.get("RAILWAY_GIT_COMMIT_SHA")
+    or os.environ.get("SOURCE_VERSION")
+    or os.environ.get("GIT_COMMIT_SHA")
+    or "unknown"
+)
+BOT_VERSION_REPORT=f"{BOT_VERSION} | revision={DEPLOY_REVISION}"
 @bot.message_handler(commands=["version"])
 def cmd_version(msg):
-    bot.send_message(msg.from_user.id,f"🤖 Versiya: {BOT_VERSION}")
+    bot.send_message(msg.from_user.id,f"🤖 Versiya: {BOT_VERSION_REPORT}")
 
 @bot.message_handler(commands=["start"])
 def cmd_start(msg):
@@ -4615,7 +4622,7 @@ def run_health_server():
                 self.send_response(200)
                 self.send_header("Content-Type","text/plain; charset=utf-8")
                 self.end_headers()
-                self.wfile.write(BOT_VERSION.encode("utf-8"))
+                self.wfile.write(BOT_VERSION_REPORT.encode("utf-8"))
             else:
                 self.send_response(404)
                 self.end_headers()

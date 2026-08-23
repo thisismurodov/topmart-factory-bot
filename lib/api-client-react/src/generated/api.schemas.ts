@@ -96,6 +96,91 @@ export interface VehicleDistributionPilotStock {
   totalWeightKg: number;
 }
 
+export interface VehicleWeeklyMetric {
+  quantity: number;
+  weightKg: number;
+}
+
+export interface VehicleWeeklyProduct {
+  publicProductId: number;
+  productName: string;
+  sku: string;
+  inventoryCurrent: VehicleWeeklyMetric;
+  expectedCurrent: VehicleWeeklyMetric;
+  handedBackReserved: VehicleWeeklyMetric;
+  indeterminate: boolean;
+  eventNet: VehicleWeeklyMetric;
+  movementNet: VehicleWeeklyMetric;
+  expectedOpening: VehicleWeeklyMetric;
+  inventoryOpening: VehicleWeeklyMetric;
+  claimInventoryVariance: VehicleWeeklyMetric | null;
+  movementEventVariance: VehicleWeeklyMetric;
+}
+
+export interface VehicleWeeklyDay {
+  date: string;
+  /** @nullable */
+  reconciliationId: number | null;
+  status: string;
+  allCounted: boolean;
+  discrepancyCount: number;
+  discrepancyQuantity: number;
+  missing: boolean;
+}
+
+export interface VehicleWeeklyBlockerDetail {
+  id: string;
+  status: string;
+  message: string;
+}
+
+export interface VehicleWeeklyBlocker {
+  type: string;
+  totalCount: number;
+  /** @maxItems 25 */
+  details: VehicleWeeklyBlockerDetail[];
+  truncated: boolean;
+}
+
+export type VehiclePilotWeeklySummaryWeek = {
+  weekStart: string;
+  weekEndExclusive: string;
+  utcStart: string;
+  utcEndExclusive: string;
+  timezone: '+05:00';
+  currentWeek: boolean;
+  defaultedWeekStart: boolean;
+  requiredThroughDate: string;
+  requiredDayCount: number;
+};
+
+export type VehiclePilotWeeklySummaryTolerances = {
+  quantity: number;
+  weightKg: number;
+};
+
+export type VehiclePilotWeeklySummaryKpis = {
+  productCount: number;
+  inventoryCurrent: VehicleWeeklyMetric;
+  expectedCurrent: VehicleWeeklyMetric;
+  eventNet: VehicleWeeklyMetric;
+  movementNet: VehicleWeeklyMetric;
+  requiredDays: number;
+  appliedDays: number;
+  blockerCount: number;
+};
+
+export interface VehiclePilotWeeklySummary {
+  readiness: boolean;
+  reasons: string[];
+  week: VehiclePilotWeeklySummaryWeek;
+  tolerances: VehiclePilotWeeklySummaryTolerances;
+  kpis: VehiclePilotWeeklySummaryKpis;
+  products: VehicleWeeklyProduct[];
+  days: VehicleWeeklyDay[];
+  blockers: VehicleWeeklyBlocker[];
+}
+
 /**
  * One stock movement touching the pilot vehicle warehouse (as source or destination).
  */
@@ -986,6 +1071,14 @@ customerId?: number | null;
 status?: string | null;
 limit?: number;
 offset?: number;
+};
+
+export type GetVehicleDistributionPilotWeeklySummaryParams = {
+/**
+ * Monday civil date; defaults to current +05:00 Monday.
+ * @pattern ^\d{4}-\d{2}-\d{2}$
+ */
+weekStart?: string;
 };
 
 export type GetVehicleDistributionPilotMovementsParams = {

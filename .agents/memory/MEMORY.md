@@ -54,3 +54,4 @@
 - [Vehicle pilot sale atomicity](vehicle-pilot-sale-atomicity.md) — NAVRUZBEK sales commit sale, balance, vehicle stock and concrete labels in one cross-schema transaction.
 - [Vehicle replenishment lifecycle](vehicle-replenishment-lifecycle.md) — low stock opens one request; full approval creates F3 handoff; only final transfer fulfills and changes stock.
 - [Vehicle return label lifecycle](vehicle-return-label-lifecycle.md) — returns reserve loaded labels, transfer them to original sources, and make returned identities terminal for the pilot.
+- [Vehicle weekly readiness semantics](vehicle-weekly-readiness.md) — weekly cockpit is read-only diagnostics; handed-back returns make physical balance indeterminate, never approved.

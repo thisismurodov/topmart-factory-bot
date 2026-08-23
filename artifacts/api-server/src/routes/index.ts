@@ -31,6 +31,7 @@ import vehicleDistributionRouter from "./vehicle-distribution";
 import vehicleHandoffRouter from "./vehicle-distribution/handoff-router";
 import vehicleReplenishmentRouter from "./vehicle-distribution/replenishment-router";
 import vehicleReturnRouter from "./vehicle-distribution/return-router";
+import vehicleWeeklySummaryRouter from "./vehicle-distribution/weekly-summary-router";
 
 const router: IRouter = Router();
 
@@ -63,6 +64,7 @@ router.use(requireAuthOrInternalKey, distributionSuggestionsRouter);
 router.use(vehicleHandoffRouter);
 router.use(vehicleReplenishmentRouter);
 router.use(vehicleReturnRouter);
+router.use(vehicleWeeklySummaryRouter);
 
 // ── Auth wall: everything below requires a valid session ──────────────────────
 router.use(requireAuth);

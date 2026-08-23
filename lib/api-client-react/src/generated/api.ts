@@ -37,6 +37,7 @@ import type {
   GetSalaryReportParams,
   GetSalesParams,
   GetVehicleDistributionPilotMovementsParams,
+  GetVehicleDistributionPilotWeeklySummaryParams,
   HealthStatus,
   InventoryItem,
   KgPayrollWorker,
@@ -75,6 +76,7 @@ import type {
   VehicleHandoffList,
   VehicleHandoffOperationInput,
   VehicleHandoffTransitionInput,
+  VehiclePilotWeeklySummary,
   VehicleReconciliationCreateResult,
   VehicleReconciliationDetail,
   VehicleReconciliationList,
@@ -3221,6 +3223,91 @@ export function useGetVehicleDistributionPilot<TData = Awaited<ReturnType<typeof
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetVehicleDistributionPilotQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getGetVehicleDistributionPilotWeeklySummaryUrl = (params?: GetVehicleDistributionPilotWeeklySummaryParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/vehicle-distribution/pilot/weekly-summary?${stringifiedParams}` : `/api/vehicle-distribution/pilot/weekly-summary`
+}
+
+/**
+ * Admin-session-only, SELECT-only weekly operational reconciliation for the exact pilot. weekStart must be a non-future Monday civil date. When omitted it defaults to the current Monday in fixed +05:00. The interval is half-open from Monday 00:00+05:00 through the following Monday. Current weeks require daily F6 coverage through today +05:00 inclusive; completed weeks require all seven days. A valid vehicle bot key and non-admin sessions are explicitly forbidden.
+ * @summary Read exact-pilot weekly reconciliation and readiness
+ */
+export const getVehicleDistributionPilotWeeklySummary = async (params?: GetVehicleDistributionPilotWeeklySummaryParams, options?: RequestInit): Promise<VehiclePilotWeeklySummary> => {
+
+  return customFetch<VehiclePilotWeeklySummary>(getGetVehicleDistributionPilotWeeklySummaryUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetVehicleDistributionPilotWeeklySummaryQueryKey = (params?: GetVehicleDistributionPilotWeeklySummaryParams,) => {
+    return [
+    `/api/vehicle-distribution/pilot/weekly-summary`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetVehicleDistributionPilotWeeklySummaryQueryOptions = <TData = Awaited<ReturnType<typeof getVehicleDistributionPilotWeeklySummary>>, TError = ErrorType<ErrorResponse>>(params?: GetVehicleDistributionPilotWeeklySummaryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getVehicleDistributionPilotWeeklySummary>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetVehicleDistributionPilotWeeklySummaryQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getVehicleDistributionPilotWeeklySummary>>> = ({ signal }) => getVehicleDistributionPilotWeeklySummary(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getVehicleDistributionPilotWeeklySummary>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetVehicleDistributionPilotWeeklySummaryQueryResult = NonNullable<Awaited<ReturnType<typeof getVehicleDistributionPilotWeeklySummary>>>
+export type GetVehicleDistributionPilotWeeklySummaryQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary Read exact-pilot weekly reconciliation and readiness
+ */
+
+export function useGetVehicleDistributionPilotWeeklySummary<TData = Awaited<ReturnType<typeof getVehicleDistributionPilotWeeklySummary>>, TError = ErrorType<ErrorResponse>>(
+ params?: GetVehicleDistributionPilotWeeklySummaryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getVehicleDistributionPilotWeeklySummary>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetVehicleDistributionPilotWeeklySummaryQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

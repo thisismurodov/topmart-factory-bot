@@ -84,7 +84,7 @@ export function vehicleDistributionGate(
     return;
   }
   if (!schemaApproved) {
-    req.log.warn(
+    req.log?.warn(
       "vehicle-distribution enabled without schema approval — returning 503",
     );
     res.status(503).json({ error: "Vehicle distribution schema not approved" });

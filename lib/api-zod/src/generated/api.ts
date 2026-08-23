@@ -692,6 +692,125 @@ export const GetVehicleDistributionPilotResponse = zod.object({
 
 
 /**
+ * Admin-session-only, SELECT-only weekly operational reconciliation for the exact pilot. weekStart must be a non-future Monday civil date. When omitted it defaults to the current Monday in fixed +05:00. The interval is half-open from Monday 00:00+05:00 through the following Monday. Current weeks require daily F6 coverage through today +05:00 inclusive; completed weeks require all seven days. A valid vehicle bot key and non-admin sessions are explicitly forbidden.
+ * @summary Read exact-pilot weekly reconciliation and readiness
+ */
+export const getVehicleDistributionPilotWeeklySummaryQueryWeekStartRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+export const GetVehicleDistributionPilotWeeklySummaryQueryParams = zod.object({
+  "weekStart": zod.coerce.string().regex(getVehicleDistributionPilotWeeklySummaryQueryWeekStartRegExp).optional().describe('Monday civil date; defaults to current +05:00 Monday.')
+})
+
+export const getVehicleDistributionPilotWeeklySummaryResponseBlockersItemDetailsMax = 25;
+
+
+
+export const GetVehicleDistributionPilotWeeklySummaryResponse = zod.object({
+  "readiness": zod.boolean(),
+  "reasons": zod.array(zod.string()),
+  "week": zod.object({
+  "weekStart": zod.coerce.date(),
+  "weekEndExclusive": zod.coerce.date(),
+  "utcStart": zod.coerce.date(),
+  "utcEndExclusive": zod.coerce.date(),
+  "timezone": zod.literal("+05:00"),
+  "currentWeek": zod.boolean(),
+  "defaultedWeekStart": zod.boolean(),
+  "requiredThroughDate": zod.coerce.date(),
+  "requiredDayCount": zod.number()
+}),
+  "tolerances": zod.object({
+  "quantity": zod.number(),
+  "weightKg": zod.number()
+}),
+  "kpis": zod.object({
+  "productCount": zod.number(),
+  "inventoryCurrent": zod.object({
+  "quantity": zod.number(),
+  "weightKg": zod.number()
+}),
+  "expectedCurrent": zod.object({
+  "quantity": zod.number(),
+  "weightKg": zod.number()
+}),
+  "eventNet": zod.object({
+  "quantity": zod.number(),
+  "weightKg": zod.number()
+}),
+  "movementNet": zod.object({
+  "quantity": zod.number(),
+  "weightKg": zod.number()
+}),
+  "requiredDays": zod.number(),
+  "appliedDays": zod.number(),
+  "blockerCount": zod.number()
+}),
+  "products": zod.array(zod.object({
+  "publicProductId": zod.number(),
+  "productName": zod.string(),
+  "sku": zod.string(),
+  "inventoryCurrent": zod.object({
+  "quantity": zod.number(),
+  "weightKg": zod.number()
+}),
+  "expectedCurrent": zod.object({
+  "quantity": zod.number(),
+  "weightKg": zod.number()
+}),
+  "handedBackReserved": zod.object({
+  "quantity": zod.number(),
+  "weightKg": zod.number()
+}),
+  "indeterminate": zod.boolean(),
+  "eventNet": zod.object({
+  "quantity": zod.number(),
+  "weightKg": zod.number()
+}),
+  "movementNet": zod.object({
+  "quantity": zod.number(),
+  "weightKg": zod.number()
+}),
+  "expectedOpening": zod.object({
+  "quantity": zod.number(),
+  "weightKg": zod.number()
+}),
+  "inventoryOpening": zod.object({
+  "quantity": zod.number(),
+  "weightKg": zod.number()
+}),
+  "claimInventoryVariance": zod.union([zod.object({
+  "quantity": zod.number(),
+  "weightKg": zod.number()
+}),zod.null()]),
+  "movementEventVariance": zod.object({
+  "quantity": zod.number(),
+  "weightKg": zod.number()
+})
+})),
+  "days": zod.array(zod.object({
+  "date": zod.coerce.date(),
+  "reconciliationId": zod.number().nullable(),
+  "status": zod.string(),
+  "allCounted": zod.boolean(),
+  "discrepancyCount": zod.number(),
+  "discrepancyQuantity": zod.number(),
+  "missing": zod.boolean()
+})),
+  "blockers": zod.array(zod.object({
+  "type": zod.string(),
+  "totalCount": zod.number(),
+  "details": zod.array(zod.object({
+  "id": zod.string(),
+  "status": zod.string(),
+  "message": zod.string()
+})).max(getVehicleDistributionPilotWeeklySummaryResponseBlockersItemDetailsMax),
+  "truncated": zod.boolean()
+}))
+})
+
+
+/**
  * Admin-only. Idempotently provisions the exact pilot state (agent NAVRUZBEK, vehicle DM-001 / DAMAS, one vehicle warehouse) and the single active assignment. All server constants are fixed; the request body carries no overridable fields. Retries and concurrent double-clicks return the same state with no duplicate rows.
  * @summary Idempotently create/reuse the pilot vehicle, warehouse and assignment
  */

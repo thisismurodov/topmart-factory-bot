@@ -30,6 +30,7 @@ import fieldRouter from "./field";
 import vehicleDistributionRouter from "./vehicle-distribution";
 import vehicleHandoffRouter from "./vehicle-distribution/handoff-router";
 import vehicleReplenishmentRouter from "./vehicle-distribution/replenishment-router";
+import vehicleReturnRouter from "./vehicle-distribution/return-router";
 
 const router: IRouter = Router();
 
@@ -61,6 +62,7 @@ router.use(requireAuthOrInternalKey, distributionSuggestionsRouter);
 // while admins use a Bearer session. The actor is always assigned server-side.
 router.use(vehicleHandoffRouter);
 router.use(vehicleReplenishmentRouter);
+router.use(vehicleReturnRouter);
 
 // ── Auth wall: everything below requires a valid session ──────────────────────
 router.use(requireAuth);

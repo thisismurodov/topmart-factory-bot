@@ -21,6 +21,7 @@ const HARNESSES = [
   "vehicle-handoff-f3-f4-upgrade.test.ts",
   "vehicle-distribution-pilot.test.ts",
   "distribution-fresh-db.test.ts",
+  "vehicle-return-f9.test.ts",
 ];
 
 function read(rel: string): string {

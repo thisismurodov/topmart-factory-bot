@@ -492,6 +492,9 @@ export const vehicleUnitEventsTable = distribution.table(
     index("idx_vehicle_unit_events_handoff").on(t.handoffId),
     index("idx_vehicle_unit_events_handoff_item").on(t.handoffItemId),
     index("idx_vehicle_unit_events_label_claim").on(t.labelClaimId),
+    uniqueIndex("uq_vehicle_unit_events_return_label_claim")
+      .on(t.labelClaimId)
+      .where(sql`${t.eventType} = 'return' AND ${t.labelClaimId} IS NOT NULL`),
     check(
       "vehicle_unit_events_type_check",
       sql`${t.eventType} IN ('load','unload','return','adjustment','sale','label_prepared','label_printed')`,
@@ -584,6 +587,10 @@ export const vehicleLabelClaimsTable = distribution.table(
     status: text("status").notNull().default("prepared"),
     /** Client idempotency token (nullable; partial-unique in runtime DDL). */
     operationKey: text("operation_key"),
+    /** F9: owning open/completed return; populated only while reserved/returned. */
+    returnId: integer("return_id"),
+    returnedAt: timestamp("returned_at", { withTimezone: true }),
+    returnedBy: bigint("returned_by", { mode: "number" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -594,11 +601,22 @@ export const vehicleLabelClaimsTable = distribution.table(
     index("idx_vehicle_label_claims_handoff_item").on(t.handoffItemId),
     index("idx_vehicle_label_claims_vehicle").on(t.vehicleId, t.status),
     index("idx_vehicle_label_claims_mahsulot").on(t.mahsulotId, t.status),
+    index("idx_vehicle_label_claims_return").on(t.returnId),
     check(
       "vehicle_label_claims_status_check",
-      sql`${t.status} IN ('prepared','printed','loaded','sold','returned')`,
+      sql`${t.status} IN ('prepared','printed','loaded','return_reserved','sold','returned')`,
     ),
     check("vehicle_label_claims_weight_check", sql`${t.unitWeightKg} > 0`),
+    check(
+      "vehicle_label_claims_return_linkage_check",
+      sql`(${t.status} = 'return_reserved' AND ${t.returnId} IS NOT NULL
+           AND ${t.returnedAt} IS NULL AND ${t.returnedBy} IS NULL)
+        OR (${t.status} = 'returned' AND
+           ((${t.returnId} IS NOT NULL AND ${t.returnedAt} IS NOT NULL AND ${t.returnedBy} IS NOT NULL)
+            OR (${t.returnId} IS NULL AND ${t.returnedAt} IS NULL AND ${t.returnedBy} IS NULL)))
+        OR (${t.status} NOT IN ('return_reserved','returned') AND ${t.returnId} IS NULL
+            AND ${t.returnedAt} IS NULL AND ${t.returnedBy} IS NULL)`,
+    ),
   ],
 );
 
@@ -874,5 +892,91 @@ export const vehicleReconciliationItemsTable = distribution.table(
     // predicates are not expressible in Drizzle.
     index("idx_vehicle_reconciliation_items_reconciliation").on(t.reconciliationId),
     check("vehicle_reconciliation_items_expected_check", sql`${t.expectedQuantity} >= 0`),
+  ],
+);
+
+/** F9 return header. All identity columns are immutable server-side snapshots. */
+export const vehicleReturnsTable = distribution.table(
+  "vehicle_returns",
+  {
+    id: serial("id").primaryKey(),
+    vehicleId: integer("vehicle_id").notNull(),
+    vehicleAssignmentId: integer("vehicle_assignment_id").notNull(),
+    deliveryAgentId: integer("delivery_agent_id").notNull(),
+    vehicleWarehouseId: integer("vehicle_warehouse_id").notNull(),
+    status: text("status").notNull().default("prepared"),
+    operationKey: text("operation_key").notNull(),
+    operationFingerprint: text("operation_fingerprint").notNull(),
+    notes: text("notes"),
+    preparedBy: bigint("prepared_by", { mode: "number" }).notNull(),
+    preparedAt: timestamp("prepared_at", { withTimezone: true }).notNull().defaultNow(),
+    handedBackBy: bigint("handed_back_by", { mode: "number" }),
+    handedBackAt: timestamp("handed_back_at", { withTimezone: true }),
+    transferredBy: bigint("transferred_by", { mode: "number" }),
+    transferredAt: timestamp("transferred_at", { withTimezone: true }),
+    cancelledBy: bigint("cancelled_by", { mode: "number" }),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("uq_vehicle_returns_operation_key").on(t.operationKey),
+    uniqueIndex("uq_vehicle_returns_open_vehicle")
+      .on(t.vehicleId)
+      .where(sql`${t.status} IN ('prepared','handed_back')`),
+    index("idx_vehicle_returns_vehicle_created").on(t.vehicleId, t.createdAt),
+    check(
+      "vehicle_returns_status_check",
+      sql`${t.status} IN ('prepared','handed_back','stock_transferred','cancelled')`,
+    ),
+    check(
+      "vehicle_returns_lifecycle_check",
+      sql`(${t.status}='prepared' AND ${t.handedBackBy} IS NULL AND ${t.handedBackAt} IS NULL
+           AND ${t.transferredBy} IS NULL AND ${t.transferredAt} IS NULL
+           AND ${t.cancelledBy} IS NULL AND ${t.cancelledAt} IS NULL)
+        OR (${t.status}='handed_back' AND ${t.handedBackBy} IS NOT NULL AND ${t.handedBackAt} IS NOT NULL
+           AND ${t.transferredBy} IS NULL AND ${t.transferredAt} IS NULL
+           AND ${t.cancelledBy} IS NULL AND ${t.cancelledAt} IS NULL)
+        OR (${t.status}='stock_transferred' AND ${t.handedBackBy} IS NOT NULL AND ${t.handedBackAt} IS NOT NULL
+           AND ${t.transferredBy} IS NOT NULL AND ${t.transferredAt} IS NOT NULL
+           AND ${t.cancelledBy} IS NULL AND ${t.cancelledAt} IS NULL)
+        OR (${t.status}='cancelled' AND ${t.handedBackBy} IS NULL AND ${t.handedBackAt} IS NULL
+           AND ${t.transferredBy} IS NULL AND ${t.transferredAt} IS NULL
+           AND ${t.cancelledBy} IS NOT NULL AND ${t.cancelledAt} IS NOT NULL)`,
+    ),
+  ],
+);
+
+/** F9 concrete physical unit returned to its original handoff source. */
+export const vehicleReturnItemsTable = distribution.table(
+  "vehicle_return_items",
+  {
+    id: serial("id").primaryKey(),
+    returnId: integer("return_id").notNull(),
+    labelClaimId: integer("label_claim_id").notNull(),
+    productionLabelId: integer("production_label_id").notNull(),
+    barcode: text("barcode").notNull(),
+    handoffId: integer("handoff_id").notNull(),
+    handoffItemId: integer("handoff_item_id").notNull(),
+    mahsulotId: integer("mahsulot_id").notNull(),
+    publicProductId: bigint("public_product_id", { mode: "number" }).notNull(),
+    productName: text("product_name").notNull(),
+    sku: text("sku").notNull(),
+    unitWeightKg: numeric("unit_weight_kg", { precision: 12, scale: 3 }).notNull(),
+    destinationWarehouseId: integer("destination_warehouse_id").notNull(),
+    movementReference: text("movement_reference").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("vehicle_return_items_label_claim_id_key").on(t.labelClaimId),
+    uniqueIndex("vehicle_return_items_movement_reference_key").on(t.movementReference),
+    uniqueIndex("uq_vehicle_return_items_return_barcode").on(t.returnId, t.barcode),
+    index("idx_vehicle_return_items_return").on(t.returnId),
+    index("idx_vehicle_return_items_destination").on(t.destinationWarehouseId),
+    check("vehicle_return_items_weight_check", sql`${t.unitWeightKg} > 0`),
+    check(
+      "vehicle_return_items_identity_check",
+      sql`btrim(${t.barcode}) <> '' AND btrim(${t.productName}) <> '' AND btrim(${t.sku}) <> ''`,
+    ),
   ],
 );

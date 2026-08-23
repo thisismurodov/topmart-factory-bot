@@ -806,6 +806,129 @@ CREATE INDEX        IF NOT EXISTS idx_vehicle_reconciliation_items_reconciliatio
 CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_reconciliation_items_adj_ref
   ON distribution.vehicle_reconciliation_items (adjustment_reference)
   WHERE adjustment_reference IS NOT NULL;
+
+-- F9: exact-pilot vehicle -> original warehouse physical-label returns.
+CREATE TABLE IF NOT EXISTS distribution.vehicle_returns (
+  id                    SERIAL PRIMARY KEY,
+  vehicle_id            INTEGER NOT NULL,
+  vehicle_assignment_id INTEGER NOT NULL,
+  delivery_agent_id     INTEGER NOT NULL,
+  vehicle_warehouse_id  INTEGER NOT NULL,
+  status                TEXT NOT NULL DEFAULT 'prepared',
+  operation_key         TEXT NOT NULL,
+  operation_fingerprint TEXT NOT NULL,
+  notes                 TEXT,
+  prepared_by           BIGINT NOT NULL,
+  prepared_at           TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  handed_back_by        BIGINT,
+  handed_back_at        TIMESTAMP WITH TIME ZONE,
+  transferred_by        BIGINT,
+  transferred_at        TIMESTAMP WITH TIME ZONE,
+  cancelled_by          BIGINT,
+  cancelled_at          TIMESTAMP WITH TIME ZONE,
+  created_at            TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  updated_at            TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  CONSTRAINT vehicle_returns_status_check
+    CHECK (status IN ('prepared','handed_back','stock_transferred','cancelled')),
+  CONSTRAINT vehicle_returns_lifecycle_check CHECK (
+    (status = 'prepared' AND handed_back_by IS NULL AND handed_back_at IS NULL
+     AND transferred_by IS NULL AND transferred_at IS NULL
+     AND cancelled_by IS NULL AND cancelled_at IS NULL)
+    OR
+    (status = 'handed_back' AND handed_back_by IS NOT NULL AND handed_back_at IS NOT NULL
+     AND transferred_by IS NULL AND transferred_at IS NULL
+     AND cancelled_by IS NULL AND cancelled_at IS NULL)
+    OR
+    (status = 'stock_transferred' AND handed_back_by IS NOT NULL AND handed_back_at IS NOT NULL
+     AND transferred_by IS NOT NULL AND transferred_at IS NOT NULL
+     AND cancelled_by IS NULL AND cancelled_at IS NULL)
+    OR
+    (status = 'cancelled' AND handed_back_by IS NULL AND handed_back_at IS NULL
+     AND transferred_by IS NULL AND transferred_at IS NULL
+     AND cancelled_by IS NOT NULL AND cancelled_at IS NOT NULL)
+  )
+);
+ALTER TABLE distribution.vehicle_returns
+  ADD COLUMN IF NOT EXISTS vehicle_assignment_id INTEGER,
+  ADD COLUMN IF NOT EXISTS delivery_agent_id INTEGER,
+  ADD COLUMN IF NOT EXISTS operation_fingerprint TEXT,
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW();
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_returns_operation_key
+  ON distribution.vehicle_returns (operation_key);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_returns_open_vehicle
+  ON distribution.vehicle_returns (vehicle_id)
+  WHERE status IN ('prepared','handed_back');
+CREATE INDEX IF NOT EXISTS idx_vehicle_returns_vehicle_created
+  ON distribution.vehicle_returns (vehicle_id, created_at);
+
+ALTER TABLE distribution.vehicle_label_claims
+  ADD COLUMN IF NOT EXISTS return_id INTEGER,
+  ADD COLUMN IF NOT EXISTS returned_at TIMESTAMP WITH TIME ZONE,
+  ADD COLUMN IF NOT EXISTS returned_by BIGINT;
+ALTER TABLE distribution.vehicle_label_claims
+  DROP CONSTRAINT IF EXISTS vehicle_label_claims_status_check;
+ALTER TABLE distribution.vehicle_label_claims
+  ADD CONSTRAINT vehicle_label_claims_status_check
+  CHECK (status IN ('prepared','printed','loaded','return_reserved','sold','returned'));
+ALTER TABLE distribution.vehicle_label_claims
+  DROP CONSTRAINT IF EXISTS vehicle_label_claims_return_linkage_check;
+ALTER TABLE distribution.vehicle_label_claims
+  ADD CONSTRAINT vehicle_label_claims_return_linkage_check CHECK (
+    (status = 'return_reserved' AND return_id IS NOT NULL
+     AND returned_at IS NULL AND returned_by IS NULL)
+    OR
+    (status = 'returned' AND
+     ((return_id IS NOT NULL AND returned_at IS NOT NULL AND returned_by IS NOT NULL)
+      OR (return_id IS NULL AND returned_at IS NULL AND returned_by IS NULL)))
+    OR
+    (status NOT IN ('return_reserved','returned') AND return_id IS NULL
+     AND returned_at IS NULL AND returned_by IS NULL)
+  );
+CREATE INDEX IF NOT EXISTS idx_vehicle_label_claims_return
+  ON distribution.vehicle_label_claims (return_id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname='vehicle_label_claims_return_fk'
+       AND conrelid='distribution.vehicle_label_claims'::regclass
+  ) THEN
+    ALTER TABLE distribution.vehicle_label_claims
+      ADD CONSTRAINT vehicle_label_claims_return_fk
+      FOREIGN KEY (return_id) REFERENCES distribution.vehicle_returns(id);
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS distribution.vehicle_return_items (
+  id                       SERIAL PRIMARY KEY,
+  return_id                INTEGER NOT NULL REFERENCES distribution.vehicle_returns(id),
+  label_claim_id           INTEGER NOT NULL UNIQUE REFERENCES distribution.vehicle_label_claims(id),
+  production_label_id      INTEGER NOT NULL,
+  barcode                  TEXT NOT NULL,
+  handoff_id               INTEGER NOT NULL,
+  handoff_item_id          INTEGER NOT NULL,
+  mahsulot_id              INTEGER NOT NULL,
+  public_product_id        BIGINT NOT NULL,
+  product_name             TEXT NOT NULL,
+  sku                      TEXT NOT NULL,
+  unit_weight_kg           NUMERIC(12,3) NOT NULL,
+  destination_warehouse_id INTEGER NOT NULL,
+  movement_reference       TEXT NOT NULL UNIQUE,
+  created_at               TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  CONSTRAINT vehicle_return_items_weight_check CHECK (unit_weight_kg > 0),
+  CONSTRAINT vehicle_return_items_identity_check CHECK (
+    btrim(barcode) <> '' AND btrim(product_name) <> '' AND btrim(sku) <> ''
+  )
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_return_items_return_barcode
+  ON distribution.vehicle_return_items (return_id, barcode);
+CREATE INDEX IF NOT EXISTS idx_vehicle_return_items_return
+  ON distribution.vehicle_return_items (return_id);
+CREATE INDEX IF NOT EXISTS idx_vehicle_return_items_destination
+  ON distribution.vehicle_return_items (destination_warehouse_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_unit_events_return_label_claim
+  ON distribution.vehicle_unit_events (label_claim_id)
+  WHERE event_type = 'return' AND label_claim_id IS NOT NULL;
 `;
 
 // Every named index declared in the DDL above. Derived from the DDL text so a

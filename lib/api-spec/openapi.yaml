@@ -1458,6 +1458,107 @@ paths:
           description: OK
           content: { application/json: { schema: { $ref: "#/components/schemas/VehicleReplenishmentRequest" } } }
 
+  /vehicle-distribution/pilot/returnable-labels:
+    get:
+      operationId: listVehicleReturnableLabels
+      tags: [vehicle-distribution]
+      summary: List exact-pilot loaded labels eligible for return
+      parameters:
+        - name: search
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/VehicleReturnableLabelList" } } }
+        "403": { description: Admin session required }
+
+  /vehicle-distribution/pilot/returns:
+    get:
+      operationId: listVehicleReturns
+      tags: [vehicle-distribution]
+      summary: List exact-pilot vehicle returns
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/VehicleReturnList" } } }
+        "403": { description: Admin session required }
+    post:
+      operationId: createVehicleReturn
+      tags: [vehicle-distribution]
+      summary: Reserve concrete loaded labels for return to original warehouses
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateVehicleReturnInput" }
+      responses:
+        "200":
+          description: Created or idempotently replayed
+          content: { application/json: { schema: { $ref: "#/components/schemas/VehicleReturn" } } }
+        "403": { description: Admin session required }
+        "409": { description: Conflict }
+
+  /vehicle-distribution/pilot/returns/{returnId}:
+    get:
+      operationId: getVehicleReturn
+      tags: [vehicle-distribution]
+      summary: Get one exact-pilot vehicle return
+      parameters:
+        - { name: returnId, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/VehicleReturn" } } }
+        "403": { description: Admin session required }
+        "404": { description: Not found }
+
+  /vehicle-distribution/pilot/returns/{returnId}/handed-back:
+    post:
+      operationId: markVehicleReturnHandedBack
+      tags: [vehicle-distribution]
+      summary: Record physical hand-back without moving stock
+      parameters:
+        - { name: returnId, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: false
+        content: { application/json: { schema: { $ref: "#/components/schemas/VehicleReturnTransitionInput" } } }
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/VehicleReturn" } } }
+
+  /vehicle-distribution/pilot/returns/{returnId}/stock-transferred:
+    post:
+      operationId: transferVehicleReturnStock
+      tags: [vehicle-distribution]
+      summary: Transfer every returned label to its original source warehouse
+      parameters:
+        - { name: returnId, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: false
+        content: { application/json: { schema: { $ref: "#/components/schemas/VehicleReturnTransitionInput" } } }
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/VehicleReturn" } } }
+
+  /vehicle-distribution/pilot/returns/{returnId}/cancel:
+    post:
+      operationId: cancelVehicleReturn
+      tags: [vehicle-distribution]
+      summary: Cancel a prepared return and release all reservations
+      parameters:
+        - { name: returnId, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: false
+        content: { application/json: { schema: { $ref: "#/components/schemas/VehicleReturnTransitionInput" } } }
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/VehicleReturn" } } }
+
   /vehicle-distribution/pilot/reconciliations:
     get:
       operationId: listVehicleReconciliations
@@ -2385,6 +2486,97 @@ components:
         requests:
           type: array
           items: { $ref: "#/components/schemas/VehicleReplenishmentRequest" }
+
+    VehicleReturnableLabel:
+      type: object
+      required: [labelClaimId, productionLabelId, barcode, handoffId, handoffItemId, mahsulotId, publicProductId, productName, sku, unitWeightKg, destinationWarehouseId]
+      properties:
+        labelClaimId: { type: integer }
+        productionLabelId: { type: integer }
+        barcode: { type: string }
+        handoffId: { type: integer }
+        handoffItemId: { type: integer }
+        mahsulotId: { type: integer }
+        publicProductId: { type: integer }
+        productName: { type: string }
+        sku: { type: string }
+        unitWeightKg: { type: number, exclusiveMinimum: 0 }
+        destinationWarehouseId: { type: integer }
+    VehicleReturnableLabelList:
+      type: object
+      required: [vehicleId, labels]
+      properties:
+        vehicleId: { type: integer }
+        labels:
+          type: array
+          items: { $ref: "#/components/schemas/VehicleReturnableLabel" }
+    CreateVehicleReturnInput:
+      type: object
+      additionalProperties: false
+      required: [barcodes, operationKey]
+      properties:
+        barcodes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: { type: string, minLength: 1 }
+        operationKey: { type: string, minLength: 1, maxLength: 200 }
+        notes: { type: ["string", "null"], maxLength: 2000 }
+    VehicleReturnTransitionInput:
+      type: object
+      additionalProperties: false
+      properties: {}
+    VehicleReturnItem:
+      type: object
+      required: [id, labelClaimId, productionLabelId, barcode, handoffId, handoffItemId, mahsulotId, publicProductId, productName, sku, unitWeightKg, destinationWarehouseId, movementReference]
+      properties:
+        id: { type: integer }
+        labelClaimId: { type: integer }
+        productionLabelId: { type: integer }
+        barcode: { type: string }
+        handoffId: { type: integer }
+        handoffItemId: { type: integer }
+        mahsulotId: { type: integer }
+        publicProductId: { type: integer }
+        productName: { type: string }
+        sku: { type: string }
+        unitWeightKg: { type: number }
+        destinationWarehouseId: { type: integer }
+        movementReference: { type: string }
+    VehicleReturn:
+      type: object
+      required: [id, vehicleId, vehicleAssignmentId, deliveryAgentId, vehicleWarehouseId, status, operationKey, operationFingerprint, preparedBy, preparedAt, createdAt, updatedAt, items]
+      properties:
+        id: { type: integer }
+        vehicleId: { type: integer }
+        vehicleAssignmentId: { type: integer }
+        deliveryAgentId: { type: integer }
+        vehicleWarehouseId: { type: integer }
+        status: { type: string, enum: [prepared, handed_back, stock_transferred, cancelled] }
+        operationKey: { type: string }
+        operationFingerprint: { type: string }
+        notes: { type: ["string", "null"] }
+        preparedBy: { type: integer }
+        preparedAt: { type: string }
+        handedBackBy: { type: ["integer", "null"] }
+        handedBackAt: { type: ["string", "null"] }
+        transferredBy: { type: ["integer", "null"] }
+        transferredAt: { type: ["string", "null"] }
+        cancelledBy: { type: ["integer", "null"] }
+        cancelledAt: { type: ["string", "null"] }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/VehicleReturnItem" }
+    VehicleReturnList:
+      type: object
+      required: [vehicleId, returns]
+      properties:
+        vehicleId: { type: integer }
+        returns:
+          type: array
+          items: { $ref: "#/components/schemas/VehicleReturn" }
 
     CreateVehicleReconciliationInput:
       type: object

@@ -25,6 +25,7 @@ import type {
   CreateVehicleHandoffInput,
   CreateVehicleReconciliationInput,
   CreateVehicleReplenishmentRequestInput,
+  CreateVehicleReturnInput,
   Customer,
   CustomerInput,
   DailyChartPoint,
@@ -41,6 +42,7 @@ import type {
   KgPayrollWorker,
   KgPayrollWorkerInput,
   ListVehicleReconciliationsParams,
+  ListVehicleReturnableLabelsParams,
   LoginInput,
   LoginResult,
   PatchVehicleReconciliationItemsInput,
@@ -80,6 +82,10 @@ import type {
   VehicleReplenishmentRequest,
   VehicleReplenishmentRequestList,
   VehicleReplenishmentTransitionInput,
+  VehicleReturn,
+  VehicleReturnList,
+  VehicleReturnTransitionInput,
+  VehicleReturnableLabelList,
   VehicleStockTarget,
   VehicleStockTargetList,
   Worker,
@@ -4647,6 +4653,531 @@ export const useCancelVehicleReplenishmentRequest = <TError = ErrorType<unknown>
         TContext
       > => {
       return useMutation(getCancelVehicleReplenishmentRequestMutationOptions(options));
+    }
+
+export const getListVehicleReturnableLabelsUrl = (params?: ListVehicleReturnableLabelsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/vehicle-distribution/pilot/returnable-labels?${stringifiedParams}` : `/api/vehicle-distribution/pilot/returnable-labels`
+}
+
+/**
+ * @summary List exact-pilot loaded labels eligible for return
+ */
+export const listVehicleReturnableLabels = async (params?: ListVehicleReturnableLabelsParams, options?: RequestInit): Promise<VehicleReturnableLabelList> => {
+
+  return customFetch<VehicleReturnableLabelList>(getListVehicleReturnableLabelsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListVehicleReturnableLabelsQueryKey = (params?: ListVehicleReturnableLabelsParams,) => {
+    return [
+    `/api/vehicle-distribution/pilot/returnable-labels`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListVehicleReturnableLabelsQueryOptions = <TData = Awaited<ReturnType<typeof listVehicleReturnableLabels>>, TError = ErrorType<void>>(params?: ListVehicleReturnableLabelsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listVehicleReturnableLabels>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListVehicleReturnableLabelsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listVehicleReturnableLabels>>> = ({ signal }) => listVehicleReturnableLabels(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listVehicleReturnableLabels>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListVehicleReturnableLabelsQueryResult = NonNullable<Awaited<ReturnType<typeof listVehicleReturnableLabels>>>
+export type ListVehicleReturnableLabelsQueryError = ErrorType<void>
+
+
+/**
+ * @summary List exact-pilot loaded labels eligible for return
+ */
+
+export function useListVehicleReturnableLabels<TData = Awaited<ReturnType<typeof listVehicleReturnableLabels>>, TError = ErrorType<void>>(
+ params?: ListVehicleReturnableLabelsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listVehicleReturnableLabels>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListVehicleReturnableLabelsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getListVehicleReturnsUrl = () => {
+
+
+
+
+  return `/api/vehicle-distribution/pilot/returns`
+}
+
+/**
+ * @summary List exact-pilot vehicle returns
+ */
+export const listVehicleReturns = async ( options?: RequestInit): Promise<VehicleReturnList> => {
+
+  return customFetch<VehicleReturnList>(getListVehicleReturnsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListVehicleReturnsQueryKey = () => {
+    return [
+    `/api/vehicle-distribution/pilot/returns`
+    ] as const;
+    }
+
+
+export const getListVehicleReturnsQueryOptions = <TData = Awaited<ReturnType<typeof listVehicleReturns>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listVehicleReturns>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListVehicleReturnsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listVehicleReturns>>> = ({ signal }) => listVehicleReturns({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listVehicleReturns>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListVehicleReturnsQueryResult = NonNullable<Awaited<ReturnType<typeof listVehicleReturns>>>
+export type ListVehicleReturnsQueryError = ErrorType<void>
+
+
+/**
+ * @summary List exact-pilot vehicle returns
+ */
+
+export function useListVehicleReturns<TData = Awaited<ReturnType<typeof listVehicleReturns>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listVehicleReturns>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListVehicleReturnsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getCreateVehicleReturnUrl = () => {
+
+
+
+
+  return `/api/vehicle-distribution/pilot/returns`
+}
+
+/**
+ * @summary Reserve concrete loaded labels for return to original warehouses
+ */
+export const createVehicleReturn = async (createVehicleReturnInput: CreateVehicleReturnInput, options?: RequestInit): Promise<VehicleReturn> => {
+
+  return customFetch<VehicleReturn>(getCreateVehicleReturnUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      createVehicleReturnInput,)
+  }
+);}
+
+
+
+
+export const getCreateVehicleReturnMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createVehicleReturn>>, TError,{data: BodyType<CreateVehicleReturnInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createVehicleReturn>>, TError,{data: BodyType<CreateVehicleReturnInput>}, TContext> => {
+
+const mutationKey = ['createVehicleReturn'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createVehicleReturn>>, {data: BodyType<CreateVehicleReturnInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createVehicleReturn(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateVehicleReturnMutationResult = NonNullable<Awaited<ReturnType<typeof createVehicleReturn>>>
+    export type CreateVehicleReturnMutationBody = BodyType<CreateVehicleReturnInput>
+    export type CreateVehicleReturnMutationError = ErrorType<void>
+
+    /**
+ * @summary Reserve concrete loaded labels for return to original warehouses
+ */
+export const useCreateVehicleReturn = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createVehicleReturn>>, TError,{data: BodyType<CreateVehicleReturnInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createVehicleReturn>>,
+        TError,
+        {data: BodyType<CreateVehicleReturnInput>},
+        TContext
+      > => {
+      return useMutation(getCreateVehicleReturnMutationOptions(options));
+    }
+
+export const getGetVehicleReturnUrl = (returnId: number,) => {
+
+
+
+
+  return `/api/vehicle-distribution/pilot/returns/${returnId}`
+}
+
+/**
+ * @summary Get one exact-pilot vehicle return
+ */
+export const getVehicleReturn = async (returnId: number, options?: RequestInit): Promise<VehicleReturn> => {
+
+  return customFetch<VehicleReturn>(getGetVehicleReturnUrl(returnId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetVehicleReturnQueryKey = (returnId: number,) => {
+    return [
+    `/api/vehicle-distribution/pilot/returns/${returnId}`
+    ] as const;
+    }
+
+
+export const getGetVehicleReturnQueryOptions = <TData = Awaited<ReturnType<typeof getVehicleReturn>>, TError = ErrorType<void>>(returnId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getVehicleReturn>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetVehicleReturnQueryKey(returnId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getVehicleReturn>>> = ({ signal }) => getVehicleReturn(returnId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(returnId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getVehicleReturn>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetVehicleReturnQueryResult = NonNullable<Awaited<ReturnType<typeof getVehicleReturn>>>
+export type GetVehicleReturnQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get one exact-pilot vehicle return
+ */
+
+export function useGetVehicleReturn<TData = Awaited<ReturnType<typeof getVehicleReturn>>, TError = ErrorType<void>>(
+ returnId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getVehicleReturn>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetVehicleReturnQueryOptions(returnId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getMarkVehicleReturnHandedBackUrl = (returnId: number,) => {
+
+
+
+
+  return `/api/vehicle-distribution/pilot/returns/${returnId}/handed-back`
+}
+
+/**
+ * @summary Record physical hand-back without moving stock
+ */
+export const markVehicleReturnHandedBack = async (returnId: number,
+    vehicleReturnTransitionInput?: VehicleReturnTransitionInput, options?: RequestInit): Promise<VehicleReturn> => {
+
+  return customFetch<VehicleReturn>(getMarkVehicleReturnHandedBackUrl(returnId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      vehicleReturnTransitionInput,)
+  }
+);}
+
+
+
+
+export const getMarkVehicleReturnHandedBackMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof markVehicleReturnHandedBack>>, TError,{returnId: number;data?: BodyType<VehicleReturnTransitionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof markVehicleReturnHandedBack>>, TError,{returnId: number;data?: BodyType<VehicleReturnTransitionInput>}, TContext> => {
+
+const mutationKey = ['markVehicleReturnHandedBack'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof markVehicleReturnHandedBack>>, {returnId: number;data?: BodyType<VehicleReturnTransitionInput>}> = (props) => {
+          const {returnId,data} = props ?? {};
+
+          return  markVehicleReturnHandedBack(returnId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type MarkVehicleReturnHandedBackMutationResult = NonNullable<Awaited<ReturnType<typeof markVehicleReturnHandedBack>>>
+    export type MarkVehicleReturnHandedBackMutationBody = BodyType<VehicleReturnTransitionInput> | undefined
+    export type MarkVehicleReturnHandedBackMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Record physical hand-back without moving stock
+ */
+export const useMarkVehicleReturnHandedBack = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof markVehicleReturnHandedBack>>, TError,{returnId: number;data?: BodyType<VehicleReturnTransitionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof markVehicleReturnHandedBack>>,
+        TError,
+        {returnId: number;data?: BodyType<VehicleReturnTransitionInput>},
+        TContext
+      > => {
+      return useMutation(getMarkVehicleReturnHandedBackMutationOptions(options));
+    }
+
+export const getTransferVehicleReturnStockUrl = (returnId: number,) => {
+
+
+
+
+  return `/api/vehicle-distribution/pilot/returns/${returnId}/stock-transferred`
+}
+
+/**
+ * @summary Transfer every returned label to its original source warehouse
+ */
+export const transferVehicleReturnStock = async (returnId: number,
+    vehicleReturnTransitionInput?: VehicleReturnTransitionInput, options?: RequestInit): Promise<VehicleReturn> => {
+
+  return customFetch<VehicleReturn>(getTransferVehicleReturnStockUrl(returnId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      vehicleReturnTransitionInput,)
+  }
+);}
+
+
+
+
+export const getTransferVehicleReturnStockMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof transferVehicleReturnStock>>, TError,{returnId: number;data?: BodyType<VehicleReturnTransitionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof transferVehicleReturnStock>>, TError,{returnId: number;data?: BodyType<VehicleReturnTransitionInput>}, TContext> => {
+
+const mutationKey = ['transferVehicleReturnStock'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof transferVehicleReturnStock>>, {returnId: number;data?: BodyType<VehicleReturnTransitionInput>}> = (props) => {
+          const {returnId,data} = props ?? {};
+
+          return  transferVehicleReturnStock(returnId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type TransferVehicleReturnStockMutationResult = NonNullable<Awaited<ReturnType<typeof transferVehicleReturnStock>>>
+    export type TransferVehicleReturnStockMutationBody = BodyType<VehicleReturnTransitionInput> | undefined
+    export type TransferVehicleReturnStockMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Transfer every returned label to its original source warehouse
+ */
+export const useTransferVehicleReturnStock = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof transferVehicleReturnStock>>, TError,{returnId: number;data?: BodyType<VehicleReturnTransitionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof transferVehicleReturnStock>>,
+        TError,
+        {returnId: number;data?: BodyType<VehicleReturnTransitionInput>},
+        TContext
+      > => {
+      return useMutation(getTransferVehicleReturnStockMutationOptions(options));
+    }
+
+export const getCancelVehicleReturnUrl = (returnId: number,) => {
+
+
+
+
+  return `/api/vehicle-distribution/pilot/returns/${returnId}/cancel`
+}
+
+/**
+ * @summary Cancel a prepared return and release all reservations
+ */
+export const cancelVehicleReturn = async (returnId: number,
+    vehicleReturnTransitionInput?: VehicleReturnTransitionInput, options?: RequestInit): Promise<VehicleReturn> => {
+
+  return customFetch<VehicleReturn>(getCancelVehicleReturnUrl(returnId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      vehicleReturnTransitionInput,)
+  }
+);}
+
+
+
+
+export const getCancelVehicleReturnMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelVehicleReturn>>, TError,{returnId: number;data?: BodyType<VehicleReturnTransitionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof cancelVehicleReturn>>, TError,{returnId: number;data?: BodyType<VehicleReturnTransitionInput>}, TContext> => {
+
+const mutationKey = ['cancelVehicleReturn'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof cancelVehicleReturn>>, {returnId: number;data?: BodyType<VehicleReturnTransitionInput>}> = (props) => {
+          const {returnId,data} = props ?? {};
+
+          return  cancelVehicleReturn(returnId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CancelVehicleReturnMutationResult = NonNullable<Awaited<ReturnType<typeof cancelVehicleReturn>>>
+    export type CancelVehicleReturnMutationBody = BodyType<VehicleReturnTransitionInput> | undefined
+    export type CancelVehicleReturnMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Cancel a prepared return and release all reservations
+ */
+export const useCancelVehicleReturn = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelVehicleReturn>>, TError,{returnId: number;data?: BodyType<VehicleReturnTransitionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof cancelVehicleReturn>>,
+        TError,
+        {returnId: number;data?: BodyType<VehicleReturnTransitionInput>},
+        TContext
+      > => {
+      return useMutation(getCancelVehicleReturnMutationOptions(options));
     }
 
 export const getListVehicleReconciliationsUrl = (params?: ListVehicleReconciliationsParams,) => {

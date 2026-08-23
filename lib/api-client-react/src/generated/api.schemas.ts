@@ -387,6 +387,104 @@ export interface VehicleReplenishmentRequestList {
   requests: VehicleReplenishmentRequest[];
 }
 
+export interface VehicleReturnableLabel {
+  labelClaimId: number;
+  productionLabelId: number;
+  barcode: string;
+  handoffId: number;
+  handoffItemId: number;
+  mahsulotId: number;
+  publicProductId: number;
+  productName: string;
+  sku: string;
+  /** @exclusiveMinimum 0 */
+  unitWeightKg: number;
+  destinationWarehouseId: number;
+}
+
+export interface VehicleReturnableLabelList {
+  vehicleId: number;
+  labels: VehicleReturnableLabel[];
+}
+
+export interface CreateVehicleReturnInput {
+  /** @minItems 1 */
+  barcodes: string[];
+  /**
+     * @minLength 1
+     * @maxLength 200
+     */
+  operationKey: string;
+  /**
+     * @maxLength 2000
+     * @nullable
+     */
+  notes?: string | null;
+}
+
+export interface VehicleReturnTransitionInput { [key: string]: unknown }
+
+export interface VehicleReturnItem {
+  id: number;
+  labelClaimId: number;
+  productionLabelId: number;
+  barcode: string;
+  handoffId: number;
+  handoffItemId: number;
+  mahsulotId: number;
+  publicProductId: number;
+  productName: string;
+  sku: string;
+  unitWeightKg: number;
+  destinationWarehouseId: number;
+  movementReference: string;
+}
+
+export type VehicleReturnStatus = typeof VehicleReturnStatus[keyof typeof VehicleReturnStatus];
+
+
+export const VehicleReturnStatus = {
+  prepared: 'prepared',
+  handed_back: 'handed_back',
+  stock_transferred: 'stock_transferred',
+  cancelled: 'cancelled',
+} as const;
+
+export interface VehicleReturn {
+  id: number;
+  vehicleId: number;
+  vehicleAssignmentId: number;
+  deliveryAgentId: number;
+  vehicleWarehouseId: number;
+  status: VehicleReturnStatus;
+  operationKey: string;
+  operationFingerprint: string;
+  /** @nullable */
+  notes?: string | null;
+  preparedBy: number;
+  preparedAt: string;
+  /** @nullable */
+  handedBackBy?: number | null;
+  /** @nullable */
+  handedBackAt?: string | null;
+  /** @nullable */
+  transferredBy?: number | null;
+  /** @nullable */
+  transferredAt?: string | null;
+  /** @nullable */
+  cancelledBy?: number | null;
+  /** @nullable */
+  cancelledAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  items: VehicleReturnItem[];
+}
+
+export interface VehicleReturnList {
+  vehicleId: number;
+  returns: VehicleReturn[];
+}
+
 /**
  * Strict draft-reconciliation creation body. Only these fields are accepted; the vehicle, warehouse, delivery agent and actor are resolved server-side. reconciliationDate is an ISO calendar date (YYYY-MM-DD).
  */
@@ -902,6 +1000,10 @@ limit?: number;
  * @minimum 1
  */
 beforeId?: number;
+};
+
+export type ListVehicleReturnableLabelsParams = {
+search?: string;
 };
 
 export type ListVehicleReconciliationsParams = {

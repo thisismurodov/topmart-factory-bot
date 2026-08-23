@@ -489,6 +489,11 @@ export async function initDb(): Promise<void> {
       ON public.stock_movements (reference)
       WHERE reference LIKE 'vehicle-sale:%'
   `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_movements_vehicle_return_reference
+      ON public.stock_movements (reference)
+      WHERE reference LIKE 'vehicle-return:%'
+  `);
   // Drift-tuzatish (2026-08-15, egasi buyrug'i): movement_type CHECK jonli
   // bazada azaldan bor, lekin initializer'lar uni yaratmasdi — yangi (fresh)
   // baza himoyasiz qolardi. Yangi baza inline CHECK oladi (yuqoridagi CREATE),

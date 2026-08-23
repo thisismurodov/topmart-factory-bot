@@ -53,3 +53,4 @@
 - [Vehicle test DB isolation](vehicle-pilot-live-schema-boundary.md) — vehicle init/drift tests must require an explicit loopback admin URL and strip inherited runtime database URLs.
 - [Vehicle pilot sale atomicity](vehicle-pilot-sale-atomicity.md) — NAVRUZBEK sales commit sale, balance, vehicle stock and concrete labels in one cross-schema transaction.
 - [Vehicle replenishment lifecycle](vehicle-replenishment-lifecycle.md) — low stock opens one request; full approval creates F3 handoff; only final transfer fulfills and changes stock.
+- [Vehicle return label lifecycle](vehicle-return-label-lifecycle.md) — returns reserve loaded labels, transfer them to original sources, and make returned identities terminal for the pilot.

@@ -1491,6 +1491,326 @@ export const CancelVehicleReplenishmentRequestResponse = zod.object({
 
 
 /**
+ * @summary List exact-pilot loaded labels eligible for return
+ */
+export const ListVehicleReturnableLabelsQueryParams = zod.object({
+  "search": zod.coerce.string().optional()
+})
+
+export const listVehicleReturnableLabelsResponseLabelsItemUnitWeightKgExclusiveMin = 0;
+
+
+
+export const ListVehicleReturnableLabelsResponse = zod.object({
+  "vehicleId": zod.number(),
+  "labels": zod.array(zod.object({
+  "labelClaimId": zod.number(),
+  "productionLabelId": zod.number(),
+  "barcode": zod.string(),
+  "handoffId": zod.number(),
+  "handoffItemId": zod.number(),
+  "mahsulotId": zod.number(),
+  "publicProductId": zod.number(),
+  "productName": zod.string(),
+  "sku": zod.string(),
+  "unitWeightKg": zod.number().gt(listVehicleReturnableLabelsResponseLabelsItemUnitWeightKgExclusiveMin),
+  "destinationWarehouseId": zod.number()
+}))
+})
+
+
+/**
+ * @summary List exact-pilot vehicle returns
+ */
+export const ListVehicleReturnsResponse = zod.object({
+  "vehicleId": zod.number(),
+  "returns": zod.array(zod.object({
+  "id": zod.number(),
+  "vehicleId": zod.number(),
+  "vehicleAssignmentId": zod.number(),
+  "deliveryAgentId": zod.number(),
+  "vehicleWarehouseId": zod.number(),
+  "status": zod.enum(['prepared', 'handed_back', 'stock_transferred', 'cancelled']),
+  "operationKey": zod.string(),
+  "operationFingerprint": zod.string(),
+  "notes": zod.string().nullish(),
+  "preparedBy": zod.number(),
+  "preparedAt": zod.string(),
+  "handedBackBy": zod.number().nullish(),
+  "handedBackAt": zod.string().nullish(),
+  "transferredBy": zod.number().nullish(),
+  "transferredAt": zod.string().nullish(),
+  "cancelledBy": zod.number().nullish(),
+  "cancelledAt": zod.string().nullish(),
+  "createdAt": zod.string(),
+  "updatedAt": zod.string(),
+  "items": zod.array(zod.object({
+  "id": zod.number(),
+  "labelClaimId": zod.number(),
+  "productionLabelId": zod.number(),
+  "barcode": zod.string(),
+  "handoffId": zod.number(),
+  "handoffItemId": zod.number(),
+  "mahsulotId": zod.number(),
+  "publicProductId": zod.number(),
+  "productName": zod.string(),
+  "sku": zod.string(),
+  "unitWeightKg": zod.number(),
+  "destinationWarehouseId": zod.number(),
+  "movementReference": zod.string()
+}))
+}))
+})
+
+
+/**
+ * @summary Reserve concrete loaded labels for return to original warehouses
+ */
+
+
+export const createVehicleReturnBodyOperationKeyMax = 200;
+
+export const createVehicleReturnBodyNotesMax = 2000;
+
+
+
+export const CreateVehicleReturnBody = zod.object({
+  "barcodes": zod.array(zod.string().min(1)).min(1),
+  "operationKey": zod.string().min(1).max(createVehicleReturnBodyOperationKeyMax),
+  "notes": zod.string().max(createVehicleReturnBodyNotesMax).nullish()
+})
+
+export const CreateVehicleReturnResponse = zod.object({
+  "id": zod.number(),
+  "vehicleId": zod.number(),
+  "vehicleAssignmentId": zod.number(),
+  "deliveryAgentId": zod.number(),
+  "vehicleWarehouseId": zod.number(),
+  "status": zod.enum(['prepared', 'handed_back', 'stock_transferred', 'cancelled']),
+  "operationKey": zod.string(),
+  "operationFingerprint": zod.string(),
+  "notes": zod.string().nullish(),
+  "preparedBy": zod.number(),
+  "preparedAt": zod.string(),
+  "handedBackBy": zod.number().nullish(),
+  "handedBackAt": zod.string().nullish(),
+  "transferredBy": zod.number().nullish(),
+  "transferredAt": zod.string().nullish(),
+  "cancelledBy": zod.number().nullish(),
+  "cancelledAt": zod.string().nullish(),
+  "createdAt": zod.string(),
+  "updatedAt": zod.string(),
+  "items": zod.array(zod.object({
+  "id": zod.number(),
+  "labelClaimId": zod.number(),
+  "productionLabelId": zod.number(),
+  "barcode": zod.string(),
+  "handoffId": zod.number(),
+  "handoffItemId": zod.number(),
+  "mahsulotId": zod.number(),
+  "publicProductId": zod.number(),
+  "productName": zod.string(),
+  "sku": zod.string(),
+  "unitWeightKg": zod.number(),
+  "destinationWarehouseId": zod.number(),
+  "movementReference": zod.string()
+}))
+})
+
+
+/**
+ * @summary Get one exact-pilot vehicle return
+ */
+export const GetVehicleReturnParams = zod.object({
+  "returnId": zod.coerce.number()
+})
+
+export const GetVehicleReturnResponse = zod.object({
+  "id": zod.number(),
+  "vehicleId": zod.number(),
+  "vehicleAssignmentId": zod.number(),
+  "deliveryAgentId": zod.number(),
+  "vehicleWarehouseId": zod.number(),
+  "status": zod.enum(['prepared', 'handed_back', 'stock_transferred', 'cancelled']),
+  "operationKey": zod.string(),
+  "operationFingerprint": zod.string(),
+  "notes": zod.string().nullish(),
+  "preparedBy": zod.number(),
+  "preparedAt": zod.string(),
+  "handedBackBy": zod.number().nullish(),
+  "handedBackAt": zod.string().nullish(),
+  "transferredBy": zod.number().nullish(),
+  "transferredAt": zod.string().nullish(),
+  "cancelledBy": zod.number().nullish(),
+  "cancelledAt": zod.string().nullish(),
+  "createdAt": zod.string(),
+  "updatedAt": zod.string(),
+  "items": zod.array(zod.object({
+  "id": zod.number(),
+  "labelClaimId": zod.number(),
+  "productionLabelId": zod.number(),
+  "barcode": zod.string(),
+  "handoffId": zod.number(),
+  "handoffItemId": zod.number(),
+  "mahsulotId": zod.number(),
+  "publicProductId": zod.number(),
+  "productName": zod.string(),
+  "sku": zod.string(),
+  "unitWeightKg": zod.number(),
+  "destinationWarehouseId": zod.number(),
+  "movementReference": zod.string()
+}))
+})
+
+
+/**
+ * @summary Record physical hand-back without moving stock
+ */
+export const MarkVehicleReturnHandedBackParams = zod.object({
+  "returnId": zod.coerce.number()
+})
+
+export const MarkVehicleReturnHandedBackBody = zod.object({
+
+})
+
+export const MarkVehicleReturnHandedBackResponse = zod.object({
+  "id": zod.number(),
+  "vehicleId": zod.number(),
+  "vehicleAssignmentId": zod.number(),
+  "deliveryAgentId": zod.number(),
+  "vehicleWarehouseId": zod.number(),
+  "status": zod.enum(['prepared', 'handed_back', 'stock_transferred', 'cancelled']),
+  "operationKey": zod.string(),
+  "operationFingerprint": zod.string(),
+  "notes": zod.string().nullish(),
+  "preparedBy": zod.number(),
+  "preparedAt": zod.string(),
+  "handedBackBy": zod.number().nullish(),
+  "handedBackAt": zod.string().nullish(),
+  "transferredBy": zod.number().nullish(),
+  "transferredAt": zod.string().nullish(),
+  "cancelledBy": zod.number().nullish(),
+  "cancelledAt": zod.string().nullish(),
+  "createdAt": zod.string(),
+  "updatedAt": zod.string(),
+  "items": zod.array(zod.object({
+  "id": zod.number(),
+  "labelClaimId": zod.number(),
+  "productionLabelId": zod.number(),
+  "barcode": zod.string(),
+  "handoffId": zod.number(),
+  "handoffItemId": zod.number(),
+  "mahsulotId": zod.number(),
+  "publicProductId": zod.number(),
+  "productName": zod.string(),
+  "sku": zod.string(),
+  "unitWeightKg": zod.number(),
+  "destinationWarehouseId": zod.number(),
+  "movementReference": zod.string()
+}))
+})
+
+
+/**
+ * @summary Transfer every returned label to its original source warehouse
+ */
+export const TransferVehicleReturnStockParams = zod.object({
+  "returnId": zod.coerce.number()
+})
+
+export const TransferVehicleReturnStockBody = zod.object({
+
+})
+
+export const TransferVehicleReturnStockResponse = zod.object({
+  "id": zod.number(),
+  "vehicleId": zod.number(),
+  "vehicleAssignmentId": zod.number(),
+  "deliveryAgentId": zod.number(),
+  "vehicleWarehouseId": zod.number(),
+  "status": zod.enum(['prepared', 'handed_back', 'stock_transferred', 'cancelled']),
+  "operationKey": zod.string(),
+  "operationFingerprint": zod.string(),
+  "notes": zod.string().nullish(),
+  "preparedBy": zod.number(),
+  "preparedAt": zod.string(),
+  "handedBackBy": zod.number().nullish(),
+  "handedBackAt": zod.string().nullish(),
+  "transferredBy": zod.number().nullish(),
+  "transferredAt": zod.string().nullish(),
+  "cancelledBy": zod.number().nullish(),
+  "cancelledAt": zod.string().nullish(),
+  "createdAt": zod.string(),
+  "updatedAt": zod.string(),
+  "items": zod.array(zod.object({
+  "id": zod.number(),
+  "labelClaimId": zod.number(),
+  "productionLabelId": zod.number(),
+  "barcode": zod.string(),
+  "handoffId": zod.number(),
+  "handoffItemId": zod.number(),
+  "mahsulotId": zod.number(),
+  "publicProductId": zod.number(),
+  "productName": zod.string(),
+  "sku": zod.string(),
+  "unitWeightKg": zod.number(),
+  "destinationWarehouseId": zod.number(),
+  "movementReference": zod.string()
+}))
+})
+
+
+/**
+ * @summary Cancel a prepared return and release all reservations
+ */
+export const CancelVehicleReturnParams = zod.object({
+  "returnId": zod.coerce.number()
+})
+
+export const CancelVehicleReturnBody = zod.object({
+
+})
+
+export const CancelVehicleReturnResponse = zod.object({
+  "id": zod.number(),
+  "vehicleId": zod.number(),
+  "vehicleAssignmentId": zod.number(),
+  "deliveryAgentId": zod.number(),
+  "vehicleWarehouseId": zod.number(),
+  "status": zod.enum(['prepared', 'handed_back', 'stock_transferred', 'cancelled']),
+  "operationKey": zod.string(),
+  "operationFingerprint": zod.string(),
+  "notes": zod.string().nullish(),
+  "preparedBy": zod.number(),
+  "preparedAt": zod.string(),
+  "handedBackBy": zod.number().nullish(),
+  "handedBackAt": zod.string().nullish(),
+  "transferredBy": zod.number().nullish(),
+  "transferredAt": zod.string().nullish(),
+  "cancelledBy": zod.number().nullish(),
+  "cancelledAt": zod.string().nullish(),
+  "createdAt": zod.string(),
+  "updatedAt": zod.string(),
+  "items": zod.array(zod.object({
+  "id": zod.number(),
+  "labelClaimId": zod.number(),
+  "productionLabelId": zod.number(),
+  "barcode": zod.string(),
+  "handoffId": zod.number(),
+  "handoffItemId": zod.number(),
+  "mahsulotId": zod.number(),
+  "publicProductId": zod.number(),
+  "productName": zod.string(),
+  "sku": zod.string(),
+  "unitWeightKg": zod.number(),
+  "destinationWarehouseId": zod.number(),
+  "movementReference": zod.string()
+}))
+})
+
+
+/**
  * Returns the reconciliation history for the single active pilot vehicle (server-resolved), newest first. Authenticated via the dedicated vehicle-distribution auth wall. Fails closed (404) unless enabled, 503 when enabled without schema approval.
  * @summary List end-of-day reconciliations for the pilot vehicle
  */

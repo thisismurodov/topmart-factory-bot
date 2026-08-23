@@ -122,6 +122,47 @@ function createLockKey(vehicleId: number): string {
   return `vehicle_distribution:reconciliation:create:${vehicleId}`;
 }
 
+async function assertNoOpenReturn(
+  client: PoolClient,
+  vehicleId: number,
+): Promise<void> {
+  const { rows } = await client.query(
+    `SELECT id,status FROM distribution.vehicle_returns
+      WHERE vehicle_id=$1 AND status IN ('prepared','handed_back')
+      ORDER BY id LIMIT 1`,
+    [vehicleId],
+  );
+  if (rows.length) {
+    throw new ReconciliationConflictError(
+      `Open vehicle return ${rows[0].id} (${rows[0].status}) blocks reconciliation`,
+    );
+  }
+}
+
+async function lockPilotParent(
+  client: PoolClient,
+  pilot: PilotTarget,
+): Promise<PilotTarget> {
+  await lockVehicleWarehouseStockMutation(client, pilot.vehicleWarehouseId);
+  const fresh = await resolveActivePilot(client);
+  if (
+    fresh.vehicleId !== pilot.vehicleId ||
+    fresh.vehicleWarehouseId !== pilot.vehicleWarehouseId
+  ) {
+    throw new ReconciliationConflictError("Pilot assignment changed while locking");
+  }
+  return fresh;
+}
+
+async function lockPilotParentAndGuard(
+  client: PoolClient,
+  pilot: PilotTarget,
+): Promise<PilotTarget> {
+  const fresh = await lockPilotParent(client, pilot);
+  await assertNoOpenReturn(client, fresh.vehicleId);
+  return fresh;
+}
+
 const iso = (v: Date | string | null): string | null =>
   v == null ? null : v instanceof Date ? v.toISOString() : String(v);
 
@@ -383,7 +424,10 @@ export async function createReconciliationInTx(
   notes: string | null,
   actor: ReconciliationActor,
 ): Promise<{ created: boolean; reconciliation: ReconciliationDetail }> {
-  const pilot = await resolveActivePilot(client);
+  const pilot = await lockPilotParentAndGuard(
+    client,
+    await resolveActivePilot(client),
+  );
 
   // Serialize concurrent creates for the same pilot vehicle.
   await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
@@ -565,8 +609,14 @@ export async function reviewReconciliationInTx(
   reconciliationId: number,
   actor: ReconciliationActor,
 ): Promise<ReconciliationDetail> {
+  const pilot = await lockPilotParentAndGuard(
+    client,
+    await resolveActivePilot(client),
+  );
   const row = await lockReconciliation(client, reconciliationId);
-  await assertPilotOwnership(client, row);
+  if (Number(row.vehicle_id) !== pilot.vehicleId) {
+    throw new ReconciliationNotFoundError();
+  }
   const status = String(row.status);
 
   // Idempotent replay: already reviewed → return as-is.
@@ -613,8 +663,14 @@ export async function applyReconciliationInTx(
   reconciliationId: number,
   actor: ReconciliationActor,
 ): Promise<ReconciliationDetail> {
+  const pilot = await lockPilotParentAndGuard(
+    client,
+    await resolveActivePilot(client),
+  );
   const row = await lockReconciliation(client, reconciliationId);
-  const pilot = await assertPilotOwnership(client, row);
+  if (Number(row.vehicle_id) !== pilot.vehicleId) {
+    throw new ReconciliationNotFoundError();
+  }
   const status = String(row.status);
 
   // Idempotent replay: already applied → return as-is.
@@ -630,8 +686,6 @@ export async function applyReconciliationInTx(
   // Lock the shared parent row before reading the complete inventory row set.
   // Unlike locking existing inventory rows, this also serializes a concurrent
   // writer inserting a brand-new SKU.
-  await lockVehicleWarehouseStockMutation(client, pilot.vehicleWarehouseId);
-
   const current = await snapshotVehicleInventory(
     client,
     pilot.vehicleWarehouseId,

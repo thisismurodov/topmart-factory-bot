@@ -217,7 +217,8 @@ async function readLabelsPayloadInTx(
             pl.pieces_per_box, pl.quantity_total, pl.weight_kg, pl.length_m,
             pl.product_name, pl.product_sku, pl.worker_name, pl.produced_at,
             pl.warehouse_id, pl.warehouse_name, pl.status, pl.print_count,
-            pl.last_printed_at, c.handoff_item_id, c.mahsulot_id
+            pl.last_printed_at, c.handoff_item_id, c.mahsulot_id,
+            c.status AS claim_status
        FROM production_labels pl
        JOIN distribution.vehicle_label_claims c
          ON c.production_label_id = pl.id
@@ -225,6 +226,14 @@ async function readLabelsPayloadInTx(
       ORDER BY pl.label_number`,
     [handoff.id],
   );
+  const unavailable = rows.find(
+    (r) => r.claim_status === "return_reserved" || r.claim_status === "returned",
+  );
+  if (unavailable) {
+    throw new HandoffConflictError(
+      `Label claim for production label ${unavailable.id} is ${unavailable.claim_status} and cannot be prepared, reloaded or reprinted`,
+    );
+  }
   const labels: LabelPassport[] = rows.map((r) => ({
     productionLabelId: Number(r.id),
     handoffItemId: Number(r.handoff_item_id),
@@ -536,6 +545,14 @@ export async function confirmLabelsPrintedInTx(
   );
   if (!claims.length) {
     throw new HandoffConflictError("Handoff has no label claims to confirm");
+  }
+  const unavailableClaim = claims.find(
+    (c) => c.status === "return_reserved" || c.status === "returned",
+  );
+  if (unavailableClaim) {
+    throw new HandoffConflictError(
+      `Label claim ${unavailableClaim.id} is ${unavailableClaim.status} and cannot be reprinted`,
+    );
   }
 
   // Reject void production labels (a void passport cannot be printed).

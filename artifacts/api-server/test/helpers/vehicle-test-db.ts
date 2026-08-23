@@ -86,8 +86,8 @@ export function sslFor(url: string): false | { rejectUnauthorized: false } {
  * bot uses TLS. Either way the value is a derived child URL, never a runtime one.
  */
 export function botDbEnv(childUrl: string): Record<string, string> {
-  if (isLoopback(childUrl)) {
-    return { DATABASE_URL: childUrl };
+  if (!isLoopback(childUrl)) {
+    throw new Error("Vehicle test child database must use loopback");
   }
-  return { RAILWAY_DATABASE_URL: childUrl, DATABASE_URL: childUrl };
+  return { DATABASE_URL: childUrl };
 }

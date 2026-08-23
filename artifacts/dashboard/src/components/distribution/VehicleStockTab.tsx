@@ -13,9 +13,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { RefreshCw, Truck, Box, MapPin, Package, AlertCircle, ArrowRightLeft, Database, ClipboardList, PackagePlus } from "lucide-react";
+import { RefreshCw, Truck, Box, MapPin, Package, AlertCircle, ArrowRightLeft, Database, ClipboardList, PackagePlus, Undo2 } from "lucide-react";
 import { VehicleReconciliations } from "./VehicleReconciliations";
 import { VehicleReplenishment } from "./VehicleReplenishment";
+import { VehicleReturns } from "./VehicleReturns";
 
 // --- Subcomponents ---
 
@@ -274,6 +275,15 @@ export default function VehicleStockTab({ active }: { active: boolean }) {
             <span className="hidden sm:inline">Fizik Sanoq</span>
             <span className="sr-only sm:hidden">Fizik Sanoq</span>
           </TabsTrigger>
+          <TabsTrigger
+            value="returns"
+            data-testid="tab-vehicle-returns"
+            className="rounded-none shrink-0 border-b-2 border-transparent data-[state=active]:border-violet-500 data-[state=active]:bg-transparent data-[state=active]:shadow-none py-2.5 px-1 font-medium text-slate-600 data-[state=active]:text-violet-700 transition-none"
+          >
+            <Undo2 className="w-4 h-4 sm:mr-2" />
+            <span className="hidden sm:inline">Qaytarish</span>
+            <span className="sr-only sm:hidden">Qaytarish</span>
+          </TabsTrigger>
         </TabsList>
 
         <div className="bg-white border border-t-0 rounded-b-md shadow-sm overflow-hidden">
@@ -364,6 +374,10 @@ export default function VehicleStockTab({ active }: { active: boolean }) {
 
           <TabsContent value="reconciliations" className="m-0 border-none p-0 outline-none">
             <VehicleReconciliations active={active && subTab === "reconciliations"} />
+          </TabsContent>
+
+          <TabsContent value="returns" className="m-0 border-none p-0 outline-none">
+            <VehicleReturns active={active && subTab === "returns"} />
           </TabsContent>
         </div>
       </Tabs>

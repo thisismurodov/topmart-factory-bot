@@ -42,6 +42,8 @@ import {
   vehicleReplenishmentRequestsTable,
   vehicleReconciliationsTable,
   vehicleReconciliationItemsTable,
+  vehicleReturnsTable,
+  vehicleReturnItemsTable,
 } from "@workspace/db";
 
 // Distribution sxemasi UCH joyda ta'riflangan va qo'lda sinxron saqlanadi:
@@ -110,6 +112,8 @@ const TABLES = {
   vehicle_replenishment_requests: vehicleReplenishmentRequestsTable,
   vehicle_reconciliations: vehicleReconciliationsTable,
   vehicle_reconciliation_items: vehicleReconciliationItemsTable,
+  vehicle_returns: vehicleReturnsTable,
+  vehicle_return_items: vehicleReturnItemsTable,
 } as const;
 
 type ColSpec = { type: string; notNull: boolean; def: string | null };
@@ -508,8 +512,16 @@ const EXPECTED_CHECKS: CheckSpec[] = [
   { table: "vehicle_sale_allocations", name: "vehicle_sale_allocations_qty_check",    expr: normalizeExpr("allocated_quantity > 0") },
   { table: "vehicle_sale_allocations", name: "vehicle_sale_allocations_concrete_qty_check", expr: normalizeExpr("label_claim_id IS NULL OR allocated_quantity = 1") },
   { table: "vehicle_sale_allocations", name: "vehicle_sale_allocations_weight_check", expr: normalizeExpr("allocated_weight_kg > 0") },
-  { table: "vehicle_label_claims", name: "vehicle_label_claims_status_check", expr: normalizeExpr("status IN ('prepared','printed','loaded','sold','returned')") },
+  { table: "vehicle_label_claims", name: "vehicle_label_claims_status_check", expr: normalizeExpr("status IN ('prepared','printed','loaded','return_reserved','sold','returned')") },
   { table: "vehicle_label_claims", name: "vehicle_label_claims_weight_check", expr: normalizeExpr("unit_weight_kg > 0") },
+  { table: "vehicle_label_claims", name: "vehicle_label_claims_return_linkage_check", expr: normalizeExpr(`
+    (status = 'return_reserved' AND return_id IS NOT NULL AND returned_at IS NULL AND returned_by IS NULL)
+    OR (status = 'returned' AND
+       ((return_id IS NOT NULL AND returned_at IS NOT NULL AND returned_by IS NOT NULL)
+        OR (return_id IS NULL AND returned_at IS NULL AND returned_by IS NULL)))
+    OR (status <> ALL (ARRAY['return_reserved', 'returned']) AND return_id IS NULL
+        AND returned_at IS NULL AND returned_by IS NULL)
+  `) },
   { table: "vehicle_label_prepare_sessions", name: "vehicle_label_prepare_sessions_count_check", expr: normalizeExpr("label_count > 0") },
   { table: "vehicle_label_print_sessions", name: "vehicle_label_print_sessions_count_check", expr: normalizeExpr("label_count > 0") },
   { table: "vehicle_stock_targets", name: "vehicle_stock_targets_qty_check", expr: normalizeExpr("target_quantity > 0") },
@@ -546,6 +558,23 @@ const EXPECTED_CHECKS: CheckSpec[] = [
   { table: "vehicle_reconciliation_items", name: "vehicle_reconciliation_items_expected_weight_check", expr: normalizeExpr("expected_weight_kg IS NULL OR expected_weight_kg >= 0") },
   { table: "vehicle_reconciliation_items", name: "vehicle_reconciliation_items_actual_check",   expr: normalizeExpr("actual_quantity IS NULL OR actual_quantity >= 0") },
   { table: "vehicle_reconciliation_items", name: "vehicle_reconciliation_items_erp_line_check", expr: normalizeExpr("public_product_id IS NULL OR (product_name IS NOT NULL AND sku IS NOT NULL)") },
+  { table: "vehicle_returns", name: "vehicle_returns_status_check", expr: normalizeExpr("status IN ('prepared','handed_back','stock_transferred','cancelled')") },
+  { table: "vehicle_returns", name: "vehicle_returns_lifecycle_check", expr: normalizeExpr(`
+    (status = 'prepared' AND handed_back_by IS NULL AND handed_back_at IS NULL
+     AND transferred_by IS NULL AND transferred_at IS NULL
+     AND cancelled_by IS NULL AND cancelled_at IS NULL)
+    OR (status = 'handed_back' AND handed_back_by IS NOT NULL AND handed_back_at IS NOT NULL
+     AND transferred_by IS NULL AND transferred_at IS NULL
+     AND cancelled_by IS NULL AND cancelled_at IS NULL)
+    OR (status = 'stock_transferred' AND handed_back_by IS NOT NULL AND handed_back_at IS NOT NULL
+     AND transferred_by IS NOT NULL AND transferred_at IS NOT NULL
+     AND cancelled_by IS NULL AND cancelled_at IS NULL)
+    OR (status = 'cancelled' AND handed_back_by IS NULL AND handed_back_at IS NULL
+     AND transferred_by IS NULL AND transferred_at IS NULL
+     AND cancelled_by IS NOT NULL AND cancelled_at IS NOT NULL)
+  `) },
+  { table: "vehicle_return_items", name: "vehicle_return_items_weight_check", expr: normalizeExpr("unit_weight_kg > 0") },
+  { table: "vehicle_return_items", name: "vehicle_return_items_identity_check", expr: normalizeExpr("btrim(barcode) <> '' AND btrim(product_name) <> '' AND btrim(sku) <> ''") },
 ];
 
 // Canonical expected partial unique indexes for vehicle tables.
@@ -594,6 +623,11 @@ const EXPECTED_PARTIAL_INDEXES: PartialIdxSpec[] = [
     table: "vehicle_unit_events",
     name: "uq_vehicle_unit_events_load_barcode",
     predicate: normalizeExpr("event_type = 'load' AND barcode IS NOT NULL"),
+  },
+  {
+    table: "vehicle_unit_events",
+    name: "uq_vehicle_unit_events_return_label_claim",
+    predicate: normalizeExpr("event_type = 'return' AND label_claim_id IS NOT NULL"),
   },
   {
     table: "vehicle_sale_allocations",
@@ -649,6 +683,11 @@ const EXPECTED_PARTIAL_INDEXES: PartialIdxSpec[] = [
     table: "vehicle_reconciliation_items",
     name: "uq_vehicle_reconciliation_items_rec_public_product",
     predicate: normalizeExpr("public_product_id IS NOT NULL"),
+  },
+  {
+    table: "vehicle_returns",
+    name: "uq_vehicle_returns_open_vehicle",
+    predicate: normalizeExpr("status IN ('prepared','handed_back')"),
   },
 ];
 

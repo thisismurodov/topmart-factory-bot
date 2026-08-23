@@ -1,17 +1,87 @@
 import { createRequire } from "node:module";
+import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { build as esbuild } from "esbuild";
 import esbuildPluginPino from "esbuild-plugin-pino";
-import { rm } from "node:fs/promises";
+import { readdir, readFile, rm } from "node:fs/promises";
 
 // Plugins (e.g. 'esbuild-plugin-pino') may use `require` to resolve dependencies
 globalThis.require = createRequire(import.meta.url);
 
 const artifactDir = path.dirname(fileURLToPath(import.meta.url));
+const workspaceDir = path.resolve(artifactDir, "../..");
+const SOURCE_ROOTS = [
+  "package.json",
+  "pnpm-lock.yaml",
+  "pnpm-workspace.yaml",
+  "lib",
+  "artifacts/api-server",
+  "artifacts/dashboard",
+];
+const EXCLUDED_NAMES = new Set([
+  ".git",
+  ".tsbuildinfo",
+  "dist",
+  "node_modules",
+]);
+
+async function sourceFiles(relativePath) {
+  const absolutePath = path.resolve(workspaceDir, relativePath);
+  const entries = await readdir(absolutePath, { withFileTypes: true }).catch(() => null);
+  if (!entries) return [relativePath];
+
+  const files = [];
+  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    if (EXCLUDED_NAMES.has(entry.name)) continue;
+    const child = path.posix.join(relativePath.replaceAll(path.sep, "/"), entry.name);
+    if (entry.isDirectory()) {
+      files.push(...await sourceFiles(child));
+    } else if (entry.isFile()) {
+      files.push(child);
+    }
+  }
+  return files;
+}
+
+async function computeSourceSha256() {
+  const files = (await Promise.all(SOURCE_ROOTS.map(sourceFiles))).flat().sort();
+  const hash = createHash("sha256");
+  for (const relativePath of files) {
+    hash.update(relativePath);
+    hash.update("\0");
+    hash.update(await readFile(path.resolve(workspaceDir, relativePath)));
+    hash.update("\0");
+  }
+  return hash.digest("hex");
+}
+
+function resolveCommitSha() {
+  for (const key of [
+    "RAILWAY_GIT_COMMIT_SHA",
+    "REPLIT_GIT_COMMIT_SHA",
+    "SOURCE_VERSION",
+    "COMMIT_SHA",
+  ]) {
+    const value = process.env[key]?.trim();
+    if (value) return value;
+  }
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: workspaceDir,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return "unknown";
+  }
+}
 
 async function buildAll() {
   const distDir = path.resolve(artifactDir, "dist");
+  const sourceSha256 = await computeSourceSha256();
+  const commitSha = resolveCommitSha();
   await rm(distDir, { recursive: true, force: true });
 
   await esbuild({
@@ -102,6 +172,10 @@ async function buildAll() {
       "electron",
     ],
     sourcemap: "linked",
+    define: {
+      __TOPMART_BUILD_COMMIT__: JSON.stringify(commitSha),
+      __TOPMART_SOURCE_SHA256__: JSON.stringify(sourceSha256),
+    },
     plugins: [
       // pino relies on workers to handle logging, instead of externalizing it we use a plugin to handle it
       esbuildPluginPino({ transports: ["pino-pretty"] })

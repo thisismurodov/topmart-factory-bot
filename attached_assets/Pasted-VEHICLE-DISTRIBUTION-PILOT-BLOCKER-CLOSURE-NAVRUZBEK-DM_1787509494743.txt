@@ -1,0 +1,286 @@
+VEHICLE DISTRIBUTION — PILOT BLOCKER CLOSURE
+
+NAVRUZBEK / DM-001 pilotni AKTIVLASHTIRMA.
+
+Preflight natijasiga ko‘ra pilot STOP holatida qoladi.
+
+Quyidagi 4 blocker yopilmaguncha:
+- feature flag OFF
+- production bootstrap YO‘Q
+- Telegram sendMessage YO‘Q
+- stock mutation YO‘Q
+- label print YO‘Q
+
+==================================================
+BLOCKER #220 — VEHICLE RETURN
+==================================================
+
+Production schema'da yo‘q:
+
+distribution.vehicle_returns
+distribution.vehicle_return_items
+
+Reviewed architecturedagi return lifecycle'ni production schema
+bilan to‘liq moslashtir.
+
+Talab:
+
+VEHICLE → WAREHOUSE
+
+Return:
+- vehicle
+- agent
+- source warehouse
+- destination warehouse
+- product
+- quantity
+- kg
+- reason
+- operator
+- timestamp
+- status
+- idempotency key
+
+Return sabablari mavjud contractga mos ishlasin.
+
+Sotilmagan mahsulot:
+VEHICLE → WAREHOUSE
+
+Damaged mahsulot:
+oddiy stockka qaytmasin;
+quarantine lifecycle mavjud bo‘lmasa PENDING bo‘lib qolsin.
+
+Atomic transaction:
+vehicle stock decrement
++
+warehouse stock increment
++
+stock movement
++
+unit event
+
+bitta transactionda.
+
+Delete bilan tarixni buzma.
+Compensating movement ishlat.
+
+Test:
+- normal return
+- duplicate return
+- insufficient vehicle stock
+- damaged/quarantine
+- rollback
+- authorization
+- concurrent return
+
+
+==================================================
+BLOCKER #218 — WAREHOUSE TELEGRAM NOTIFICATION
+==================================================
+
+Low-stock/replenishment request productionda yaratilganda
+omborchiga real Telegram notification yuborish lifecycle'ini
+to‘liq yakunla.
+
+Talab:
+
+SALE
+→ LOW STOCK
+→ REPLENISHMENT REQUEST
+→ WAREHOUSE NOTIFICATION
+→ ACKNOWLEDGE
+→ HANDOFF
+
+Aniq production recipient konfiguratsiyasi bo‘lsin.
+
+Notification:
+- recipient
+- vehicle
+- agent
+- SKU
+- product
+- required quantity
+- kg
+- request ID
+- timestamp
+
+Idempotency:
+bir xil vehicle/request/SKU uchun duplicate Telegram
+notification yuborilmasin.
+
+Telegram send failure:
+stock transactionni buzmasin.
+Notification retryable bo‘lsin.
+
+Audit:
+SENT
+FAILED
+ACKNOWLEDGED
+
+holatlari saqlansin.
+
+Test:
+- normal notification
+- duplicate suppression
+- Telegram failure
+- retry
+- wrong recipient protection
+- authorization
+- idempotency
+
+
+==================================================
+BLOCKER #219 — 100×80 LABEL PRINTER BRIDGE
+==================================================
+
+Mavjud:
+- production_labels
+- individual label identity
+- barcode
+- 100×80 PDF
+
+Lekin:
+
+Vehicle PDF
+→ Windows print-agent
+→ DTP-4207
+
+end-to-end production bridge tasdiqlanmagan.
+
+Shuni xavfsiz yakunla.
+
+Talab:
+
+1. Authenticated print request.
+2. Individual label IDs saqlansin.
+3. Print job unique/idempotent bo‘lsin.
+4. PDF aynan 100×80 mm.
+5. QR CODE YO‘Q.
+6. Real barcode saqlansin.
+7. Print status:
+   CREATED
+   SENT
+   PRINT_CONFIRMED
+   FAILED
+   RETRYABLE
+
+Muhim:
+
+PDF yaratildi ≠ fizik label chop etildi.
+
+Shuning uchun:
+
+LABEL_CREATED
+→ PRINT_SENT
+→ PRINT_CONFIRMED
+→ HANDOFF
+
+ketma-ketligi saqlansin.
+
+Print confirmation bo‘lmasa:
+vehicle stock transfer QILINMASIN.
+
+Double-click / retry duplicate label print yoki duplicate
+stock transferga olib kelmasin.
+
+Windows print-agent bilan real end-to-end test qil.
+
+Agar production printerga ulanish uchun credential/config
+kerak bo‘lsa, uni hardcode qilma.
+
+
+==================================================
+BLOCKER #4 — DEPLOYMENT REVISION
+==================================================
+
+Current workspace production source'dan 22 commit oldinda.
+
+Reviewed F1–F10 revision bilan production revisionni
+aniq bog‘lash kerak.
+
+Aniq ko‘rsat:
+
+- reviewed commit SHA
+- current workspace SHA
+- origin/main SHA
+- live production revision
+- migration state
+- schema state
+
+Production reviewed revisiondan boshqa kodda bo‘lsa:
+STOP.
+
+Reviewed code va production code bir xil ekanini
+cryptographic/commit-level evidence bilan tasdiqlamaguncha
+pilot activation qilma.
+
+`.replit` auto-port metadata bilan aralashtirma.
+
+
+==================================================
+TEST VA REVIEW
+==================================================
+
+Har blocker uchun:
+
+1. Unit tests
+2. Integration tests
+3. PostgreSQL transaction tests
+4. Idempotency tests
+5. Authorization tests
+6. Failure/rollback tests
+7. Relevant E2E
+8. Typecheck
+9. Codegen
+10. Schema-drift
+11. Architect review
+
+Keyin full relevant API suite.
+
+Oldindan ma’lum:
+products-distribution-propagation.test.ts
+20 testdan 9 failure
+
+ularni yangi Vehicle Distribution failure sifatida hisoblama.
+
+==================================================
+PRODUCTION SAFETY
+==================================================
+
+Hozircha:
+
+FEATURE FLAGS = OFF
+PROD WRITE = 0
+TELEGRAM SEND = 0
+PRINT = 0
+BOOTSTRAP = 0
+ROLLOUT = 0
+
+Blockerlar yopilgandan keyin ham:
+NAVRUZBEK / DM-001 uchun alohida PREFLIGHT qil.
+
+Pilotni o‘zboshimchalik bilan yoqma.
+
+==================================================
+FINAL REPORT
+==================================================
+
+Har bir blocker:
+
+#218 — PASS/FAIL
+#219 — PASS/FAIL
+#220 — PASS/FAIL
+Deployment revision — PASS/FAIL
+
+Keyin:
+
+READY FOR PILOT
+yoki
+STOP
+
+deb aniq yakunla.
+
+Agar birorta blocker FAIL bo‘lsa:
+STOP.
+
+HECH QANDAY AVTOMATIK KEYINGI BOSQICHNI BOSHLAMA.

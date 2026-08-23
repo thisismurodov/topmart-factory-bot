@@ -654,22 +654,37 @@ export const vehicleStockTargetsTable = distribution.table(
     id: serial("id").primaryKey(),
     vehicleId: integer("vehicle_id").notNull(),
     mahsulotId: integer("mahsulot_id").notNull(),
+    publicProductId: bigint("public_product_id", { mode: "number" }),
+    productName: text("product_name"),
     sku: text("sku").notNull().default(""),
     targetQuantity: numeric("target_quantity", { precision: 12, scale: 3 }).notNull(),
     minQuantity: numeric("min_quantity", { precision: 12, scale: 3 }).notNull().default("0"),
     effectiveFrom: date("effective_from").notNull(),
     effectiveTo: date("effective_to"),
+    operationKey: text("operation_key"),
+    actorType: text("actor_type"),
+    actorRef: text("actor_ref"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    index("idx_vehicle_stock_targets_vehicle").on(t.vehicleId, t.mahsulotId),
-    uniqueIndex("uq_vehicle_stock_targets_vehicle_mahsulot_from").on(
-      t.vehicleId,
-      t.mahsulotId,
-      t.effectiveFrom,
-    ),
+    index("idx_vehicle_stock_targets_vehicle").on(t.vehicleId, t.publicProductId),
+    uniqueIndex("uq_vehicle_stock_targets_current")
+      .on(t.vehicleId, t.publicProductId)
+      .where(sql`${t.effectiveTo} IS NULL`),
+    uniqueIndex("uq_vehicle_stock_targets_operation_key")
+      .on(t.operationKey)
+      .where(sql`${t.operationKey} IS NOT NULL`),
     check("vehicle_stock_targets_qty_check", sql`${t.targetQuantity} > 0`),
     check("vehicle_stock_targets_min_check", sql`${t.minQuantity} >= 0`),
+    check("vehicle_stock_targets_range_check", sql`${t.minQuantity} <= ${t.targetQuantity}`),
+    check(
+      "vehicle_stock_targets_whole_units_check",
+      sql`${t.publicProductId} IS NULL OR (${t.targetQuantity} = trunc(${t.targetQuantity}) AND ${t.minQuantity} = trunc(${t.minQuantity}))`,
+    ),
+    check(
+      "vehicle_stock_targets_identity_check",
+      sql`${t.publicProductId} IS NULL OR (${t.productName} IS NOT NULL AND btrim(${t.productName}) <> '' AND btrim(${t.sku}) <> '')`,
+    ),
   ],
 );
 
@@ -686,18 +701,43 @@ export const vehicleReplenishmentRequestsTable = distribution.table(
     vehicleId: integer("vehicle_id").notNull(),
     requestedBy: bigint("requested_by", { mode: "number" }).notNull(),
     mahsulotId: integer("mahsulot_id").notNull(),
+    publicProductId: bigint("public_product_id", { mode: "number" }),
+    productName: text("product_name"),
     sku: text("sku").notNull().default(""),
     requestedQuantity: numeric("requested_quantity", { precision: 12, scale: 3 }).notNull(),
     approvedQuantity: numeric("approved_quantity", { precision: 12, scale: 3 }),
+    targetQuantitySnapshot: numeric("target_quantity_snapshot", { precision: 12, scale: 3 }),
+    currentQuantitySnapshot: numeric("current_quantity_snapshot", { precision: 12, scale: 3 }),
+    sourceWarehouseId: integer("source_warehouse_id"),
+    handoffId: integer("handoff_id").references(() => vehicleHandoffsTable.id),
+    operationKey: text("operation_key"),
+    requestFingerprint: text("request_fingerprint"),
     status: text("status").notNull().default("pending"),
     requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    approvedBy: bigint("approved_by", { mode: "number" }),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    cancelledBy: bigint("cancelled_by", { mode: "number" }),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    fulfilledAt: timestamp("fulfilled_at", { withTimezone: true }),
     notes: text("notes"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index("idx_vehicle_replenishment_vehicle_status").on(t.vehicleId, t.status),
-    index("idx_vehicle_replenishment_mahsulot").on(t.mahsulotId, t.status),
+    index("idx_vehicle_replenishment_product").on(t.publicProductId, t.status),
+    uniqueIndex("uq_vehicle_replenishment_open")
+      .on(t.vehicleId, t.publicProductId)
+      .where(sql`${t.status} IN ('pending','approved')`),
+    uniqueIndex("uq_vehicle_replenishment_operation_key")
+      .on(t.operationKey)
+      .where(sql`${t.operationKey} IS NOT NULL`),
+    uniqueIndex("uq_vehicle_replenishment_fingerprint")
+      .on(t.requestFingerprint)
+      .where(sql`${t.requestFingerprint} IS NOT NULL`),
+    uniqueIndex("uq_vehicle_replenishment_handoff")
+      .on(t.handoffId)
+      .where(sql`${t.handoffId} IS NOT NULL`),
     check(
       "vehicle_replenishment_status_check",
       sql`${t.status} IN ('pending','approved','fulfilled','rejected','cancelled')`,
@@ -705,7 +745,41 @@ export const vehicleReplenishmentRequestsTable = distribution.table(
     check("vehicle_replenishment_qty_check", sql`${t.requestedQuantity} > 0`),
     check(
       "vehicle_replenishment_approved_check",
-      sql`${t.approvedQuantity} IS NULL OR ${t.approvedQuantity} >= 0`,
+      sql`${t.approvedQuantity} IS NULL OR ${t.approvedQuantity} > 0`,
+    ),
+    check(
+      "vehicle_replenishment_whole_units_check",
+      sql`${t.publicProductId} IS NULL OR (${t.requestedQuantity} = trunc(${t.requestedQuantity}) AND (${t.approvedQuantity} IS NULL OR ${t.approvedQuantity} = trunc(${t.approvedQuantity})))`,
+    ),
+    check(
+      "vehicle_replenishment_identity_check",
+      sql`${t.publicProductId} IS NULL OR (${t.productName} IS NOT NULL AND btrim(${t.productName}) <> '' AND btrim(${t.sku}) <> '')`,
+    ),
+    check(
+      "vehicle_replenishment_snapshot_check",
+      sql`${t.publicProductId} IS NULL OR (${t.targetQuantitySnapshot} > 0 AND ${t.currentQuantitySnapshot} >= 0 AND ${t.requestedQuantity} = ${t.targetQuantitySnapshot} - ${t.currentQuantitySnapshot})`,
+    ),
+    check(
+      "vehicle_replenishment_full_approval_check",
+      sql`${t.status} NOT IN ('approved','fulfilled') OR (${t.approvedQuantity} IS NOT NULL AND ${t.approvedQuantity} = ${t.requestedQuantity})`,
+    ),
+    check(
+      "vehicle_replenishment_linkage_check",
+      sql`${t.publicProductId} IS NULL OR
+        (${t.status} = 'pending' AND ${t.approvedQuantity} IS NULL AND ${t.approvedBy} IS NULL
+         AND ${t.approvedAt} IS NULL AND ${t.handoffId} IS NULL AND ${t.sourceWarehouseId} IS NULL
+         AND ${t.cancelledBy} IS NULL AND ${t.cancelledAt} IS NULL AND ${t.fulfilledAt} IS NULL)
+        OR (${t.status} = 'approved' AND ${t.approvedQuantity} = ${t.requestedQuantity}
+         AND ${t.approvedBy} IS NOT NULL AND ${t.approvedAt} IS NOT NULL
+         AND ${t.handoffId} IS NOT NULL AND ${t.sourceWarehouseId} IS NOT NULL
+         AND ${t.cancelledBy} IS NULL AND ${t.cancelledAt} IS NULL AND ${t.fulfilledAt} IS NULL)
+        OR (${t.status} = 'fulfilled' AND ${t.approvedQuantity} = ${t.requestedQuantity}
+         AND ${t.approvedBy} IS NOT NULL AND ${t.approvedAt} IS NOT NULL
+         AND ${t.handoffId} IS NOT NULL AND ${t.sourceWarehouseId} IS NOT NULL
+         AND ${t.cancelledBy} IS NULL AND ${t.cancelledAt} IS NULL AND ${t.fulfilledAt} IS NOT NULL)
+        OR (${t.status} = 'cancelled' AND ${t.cancelledBy} IS NOT NULL
+         AND ${t.cancelledAt} IS NOT NULL AND ${t.fulfilledAt} IS NULL)
+        OR (${t.status} = 'rejected' AND ${t.handoffId} IS NULL AND ${t.fulfilledAt} IS NULL)`,
     ),
   ],
 );

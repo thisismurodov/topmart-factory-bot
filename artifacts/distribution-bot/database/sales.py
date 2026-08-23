@@ -146,6 +146,84 @@ def _existing(c, operation_key, fingerprint):
     return row[0], owner[0] if owner else None, c.fetchone()[0]
 
 
+def _create_auto_replenishment_request(c, *, sale_id, detail_id, agent_id,
+                                       vehicle_id, mahsulot_id, public_product_id,
+                                       product_name, sku, current_quantity):
+    """Create F8's low-stock request inside the already-locked F7 sale tx.
+
+    The caller holds the vehicle warehouse parent and inventory row locks.  Do
+    not add a later advisory lock here: the open-request partial unique index is
+    the concurrency arbiter and an equivalent winner must not fail the sale.
+    """
+    c.execute(
+        """SELECT id,target_quantity,min_quantity
+             FROM distribution.vehicle_stock_targets
+            WHERE vehicle_id=%s AND public_product_id=%s
+              AND effective_from<=CURRENT_DATE
+              AND (effective_to IS NULL OR effective_to>=CURRENT_DATE)
+            ORDER BY effective_from DESC,id DESC
+            LIMIT 1""",
+        (vehicle_id, public_product_id),
+    )
+    target = c.fetchone()
+    if not target:
+        return
+
+    target_id, target_quantity, min_quantity = target
+    current = Decimal(str(current_quantity))
+    target_qty = Decimal(str(target_quantity))
+    minimum = Decimal(str(min_quantity))
+    if current > minimum:
+        return
+    deficit = target_qty - current
+    if deficit <= 0:
+        return
+    if (target_qty != target_qty.to_integral_value()
+            or minimum != minimum.to_integral_value()
+            or current != current.to_integral_value()
+            or deficit != deficit.to_integral_value()):
+        raise VehiclePilotSaleError(
+            "Pilot label stock and replenishment targets must be whole units.")
+
+    operation_key = (
+        "vehicle-replenishment:auto:sale:%s:detail:%s:product:%s"
+        % (sale_id, detail_id, public_product_id)
+    )
+    fingerprint_payload = {
+        "current_quantity": str(current.normalize()),
+        "detail_id": int(detail_id),
+        "mahsulot_id": int(mahsulot_id),
+        "product_name": str(product_name),
+        "public_product_id": int(public_product_id),
+        "requested_quantity": str(deficit.normalize()),
+        "sale_id": int(sale_id),
+        "sku": str(sku),
+        "target_id": int(target_id),
+        "target_quantity": str(target_qty.normalize()),
+        "vehicle_id": int(vehicle_id),
+    }
+    request_fingerprint = hashlib.sha256(
+        json.dumps(
+            fingerprint_payload, sort_keys=True, separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    c.execute(
+        """INSERT INTO distribution.vehicle_replenishment_requests
+             (vehicle_id,requested_by,mahsulot_id,public_product_id,product_name,sku,
+              requested_quantity,status,operation_key,request_fingerprint,
+              target_quantity_snapshot,current_quantity_snapshot,requested_at)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,'pending',%s,%s,%s,%s,NOW())
+           ON CONFLICT (vehicle_id,public_product_id)
+             WHERE status IN ('pending','approved')
+           DO NOTHING""",
+        (
+            vehicle_id, agent_id, mahsulot_id, public_product_id, product_name,
+            sku, deficit, operation_key, request_fingerprint, target_qty, current,
+        ),
+    )
+
+
 def _create_vehicle_pilot_once(dokon_id, agent_id, items, jami, tolov, foto,
                                nasiya_summa, operation_key, fingerprint,
                                balance_deduction):
@@ -238,7 +316,8 @@ def _create_vehicle_pilot_once(dokon_id, agent_id, items, jami, tolov, foto,
                 (qty, total_weight, inv[0], qty, total_weight))
             if c.rowcount != 1:
                 raise VehiclePilotSaleError("Mashina qoldig'i yoki og'irligi yetarli emas.")
-            line += (selected, total_weight)
+            post_sale_quantity = Decimal(str(inv[1])) - Decimal(qty)
+            line += (selected, total_weight, post_sale_quantity)
             mapped[mapped.index(line[:6])] = line
 
         if balance_deduction:
@@ -253,7 +332,8 @@ def _create_vehicle_pilot_once(dokon_id, agent_id, items, jami, tolov, foto,
             c, dokon_id, agent_id, items, jami, tolov, foto, nasiya_summa,
             operation_key, fingerprint, True)
         detail_by_mid = {int(x[1]): x[0] for x in details}
-        for mid, qty, price, public_id, product_name, sku, selected, total_weight in mapped:
+        for (mid, qty, price, public_id, product_name, sku, selected,
+             total_weight, post_sale_quantity) in mapped:
             detail_id = detail_by_mid[int(mid)]
             reference = "vehicle-sale:%s:detail:%s" % (sid, detail_id)
             c.execute(
@@ -288,6 +368,18 @@ def _create_vehicle_pilot_once(dokon_id, agent_id, items, jami, tolov, foto,
                     (vehicle_id, handoff_id, handoff_item_id, mid, sku, agent_id,
                      label_id, barcode, unit_key + ":event", claim_id,
                      "vehicle sale %s detail %s" % (sid, detail_id)))
+            _create_auto_replenishment_request(
+                c,
+                sale_id=sid,
+                detail_id=detail_id,
+                agent_id=agent_id,
+                vehicle_id=vehicle_id,
+                mahsulot_id=mid,
+                public_product_id=public_id,
+                product_name=product_name,
+                sku=sku,
+                current_quantity=post_sale_quantity,
+            )
         return sid, owner, qoldiq
 
 

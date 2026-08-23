@@ -12,6 +12,7 @@ import threading
 import time
 import unittest
 import uuid
+from datetime import date, timedelta
 from decimal import Decimal
 from urllib.parse import urlparse, urlunparse
 from pathlib import Path
@@ -110,6 +111,8 @@ class VehiclePilotSaleF7(unittest.TestCase):
         with _db() as conn, conn.cursor() as c:
             c.execute("""
               TRUNCATE distribution.vehicle_sale_allocations,
+                distribution.vehicle_replenishment_requests,
+                distribution.vehicle_stock_targets,
                 distribution.vehicle_reconciliation_items,
                 distribution.vehicle_reconciliations,
                 distribution.vehicle_unit_events,distribution.vehicle_label_claims,
@@ -130,7 +133,8 @@ class VehiclePilotSaleF7(unittest.TestCase):
                       "VALUES('Pilot rope',100,1,'SKU-1') RETURNING id")
             self.mid = c.fetchone()[0]
             c.execute("INSERT INTO public.products(name,sku,active,in_sales) "
-                      "VALUES('ERP rope','SKU-1',TRUE,TRUE)")
+                      "VALUES('ERP rope','SKU-1',TRUE,TRUE) RETURNING id")
+            self.public_product_id = c.fetchone()[0]
             c.execute("INSERT INTO public.warehouses(name,active,location_type,purpose) "
                       "VALUES('DM-001 mashina ombori',TRUE,'vehicle','finished') RETURNING id")
             self.warehouse = c.fetchone()[0]
@@ -186,6 +190,7 @@ class VehiclePilotSaleF7(unittest.TestCase):
         tables = [
             "savdolar", "savdo_tafsilot", "nasiya", "revisitlar",
             "vehicle_sale_allocations", "vehicle_unit_events",
+            "vehicle_replenishment_requests",
         ]
         out = {}
         with _db() as conn, conn.cursor() as c:
@@ -206,6 +211,25 @@ class VehiclePilotSaleF7(unittest.TestCase):
                       (self.shop,))
             out["shop_stats"] = c.fetchone()
         return out
+
+    def add_target(self, target=10, minimum=3, effective_from="CURRENT_DATE",
+                   effective_to="NULL", operation_key=None):
+        with _db() as conn, conn.cursor() as c:
+            c.execute(
+                """INSERT INTO distribution.vehicle_stock_targets
+                   (vehicle_id,mahsulot_id,public_product_id,product_name,sku,
+                    target_quantity,min_quantity,effective_from,effective_to,
+                    operation_key,actor_type,actor_ref)
+                   VALUES(%s,%s,%s,'ERP rope','SKU-1',%s,%s,%s,%s,%s,'admin','f8-test')
+                   RETURNING id""",
+                (
+                    self.vehicle, self.mid, self.public_product_id, target, minimum,
+                    date.today() if effective_from == "CURRENT_DATE" else effective_from,
+                    None if effective_to == "NULL" else effective_to,
+                    operation_key,
+                ),
+            )
+            return c.fetchone()[0]
 
     def test_success_qty_two_exact_effects_and_replay(self):
         key = str(uuid.uuid4())
@@ -381,6 +405,209 @@ class VehiclePilotSaleF7(unittest.TestCase):
             self._exec("""INSERT INTO public.stock_movements
                        (product,quantity,movement_type,reference)
                        VALUES('x',1,'OUT',%s)""", (ref,))
+
+    def test_f8_no_target_and_above_min_create_no_request(self):
+        self.sale()
+        self.assertEqual(
+            self.scalar("SELECT count(*) FROM distribution.vehicle_replenishment_requests"),
+            0,
+        )
+        self.setUp()
+        self.add_target(target=10, minimum=2)
+        self.sale()  # post-sale quantity=3, above min=2
+        self.assertEqual(
+            self.scalar("SELECT count(*) FROM distribution.vehicle_replenishment_requests"),
+            0,
+        )
+
+    def test_f8_at_min_creates_exact_deficit_and_snapshots(self):
+        target_id = self.add_target(target=10, minimum=3)
+        sid = self.sale()[0]  # post-sale quantity=3
+        with _db() as conn, conn.cursor() as c:
+            c.execute(
+                """SELECT vehicle_id,mahsulot_id,public_product_id,product_name,sku,
+                          requested_quantity,target_quantity_snapshot,
+                          current_quantity_snapshot,status,operation_key,
+                          request_fingerprint
+                     FROM distribution.vehicle_replenishment_requests"""
+            )
+            row = c.fetchone()
+        self.assertEqual(
+            row[:9],
+            (
+                self.vehicle,
+                self.mid,
+                self.public_product_id,
+                "ERP rope",
+                "SKU-1",
+                Decimal("7"),
+                Decimal("10"),
+                Decimal("3"),
+                "pending",
+            ),
+        )
+        detail_id = self.scalar(
+            "SELECT id FROM distribution.savdo_tafsilot WHERE savdo_id=%s", (sid,)
+        )
+        self.assertEqual(
+            row[9],
+            "vehicle-replenishment:auto:sale:%s:detail:%s:product:%s"
+            % (sid, detail_id, self.public_product_id),
+        )
+        self.assertRegex(row[10], r"^[0-9a-f]{64}$")
+        self.assertEqual(
+            self.scalar(
+                "SELECT id FROM distribution.vehicle_stock_targets WHERE id=%s",
+                (target_id,),
+            ),
+            target_id,
+        )
+
+    def test_f8_sale_replay_does_not_duplicate_request(self):
+        self.add_target(target=10, minimum=3)
+        key = str(uuid.uuid4())
+        first = self.sale(key)
+        before = self.snapshot()
+        self.assertEqual(self.sale(key), first)
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(before["vehicle_replenishment_requests"], 1)
+
+    def test_f8_concurrent_sales_leave_one_open_request_without_sale_failure(self):
+        self.add_target(target=10, minimum=5)
+        barrier = threading.Barrier(2)
+        results, errors = [], []
+
+        def run():
+            try:
+                barrier.wait()
+                results.append(
+                    self.sale(
+                        key=str(uuid.uuid4()), qty=1, total=100,
+                        debt=0, prepayment=0,
+                    )
+                )
+            except Exception as exc:  # asserted below
+                errors.append(exc)
+
+        threads = [threading.Thread(target=run) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(15)
+        self.assertFalse(any(thread.is_alive() for thread in threads), "deadlock")
+        self.assertEqual(errors, [])
+        self.assertEqual(len(results), 2)
+        self.assertEqual(self.scalar("SELECT count(*) FROM distribution.savdolar"), 2)
+        self.assertEqual(
+            self.scalar(
+                """SELECT count(*) FROM distribution.vehicle_replenishment_requests
+                   WHERE status IN ('pending','approved')"""
+            ),
+            1,
+        )
+        self.assertEqual(
+            self.scalar(
+                "SELECT quantity FROM public.inventory WHERE warehouse_id=%s",
+                (self.warehouse,),
+            ),
+            Decimal("3"),
+        )
+
+    def test_f8_only_current_effective_target_is_used(self):
+        yesterday = date.today() - timedelta(days=1)
+        tomorrow = date.today() + timedelta(days=1)
+        self.add_target(
+            target=20, minimum=5, effective_from=yesterday, effective_to=yesterday
+        )
+        self.add_target(
+            target=30, minimum=5, effective_from=tomorrow, effective_to=tomorrow
+        )
+        self.sale(qty=1, total=100, debt=0, prepayment=0)
+        self.assertEqual(
+            self.scalar("SELECT count(*) FROM distribution.vehicle_replenishment_requests"),
+            0,
+        )
+
+        self.setUp()
+        self.add_target(
+            target=9, minimum=4,
+            effective_from=yesterday, effective_to=tomorrow,
+        )
+        self.sale(qty=1, total=100, debt=0, prepayment=0)
+        self.assertEqual(
+            self.scalar(
+                "SELECT requested_quantity FROM distribution.vehicle_replenishment_requests"
+            ),
+            Decimal("5"),
+        )
+
+    def test_f8_request_schema_failure_rolls_back_entire_sale(self):
+        self.add_target(target=10, minimum=3)
+        self._exec(
+            """
+            CREATE OR REPLACE FUNCTION distribution.f8_test_fail() RETURNS trigger
+            LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced f8'; END $$;
+            CREATE TRIGGER f8_test_fail BEFORE INSERT
+              ON distribution.vehicle_replenishment_requests
+            FOR EACH ROW EXECUTE FUNCTION distribution.f8_test_fail()
+            """
+        )
+        before = self.snapshot()
+        with self.assertRaises(psycopg2.Error):
+            self.sale()
+        self.assertEqual(self.snapshot(), before)
+        self._exec(
+            "DROP TRIGGER f8_test_fail ON distribution.vehicle_replenishment_requests"
+        )
+
+    def test_f8_schema_checks_and_canonical_partial_uniques(self):
+        with self.assertRaises(psycopg2.Error):
+            self.add_target(target=2, minimum=3)
+        self.add_target(target=10, minimum=3, operation_key="target-op")
+        with self.assertRaises(psycopg2.Error):
+            self.add_target(target=11, minimum=3, operation_key="target-op-2")
+
+        self.sale()
+        with self.assertRaises(psycopg2.Error):
+            self._exec(
+                "UPDATE distribution.vehicle_replenishment_requests "
+                "SET approved_quantity=0"
+            )
+        with self.assertRaises(psycopg2.Error):
+            self._exec(
+                """UPDATE distribution.vehicle_replenishment_requests
+                      SET status='approved',approved_quantity=requested_quantity-1,
+                          approved_by=1,approved_at=NOW(),source_warehouse_id=%s,
+                          handoff_id=(SELECT id FROM distribution.vehicle_handoffs LIMIT 1)""",
+                (self.warehouse,),
+            )
+
+        with _db() as conn, conn.cursor() as c:
+            c.execute(
+                """SELECT indexname,indexdef FROM pg_indexes
+                   WHERE schemaname='distribution'
+                     AND indexname IN (
+                       'uq_vehicle_stock_targets_current',
+                       'uq_vehicle_replenishment_open',
+                       'uq_vehicle_replenishment_operation_key',
+                       'uq_vehicle_replenishment_fingerprint',
+                       'uq_vehicle_replenishment_handoff')
+                   ORDER BY indexname"""
+            )
+            indexes = dict(c.fetchall())
+        self.assertEqual(len(indexes), 5)
+        self.assertIn(
+            "(vehicle_id, public_product_id) WHERE (effective_to IS NULL)",
+            indexes["uq_vehicle_stock_targets_current"],
+        )
+        self.assertIn(
+            "(vehicle_id, public_product_id)",
+            indexes["uq_vehicle_replenishment_open"],
+        )
+        self.assertIn(
+            "status = ANY (ARRAY['pending'::text, 'approved'::text])",
+            indexes["uq_vehicle_replenishment_open"],
+        )
 
     def _approved_reconciliation(self):
         with _db() as conn, conn.cursor() as c:

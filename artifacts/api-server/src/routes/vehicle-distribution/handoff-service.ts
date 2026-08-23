@@ -603,6 +603,27 @@ export async function markStockTransferredInTx(
   handoffId: number,
   actor: HandoffActor,
 ): Promise<HandoffDetail> {
+  // PRE-READ only identifies the warehouse parents. Parent locks must precede
+  // the handoff/request row locks so F8 approval/cancellation and F7 auto-create
+  // use the same global lock order.
+  const pre = await client.query(
+    `SELECT source_warehouse_id, vehicle_warehouse_id
+       FROM distribution.vehicle_handoffs WHERE id=$1`,
+    [handoffId],
+  );
+  if (!pre.rows.length) throw new HandoffNotFoundError();
+  const parentIds = [
+    Number(pre.rows[0].source_warehouse_id),
+    Number(pre.rows[0].vehicle_warehouse_id),
+  ].sort((a, b) => a - b);
+  const lockedParents = await client.query(
+    `SELECT id FROM public.warehouses
+      WHERE id=ANY($1::int[]) ORDER BY id FOR UPDATE`,
+    [parentIds],
+  );
+  if (lockedParents.rows.length !== new Set(parentIds).size) {
+    throw new HandoffConflictError("Handoff warehouse parent is missing");
+  }
   const row = await lockHandoff(client, handoffId);
   const pilot = await assertPilotOwnership(client, row);
   const status = String(row.status);
@@ -783,6 +804,45 @@ export async function markStockTransferredInTx(
       WHERE id = $1`,
     [handoffId, actor.actorId, movementReference],
   );
+
+  // F8 lifecycle hook. A linked request is optional for ordinary F3 handoffs,
+  // but when present it must be the unique approved request and exactly match
+  // this one-item handoff. Any malformed linkage aborts the entire stock move.
+  const linked = await client.query(
+    `SELECT r.id,r.status,r.requested_quantity,r.mahsulot_id,
+            (SELECT COUNT(*)::int FROM distribution.vehicle_handoff_items hi
+              WHERE hi.handoff_id=r.handoff_id) item_count,
+            (SELECT MIN(hi.mahsulot_id)::int FROM distribution.vehicle_handoff_items hi
+              WHERE hi.handoff_id=r.handoff_id) item_mahsulot_id,
+            (SELECT MIN(hi.quantity_dispatched) FROM distribution.vehicle_handoff_items hi
+              WHERE hi.handoff_id=r.handoff_id) item_quantity
+       FROM distribution.vehicle_replenishment_requests r
+      WHERE r.handoff_id=$1
+      FOR UPDATE OF r`,
+    [handoffId],
+  );
+  if (linked.rows.length > 1) {
+    throw new HandoffConflictError("Multiple replenishment requests link this handoff");
+  }
+  if (linked.rows.length === 1) {
+    const request = linked.rows[0];
+    if (
+      String(request.status) !== "approved" ||
+      Number(request.item_count) !== 1 ||
+      Number(request.item_mahsulot_id) !== Number(request.mahsulot_id) ||
+      Number(request.item_quantity) !== Number(request.requested_quantity)
+    ) {
+      throw new HandoffConflictError(
+        "Linked replenishment request is not a valid approved full-quantity linkage",
+      );
+    }
+    await client.query(
+      `UPDATE distribution.vehicle_replenishment_requests
+          SET status='fulfilled',fulfilled_at=NOW(),resolved_at=NOW()
+        WHERE id=$1 AND status='approved'`,
+      [request.id],
+    );
+  }
 
   return (await loadHandoffDetail(client, handoffId))!;
 }

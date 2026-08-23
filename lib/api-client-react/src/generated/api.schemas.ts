@@ -274,6 +274,119 @@ export interface VehicleHandoffConfirmLabelsResult {
   atLeastOnce: boolean;
 }
 
+export interface ReplaceVehicleStockTargetInput {
+  /** @minimum 1 */
+  mahsulotId: number;
+  /** @minimum 0 */
+  minQuantity: number;
+  /** @minimum 1 */
+  targetQuantity: number;
+  /**
+     * @minLength 1
+     * @maxLength 200
+     */
+  operationKey: string;
+  effectiveFrom?: string;
+}
+
+export interface VehicleStockTarget {
+  id: number;
+  vehicleId: number;
+  mahsulotId: number;
+  publicProductId: number;
+  productName: string;
+  sku: string;
+  minQuantity: number;
+  targetQuantity: number;
+  currentQuantity: number;
+  deficitQuantity: number;
+  low: boolean;
+  effectiveFrom: string;
+  /** @nullable */
+  effectiveTo: string | null;
+  /** @nullable */
+  operationKey: string | null;
+  /** @nullable */
+  actorType: string | null;
+  /** @nullable */
+  actorRef: string | null;
+  createdAt: string;
+}
+
+export interface VehicleStockTargetList {
+  vehicleId: number;
+  warehouseId: number;
+  targets: VehicleStockTarget[];
+}
+
+export interface CreateVehicleReplenishmentRequestInput {
+  /** @minimum 1 */
+  mahsulotId: number;
+  /**
+     * @minLength 1
+     * @maxLength 200
+     */
+  operationKey: string;
+}
+
+export interface VehicleReplenishmentTransitionInput { [key: string]: unknown }
+
+export type VehicleReplenishmentRequestStatus = typeof VehicleReplenishmentRequestStatus[keyof typeof VehicleReplenishmentRequestStatus];
+
+
+export const VehicleReplenishmentRequestStatus = {
+  pending: 'pending',
+  approved: 'approved',
+  fulfilled: 'fulfilled',
+  rejected: 'rejected',
+  cancelled: 'cancelled',
+} as const;
+
+export interface VehicleReplenishmentRequest {
+  id: number;
+  vehicleId: number;
+  requestedBy: number;
+  mahsulotId: number;
+  publicProductId: number;
+  productName: string;
+  sku: string;
+  requestedQuantity: number;
+  /** @nullable */
+  approvedQuantity: number | null;
+  targetQuantitySnapshot: number;
+  currentQuantitySnapshot: number;
+  /** @nullable */
+  sourceWarehouseId: number | null;
+  /** @nullable */
+  handoffId: number | null;
+  /** @nullable */
+  handoffStatus: string | null;
+  /** @nullable */
+  operationKey: string | null;
+  status: VehicleReplenishmentRequestStatus;
+  requestedAt: string;
+  /** @nullable */
+  resolvedAt: string | null;
+  /** @nullable */
+  approvedBy: number | null;
+  /** @nullable */
+  approvedAt: string | null;
+  /** @nullable */
+  cancelledBy: number | null;
+  /** @nullable */
+  cancelledAt: string | null;
+  /** @nullable */
+  fulfilledAt: string | null;
+  /** @nullable */
+  notes: string | null;
+  createdAt: string;
+}
+
+export interface VehicleReplenishmentRequestList {
+  vehicleId: number;
+  requests: VehicleReplenishmentRequest[];
+}
+
 /**
  * Strict draft-reconciliation creation body. Only these fields are accepted; the vehicle, warehouse, delivery agent and actor are resolved server-side. reconciliationDate is an ISO calendar date (YYYY-MM-DD).
  */

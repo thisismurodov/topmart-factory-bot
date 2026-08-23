@@ -29,6 +29,7 @@ import distributionRouter, { distributionSuggestionsRouter } from "./distributio
 import fieldRouter from "./field";
 import vehicleDistributionRouter from "./vehicle-distribution";
 import vehicleHandoffRouter from "./vehicle-distribution/handoff-router";
+import vehicleReplenishmentRouter from "./vehicle-distribution/replenishment-router";
 
 const router: IRouter = Router();
 
@@ -59,6 +60,7 @@ router.use(requireAuthOrInternalKey, distributionSuggestionsRouter);
 // warehouse bot can drive the handoff lifecycle with x-vehicle-distribution-bot-key
 // while admins use a Bearer session. The actor is always assigned server-side.
 router.use(vehicleHandoffRouter);
+router.use(vehicleReplenishmentRouter);
 
 // ── Auth wall: everything below requires a valid session ──────────────────────
 router.use(requireAuth);

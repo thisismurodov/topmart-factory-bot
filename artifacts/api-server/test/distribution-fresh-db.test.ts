@@ -58,8 +58,13 @@ const mainPySource = readFileSync(path.join(botDir, "main.py"), "utf8");
 // calls here; TeleBot() construction and handler registration are offline.
 // Vehicle pilot: always enabled on throwaway DBs so fresh-DB validation
 // covers all vehicle tables (the gate only guards production databases).
+const {
+  RAILWAY_DATABASE_URL: _ignoredRailwayDatabaseUrl,
+  DATABASE_URL: _ignoredRuntimeDatabaseUrl,
+  ...isolatedBotBaseEnv
+} = process.env;
 const botEnv = {
-  ...process.env,
+  ...isolatedBotBaseEnv,
   ...botDbEnv(tmpUrl()),
   TELEGRAM_BOT_TOKEN: "123456:TEST_TOKEN_FRESH_DB_GUARD",
   VEHICLE_DISTRIBUTION_SCHEMA_APPROVED: "1",
@@ -148,8 +153,8 @@ const REQUIRED: Record<string, string[]> = {
   vehicle_unit_events: ["id", "vehicle_id", "handoff_id", "handoff_item_id", "mahsulot_id", "sku", "event_type", "quantity", "actor_id", "production_label_id", "barcode", "operation_key", "label_claim_id", "event_at", "notes", "created_at"],
   vehicle_sale_allocations: ["id", "handoff_id", "savdo_id", "savdo_tafsilot_id", "mahsulot_id", "product_name", "product_sku", "vehicle_id", "allocated_quantity", "allocated_weight_kg", "production_label_id", "barcode", "source_unit_event_id", "operation_key", "allocated_at", "created_at"],
   vehicle_label_claims: ["id", "vehicle_id", "handoff_id", "handoff_item_id", "production_label_id", "barcode", "mahsulot_id", "sku", "unit_weight_kg", "status", "operation_key", "created_at", "updated_at"],
-  vehicle_stock_targets: ["id", "vehicle_id", "mahsulot_id", "sku", "target_quantity", "min_quantity", "effective_from", "effective_to", "created_at"],
-  vehicle_replenishment_requests: ["id", "vehicle_id", "requested_by", "mahsulot_id", "sku", "requested_quantity", "approved_quantity", "status", "requested_at", "resolved_at", "notes", "created_at"],
+  vehicle_stock_targets: ["id", "vehicle_id", "mahsulot_id", "public_product_id", "product_name", "sku", "target_quantity", "min_quantity", "effective_from", "effective_to", "operation_key", "actor_type", "actor_ref", "created_at"],
+  vehicle_replenishment_requests: ["id", "vehicle_id", "requested_by", "mahsulot_id", "public_product_id", "product_name", "sku", "requested_quantity", "approved_quantity", "target_quantity_snapshot", "current_quantity_snapshot", "source_warehouse_id", "handoff_id", "operation_key", "request_fingerprint", "status", "requested_at", "resolved_at", "approved_by", "approved_at", "cancelled_by", "cancelled_at", "fulfilled_at", "notes", "created_at"],
   vehicle_reconciliations: ["id", "vehicle_id", "delivery_agent_id", "reconciliation_date", "status", "created_by", "reviewed_by", "reviewed_at", "approved_by", "approved_at", "applied_by", "applied_at", "notes", "created_at"],
   vehicle_reconciliation_items: ["id", "reconciliation_id", "mahsulot_id", "public_product_id", "product_name", "sku", "expected_quantity", "expected_weight_kg", "actual_quantity", "discrepancy", "counted_by", "counted_at", "adjustment_reference", "notes", "created_at"],
 };
@@ -955,26 +960,69 @@ describe("Vehicle F1 schema: constraint and partial-index behavioral assertions"
     `);
   });
 
-  it("vehicle_replenishment_requests: partial unique prevents two open requests for same vehicle+mahsulot", async () => {
+  it("vehicle_replenishment_requests: canonical product partial unique prevents two open requests", async () => {
     // First open request succeeds
     await client.query(`
       INSERT INTO distribution.vehicle_replenishment_requests
-        (vehicle_id, requested_by, mahsulot_id, requested_quantity, status)
-      VALUES (1, 111, 1, 10, 'pending')
+        (vehicle_id, requested_by, mahsulot_id, public_product_id, product_name, sku,
+         requested_quantity, target_quantity_snapshot, current_quantity_snapshot, status)
+      VALUES (1, 111, 1, 9001, 'Arqon', 'SKU-1', 10, 15, 5, 'pending')
     `);
-    // Second open request for same vehicle+mahsulot rejected
+    // Second open request for same vehicle+canonical product rejected
     await expect(
       client.query(`
         INSERT INTO distribution.vehicle_replenishment_requests
-          (vehicle_id, requested_by, mahsulot_id, requested_quantity, status)
-        VALUES (1, 111, 1, 5, 'approved')
+          (vehicle_id, requested_by, mahsulot_id, public_product_id, product_name, sku,
+           requested_quantity, target_quantity_snapshot, current_quantity_snapshot, status)
+        VALUES (1, 111, 2, 9001, 'Arqon', 'SKU-1', 5, 15, 10, 'pending')
       `),
     ).rejects.toThrow(/unique/i);
-    // Closed request (fulfilled) for same vehicle+mahsulot is allowed
+    // Closed request for the same canonical product is allowed.
     await client.query(`
       INSERT INTO distribution.vehicle_replenishment_requests
-        (vehicle_id, requested_by, mahsulot_id, requested_quantity, status)
-      VALUES (1, 111, 1, 3, 'fulfilled')
+        (vehicle_id, requested_by, mahsulot_id, public_product_id, product_name, sku,
+         requested_quantity, target_quantity_snapshot, current_quantity_snapshot, status)
+      VALUES (1, 111, 1, 9001, 'Arqon', 'SKU-1', 3, 8, 5, 'rejected')
+    `);
+  });
+
+  it("F8 canonical target/request quantities are whole units while nullable legacy identities remain accepted", async () => {
+    await expect(
+      client.query(`
+        INSERT INTO distribution.vehicle_stock_targets
+          (vehicle_id,mahsulot_id,public_product_id,product_name,sku,
+           target_quantity,min_quantity,effective_from)
+        VALUES (77,1,77001,'Whole product','WHOLE-1',10.5,2,CURRENT_DATE)
+      `),
+    ).rejects.toThrow(/vehicle_stock_targets_whole_units_check/i);
+    await expect(
+      client.query(`
+        INSERT INTO distribution.vehicle_stock_targets
+          (vehicle_id,mahsulot_id,public_product_id,product_name,sku,
+           target_quantity,min_quantity,effective_from)
+        VALUES (77,1,77002,'Whole product 2','WHOLE-2',10,2.5,CURRENT_DATE)
+      `),
+    ).rejects.toThrow(/vehicle_stock_targets_whole_units_check/i);
+    await expect(
+      client.query(`
+        INSERT INTO distribution.vehicle_replenishment_requests
+          (vehicle_id,requested_by,mahsulot_id,public_product_id,product_name,sku,
+           requested_quantity,target_quantity_snapshot,current_quantity_snapshot,status)
+        VALUES (77,1,1,77003,'Whole product 3','WHOLE-3',2.5,5,2.5,'pending')
+      `),
+    ).rejects.toThrow(/vehicle_replenishment_whole_units_check/i);
+
+    // Legacy rows have no canonical public identity and remain loadable.
+    await client.query(`
+      INSERT INTO distribution.vehicle_stock_targets
+        (vehicle_id,mahsulot_id,public_product_id,sku,target_quantity,min_quantity,effective_from)
+      VALUES (78,1,NULL,'',10.5,2.5,CURRENT_DATE)
+    `);
+    await client.query(`
+      INSERT INTO distribution.vehicle_replenishment_requests
+        (vehicle_id,requested_by,mahsulot_id,public_product_id,sku,
+         requested_quantity,approved_quantity,status)
+      VALUES (78,1,1,NULL,'',2.5,2.5,'rejected')
     `);
   });
 

@@ -1230,6 +1230,267 @@ export const CancelVehicleHandoffResponse = zod.object({
 
 
 /**
+ * @summary List pilot stock target history with current inventory and low state
+ */
+export const ListVehicleStockTargetsResponse = zod.object({
+  "vehicleId": zod.number(),
+  "warehouseId": zod.number(),
+  "targets": zod.array(zod.object({
+  "id": zod.number(),
+  "vehicleId": zod.number(),
+  "mahsulotId": zod.number(),
+  "publicProductId": zod.number(),
+  "productName": zod.string(),
+  "sku": zod.string(),
+  "minQuantity": zod.number(),
+  "targetQuantity": zod.number(),
+  "currentQuantity": zod.number(),
+  "deficitQuantity": zod.number(),
+  "low": zod.boolean(),
+  "effectiveFrom": zod.coerce.date(),
+  "effectiveTo": zod.coerce.date().nullable(),
+  "operationKey": zod.string().nullable(),
+  "actorType": zod.string().nullable(),
+  "actorRef": zod.string().nullable(),
+  "createdAt": zod.coerce.date()
+}))
+})
+
+
+/**
+ * @summary Replace the effective stock target (admin only)
+ */
+
+export const replaceVehicleStockTargetBodyMinQuantityMin = 0;
+
+
+export const replaceVehicleStockTargetBodyOperationKeyMax = 200;
+
+
+
+export const ReplaceVehicleStockTargetBody = zod.object({
+  "mahsulotId": zod.number().min(1),
+  "minQuantity": zod.number().min(replaceVehicleStockTargetBodyMinQuantityMin),
+  "targetQuantity": zod.number().min(1),
+  "operationKey": zod.string().min(1).max(replaceVehicleStockTargetBodyOperationKeyMax),
+  "effectiveFrom": zod.coerce.date().optional()
+})
+
+export const ReplaceVehicleStockTargetResponse = zod.object({
+  "id": zod.number(),
+  "vehicleId": zod.number(),
+  "mahsulotId": zod.number(),
+  "publicProductId": zod.number(),
+  "productName": zod.string(),
+  "sku": zod.string(),
+  "minQuantity": zod.number(),
+  "targetQuantity": zod.number(),
+  "currentQuantity": zod.number(),
+  "deficitQuantity": zod.number(),
+  "low": zod.boolean(),
+  "effectiveFrom": zod.coerce.date(),
+  "effectiveTo": zod.coerce.date().nullable(),
+  "operationKey": zod.string().nullable(),
+  "actorType": zod.string().nullable(),
+  "actorRef": zod.string().nullable(),
+  "createdAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary List pilot replenishment request history and linked handoff states
+ */
+export const ListVehicleReplenishmentRequestsResponse = zod.object({
+  "vehicleId": zod.number(),
+  "requests": zod.array(zod.object({
+  "id": zod.number(),
+  "vehicleId": zod.number(),
+  "requestedBy": zod.number(),
+  "mahsulotId": zod.number(),
+  "publicProductId": zod.number(),
+  "productName": zod.string(),
+  "sku": zod.string(),
+  "requestedQuantity": zod.number(),
+  "approvedQuantity": zod.number().nullable(),
+  "targetQuantitySnapshot": zod.number(),
+  "currentQuantitySnapshot": zod.number(),
+  "sourceWarehouseId": zod.number().nullable(),
+  "handoffId": zod.number().nullable(),
+  "handoffStatus": zod.string().nullable(),
+  "operationKey": zod.string().nullable(),
+  "status": zod.enum(['pending', 'approved', 'fulfilled', 'rejected', 'cancelled']),
+  "requestedAt": zod.coerce.date(),
+  "resolvedAt": zod.coerce.date().nullable(),
+  "approvedBy": zod.number().nullable(),
+  "approvedAt": zod.coerce.date().nullable(),
+  "cancelledBy": zod.number().nullable(),
+  "cancelledAt": zod.coerce.date().nullable(),
+  "fulfilledAt": zod.coerce.date().nullable(),
+  "notes": zod.string().nullable(),
+  "createdAt": zod.coerce.date()
+}))
+})
+
+
+/**
+ * @summary Create a server-computed manual replenishment request
+ */
+
+export const createVehicleReplenishmentRequestBodyOperationKeyMax = 200;
+
+
+
+export const CreateVehicleReplenishmentRequestBody = zod.object({
+  "mahsulotId": zod.number().min(1),
+  "operationKey": zod.string().min(1).max(createVehicleReplenishmentRequestBodyOperationKeyMax)
+})
+
+export const CreateVehicleReplenishmentRequestResponse = zod.object({
+  "id": zod.number(),
+  "vehicleId": zod.number(),
+  "requestedBy": zod.number(),
+  "mahsulotId": zod.number(),
+  "publicProductId": zod.number(),
+  "productName": zod.string(),
+  "sku": zod.string(),
+  "requestedQuantity": zod.number(),
+  "approvedQuantity": zod.number().nullable(),
+  "targetQuantitySnapshot": zod.number(),
+  "currentQuantitySnapshot": zod.number(),
+  "sourceWarehouseId": zod.number().nullable(),
+  "handoffId": zod.number().nullable(),
+  "handoffStatus": zod.string().nullable(),
+  "operationKey": zod.string().nullable(),
+  "status": zod.enum(['pending', 'approved', 'fulfilled', 'rejected', 'cancelled']),
+  "requestedAt": zod.coerce.date(),
+  "resolvedAt": zod.coerce.date().nullable(),
+  "approvedBy": zod.number().nullable(),
+  "approvedAt": zod.coerce.date().nullable(),
+  "cancelledBy": zod.number().nullable(),
+  "cancelledAt": zod.coerce.date().nullable(),
+  "fulfilledAt": zod.coerce.date().nullable(),
+  "notes": zod.string().nullable(),
+  "createdAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Get one pilot replenishment request
+ */
+export const GetVehicleReplenishmentRequestParams = zod.object({
+  "requestId": zod.coerce.number()
+})
+
+export const GetVehicleReplenishmentRequestResponse = zod.object({
+  "id": zod.number(),
+  "vehicleId": zod.number(),
+  "requestedBy": zod.number(),
+  "mahsulotId": zod.number(),
+  "publicProductId": zod.number(),
+  "productName": zod.string(),
+  "sku": zod.string(),
+  "requestedQuantity": zod.number(),
+  "approvedQuantity": zod.number().nullable(),
+  "targetQuantitySnapshot": zod.number(),
+  "currentQuantitySnapshot": zod.number(),
+  "sourceWarehouseId": zod.number().nullable(),
+  "handoffId": zod.number().nullable(),
+  "handoffStatus": zod.string().nullable(),
+  "operationKey": zod.string().nullable(),
+  "status": zod.enum(['pending', 'approved', 'fulfilled', 'rejected', 'cancelled']),
+  "requestedAt": zod.coerce.date(),
+  "resolvedAt": zod.coerce.date().nullable(),
+  "approvedBy": zod.number().nullable(),
+  "approvedAt": zod.coerce.date().nullable(),
+  "cancelledBy": zod.number().nullable(),
+  "cancelledAt": zod.coerce.date().nullable(),
+  "fulfilledAt": zod.coerce.date().nullable(),
+  "notes": zod.string().nullable(),
+  "createdAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Fully approve a request and create its prepared handoff
+ */
+export const ApproveVehicleReplenishmentRequestParams = zod.object({
+  "requestId": zod.coerce.number()
+})
+
+export const ApproveVehicleReplenishmentRequestBody = zod.object({
+
+})
+
+export const ApproveVehicleReplenishmentRequestResponse = zod.object({
+  "id": zod.number(),
+  "vehicleId": zod.number(),
+  "requestedBy": zod.number(),
+  "mahsulotId": zod.number(),
+  "publicProductId": zod.number(),
+  "productName": zod.string(),
+  "sku": zod.string(),
+  "requestedQuantity": zod.number(),
+  "approvedQuantity": zod.number().nullable(),
+  "targetQuantitySnapshot": zod.number(),
+  "currentQuantitySnapshot": zod.number(),
+  "sourceWarehouseId": zod.number().nullable(),
+  "handoffId": zod.number().nullable(),
+  "handoffStatus": zod.string().nullable(),
+  "operationKey": zod.string().nullable(),
+  "status": zod.enum(['pending', 'approved', 'fulfilled', 'rejected', 'cancelled']),
+  "requestedAt": zod.coerce.date(),
+  "resolvedAt": zod.coerce.date().nullable(),
+  "approvedBy": zod.number().nullable(),
+  "approvedAt": zod.coerce.date().nullable(),
+  "cancelledBy": zod.number().nullable(),
+  "cancelledAt": zod.coerce.date().nullable(),
+  "fulfilledAt": zod.coerce.date().nullable(),
+  "notes": zod.string().nullable(),
+  "createdAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Cancel a pending request or safely cancellable linked handoff
+ */
+export const CancelVehicleReplenishmentRequestParams = zod.object({
+  "requestId": zod.coerce.number()
+})
+
+export const CancelVehicleReplenishmentRequestBody = zod.object({
+
+})
+
+export const CancelVehicleReplenishmentRequestResponse = zod.object({
+  "id": zod.number(),
+  "vehicleId": zod.number(),
+  "requestedBy": zod.number(),
+  "mahsulotId": zod.number(),
+  "publicProductId": zod.number(),
+  "productName": zod.string(),
+  "sku": zod.string(),
+  "requestedQuantity": zod.number(),
+  "approvedQuantity": zod.number().nullable(),
+  "targetQuantitySnapshot": zod.number(),
+  "currentQuantitySnapshot": zod.number(),
+  "sourceWarehouseId": zod.number().nullable(),
+  "handoffId": zod.number().nullable(),
+  "handoffStatus": zod.string().nullable(),
+  "operationKey": zod.string().nullable(),
+  "status": zod.enum(['pending', 'approved', 'fulfilled', 'rejected', 'cancelled']),
+  "requestedAt": zod.coerce.date(),
+  "resolvedAt": zod.coerce.date().nullable(),
+  "approvedBy": zod.number().nullable(),
+  "approvedAt": zod.coerce.date().nullable(),
+  "cancelledBy": zod.number().nullable(),
+  "cancelledAt": zod.coerce.date().nullable(),
+  "fulfilledAt": zod.coerce.date().nullable(),
+  "notes": zod.string().nullable(),
+  "createdAt": zod.coerce.date()
+})
+
+
+/**
  * Returns the reconciliation history for the single active pilot vehicle (server-resolved), newest first. Authenticated via the dedicated vehicle-distribution auth wall. Fails closed (404) unless enabled, 503 when enabled without schema approval.
  * @summary List end-of-day reconciliations for the pilot vehicle
  */

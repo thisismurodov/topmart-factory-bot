@@ -524,42 +524,209 @@ CREATE TABLE IF NOT EXISTS distribution.vehicle_stock_targets (
   id              SERIAL PRIMARY KEY,
   vehicle_id      INTEGER NOT NULL,
   mahsulot_id     INTEGER NOT NULL,
+  public_product_id BIGINT,
+  product_name    TEXT,
   sku             TEXT NOT NULL DEFAULT '',
   target_quantity NUMERIC(12,3) NOT NULL,
   min_quantity    NUMERIC(12,3) NOT NULL DEFAULT 0,
   effective_from  DATE NOT NULL,
   effective_to    DATE,
+  operation_key   TEXT,
+  actor_type      TEXT,
+  actor_ref       TEXT,
   created_at      TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
   CONSTRAINT vehicle_stock_targets_qty_check CHECK (target_quantity > 0),
-  CONSTRAINT vehicle_stock_targets_min_check CHECK (min_quantity >= 0)
+  CONSTRAINT vehicle_stock_targets_min_check CHECK (min_quantity >= 0),
+  CONSTRAINT vehicle_stock_targets_range_check CHECK (min_quantity <= target_quantity),
+  CONSTRAINT vehicle_stock_targets_whole_units_check CHECK (
+    public_product_id IS NULL OR
+    (target_quantity = trunc(target_quantity) AND min_quantity = trunc(min_quantity))
+  ),
+  CONSTRAINT vehicle_stock_targets_identity_check CHECK (
+    public_product_id IS NULL OR
+    (product_name IS NOT NULL AND btrim(product_name) <> '' AND btrim(sku) <> '')
+  )
 );
-CREATE INDEX        IF NOT EXISTS idx_vehicle_stock_targets_vehicle                ON distribution.vehicle_stock_targets (vehicle_id, mahsulot_id);
-CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_stock_targets_vehicle_mahsulot_from   ON distribution.vehicle_stock_targets (vehicle_id, mahsulot_id, effective_from);
+ALTER TABLE distribution.vehicle_stock_targets
+  ADD COLUMN IF NOT EXISTS public_product_id BIGINT,
+  ADD COLUMN IF NOT EXISTS product_name TEXT,
+  ADD COLUMN IF NOT EXISTS operation_key TEXT,
+  ADD COLUMN IF NOT EXISTS actor_type TEXT,
+  ADD COLUMN IF NOT EXISTS actor_ref TEXT;
+ALTER TABLE distribution.vehicle_stock_targets
+  DROP CONSTRAINT IF EXISTS vehicle_stock_targets_range_check,
+  DROP CONSTRAINT IF EXISTS vehicle_stock_targets_whole_units_check,
+  DROP CONSTRAINT IF EXISTS vehicle_stock_targets_identity_check;
+ALTER TABLE distribution.vehicle_stock_targets
+  ADD CONSTRAINT vehicle_stock_targets_range_check CHECK (min_quantity <= target_quantity),
+  ADD CONSTRAINT vehicle_stock_targets_whole_units_check CHECK (
+    public_product_id IS NULL OR
+    (target_quantity = trunc(target_quantity) AND min_quantity = trunc(min_quantity))
+  ),
+  ADD CONSTRAINT vehicle_stock_targets_identity_check CHECK (
+    public_product_id IS NULL OR
+    (product_name IS NOT NULL AND btrim(product_name) <> '' AND btrim(sku) <> '')
+  );
+DROP INDEX IF EXISTS distribution.uq_vehicle_stock_targets_vehicle_mahsulot_from;
+CREATE INDEX        IF NOT EXISTS idx_vehicle_stock_targets_vehicle ON distribution.vehicle_stock_targets (vehicle_id, public_product_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_stock_targets_current
+  ON distribution.vehicle_stock_targets (vehicle_id, public_product_id)
+  WHERE effective_to IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_stock_targets_operation_key
+  ON distribution.vehicle_stock_targets (operation_key)
+  WHERE operation_key IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS distribution.vehicle_replenishment_requests (
   id                 SERIAL PRIMARY KEY,
   vehicle_id         INTEGER NOT NULL,
   requested_by       BIGINT NOT NULL,
   mahsulot_id        INTEGER NOT NULL,
+  public_product_id  BIGINT,
+  product_name       TEXT,
   sku                TEXT NOT NULL DEFAULT '',
   requested_quantity NUMERIC(12,3) NOT NULL,
   approved_quantity  NUMERIC(12,3),
+  target_quantity_snapshot NUMERIC(12,3),
+  current_quantity_snapshot NUMERIC(12,3),
+  source_warehouse_id INTEGER,
+  handoff_id         INTEGER,
+  operation_key      TEXT,
+  request_fingerprint TEXT,
   status             TEXT NOT NULL DEFAULT 'pending',
   requested_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
   resolved_at        TIMESTAMP WITH TIME ZONE,
+  approved_by        BIGINT,
+  approved_at        TIMESTAMP WITH TIME ZONE,
+  cancelled_by       BIGINT,
+  cancelled_at       TIMESTAMP WITH TIME ZONE,
+  fulfilled_at       TIMESTAMP WITH TIME ZONE,
   notes              TEXT,
   created_at         TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
   CONSTRAINT vehicle_replenishment_status_check   CHECK (status IN ('pending','approved','fulfilled','rejected','cancelled')),
   CONSTRAINT vehicle_replenishment_qty_check      CHECK (requested_quantity > 0),
-  CONSTRAINT vehicle_replenishment_approved_check CHECK (approved_quantity IS NULL OR approved_quantity >= 0)
+  CONSTRAINT vehicle_replenishment_approved_check CHECK (approved_quantity IS NULL OR approved_quantity > 0),
+  CONSTRAINT vehicle_replenishment_whole_units_check CHECK (
+    public_product_id IS NULL OR
+    (requested_quantity = trunc(requested_quantity)
+     AND (approved_quantity IS NULL OR approved_quantity = trunc(approved_quantity)))
+  ),
+  CONSTRAINT vehicle_replenishment_handoff_fk FOREIGN KEY (handoff_id)
+    REFERENCES distribution.vehicle_handoffs(id),
+  CONSTRAINT vehicle_replenishment_identity_check CHECK (
+    public_product_id IS NULL OR
+    (product_name IS NOT NULL AND btrim(product_name) <> '' AND btrim(sku) <> '')
+  ),
+  CONSTRAINT vehicle_replenishment_snapshot_check CHECK (
+    public_product_id IS NULL OR
+    (target_quantity_snapshot > 0 AND current_quantity_snapshot >= 0
+     AND requested_quantity = target_quantity_snapshot - current_quantity_snapshot)
+  ),
+  CONSTRAINT vehicle_replenishment_full_approval_check CHECK (
+    status NOT IN ('approved','fulfilled') OR
+    (approved_quantity IS NOT NULL AND approved_quantity = requested_quantity)
+  ),
+  CONSTRAINT vehicle_replenishment_linkage_check CHECK (
+    public_product_id IS NULL OR
+    (status = 'pending' AND approved_quantity IS NULL AND approved_by IS NULL
+     AND approved_at IS NULL AND handoff_id IS NULL AND source_warehouse_id IS NULL
+     AND cancelled_by IS NULL AND cancelled_at IS NULL AND fulfilled_at IS NULL)
+    OR (status = 'approved' AND approved_quantity = requested_quantity
+     AND approved_by IS NOT NULL AND approved_at IS NOT NULL
+     AND handoff_id IS NOT NULL AND source_warehouse_id IS NOT NULL
+     AND cancelled_by IS NULL AND cancelled_at IS NULL AND fulfilled_at IS NULL)
+    OR (status = 'fulfilled' AND approved_quantity = requested_quantity
+     AND approved_by IS NOT NULL AND approved_at IS NOT NULL
+     AND handoff_id IS NOT NULL AND source_warehouse_id IS NOT NULL
+     AND cancelled_by IS NULL AND cancelled_at IS NULL AND fulfilled_at IS NOT NULL)
+    OR (status = 'cancelled' AND cancelled_by IS NOT NULL
+     AND cancelled_at IS NOT NULL AND fulfilled_at IS NULL)
+    OR (status = 'rejected' AND handoff_id IS NULL AND fulfilled_at IS NULL)
+  )
 );
+ALTER TABLE distribution.vehicle_replenishment_requests
+  ADD COLUMN IF NOT EXISTS public_product_id BIGINT,
+  ADD COLUMN IF NOT EXISTS product_name TEXT,
+  ADD COLUMN IF NOT EXISTS target_quantity_snapshot NUMERIC(12,3),
+  ADD COLUMN IF NOT EXISTS current_quantity_snapshot NUMERIC(12,3),
+  ADD COLUMN IF NOT EXISTS source_warehouse_id INTEGER,
+  ADD COLUMN IF NOT EXISTS handoff_id INTEGER,
+  ADD COLUMN IF NOT EXISTS operation_key TEXT,
+  ADD COLUMN IF NOT EXISTS request_fingerprint TEXT,
+  ADD COLUMN IF NOT EXISTS approved_by BIGINT,
+  ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP WITH TIME ZONE,
+  ADD COLUMN IF NOT EXISTS cancelled_by BIGINT,
+  ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP WITH TIME ZONE,
+  ADD COLUMN IF NOT EXISTS fulfilled_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE distribution.vehicle_replenishment_requests
+  DROP CONSTRAINT IF EXISTS vehicle_replenishment_approved_check,
+  DROP CONSTRAINT IF EXISTS vehicle_replenishment_whole_units_check,
+  DROP CONSTRAINT IF EXISTS vehicle_replenishment_identity_check,
+  DROP CONSTRAINT IF EXISTS vehicle_replenishment_snapshot_check,
+  DROP CONSTRAINT IF EXISTS vehicle_replenishment_full_approval_check,
+  DROP CONSTRAINT IF EXISTS vehicle_replenishment_linkage_check;
+ALTER TABLE distribution.vehicle_replenishment_requests
+  ADD CONSTRAINT vehicle_replenishment_approved_check CHECK (approved_quantity IS NULL OR approved_quantity > 0),
+  ADD CONSTRAINT vehicle_replenishment_whole_units_check CHECK (
+    public_product_id IS NULL OR
+    (requested_quantity = trunc(requested_quantity)
+     AND (approved_quantity IS NULL OR approved_quantity = trunc(approved_quantity)))
+  ),
+  ADD CONSTRAINT vehicle_replenishment_identity_check CHECK (
+    public_product_id IS NULL OR
+    (product_name IS NOT NULL AND btrim(product_name) <> '' AND btrim(sku) <> '')
+  ),
+  ADD CONSTRAINT vehicle_replenishment_snapshot_check CHECK (
+    public_product_id IS NULL OR
+    (target_quantity_snapshot > 0 AND current_quantity_snapshot >= 0
+     AND requested_quantity = target_quantity_snapshot - current_quantity_snapshot)
+  ),
+  ADD CONSTRAINT vehicle_replenishment_full_approval_check CHECK (
+    status NOT IN ('approved','fulfilled') OR
+    (approved_quantity IS NOT NULL AND approved_quantity = requested_quantity)
+  ),
+  ADD CONSTRAINT vehicle_replenishment_linkage_check CHECK (
+    public_product_id IS NULL OR
+    (status = 'pending' AND approved_quantity IS NULL AND approved_by IS NULL
+     AND approved_at IS NULL AND handoff_id IS NULL AND source_warehouse_id IS NULL
+     AND cancelled_by IS NULL AND cancelled_at IS NULL AND fulfilled_at IS NULL)
+    OR (status = 'approved' AND approved_quantity = requested_quantity
+     AND approved_by IS NOT NULL AND approved_at IS NOT NULL
+     AND handoff_id IS NOT NULL AND source_warehouse_id IS NOT NULL
+     AND cancelled_by IS NULL AND cancelled_at IS NULL AND fulfilled_at IS NULL)
+    OR (status = 'fulfilled' AND approved_quantity = requested_quantity
+     AND approved_by IS NOT NULL AND approved_at IS NOT NULL
+     AND handoff_id IS NOT NULL AND source_warehouse_id IS NOT NULL
+     AND cancelled_by IS NULL AND cancelled_at IS NULL AND fulfilled_at IS NOT NULL)
+    OR (status = 'cancelled' AND cancelled_by IS NOT NULL
+     AND cancelled_at IS NOT NULL AND fulfilled_at IS NULL)
+    OR (status = 'rejected' AND handoff_id IS NULL AND fulfilled_at IS NULL)
+  );
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE connamespace='distribution'::regnamespace
+      AND conname='vehicle_replenishment_handoff_fk'
+  ) THEN
+    ALTER TABLE distribution.vehicle_replenishment_requests
+      ADD CONSTRAINT vehicle_replenishment_handoff_fk FOREIGN KEY (handoff_id)
+      REFERENCES distribution.vehicle_handoffs(id);
+  END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS idx_vehicle_replenishment_vehicle_status ON distribution.vehicle_replenishment_requests (vehicle_id, status);
-CREATE INDEX IF NOT EXISTS idx_vehicle_replenishment_mahsulot       ON distribution.vehicle_replenishment_requests (mahsulot_id, status);
--- Partial unique: at most one open (pending/approved) request per vehicle+product.
--- Validated via pg_catalog in check-distribution-drift.ts.
+CREATE INDEX IF NOT EXISTS idx_vehicle_replenishment_product ON distribution.vehicle_replenishment_requests (public_product_id, status);
+DROP INDEX IF EXISTS distribution.uq_vehicle_replenishment_open;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_replenishment_open
-  ON distribution.vehicle_replenishment_requests (vehicle_id, mahsulot_id)
+  ON distribution.vehicle_replenishment_requests (vehicle_id, public_product_id)
   WHERE status IN ('pending','approved');
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_replenishment_operation_key
+  ON distribution.vehicle_replenishment_requests (operation_key)
+  WHERE operation_key IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_replenishment_fingerprint
+  ON distribution.vehicle_replenishment_requests (request_fingerprint)
+  WHERE request_fingerprint IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_replenishment_handoff
+  ON distribution.vehicle_replenishment_requests (handoff_id)
+  WHERE handoff_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS distribution.vehicle_reconciliations (
   id                   SERIAL PRIMARY KEY,

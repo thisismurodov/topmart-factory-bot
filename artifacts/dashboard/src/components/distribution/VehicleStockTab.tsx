@@ -13,8 +13,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { RefreshCw, Truck, Box, MapPin, Package, AlertCircle, ArrowRightLeft, Database, ClipboardList } from "lucide-react";
+import { RefreshCw, Truck, Box, MapPin, Package, AlertCircle, ArrowRightLeft, Database, ClipboardList, PackagePlus } from "lucide-react";
 import { VehicleReconciliations } from "./VehicleReconciliations";
+import { VehicleReplenishment } from "./VehicleReplenishment";
 
 // --- Subcomponents ---
 
@@ -235,13 +236,14 @@ export default function VehicleStockTab({ active }: { active: boolean }) {
 
       {/* Tabs for Stock & Movements */}
       <Tabs value={subTab} onValueChange={setSubTab}>
-        <TabsList className="bg-slate-100 border-b border-slate-200 rounded-none w-full justify-start h-auto p-0 pb-px gap-6 px-4">
+        <TabsList className="bg-slate-100 border-b border-slate-200 rounded-none w-full justify-start h-auto p-0 pb-px gap-2 sm:gap-6 px-2 sm:px-4 overflow-x-auto">
           <TabsTrigger
             value="stock"
             className="rounded-none border-b-2 border-transparent data-[state=active]:border-indigo-600 data-[state=active]:bg-transparent data-[state=active]:shadow-none py-2.5 px-1 font-medium text-slate-600 data-[state=active]:text-indigo-700 transition-none"
           >
-            <Box className="w-4 h-4 mr-2" />
-            Zaxira Qoldig'i
+            <Box className="w-4 h-4 sm:mr-2" />
+            <span className="hidden sm:inline">Zaxira Qoldig'i</span>
+            <span className="sr-only sm:hidden">Zaxira Qoldig'i</span>
             {isBootstrapped && stockData?.skuCount > 0 && (
               <Badge className="ml-2 bg-indigo-100 text-indigo-700 border-transparent hover:bg-indigo-100 px-1.5 py-0 text-[10px]">
                 {stockData.skuCount}
@@ -249,18 +251,28 @@ export default function VehicleStockTab({ active }: { active: boolean }) {
             )}
           </TabsTrigger>
           <TabsTrigger
-            value="movements"
-            className="rounded-none border-b-2 border-transparent data-[state=active]:border-amber-500 data-[state=active]:bg-transparent data-[state=active]:shadow-none py-2.5 px-1 font-medium text-slate-600 data-[state=active]:text-amber-700 transition-none"
+            value="replenishment"
+            className="rounded-none shrink-0 border-b-2 border-transparent data-[state=active]:border-indigo-600 data-[state=active]:bg-transparent data-[state=active]:shadow-none py-2.5 px-1 font-medium text-slate-600 data-[state=active]:text-indigo-700 transition-none"
           >
-            <ArrowRightLeft className="w-4 h-4 mr-2" />
-            Harakatlar Tarixi
+            <PackagePlus className="w-4 h-4 sm:mr-2" />
+            <span className="hidden sm:inline">To‘ldirish</span>
+            <span className="sr-only sm:hidden">To‘ldirish</span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="movements"
+            className="rounded-none shrink-0 border-b-2 border-transparent data-[state=active]:border-amber-500 data-[state=active]:bg-transparent data-[state=active]:shadow-none py-2.5 px-1 font-medium text-slate-600 data-[state=active]:text-amber-700 transition-none"
+          >
+            <ArrowRightLeft className="w-4 h-4 sm:mr-2" />
+            <span className="hidden sm:inline">Harakatlar Tarixi</span>
+            <span className="sr-only sm:hidden">Harakatlar Tarixi</span>
           </TabsTrigger>
           <TabsTrigger
             value="reconciliations"
-            className="rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-500 data-[state=active]:bg-transparent data-[state=active]:shadow-none py-2.5 px-1 font-medium text-slate-600 data-[state=active]:text-emerald-700 transition-none"
+            className="rounded-none shrink-0 border-b-2 border-transparent data-[state=active]:border-emerald-500 data-[state=active]:bg-transparent data-[state=active]:shadow-none py-2.5 px-1 font-medium text-slate-600 data-[state=active]:text-emerald-700 transition-none"
           >
-            <ClipboardList className="w-4 h-4 mr-2" />
-            Fizik Sanoq
+            <ClipboardList className="w-4 h-4 sm:mr-2" />
+            <span className="hidden sm:inline">Fizik Sanoq</span>
+            <span className="sr-only sm:hidden">Fizik Sanoq</span>
           </TabsTrigger>
         </TabsList>
 
@@ -344,6 +356,10 @@ export default function VehicleStockTab({ active }: { active: boolean }) {
                 </TableBody>
               </Table>
             </div>
+          </TabsContent>
+
+          <TabsContent value="replenishment" className="m-0 border-none p-0 outline-none">
+            <VehicleReplenishment active={active && subTab === "replenishment"} />
           </TabsContent>
 
           <TabsContent value="reconciliations" className="m-0 border-none p-0 outline-none">

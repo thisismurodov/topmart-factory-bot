@@ -1357,6 +1357,107 @@ paths:
           description: Enabled but schema not approved
           content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
 
+  /vehicle-distribution/pilot/stock-targets:
+    get:
+      operationId: listVehicleStockTargets
+      tags: [vehicle-distribution]
+      summary: List pilot stock target history with current inventory and low state
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/VehicleStockTargetList" } } }
+    put:
+      operationId: replaceVehicleStockTarget
+      tags: [vehicle-distribution]
+      summary: Replace the effective stock target (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReplaceVehicleStockTargetInput" }
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/VehicleStockTarget" } } }
+
+  /vehicle-distribution/pilot/replenishment-requests:
+    get:
+      operationId: listVehicleReplenishmentRequests
+      tags: [vehicle-distribution]
+      summary: List pilot replenishment request history and linked handoff states
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/VehicleReplenishmentRequestList" } } }
+    post:
+      operationId: createVehicleReplenishmentRequest
+      tags: [vehicle-distribution]
+      summary: Create a server-computed manual replenishment request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateVehicleReplenishmentRequestInput" }
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/VehicleReplenishmentRequest" } } }
+
+  /vehicle-distribution/pilot/replenishment-requests/{requestId}:
+    get:
+      operationId: getVehicleReplenishmentRequest
+      tags: [vehicle-distribution]
+      summary: Get one pilot replenishment request
+      parameters:
+        - name: requestId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/VehicleReplenishmentRequest" } } }
+
+  /vehicle-distribution/pilot/replenishment-requests/{requestId}/approve:
+    post:
+      operationId: approveVehicleReplenishmentRequest
+      tags: [vehicle-distribution]
+      summary: Fully approve a request and create its prepared handoff
+      parameters:
+        - name: requestId
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VehicleReplenishmentTransitionInput" }
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/VehicleReplenishmentRequest" } } }
+
+  /vehicle-distribution/pilot/replenishment-requests/{requestId}/cancel:
+    post:
+      operationId: cancelVehicleReplenishmentRequest
+      tags: [vehicle-distribution]
+      summary: Cancel a pending request or safely cancellable linked handoff
+      parameters:
+        - name: requestId
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VehicleReplenishmentTransitionInput" }
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/VehicleReplenishmentRequest" } } }
+
   /vehicle-distribution/pilot/reconciliations:
     get:
       operationId: listVehicleReconciliations
@@ -2177,6 +2278,114 @@ components:
       additionalProperties: false
 
     # ── Vehicle Reconciliation (F6 variance detection) ──────────────
+    ReplaceVehicleStockTargetInput:
+      type: object
+      additionalProperties: false
+      required: [mahsulotId, minQuantity, targetQuantity, operationKey]
+      properties:
+        mahsulotId: { type: integer, minimum: 1 }
+        minQuantity: { type: integer, minimum: 0 }
+        targetQuantity: { type: integer, minimum: 1 }
+        operationKey: { type: string, minLength: 1, maxLength: 200 }
+        effectiveFrom: { type: string, format: date }
+
+    VehicleStockTarget:
+      type: object
+      additionalProperties: false
+      required: [id, vehicleId, mahsulotId, publicProductId, productName, sku,
+        minQuantity, targetQuantity, currentQuantity, deficitQuantity, low,
+        effectiveFrom, effectiveTo, operationKey, actorType, actorRef, createdAt]
+      properties:
+        id: { type: integer }
+        vehicleId: { type: integer }
+        mahsulotId: { type: integer }
+        publicProductId: { type: integer }
+        productName: { type: string }
+        sku: { type: string }
+        minQuantity: { type: number }
+        targetQuantity: { type: number }
+        currentQuantity: { type: number }
+        deficitQuantity: { type: number }
+        low: { type: boolean }
+        effectiveFrom: { type: string, format: date }
+        effectiveTo: { type: [string, "null"], format: date }
+        operationKey: { type: [string, "null"] }
+        actorType: { type: [string, "null"] }
+        actorRef: { type: [string, "null"] }
+        createdAt: { type: string, format: date-time }
+
+    VehicleStockTargetList:
+      type: object
+      additionalProperties: false
+      required: [vehicleId, warehouseId, targets]
+      properties:
+        vehicleId: { type: integer }
+        warehouseId: { type: integer }
+        targets:
+          type: array
+          items: { $ref: "#/components/schemas/VehicleStockTarget" }
+
+    CreateVehicleReplenishmentRequestInput:
+      type: object
+      additionalProperties: false
+      required: [mahsulotId, operationKey]
+      properties:
+        mahsulotId: { type: integer, minimum: 1 }
+        operationKey: { type: string, minLength: 1, maxLength: 200 }
+
+    VehicleReplenishmentTransitionInput:
+      type: object
+      additionalProperties: false
+      maxProperties: 0
+
+    VehicleReplenishmentRequest:
+      type: object
+      additionalProperties: false
+      required: [id, vehicleId, requestedBy, mahsulotId, publicProductId,
+        productName, sku, requestedQuantity, approvedQuantity,
+        targetQuantitySnapshot, currentQuantitySnapshot, sourceWarehouseId,
+        handoffId, handoffStatus, operationKey, status, requestedAt, resolvedAt,
+        approvedBy, approvedAt, cancelledBy, cancelledAt, fulfilledAt, notes,
+        createdAt]
+      properties:
+        id: { type: integer }
+        vehicleId: { type: integer }
+        requestedBy: { type: integer }
+        mahsulotId: { type: integer }
+        publicProductId: { type: integer }
+        productName: { type: string }
+        sku: { type: string }
+        requestedQuantity: { type: number }
+        approvedQuantity: { type: [number, "null"] }
+        targetQuantitySnapshot: { type: number }
+        currentQuantitySnapshot: { type: number }
+        sourceWarehouseId: { type: [integer, "null"] }
+        handoffId: { type: [integer, "null"] }
+        handoffStatus: { type: [string, "null"] }
+        operationKey: { type: [string, "null"] }
+        status:
+          type: string
+          enum: [pending, approved, fulfilled, rejected, cancelled]
+        requestedAt: { type: string, format: date-time }
+        resolvedAt: { type: [string, "null"], format: date-time }
+        approvedBy: { type: [integer, "null"] }
+        approvedAt: { type: [string, "null"], format: date-time }
+        cancelledBy: { type: [integer, "null"] }
+        cancelledAt: { type: [string, "null"], format: date-time }
+        fulfilledAt: { type: [string, "null"], format: date-time }
+        notes: { type: [string, "null"] }
+        createdAt: { type: string, format: date-time }
+
+    VehicleReplenishmentRequestList:
+      type: object
+      additionalProperties: false
+      required: [vehicleId, requests]
+      properties:
+        vehicleId: { type: integer }
+        requests:
+          type: array
+          items: { $ref: "#/components/schemas/VehicleReplenishmentRequest" }
+
     CreateVehicleReconciliationInput:
       type: object
       description: >-

@@ -24,6 +24,7 @@ import type {
   BatchList,
   CreateVehicleHandoffInput,
   CreateVehicleReconciliationInput,
+  CreateVehicleReplenishmentRequestInput,
   Customer,
   CustomerInput,
   DailyChartPoint,
@@ -55,6 +56,7 @@ import type {
   ProductionLineInput,
   ProductionLineWorker,
   ProductionLineWorkerInput,
+  ReplaceVehicleStockTargetInput,
   SalaryPayInput,
   SalaryRow,
   Sale,
@@ -75,6 +77,11 @@ import type {
   VehicleReconciliationDetail,
   VehicleReconciliationList,
   VehicleReconciliationOperationInput,
+  VehicleReplenishmentRequest,
+  VehicleReplenishmentRequestList,
+  VehicleReplenishmentTransitionInput,
+  VehicleStockTarget,
+  VehicleStockTargetList,
   Worker,
   WorkerDeleteInput,
   WorkerInput,
@@ -4123,6 +4130,523 @@ export const useCancelVehicleHandoff = <TError = ErrorType<ErrorResponse>,
         TContext
       > => {
       return useMutation(getCancelVehicleHandoffMutationOptions(options));
+    }
+
+export const getListVehicleStockTargetsUrl = () => {
+
+
+
+
+  return `/api/vehicle-distribution/pilot/stock-targets`
+}
+
+/**
+ * @summary List pilot stock target history with current inventory and low state
+ */
+export const listVehicleStockTargets = async ( options?: RequestInit): Promise<VehicleStockTargetList> => {
+
+  return customFetch<VehicleStockTargetList>(getListVehicleStockTargetsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListVehicleStockTargetsQueryKey = () => {
+    return [
+    `/api/vehicle-distribution/pilot/stock-targets`
+    ] as const;
+    }
+
+
+export const getListVehicleStockTargetsQueryOptions = <TData = Awaited<ReturnType<typeof listVehicleStockTargets>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listVehicleStockTargets>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListVehicleStockTargetsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listVehicleStockTargets>>> = ({ signal }) => listVehicleStockTargets({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listVehicleStockTargets>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListVehicleStockTargetsQueryResult = NonNullable<Awaited<ReturnType<typeof listVehicleStockTargets>>>
+export type ListVehicleStockTargetsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List pilot stock target history with current inventory and low state
+ */
+
+export function useListVehicleStockTargets<TData = Awaited<ReturnType<typeof listVehicleStockTargets>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listVehicleStockTargets>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListVehicleStockTargetsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getReplaceVehicleStockTargetUrl = () => {
+
+
+
+
+  return `/api/vehicle-distribution/pilot/stock-targets`
+}
+
+/**
+ * @summary Replace the effective stock target (admin only)
+ */
+export const replaceVehicleStockTarget = async (replaceVehicleStockTargetInput: ReplaceVehicleStockTargetInput, options?: RequestInit): Promise<VehicleStockTarget> => {
+
+  return customFetch<VehicleStockTarget>(getReplaceVehicleStockTargetUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      replaceVehicleStockTargetInput,)
+  }
+);}
+
+
+
+
+export const getReplaceVehicleStockTargetMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof replaceVehicleStockTarget>>, TError,{data: BodyType<ReplaceVehicleStockTargetInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof replaceVehicleStockTarget>>, TError,{data: BodyType<ReplaceVehicleStockTargetInput>}, TContext> => {
+
+const mutationKey = ['replaceVehicleStockTarget'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof replaceVehicleStockTarget>>, {data: BodyType<ReplaceVehicleStockTargetInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  replaceVehicleStockTarget(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReplaceVehicleStockTargetMutationResult = NonNullable<Awaited<ReturnType<typeof replaceVehicleStockTarget>>>
+    export type ReplaceVehicleStockTargetMutationBody = BodyType<ReplaceVehicleStockTargetInput>
+    export type ReplaceVehicleStockTargetMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Replace the effective stock target (admin only)
+ */
+export const useReplaceVehicleStockTarget = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof replaceVehicleStockTarget>>, TError,{data: BodyType<ReplaceVehicleStockTargetInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof replaceVehicleStockTarget>>,
+        TError,
+        {data: BodyType<ReplaceVehicleStockTargetInput>},
+        TContext
+      > => {
+      return useMutation(getReplaceVehicleStockTargetMutationOptions(options));
+    }
+
+export const getListVehicleReplenishmentRequestsUrl = () => {
+
+
+
+
+  return `/api/vehicle-distribution/pilot/replenishment-requests`
+}
+
+/**
+ * @summary List pilot replenishment request history and linked handoff states
+ */
+export const listVehicleReplenishmentRequests = async ( options?: RequestInit): Promise<VehicleReplenishmentRequestList> => {
+
+  return customFetch<VehicleReplenishmentRequestList>(getListVehicleReplenishmentRequestsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListVehicleReplenishmentRequestsQueryKey = () => {
+    return [
+    `/api/vehicle-distribution/pilot/replenishment-requests`
+    ] as const;
+    }
+
+
+export const getListVehicleReplenishmentRequestsQueryOptions = <TData = Awaited<ReturnType<typeof listVehicleReplenishmentRequests>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listVehicleReplenishmentRequests>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListVehicleReplenishmentRequestsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listVehicleReplenishmentRequests>>> = ({ signal }) => listVehicleReplenishmentRequests({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listVehicleReplenishmentRequests>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListVehicleReplenishmentRequestsQueryResult = NonNullable<Awaited<ReturnType<typeof listVehicleReplenishmentRequests>>>
+export type ListVehicleReplenishmentRequestsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List pilot replenishment request history and linked handoff states
+ */
+
+export function useListVehicleReplenishmentRequests<TData = Awaited<ReturnType<typeof listVehicleReplenishmentRequests>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listVehicleReplenishmentRequests>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListVehicleReplenishmentRequestsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getCreateVehicleReplenishmentRequestUrl = () => {
+
+
+
+
+  return `/api/vehicle-distribution/pilot/replenishment-requests`
+}
+
+/**
+ * @summary Create a server-computed manual replenishment request
+ */
+export const createVehicleReplenishmentRequest = async (createVehicleReplenishmentRequestInput: CreateVehicleReplenishmentRequestInput, options?: RequestInit): Promise<VehicleReplenishmentRequest> => {
+
+  return customFetch<VehicleReplenishmentRequest>(getCreateVehicleReplenishmentRequestUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      createVehicleReplenishmentRequestInput,)
+  }
+);}
+
+
+
+
+export const getCreateVehicleReplenishmentRequestMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createVehicleReplenishmentRequest>>, TError,{data: BodyType<CreateVehicleReplenishmentRequestInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createVehicleReplenishmentRequest>>, TError,{data: BodyType<CreateVehicleReplenishmentRequestInput>}, TContext> => {
+
+const mutationKey = ['createVehicleReplenishmentRequest'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createVehicleReplenishmentRequest>>, {data: BodyType<CreateVehicleReplenishmentRequestInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createVehicleReplenishmentRequest(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateVehicleReplenishmentRequestMutationResult = NonNullable<Awaited<ReturnType<typeof createVehicleReplenishmentRequest>>>
+    export type CreateVehicleReplenishmentRequestMutationBody = BodyType<CreateVehicleReplenishmentRequestInput>
+    export type CreateVehicleReplenishmentRequestMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Create a server-computed manual replenishment request
+ */
+export const useCreateVehicleReplenishmentRequest = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createVehicleReplenishmentRequest>>, TError,{data: BodyType<CreateVehicleReplenishmentRequestInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createVehicleReplenishmentRequest>>,
+        TError,
+        {data: BodyType<CreateVehicleReplenishmentRequestInput>},
+        TContext
+      > => {
+      return useMutation(getCreateVehicleReplenishmentRequestMutationOptions(options));
+    }
+
+export const getGetVehicleReplenishmentRequestUrl = (requestId: number,) => {
+
+
+
+
+  return `/api/vehicle-distribution/pilot/replenishment-requests/${requestId}`
+}
+
+/**
+ * @summary Get one pilot replenishment request
+ */
+export const getVehicleReplenishmentRequest = async (requestId: number, options?: RequestInit): Promise<VehicleReplenishmentRequest> => {
+
+  return customFetch<VehicleReplenishmentRequest>(getGetVehicleReplenishmentRequestUrl(requestId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetVehicleReplenishmentRequestQueryKey = (requestId: number,) => {
+    return [
+    `/api/vehicle-distribution/pilot/replenishment-requests/${requestId}`
+    ] as const;
+    }
+
+
+export const getGetVehicleReplenishmentRequestQueryOptions = <TData = Awaited<ReturnType<typeof getVehicleReplenishmentRequest>>, TError = ErrorType<unknown>>(requestId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getVehicleReplenishmentRequest>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetVehicleReplenishmentRequestQueryKey(requestId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getVehicleReplenishmentRequest>>> = ({ signal }) => getVehicleReplenishmentRequest(requestId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(requestId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getVehicleReplenishmentRequest>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetVehicleReplenishmentRequestQueryResult = NonNullable<Awaited<ReturnType<typeof getVehicleReplenishmentRequest>>>
+export type GetVehicleReplenishmentRequestQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get one pilot replenishment request
+ */
+
+export function useGetVehicleReplenishmentRequest<TData = Awaited<ReturnType<typeof getVehicleReplenishmentRequest>>, TError = ErrorType<unknown>>(
+ requestId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getVehicleReplenishmentRequest>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetVehicleReplenishmentRequestQueryOptions(requestId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getApproveVehicleReplenishmentRequestUrl = (requestId: number,) => {
+
+
+
+
+  return `/api/vehicle-distribution/pilot/replenishment-requests/${requestId}/approve`
+}
+
+/**
+ * @summary Fully approve a request and create its prepared handoff
+ */
+export const approveVehicleReplenishmentRequest = async (requestId: number,
+    vehicleReplenishmentTransitionInput?: VehicleReplenishmentTransitionInput, options?: RequestInit): Promise<VehicleReplenishmentRequest> => {
+
+  return customFetch<VehicleReplenishmentRequest>(getApproveVehicleReplenishmentRequestUrl(requestId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      vehicleReplenishmentTransitionInput,)
+  }
+);}
+
+
+
+
+export const getApproveVehicleReplenishmentRequestMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveVehicleReplenishmentRequest>>, TError,{requestId: number;data?: BodyType<VehicleReplenishmentTransitionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof approveVehicleReplenishmentRequest>>, TError,{requestId: number;data?: BodyType<VehicleReplenishmentTransitionInput>}, TContext> => {
+
+const mutationKey = ['approveVehicleReplenishmentRequest'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof approveVehicleReplenishmentRequest>>, {requestId: number;data?: BodyType<VehicleReplenishmentTransitionInput>}> = (props) => {
+          const {requestId,data} = props ?? {};
+
+          return  approveVehicleReplenishmentRequest(requestId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ApproveVehicleReplenishmentRequestMutationResult = NonNullable<Awaited<ReturnType<typeof approveVehicleReplenishmentRequest>>>
+    export type ApproveVehicleReplenishmentRequestMutationBody = BodyType<VehicleReplenishmentTransitionInput> | undefined
+    export type ApproveVehicleReplenishmentRequestMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Fully approve a request and create its prepared handoff
+ */
+export const useApproveVehicleReplenishmentRequest = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveVehicleReplenishmentRequest>>, TError,{requestId: number;data?: BodyType<VehicleReplenishmentTransitionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof approveVehicleReplenishmentRequest>>,
+        TError,
+        {requestId: number;data?: BodyType<VehicleReplenishmentTransitionInput>},
+        TContext
+      > => {
+      return useMutation(getApproveVehicleReplenishmentRequestMutationOptions(options));
+    }
+
+export const getCancelVehicleReplenishmentRequestUrl = (requestId: number,) => {
+
+
+
+
+  return `/api/vehicle-distribution/pilot/replenishment-requests/${requestId}/cancel`
+}
+
+/**
+ * @summary Cancel a pending request or safely cancellable linked handoff
+ */
+export const cancelVehicleReplenishmentRequest = async (requestId: number,
+    vehicleReplenishmentTransitionInput?: VehicleReplenishmentTransitionInput, options?: RequestInit): Promise<VehicleReplenishmentRequest> => {
+
+  return customFetch<VehicleReplenishmentRequest>(getCancelVehicleReplenishmentRequestUrl(requestId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      vehicleReplenishmentTransitionInput,)
+  }
+);}
+
+
+
+
+export const getCancelVehicleReplenishmentRequestMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelVehicleReplenishmentRequest>>, TError,{requestId: number;data?: BodyType<VehicleReplenishmentTransitionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof cancelVehicleReplenishmentRequest>>, TError,{requestId: number;data?: BodyType<VehicleReplenishmentTransitionInput>}, TContext> => {
+
+const mutationKey = ['cancelVehicleReplenishmentRequest'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof cancelVehicleReplenishmentRequest>>, {requestId: number;data?: BodyType<VehicleReplenishmentTransitionInput>}> = (props) => {
+          const {requestId,data} = props ?? {};
+
+          return  cancelVehicleReplenishmentRequest(requestId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CancelVehicleReplenishmentRequestMutationResult = NonNullable<Awaited<ReturnType<typeof cancelVehicleReplenishmentRequest>>>
+    export type CancelVehicleReplenishmentRequestMutationBody = BodyType<VehicleReplenishmentTransitionInput> | undefined
+    export type CancelVehicleReplenishmentRequestMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Cancel a pending request or safely cancellable linked handoff
+ */
+export const useCancelVehicleReplenishmentRequest = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelVehicleReplenishmentRequest>>, TError,{requestId: number;data?: BodyType<VehicleReplenishmentTransitionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof cancelVehicleReplenishmentRequest>>,
+        TError,
+        {requestId: number;data?: BodyType<VehicleReplenishmentTransitionInput>},
+        TContext
+      > => {
+      return useMutation(getCancelVehicleReplenishmentRequestMutationOptions(options));
     }
 
 export const getListVehicleReconciliationsUrl = (params?: ListVehicleReconciliationsParams,) => {

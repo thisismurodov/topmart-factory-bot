@@ -6,6 +6,7 @@ import http from "node:http";
 import express from "express";
 import pg from "pg";
 import { createVehicleHandoffRouter } from "../src/routes/vehicle-distribution/handoff-router";
+import { createVehicleReplenishmentRouter } from "../src/routes/vehicle-distribution/replenishment-router";
 import {
   bootstrapPilotInTx,
   PILOT_LOCK_KEY,
@@ -313,6 +314,7 @@ function makeApp(): http.Server {
     next();
   });
   app.use(createVehicleHandoffRouter(testPool));
+  app.use(createVehicleReplenishmentRouter(testPool));
   return http.createServer(app);
 }
 
@@ -331,7 +333,7 @@ async function call(
   const res = await fetch(`${baseUrl}${pathname}`, {
     method,
     headers,
-    ...(method === "POST"
+    ...(method !== "GET"
       ? { body: JSON.stringify(opts.body ?? {}) }
       : {}),
   });
@@ -365,6 +367,8 @@ function opKey(): string {
 }
 
 async function cleanHandoffs(): Promise<void> {
+  await client.query(`DELETE FROM distribution.vehicle_replenishment_requests`);
+  await client.query(`DELETE FROM distribution.vehicle_stock_targets`);
   await client.query(`DELETE FROM distribution.vehicle_unit_events`);
   await client.query(`DELETE FROM distribution.vehicle_label_print_sessions`);
   await client.query(`DELETE FROM distribution.vehicle_label_prepare_sessions`);
@@ -1351,6 +1355,454 @@ describe("cancellation", () => {
     await call(`POST`, `/vehicle-distribution/handoffs/${handoffId}/stock-transferred`, { token: adminToken });
     const c = await call(`POST`, `/vehicle-distribution/handoffs/${handoffId}/cancel`, { token: adminToken });
     expect(c.status).toBe(409);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// F8 replenishment API + F3 linked lifecycle
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function putTarget(
+  product = prodA,
+  overrides: Record<string, unknown> = {},
+): Promise<Resp> {
+  return call("PUT", "/vehicle-distribution/pilot/stock-targets", {
+    token: adminToken,
+    body: {
+      mahsulotId: product.mahsulotId,
+      minQuantity: 3,
+      targetQuantity: 10,
+      operationKey: opKey(),
+      ...overrides,
+    },
+  });
+}
+
+async function manualRequest(
+  product = prodA,
+  opts: { token?: string; botKey?: string; operationKey?: string } = {
+    token: adminToken,
+  },
+): Promise<Resp> {
+  return call("POST", "/vehicle-distribution/pilot/replenishment-requests", {
+    token: opts.token,
+    botKey: opts.botKey,
+    body: {
+      mahsulotId: product.mahsulotId,
+      operationKey: opts.operationKey ?? opKey(),
+    },
+  });
+}
+
+describe("F8 stock targets", () => {
+  it("lists canonical inventory low state and replaces targets with idempotent history", async () => {
+    await setStock(vehicleWarehouseId, prodA.name, 2, 5);
+    const operationKey = opKey();
+    const first = await putTarget(prodA, { operationKey });
+    expect(first.status).toBe(200);
+    expect(first.body).toMatchObject({
+      mahsulotId: prodA.mahsulotId,
+      sku: prodA.sku,
+      minQuantity: 3,
+      targetQuantity: 10,
+      currentQuantity: 2,
+      deficitQuantity: 8,
+      low: true,
+    });
+    const replay = await putTarget(prodA, { operationKey });
+    expect(replay.status).toBe(200);
+    expect(replay.body.id).toBe(first.body.id);
+    const mismatch = await putTarget(prodA, {
+      operationKey,
+      targetQuantity: 11,
+    });
+    expect(mismatch.status).toBe(409);
+
+    const tomorrow = new Date(Date.now() + 86_400_000)
+      .toISOString()
+      .slice(0, 10);
+    const second = await putTarget(prodA, {
+      effectiveFrom: tomorrow,
+      operationKey: opKey(),
+      minQuantity: 4,
+      targetQuantity: 12,
+    });
+    expect(second.status).toBe(200);
+    const list = await call(
+      "GET",
+      "/vehicle-distribution/pilot/stock-targets",
+      { token: adminToken },
+    );
+    expect(list.status).toBe(200);
+    expect(list.body.targets).toHaveLength(2);
+    const old = list.body.targets.find((t: any) => t.id === first.body.id);
+    expect(String(old.effectiveTo).slice(0, 10)).toBe(
+      new Date(Date.parse(`${tomorrow}T00:00:00Z`) - 86_400_000)
+        .toISOString()
+        .slice(0, 10),
+    );
+    expect(list.body.targets.find((t: any) => t.id === second.body.id).effectiveTo)
+      .toBeNull();
+  });
+
+  it("rejects fractional/invalid ranges, unknown fields, bot replacement and open-request replacement", async () => {
+    expect((await putTarget(prodA, { targetQuantity: 10.5 })).status).toBe(400);
+    expect((await putTarget(prodA, { minQuantity: 4, targetQuantity: 3 })).status)
+      .toBe(400);
+    const strict = await putTarget(prodA, { extra: true });
+    expect(strict.status).toBe(400);
+    const bot = await call(
+      "PUT",
+      "/vehicle-distribution/pilot/stock-targets",
+      {
+        botKey: BOT_KEY,
+        body: {
+          mahsulotId: prodA.mahsulotId,
+          minQuantity: 1,
+          targetQuantity: 2,
+          operationKey: opKey(),
+        },
+      },
+    );
+    expect(bot.status).toBe(403);
+    expect((await putTarget()).status).toBe(200);
+    await setStock(vehicleWarehouseId, prodA.name, 0, 0);
+    expect((await manualRequest()).status).toBe(200);
+    expect((await putTarget(prodA, { targetQuantity: 20 })).status).toBe(409);
+  });
+});
+
+describe("F8 manual request", () => {
+  it("computes target-current server-side, supports bot/admin reads and idempotency", async () => {
+    await putTarget();
+    await setStock(vehicleWarehouseId, prodA.name, 2, 5);
+    const operationKey = opKey();
+    const first = await manualRequest(prodA, {
+      botKey: BOT_KEY,
+      operationKey,
+    });
+    expect(first.status).toBe(200);
+    expect(first.body).toMatchObject({
+      requestedQuantity: 8,
+      targetQuantitySnapshot: 10,
+      currentQuantitySnapshot: 2,
+      status: "pending",
+    });
+    const replay = await manualRequest(prodA, {
+      botKey: BOT_KEY,
+      operationKey,
+    });
+    expect(replay.status).toBe(200);
+    expect(replay.body.id).toBe(first.body.id);
+    const list = await call(
+      "GET",
+      "/vehicle-distribution/pilot/replenishment-requests",
+      { botKey: BOT_KEY },
+    );
+    expect(list.status).toBe(200);
+    expect(list.body.requests).toHaveLength(1);
+    const detail = await call(
+      "GET",
+      `/vehicle-distribution/pilot/replenishment-requests/${first.body.id}`,
+      { token: adminToken },
+    );
+    expect(detail.status).toBe(200);
+    expect(detail.body.handoffStatus).toBeNull();
+  });
+
+  it("rejects no target, above-minimum, client quantities, and mismatched snapshot replay", async () => {
+    expect((await manualRequest()).status).toBe(409);
+    await putTarget();
+    await setStock(vehicleWarehouseId, prodA.name, 4, 10);
+    expect((await manualRequest()).status).toBe(409);
+    await setStock(vehicleWarehouseId, prodA.name, 1, 2.5);
+    const operationKey = opKey();
+    expect(
+      (
+        await call("POST", "/vehicle-distribution/pilot/replenishment-requests", {
+          token: adminToken,
+          body: {
+            mahsulotId: prodA.mahsulotId,
+            operationKey,
+            requestedQuantity: 999,
+          },
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (await manualRequest(prodA, { token: adminToken, operationKey })).status,
+    ).toBe(200);
+    await setStock(vehicleWarehouseId, prodA.name, 2, 5);
+    expect(
+      (await manualRequest(prodA, { token: adminToken, operationKey })).status,
+    ).toBe(409);
+  });
+});
+
+describe("F8 approval and linked F3 lifecycle", () => {
+  it("approves once under concurrency, chooses deterministic source, and does not move stock", async () => {
+    const later = await client.query(
+      `INSERT INTO warehouses(name,active,location_type,purpose)
+       VALUES($1,TRUE,'general','finished') RETURNING id`,
+      [`Later source ${Date.now()}`],
+    );
+    const laterId = Number(later.rows[0].id);
+    await setStock(laterId, prodA.name, 100, 250);
+    await putTarget();
+    await setStock(vehicleWarehouseId, prodA.name, 0, 0);
+    const request = await manualRequest();
+    const path =
+      `/vehicle-distribution/pilot/replenishment-requests/${request.body.id}/approve`;
+    const [a, b] = await Promise.all([
+      call("POST", path, { token: adminToken, body: {} }),
+      call("POST", path, { token: adminToken, body: {} }),
+    ]);
+    expect(a.status).toBe(200);
+    expect(b.status).toBe(200);
+    expect(a.body.handoffId).toBe(b.body.handoffId);
+    expect(a.body.sourceWarehouseId).toBe(erpWarehouseId);
+    expect(a.body.handoffStatus).toBe("prepared");
+    const counts = await client.query(
+      `SELECT
+        (SELECT COUNT(*)::int FROM distribution.vehicle_handoffs
+          WHERE operation_key=$1) handoffs,
+        (SELECT COUNT(*)::int FROM stock_movements) movements,
+        (SELECT quantity FROM inventory WHERE warehouse_id=$2 AND product=$3) vehicle_qty`,
+      [`replenishment:${request.body.id}`, vehicleWarehouseId, prodA.name],
+    );
+    expect(Number(counts.rows[0].handoffs)).toBe(1);
+    expect(Number(counts.rows[0].movements)).toBe(0);
+    expect(Number(counts.rows[0].vehicle_qty)).toBe(0);
+    expect(
+      (
+        await call("POST", path, {
+          token: adminToken,
+          body: { approvedQuantity: 1 },
+        })
+      ).status,
+    ).toBe(400);
+  });
+
+  it("insufficient source rolls back request and handoff", async () => {
+    await putTarget();
+    await setStock(vehicleWarehouseId, prodA.name, 0, 0);
+    await client.query(
+      `UPDATE inventory SET quantity=0,weight_kg=0
+        WHERE product=$1 AND warehouse_id<>$2`,
+      [prodA.name, vehicleWarehouseId],
+    );
+    const request = await manualRequest();
+    const approval = await call(
+      "POST",
+      `/vehicle-distribution/pilot/replenishment-requests/${request.body.id}/approve`,
+      { token: adminToken, body: {} },
+    );
+    expect(approval.status).toBe(409);
+    const row = await client.query(
+      `SELECT status,handoff_id FROM distribution.vehicle_replenishment_requests WHERE id=$1`,
+      [request.body.id],
+    );
+    expect(row.rows[0]).toMatchObject({ status: "pending", handoff_id: null });
+  });
+
+  it("F4 prepare/print and F3 transfer atomically fulfill the linked request", async () => {
+    await putTarget();
+    await setStock(vehicleWarehouseId, prodA.name, 0, 0);
+    const request = await manualRequest();
+    const approved = await call(
+      "POST",
+      `/vehicle-distribution/pilot/replenishment-requests/${request.body.id}/approve`,
+      { token: adminToken, body: {} },
+    );
+    const handoffId = approved.body.handoffId as number;
+    expect((await prepareLabels(handoffId)).status).toBe(200);
+    expect((await confirmPrinted(handoffId)).status).toBe(200);
+    expect(
+      (
+        await call(
+          "POST",
+          `/vehicle-distribution/handoffs/${handoffId}/handed-over`,
+          { token: adminToken },
+        )
+      ).status,
+    ).toBe(200);
+    const transferred = await call(
+      "POST",
+      `/vehicle-distribution/handoffs/${handoffId}/stock-transferred`,
+      { token: adminToken },
+    );
+    expect(transferred.status).toBe(200);
+    const linked = await client.query(
+      `SELECT status,fulfilled_at FROM distribution.vehicle_replenishment_requests WHERE id=$1`,
+      [request.body.id],
+    );
+    expect(linked.rows[0].status).toBe("fulfilled");
+    expect(linked.rows[0].fulfilled_at).not.toBeNull();
+    expect(
+      (
+        await call(
+          "POST",
+          `/vehicle-distribution/pilot/replenishment-requests/${request.body.id}/cancel`,
+          { token: adminToken, body: {} },
+        )
+      ).status,
+    ).toBe(409);
+  });
+
+  it("failed transfer rolls back all stock effects and leaves request approved", async () => {
+    await putTarget();
+    await setStock(vehicleWarehouseId, prodA.name, 0, 0);
+    const request = await manualRequest();
+    const approved = await call(
+      "POST",
+      `/vehicle-distribution/pilot/replenishment-requests/${request.body.id}/approve`,
+      { token: adminToken, body: {} },
+    );
+    const handoffId = approved.body.handoffId as number;
+    await prepareLabels(handoffId);
+    await confirmPrinted(handoffId);
+    await call("POST", `/vehicle-distribution/handoffs/${handoffId}/handed-over`, {
+      token: adminToken,
+    });
+    await setStock(erpWarehouseId, prodA.name, 0, 0);
+    expect(
+      (
+        await call(
+          "POST",
+          `/vehicle-distribution/handoffs/${handoffId}/stock-transferred`,
+          { token: adminToken },
+        )
+      ).status,
+    ).toBe(409);
+    const state = await client.query(
+      `SELECT status,fulfilled_at FROM distribution.vehicle_replenishment_requests WHERE id=$1`,
+      [request.body.id],
+    );
+    expect(state.rows[0]).toMatchObject({ status: "approved", fulfilled_at: null });
+  });
+});
+
+describe("F8 cancellation, gates and exact pilot scope", () => {
+  it("cancels pending and safely cancels prepared/labels_printed linked handoffs", async () => {
+    await putTarget();
+    await setStock(vehicleWarehouseId, prodA.name, 0, 0);
+    const pending = await manualRequest();
+    expect(
+      (
+        await call(
+          "POST",
+          `/vehicle-distribution/pilot/replenishment-requests/${pending.body.id}/cancel`,
+          { token: adminToken, body: {} },
+        )
+      ).body.status,
+    ).toBe("cancelled");
+
+    await setStock(vehicleWarehouseId, prodA.name, 1, 2.5);
+    const next = await manualRequest(prodA, {
+      token: adminToken,
+      operationKey: opKey(),
+    });
+    expect(next.status).toBe(200);
+    const approved = await call(
+      "POST",
+      `/vehicle-distribution/pilot/replenishment-requests/${next.body.id}/approve`,
+      { token: adminToken, body: {} },
+    );
+    expect(approved.status).toBe(200);
+    await prepareLabels(approved.body.handoffId);
+    await confirmPrinted(approved.body.handoffId);
+    const cancelled = await call(
+      "POST",
+      `/vehicle-distribution/pilot/replenishment-requests/${next.body.id}/cancel`,
+      { token: adminToken, body: {} },
+    );
+    expect(cancelled.status).toBe(200);
+    expect(cancelled.body.status).toBe("cancelled");
+    expect(cancelled.body.handoffStatus).toBe("cancelled");
+    const audit = await client.query(
+      `SELECT
+        (SELECT COUNT(*)::int FROM distribution.vehicle_label_claims WHERE handoff_id=$1) claims,
+        (SELECT COUNT(*)::int FROM distribution.vehicle_label_prepare_sessions WHERE handoff_id=$1) prep,
+        (SELECT COUNT(*)::int FROM distribution.vehicle_label_print_sessions WHERE handoff_id=$1) prints`,
+      [approved.body.handoffId],
+    );
+    // Existing F3 cancellation preserves label/session audit rows; it never
+    // releases them into another handoff or mutates stock.
+    expect(Number(audit.rows[0].claims)).toBeGreaterThan(0);
+    expect(Number(audit.rows[0].prep)).toBe(1);
+    expect(Number(audit.rows[0].prints)).toBe(1);
+  });
+
+  it("rejects handed-over cancellation, enforces strict/admin/gates/auth and exact pilot 404", async () => {
+    await putTarget();
+    await setStock(vehicleWarehouseId, prodA.name, 0, 0);
+    const request = await manualRequest();
+    const approved = await call(
+      "POST",
+      `/vehicle-distribution/pilot/replenishment-requests/${request.body.id}/approve`,
+      { token: adminToken, body: {} },
+    );
+    await prepareLabels(approved.body.handoffId);
+    await confirmPrinted(approved.body.handoffId);
+    await call(
+      "POST",
+      `/vehicle-distribution/handoffs/${approved.body.handoffId}/handed-over`,
+      { token: adminToken },
+    );
+    expect(
+      (
+        await call(
+          "POST",
+          `/vehicle-distribution/pilot/replenishment-requests/${request.body.id}/cancel`,
+          { token: adminToken, body: {} },
+        )
+      ).status,
+    ).toBe(409);
+    expect(
+      (
+        await call(
+          "POST",
+          `/vehicle-distribution/pilot/replenishment-requests/${request.body.id}/cancel`,
+          { botKey: BOT_KEY, body: {} },
+        )
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await call(
+          "GET",
+          "/vehicle-distribution/pilot/replenishment-requests",
+        )
+      ).status,
+    ).toBe(401);
+    delete process.env.VEHICLE_DISTRIBUTION_ENABLED;
+    expect(
+      (
+        await call(
+          "GET",
+          "/vehicle-distribution/pilot/replenishment-requests",
+          { token: adminToken },
+        )
+      ).status,
+    ).toBe(404);
+    process.env.VEHICLE_DISTRIBUTION_ENABLED = "1";
+    await client.query(
+      `UPDATE distribution.vehicles SET plate_number='WRONG' WHERE id=$1`,
+      [vehicleId],
+    );
+    expect(
+      (
+        await call(
+          "GET",
+          "/vehicle-distribution/pilot/replenishment-requests",
+          { token: adminToken },
+        )
+      ).status,
+    ).toBe(404);
+    await client.query(
+      `UPDATE distribution.vehicles SET plate_number=$2 WHERE id=$1`,
+      [vehicleId, PILOT_VEHICLE_PLATE],
+    );
   });
 });
 

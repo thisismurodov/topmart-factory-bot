@@ -514,9 +514,33 @@ const EXPECTED_CHECKS: CheckSpec[] = [
   { table: "vehicle_label_print_sessions", name: "vehicle_label_print_sessions_count_check", expr: normalizeExpr("label_count > 0") },
   { table: "vehicle_stock_targets", name: "vehicle_stock_targets_qty_check", expr: normalizeExpr("target_quantity > 0") },
   { table: "vehicle_stock_targets", name: "vehicle_stock_targets_min_check", expr: normalizeExpr("min_quantity >= 0") },
+  { table: "vehicle_stock_targets", name: "vehicle_stock_targets_range_check", expr: normalizeExpr("min_quantity <= target_quantity") },
+  { table: "vehicle_stock_targets", name: "vehicle_stock_targets_whole_units_check", expr: normalizeExpr("public_product_id IS NULL OR target_quantity = trunc(target_quantity) AND min_quantity = trunc(min_quantity)") },
+  { table: "vehicle_stock_targets", name: "vehicle_stock_targets_identity_check", expr: normalizeExpr("public_product_id IS NULL OR (product_name IS NOT NULL AND btrim(product_name) <> '' AND btrim(sku) <> '')") },
   { table: "vehicle_replenishment_requests", name: "vehicle_replenishment_status_check",   expr: normalizeExpr("status IN ('pending','approved','fulfilled','rejected','cancelled')") },
   { table: "vehicle_replenishment_requests", name: "vehicle_replenishment_qty_check",      expr: normalizeExpr("requested_quantity > 0") },
-  { table: "vehicle_replenishment_requests", name: "vehicle_replenishment_approved_check", expr: normalizeExpr("approved_quantity IS NULL OR approved_quantity >= 0") },
+  { table: "vehicle_replenishment_requests", name: "vehicle_replenishment_approved_check", expr: normalizeExpr("approved_quantity IS NULL OR approved_quantity > 0") },
+  { table: "vehicle_replenishment_requests", name: "vehicle_replenishment_whole_units_check", expr: normalizeExpr("public_product_id IS NULL OR requested_quantity = trunc(requested_quantity) AND (approved_quantity IS NULL OR approved_quantity = trunc(approved_quantity))") },
+  { table: "vehicle_replenishment_requests", name: "vehicle_replenishment_identity_check", expr: normalizeExpr("public_product_id IS NULL OR (product_name IS NOT NULL AND btrim(product_name) <> '' AND btrim(sku) <> '')") },
+  { table: "vehicle_replenishment_requests", name: "vehicle_replenishment_snapshot_check", expr: normalizeExpr("public_product_id IS NULL OR (target_quantity_snapshot > 0 AND current_quantity_snapshot >= 0 AND requested_quantity = target_quantity_snapshot - current_quantity_snapshot)") },
+  { table: "vehicle_replenishment_requests", name: "vehicle_replenishment_full_approval_check", expr: normalizeExpr("status <> ALL (ARRAY['approved', 'fulfilled']) OR (approved_quantity IS NOT NULL AND approved_quantity = requested_quantity)") },
+  { table: "vehicle_replenishment_requests", name: "vehicle_replenishment_linkage_check", expr: normalizeExpr(`
+    public_product_id IS NULL OR
+    (status = 'pending' AND approved_quantity IS NULL AND approved_by IS NULL
+     AND approved_at IS NULL AND handoff_id IS NULL AND source_warehouse_id IS NULL
+     AND cancelled_by IS NULL AND cancelled_at IS NULL AND fulfilled_at IS NULL)
+    OR (status = 'approved' AND approved_quantity = requested_quantity
+     AND approved_by IS NOT NULL AND approved_at IS NOT NULL
+     AND handoff_id IS NOT NULL AND source_warehouse_id IS NOT NULL
+     AND cancelled_by IS NULL AND cancelled_at IS NULL AND fulfilled_at IS NULL)
+    OR (status = 'fulfilled' AND approved_quantity = requested_quantity
+     AND approved_by IS NOT NULL AND approved_at IS NOT NULL
+     AND handoff_id IS NOT NULL AND source_warehouse_id IS NOT NULL
+     AND cancelled_by IS NULL AND cancelled_at IS NULL AND fulfilled_at IS NOT NULL)
+    OR (status = 'cancelled' AND cancelled_by IS NOT NULL
+     AND cancelled_at IS NOT NULL AND fulfilled_at IS NULL)
+    OR (status = 'rejected' AND handoff_id IS NULL AND fulfilled_at IS NULL)
+  `) },
   { table: "vehicle_reconciliations", name: "vehicle_reconciliations_status_check", expr: normalizeExpr("status IN ('draft','approved','applied','disputed','cancelled')") },
   { table: "vehicle_reconciliation_items", name: "vehicle_reconciliation_items_expected_check", expr: normalizeExpr("expected_quantity >= 0") },
   { table: "vehicle_reconciliation_items", name: "vehicle_reconciliation_items_expected_weight_check", expr: normalizeExpr("expected_weight_kg IS NULL OR expected_weight_kg >= 0") },
@@ -582,9 +606,34 @@ const EXPECTED_PARTIAL_INDEXES: PartialIdxSpec[] = [
     predicate: normalizeExpr("label_claim_id IS NOT NULL"),
   },
   {
+    table: "vehicle_stock_targets",
+    name: "uq_vehicle_stock_targets_current",
+    predicate: normalizeExpr("effective_to IS NULL"),
+  },
+  {
+    table: "vehicle_stock_targets",
+    name: "uq_vehicle_stock_targets_operation_key",
+    predicate: normalizeExpr("operation_key IS NOT NULL"),
+  },
+  {
     table: "vehicle_replenishment_requests",
     name: "uq_vehicle_replenishment_open",
     predicate: normalizeExpr("status IN ('pending','approved')"),
+  },
+  {
+    table: "vehicle_replenishment_requests",
+    name: "uq_vehicle_replenishment_operation_key",
+    predicate: normalizeExpr("operation_key IS NOT NULL"),
+  },
+  {
+    table: "vehicle_replenishment_requests",
+    name: "uq_vehicle_replenishment_fingerprint",
+    predicate: normalizeExpr("request_fingerprint IS NOT NULL"),
+  },
+  {
+    table: "vehicle_replenishment_requests",
+    name: "uq_vehicle_replenishment_handoff",
+    predicate: normalizeExpr("handoff_id IS NOT NULL"),
   },
   {
     table: "vehicle_reconciliation_items",

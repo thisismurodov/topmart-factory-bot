@@ -52,3 +52,4 @@
 - [Dashboard TSX unit tests](dashboard-tsx-unit-tests.md) — pure Vitest runs skip Vite aliases/JSX plugins; isolate TSX under test with relative imports and explicit React.
 - [Vehicle test DB isolation](vehicle-pilot-live-schema-boundary.md) — vehicle init/drift tests must require an explicit loopback admin URL and strip inherited runtime database URLs.
 - [Vehicle pilot sale atomicity](vehicle-pilot-sale-atomicity.md) — NAVRUZBEK sales commit sale, balance, vehicle stock and concrete labels in one cross-schema transaction.
+- [Vehicle replenishment lifecycle](vehicle-replenishment-lifecycle.md) — low stock opens one request; full approval creates F3 handoff; only final transfer fulfills and changes stock.

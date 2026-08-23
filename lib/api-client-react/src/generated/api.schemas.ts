@@ -117,8 +117,16 @@ export interface VehicleWeeklyProduct {
   movementEventVariance: VehicleWeeklyMetric;
 }
 
+/**
+ * Civil calendar date preserved exactly as YYYY-MM-DD; never serialized as a timestamp.
+ * @minLength 10
+ * @maxLength 10
+ * @pattern ^\d{4}-\d{2}-\d{2}$
+ */
+export type VehicleCivilDate = string;
+
 export interface VehicleWeeklyDay {
-  date: string;
+  date: VehicleCivilDate;
   /** @nullable */
   reconciliationId: number | null;
   status: string;
@@ -143,14 +151,14 @@ export interface VehicleWeeklyBlocker {
 }
 
 export type VehiclePilotWeeklySummaryWeek = {
-  weekStart: string;
-  weekEndExclusive: string;
+  weekStart: VehicleCivilDate;
+  weekEndExclusive: VehicleCivilDate;
   utcStart: string;
   utcEndExclusive: string;
   timezone: '+05:00';
   currentWeek: boolean;
   defaultedWeekStart: boolean;
-  requiredThroughDate: string;
+  requiredThroughDate: VehicleCivilDate;
   requiredDayCount: number;
 };
 

@@ -27,6 +27,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  addCivilDays,
+  buildWeeklyCoverage,
+  currentTashkentMonday,
+  formatCivilDate,
+  formatCivilWeekRange,
+  isCivilMonday,
+} from "./vehicle-weekly-civil";
 
 type ApiFailure = {
   status?: number;
@@ -34,41 +42,6 @@ type ApiFailure = {
   message?: string;
   response?: { status?: number; data?: { error?: string } };
 };
-
-const DAY_MS = 86_400_000;
-
-function civilDate(date: Date) {
-  return date.toISOString().slice(0, 10);
-}
-
-function addDays(value: string, days: number) {
-  return civilDate(new Date(new Date(`${value}T00:00:00Z`).getTime() + days * DAY_MS));
-}
-
-function currentMonday() {
-  const nowInUzbekistan = new Date(Date.now() + 5 * 60 * 60 * 1000);
-  const civil = new Date(Date.UTC(
-    nowInUzbekistan.getUTCFullYear(),
-    nowInUzbekistan.getUTCMonth(),
-    nowInUzbekistan.getUTCDate(),
-  ));
-  const daysFromMonday = (civil.getUTCDay() + 6) % 7;
-  return civilDate(new Date(civil.getTime() - daysFromMonday * DAY_MS));
-}
-
-function isMonday(value: string) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value)
-    && new Date(`${value}T00:00:00Z`).getUTCDay() === 1;
-}
-
-function formatCivil(value: string) {
-  return new Intl.DateTimeFormat("uz-UZ", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    timeZone: "UTC",
-  }).format(new Date(`${value}T00:00:00Z`));
-}
 
 function number(value: number) {
   return value.toLocaleString("uz-UZ", { maximumFractionDigits: 3 });
@@ -183,14 +156,14 @@ function blockerSeverity(type: string) {
 
 export function VehicleWeeklyReadiness({ active }: { active: boolean }) {
   const queryClient = useQueryClient();
-  const monday = useMemo(currentMonday, []);
+  const monday = useMemo(currentTashkentMonday, []);
   const [weekStart, setWeekStart] = useState(monday);
   const [selectorError, setSelectorError] = useState("");
   const me = useGetMe({ query: { enabled: active, queryKey: getGetMeQueryKey(), retry: false } });
   const isAdmin = me.data?.role === "admin";
   const params = { weekStart };
   const summary = useGetVehicleDistributionPilotWeeklySummary(params, { query: {
-    enabled: active && isAdmin && isMonday(weekStart) && weekStart <= monday,
+    enabled: active && isAdmin && isCivilMonday(weekStart) && weekStart <= monday,
     queryKey: getGetVehicleDistributionPilotWeeklySummaryQueryKey(params),
     retry: false,
   } });
@@ -200,7 +173,7 @@ export function VehicleWeeklyReadiness({ active }: { active: boolean }) {
     queryClient.invalidateQueries({ queryKey: getGetVehicleDistributionPilotWeeklySummaryQueryKey(params) });
   };
   const chooseWeek = (value: string) => {
-    if (!isMonday(value) || value > monday) {
+    if (!isCivilMonday(value) || value > monday) {
       setSelectorError(value > monday ? "Kelajak haftasini tanlab bo‘lmaydi." : "Faqat dushanba sanasini tanlang.");
       return;
     }
@@ -233,8 +206,13 @@ export function VehicleWeeklyReadiness({ active }: { active: boolean }) {
   }
 
   const data = summary.data;
-  const sevenDays = Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
-  const dayByDate = new Map(data?.days.map((day) => [day.date, day]));
+  const coverage = data
+    ? buildWeeklyCoverage(
+        weekStart,
+        data.week.requiredThroughDate,
+        data.days,
+      )
+    : [];
 
   return (
     <div className="min-w-0">
@@ -267,7 +245,7 @@ export function VehicleWeeklyReadiness({ active }: { active: boolean }) {
             />
           </div>
           <div className="grid grid-cols-2 gap-2">
-            <Button data-testid="button-previous-week" variant="outline" className="min-h-11" onClick={() => chooseWeek(addDays(weekStart, -7))}>
+            <Button data-testid="button-previous-week" variant="outline" className="min-h-11" onClick={() => chooseWeek(addCivilDays(weekStart, -7))}>
               <ChevronLeft className="mr-1 h-4 w-4" /> Oldingi
             </Button>
             <Button data-testid="button-current-week" variant="outline" className="min-h-11" disabled={weekStart === monday} onClick={() => chooseWeek(monday)}>
@@ -298,7 +276,7 @@ export function VehicleWeeklyReadiness({ active }: { active: boolean }) {
               {data.readiness ? <CheckCircle2 className="h-7 w-7 shrink-0 text-emerald-600" /> : <XCircle className="h-7 w-7 shrink-0 text-red-600" />}
               <div>
                 <p className={`text-lg font-bold ${data.readiness ? "text-emerald-800" : "text-red-800"}`}>{data.readiness ? "Yopishga tayyor" : "Yopishga tayyor emas"}</p>
-                <p className="text-sm text-slate-600">{formatCivil(data.week.weekStart)} — {formatCivil(addDays(data.week.weekEndExclusive, -1))}</p>
+                <p className="text-sm text-slate-600">{formatCivilWeekRange(data.week.weekStart, data.week.weekEndExclusive)}</p>
               </div>
             </div>
             <Badge data-testid="text-weekly-reason-count" variant="outline" className="w-fit bg-white text-sm">{data.reasons.length} sabab · {data.kpis.blockerCount} to‘siq</Badge>
@@ -342,15 +320,13 @@ export function VehicleWeeklyReadiness({ active }: { active: boolean }) {
             <h4 id="weekly-coverage-title" className="font-semibold text-slate-800">7 kunlik F6 qamrovi</h4>
             <p className="mb-3 mt-1 text-sm text-slate-500">Kelajak kunlari talab qilinmaydi. “Qo‘llangan” holat joriy zaxira to‘g‘riligini sertifikatlamaydi.</p>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
-              {sevenDays.map((date) => {
-                const day = dayByDate.get(date);
-                const futureNotRequired = !day && date > data.week.requiredThroughDate;
+              {coverage.map(({ date, day, futureNotRequired }) => {
                 const good = day?.status === "applied" && day.allCounted && day.discrepancyCount === 0;
                 const label = futureNotRequired ? "Talab qilinmaydi" : good ? "Qo‘llangan" : day?.missing ? "Yo‘q" : day?.status || "Yo‘q";
                 return (
                   <Card key={date} data-testid={`card-weekly-day-${date}`} className={good ? "border-emerald-200" : futureNotRequired ? "border-slate-200 bg-slate-50" : "border-red-200"}>
                     <CardContent className="p-3">
-                      <span className="block text-xs text-slate-500">{formatCivil(date)}</span>
+                      <span className="block text-xs text-slate-500">{formatCivilDate(date)}</span>
                       <Badge variant="outline" className={`mt-2 max-w-full ${good ? "border-emerald-200 bg-emerald-50 text-emerald-700" : futureNotRequired ? "border-slate-200 bg-white text-slate-600" : "border-red-200 bg-red-50 text-red-700"}`}>{label}</Badge>
                       {day && <span className="mt-2 block text-xs text-slate-500">{day.allCounted ? "To‘liq sanalgan" : "To‘liq sanalmagan"} · {day.discrepancyCount} farq</span>}
                     </CardContent>

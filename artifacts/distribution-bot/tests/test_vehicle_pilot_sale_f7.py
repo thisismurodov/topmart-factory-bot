@@ -44,6 +44,10 @@ from database.sales import (  # noqa: E402
 
 
 PUBLIC_DDL = """
+CREATE TABLE IF NOT EXISTS public.products (
+ id SERIAL PRIMARY KEY, name TEXT NOT NULL, sku TEXT NOT NULL,
+ active BOOLEAN NOT NULL DEFAULT TRUE, in_sales BOOLEAN NOT NULL DEFAULT FALSE
+);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_products_sku_unique ON public.products(sku) WHERE sku<>'';
 CREATE TABLE IF NOT EXISTS public.warehouses (
  id SERIAL PRIMARY KEY, name TEXT NOT NULL UNIQUE, active BOOLEAN NOT NULL DEFAULT TRUE,

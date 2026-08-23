@@ -5,15 +5,16 @@
  * TopMart ERP API
  * OpenAPI spec version: 0.1.0
  */
+import type { VehicleCivilDate } from './vehicleCivilDate';
 
 export type VehiclePilotWeeklySummaryWeek = {
-  weekStart: Date;
-  weekEndExclusive: Date;
+  weekStart: VehicleCivilDate;
+  weekEndExclusive: VehicleCivilDate;
   utcStart: Date;
   utcEndExclusive: Date;
   timezone: '+05:00';
   currentWeek: boolean;
   defaultedWeekStart: boolean;
-  requiredThroughDate: Date;
+  requiredThroughDate: VehicleCivilDate;
   requiredDayCount: number;
 };

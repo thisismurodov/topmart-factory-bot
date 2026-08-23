@@ -8,36 +8,41 @@ import path from "node:path";
 // Bot uchun alohida CI yo'q — mavjud konvensiya (distribution-analytics,
 // distribution-fresh-db) bo'yicha vitest execFileSync orqali python'ni yuritadi.
 //
-// tests/ ichidagi testlar DB'siz va tarmoqsiz (pure mock) — throwaway DB shart
-// emas, shuning uchun bu wrapper tez (~sekundlar) ishlaydi.
+// Pure bot tests share one process. The DB-backed F7 integration runs in a
+// separate process so its child DATABASE_URL is applied before connection.py
+// is imported; unittest discovery would otherwise reuse the pure tests' cached
+// connection module.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const distBotDir = path.resolve(here, "../../distribution-bot");
 
 describe("distribution-bot python unittests", () => {
+  const runPython = (modules: string[]) =>
+    execFileSync("python3", ["-m", "unittest", ...modules, "-v"], {
+      cwd: distBotDir,
+      env: {
+        ...process.env,
+        TELEGRAM_BOT_TOKEN:
+          process.env.TELEGRAM_BOT_TOKEN || "123456:TEST_TOKEN_BOT_UNIT",
+      },
+      stdio: "pipe",
+      encoding: "utf-8",
+      timeout: 120_000,
+    });
+
   it(
-    "unittest discover (tests/) muvaffaqiyatli o'tadi",
+    "pure va F7 integration testlari isolated processlarda o'tadi",
     () => {
       try {
-        execFileSync(
-          "python3",
-          ["-m", "unittest", "discover", "-s", "tests", "-t", ".", "-v"],
-          {
-            cwd: distBotDir,
-            env: {
-              ...process.env,
-              TELEGRAM_BOT_TOKEN:
-                process.env.TELEGRAM_BOT_TOKEN || "123456:TEST_TOKEN_BOT_UNIT",
-            },
-            stdio: "pipe",
-            encoding: "utf-8",
-            timeout: 120_000,
-          },
-        );
+        runPython([
+          "tests.test_ai_tavsiyalar",
+          "tests.test_vehicle_pilot_bot_f7",
+        ]);
+        runPython(["tests.test_vehicle_pilot_sale_f7"]);
       } catch (e: any) {
         throw new Error(
-          `distribution-bot unittest discover yiqildi:\n${e.stdout ?? ""}\n${e.stderr ?? ""}`,
+          `distribution-bot unittest yiqildi:\n${e.stdout ?? ""}\n${e.stderr ?? ""}`,
         );
       }
     },

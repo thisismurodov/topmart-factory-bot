@@ -53,7 +53,10 @@ export function makeWeeklySummaryAdminAuth(pool: Pool) {
   };
 }
 
-export function createVehicleWeeklySummaryRouter(pool: Pool): IRouter {
+export function createVehicleWeeklySummaryRouter(
+  pool: Pool,
+  readSummary: typeof readPilotWeeklySummary = readPilotWeeklySummary,
+): IRouter {
   const router: IRouter = Router();
   const path = "/vehicle-distribution/pilot/weekly-summary";
   router.use(path, makeWeeklySummaryAdminAuth(pool));
@@ -68,7 +71,7 @@ export function createVehicleWeeklySummaryRouter(pool: Pool): IRouter {
     }
     const client = await pool.connect();
     try {
-      const out = await readPilotWeeklySummary(client, parsed.data.weekStart);
+      const out = await readSummary(client, parsed.data.weekStart);
       res.json(GetVehicleDistributionPilotWeeklySummaryResponse.parse(out));
     } catch (e) {
       if (e instanceof WeeklySummaryValidationError) {

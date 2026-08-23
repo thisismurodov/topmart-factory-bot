@@ -2122,10 +2122,17 @@ components:
         - claimInventoryVariance
         - movementEventVariance
 
+    VehicleCivilDate:
+      type: string
+      description: Civil calendar date preserved exactly as YYYY-MM-DD; never serialized as a timestamp.
+      pattern: '^\d{4}-\d{2}-\d{2}$'
+      minLength: 10
+      maxLength: 10
+
     VehicleWeeklyDay:
       type: object
       properties:
-        date: { type: string, format: date }
+        date: { $ref: "#/components/schemas/VehicleCivilDate" }
         reconciliationId: { type: ["integer", "null"] }
         status: { type: string }
         allCounted: { type: boolean }
@@ -2164,14 +2171,14 @@ components:
         week:
           type: object
           properties:
-            weekStart: { type: string, format: date }
-            weekEndExclusive: { type: string, format: date }
+            weekStart: { $ref: "#/components/schemas/VehicleCivilDate" }
+            weekEndExclusive: { $ref: "#/components/schemas/VehicleCivilDate" }
             utcStart: { type: string, format: date-time }
             utcEndExclusive: { type: string, format: date-time }
             timezone: { type: string, const: "+05:00" }
             currentWeek: { type: boolean }
             defaultedWeekStart: { type: boolean }
-            requiredThroughDate: { type: string, format: date }
+            requiredThroughDate: { $ref: "#/components/schemas/VehicleCivilDate" }
             requiredDayCount: { type: integer }
           required: [weekStart, weekEndExclusive, utcStart, utcEndExclusive, timezone, currentWeek, defaultedWeekStart, requiredThroughDate, requiredDayCount]
         tolerances:

@@ -702,6 +702,26 @@ export const GetVehicleDistributionPilotWeeklySummaryQueryParams = zod.object({
   "weekStart": zod.coerce.string().regex(getVehicleDistributionPilotWeeklySummaryQueryWeekStartRegExp).optional().describe('Monday civil date; defaults to current +05:00 Monday.')
 })
 
+export const getVehicleDistributionPilotWeeklySummaryResponseWeekWeekStartMin = 10;
+export const getVehicleDistributionPilotWeeklySummaryResponseWeekWeekStartMax = 10;
+
+
+export const getVehicleDistributionPilotWeeklySummaryResponseWeekWeekStartRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getVehicleDistributionPilotWeeklySummaryResponseWeekWeekEndExclusiveMin = 10;
+export const getVehicleDistributionPilotWeeklySummaryResponseWeekWeekEndExclusiveMax = 10;
+
+
+export const getVehicleDistributionPilotWeeklySummaryResponseWeekWeekEndExclusiveRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getVehicleDistributionPilotWeeklySummaryResponseWeekRequiredThroughDateMin = 10;
+export const getVehicleDistributionPilotWeeklySummaryResponseWeekRequiredThroughDateMax = 10;
+
+
+export const getVehicleDistributionPilotWeeklySummaryResponseWeekRequiredThroughDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getVehicleDistributionPilotWeeklySummaryResponseDaysItemDateMin = 10;
+export const getVehicleDistributionPilotWeeklySummaryResponseDaysItemDateMax = 10;
+
+
+export const getVehicleDistributionPilotWeeklySummaryResponseDaysItemDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
 export const getVehicleDistributionPilotWeeklySummaryResponseBlockersItemDetailsMax = 25;
 
 
@@ -710,14 +730,14 @@ export const GetVehicleDistributionPilotWeeklySummaryResponse = zod.object({
   "readiness": zod.boolean(),
   "reasons": zod.array(zod.string()),
   "week": zod.object({
-  "weekStart": zod.coerce.date(),
-  "weekEndExclusive": zod.coerce.date(),
+  "weekStart": zod.string().min(getVehicleDistributionPilotWeeklySummaryResponseWeekWeekStartMin).max(getVehicleDistributionPilotWeeklySummaryResponseWeekWeekStartMax).regex(getVehicleDistributionPilotWeeklySummaryResponseWeekWeekStartRegExp).describe('Civil calendar date preserved exactly as YYYY-MM-DD; never serialized as a timestamp.'),
+  "weekEndExclusive": zod.string().min(getVehicleDistributionPilotWeeklySummaryResponseWeekWeekEndExclusiveMin).max(getVehicleDistributionPilotWeeklySummaryResponseWeekWeekEndExclusiveMax).regex(getVehicleDistributionPilotWeeklySummaryResponseWeekWeekEndExclusiveRegExp).describe('Civil calendar date preserved exactly as YYYY-MM-DD; never serialized as a timestamp.'),
   "utcStart": zod.coerce.date(),
   "utcEndExclusive": zod.coerce.date(),
   "timezone": zod.literal("+05:00"),
   "currentWeek": zod.boolean(),
   "defaultedWeekStart": zod.boolean(),
-  "requiredThroughDate": zod.coerce.date(),
+  "requiredThroughDate": zod.string().min(getVehicleDistributionPilotWeeklySummaryResponseWeekRequiredThroughDateMin).max(getVehicleDistributionPilotWeeklySummaryResponseWeekRequiredThroughDateMax).regex(getVehicleDistributionPilotWeeklySummaryResponseWeekRequiredThroughDateRegExp).describe('Civil calendar date preserved exactly as YYYY-MM-DD; never serialized as a timestamp.'),
   "requiredDayCount": zod.number()
 }),
   "tolerances": zod.object({
@@ -789,7 +809,7 @@ export const GetVehicleDistributionPilotWeeklySummaryResponse = zod.object({
 })
 })),
   "days": zod.array(zod.object({
-  "date": zod.coerce.date(),
+  "date": zod.string().min(getVehicleDistributionPilotWeeklySummaryResponseDaysItemDateMin).max(getVehicleDistributionPilotWeeklySummaryResponseDaysItemDateMax).regex(getVehicleDistributionPilotWeeklySummaryResponseDaysItemDateRegExp).describe('Civil calendar date preserved exactly as YYYY-MM-DD; never serialized as a timestamp.'),
   "reconciliationId": zod.number().nullable(),
   "status": zod.string(),
   "allCounted": zod.boolean(),

@@ -63,6 +63,7 @@ export * from './sale';
 export * from './saleInput';
 export * from './saleList';
 export * from './saleStatusInput';
+export * from './vehicleCivilDate';
 export * from './vehicleDistributionAgent';
 export * from './vehicleDistributionAssignment';
 export * from './vehicleDistributionBalanceSummary';

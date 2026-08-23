@@ -1,0 +1,138 @@
+F10 DATE-ONLY SERIALIZATION FIX — GO
+
+Managed review’da topilgan yagona NEW FUNCTIONAL BLOCKER'ni tuzat.
+
+MUAMMO:
+
+F10 weekly summary API'dagi date-only fieldlar:
+
+- weekStart
+- weekEndExclusive
+- requiredThroughDate
+- daily coverage date
+
+Zod schema'da:
+
+z.coerce.date()
+
+orqali JavaScript Date objectga aylanmoqda.
+
+Router esa parsed objectni to'g'ridan-to'g'ri res.json(...) qiladi.
+
+Natijada API:
+
+2026-08-17T00:00:00.000Z
+
+qaytaryapti.
+
+Talab:
+
+2026-08-17
+
+qaytishi kerak.
+
+DATE-ONLY qiymatlar civil calendar date sifatida qolishi kerak.
+Timezone conversion bo'lmasligi kerak.
+
+FIX:
+
+1. F10 weekly summary response contractini tekshir.
+2. Date-only fieldlarni JavaScript Date object sifatida serialize qilma.
+3. API response'da barcha date-only fieldlar EXACT:
+   YYYY-MM-DD
+   formatida qaytsin.
+
+Misol:
+
+{
+  "weekStart": "2026-08-17",
+  "weekEndExclusive": "2026-08-24",
+  "requiredThroughDate": "2026-08-23",
+  "dailyCoverage": [
+    {
+      "date": "2026-08-17"
+    }
+  ]
+}
+
+MUHIM:
+
+- Timestamp fieldlarga tegma.
+- Faqat date-only contractni tuzat.
+- UTC conversion orqali workaround qilma.
+- Dashboardda date stringni Date objectga aylantirib yuboradigan
+  mavjud logic bo'lsa, uni ham tekshir.
+- Civil date sifatida ishlansin.
+
+TESTLAR:
+
+1. Unit/schema test:
+   date-only response → YYYY-MM-DD
+
+2. Router-level JSON regression test:
+   real endpoint response JSON ichida:
+   "2026-08-17"
+   kelishini tekshir.
+
+3. F10 weekly summary test:
+   weekStart
+   weekEndExclusive
+   requiredThroughDate
+   dailyCoverage[].date
+
+   barchasi date-only string ekanini tekshir.
+
+4. Dashboard integration test:
+   real serialized API response bilan:
+   - daily coverage Map lookup
+   - week date rendering
+   - required/future-day classification
+
+   to'g'ri ishlashini tekshir.
+
+5. Timezone regression:
+   Asia/Tashkent va UTC chegaralarida date bir kun oldinga/orqaga
+   siljimasligini tekshir.
+
+6. Existing F3–F10 regressionsni qayta yugurtir.
+
+7. Typecheck + codegen.
+
+8. Fresh schema-drift.
+
+9. Full relevant API tests.
+
+KNOWN PRE-EXISTING FAILURE:
+
+products-distribution-propagation.test.ts dagi oldindan mavjud
+20 testdan 9 failure'ni Vehicle Distribution failure deb hisoblama.
+Ularni alohida report qil.
+
+SECURITY:
+
+- DB WRITE QILMA.
+- Migration qilma.
+- Production rollout qilma.
+- NAVRUZBEK / DM-001 feature flagni yoqma.
+
+FINAL REVIEW:
+
+Tuzatishdan keyin managed reviewni qayta o'tkaz.
+
+Agar:
+- F10 date-only serialization PASS
+- router regression PASS
+- dashboard real-response test PASS
+- F3–F10 regression PASS
+- schema-drift PASS
+- security PASS
+
+bo'lsa:
+
+READY FOR PILOT
+
+deb belgila.
+
+Aks holda STOP.
+
+STOP AFTER REVIEW.

@@ -26,9 +26,24 @@ if (!basePath) {
   );
 }
 
+const buildRevision =
+  process.env.RAILWAY_GIT_COMMIT_SHA ??
+  process.env.SOURCE_VERSION ??
+  process.env.GIT_COMMIT_SHA ??
+  "unknown";
+
 export default defineConfig({
   base: basePath,
   plugins: [
+    {
+      name: "topmart-build-revision",
+      transformIndexHtml(html) {
+        return html.replace(
+          "</head>",
+          `  <meta name="topmart-revision" content="${buildRevision}">\n</head>`,
+        );
+      },
+    },
     react(),
     tailwindcss(),
     runtimeErrorOverlay(),

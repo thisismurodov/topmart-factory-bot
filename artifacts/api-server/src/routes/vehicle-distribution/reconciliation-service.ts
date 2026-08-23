@@ -35,6 +35,7 @@ import {
   PILOT_WAREHOUSE_NAME,
   PILOT_WAREHOUSE_LOCATION_TYPE,
   PILOT_WAREHOUSE_PURPOSE,
+  lockVehicleWarehouseStockMutation,
 } from "./service";
 
 /** Actor identity assigned server-side by the auth layer. Never from the body. */
@@ -374,7 +375,7 @@ async function snapshotVehicleInventory(
 
 // ── Create a draft reconciliation ────────────────────────────────────────────
 
-const NON_TERMINAL = new Set(["draft", "approved", "disputed"]);
+const ACTIVE_CREATE_BLOCKERS = new Set(["draft", "approved"]);
 
 export async function createReconciliationInTx(
   client: PoolClient,
@@ -389,16 +390,16 @@ export async function createReconciliationInTx(
     createLockKey(pilot.vehicleId),
   ]);
 
-  // Any non-terminal reconciliation blocks opening a new one — EXCEPT that a
+  // Any active reconciliation blocks opening a new one — EXCEPT that a
   // same-date draft retry returns the existing draft (created=false).
-  const { rows: active } = await client.query(
+  const { rows: existingRows } = await client.query(
     `SELECT id, status, reconciliation_date
        FROM distribution.vehicle_reconciliations
-      WHERE vehicle_id = $1 AND status IN ('draft','approved','disputed')
+      WHERE vehicle_id = $1
       ORDER BY id`,
     [pilot.vehicleId],
   );
-  for (const a of active) {
+  for (const a of existingRows) {
     const status = String(a.status);
     const existingDate =
       iso(a.reconciliation_date as Date | string) ?? String(a.reconciliation_date);
@@ -408,7 +409,12 @@ export async function createReconciliationInTx(
       if (!existing) throw new ReconciliationNotFoundError();
       return { created: false, reconciliation: existing };
     }
-    if (NON_TERMINAL.has(status)) {
+    if (sameDate) {
+      throw new ReconciliationConflictError(
+        `A reconciliation already exists for the pilot vehicle on ${reconciliationDate.slice(0, 10)}`,
+      );
+    }
+    if (ACTIVE_CREATE_BLOCKERS.has(status)) {
       throw new ReconciliationConflictError(
         `An active reconciliation (id=${a.id}, status=${status}) already exists for the pilot vehicle`,
       );
@@ -621,16 +627,10 @@ export async function applyReconciliationInTx(
     );
   }
 
-  // Re-lock the pilot vehicle inventory rows deterministically, then re-snapshot
-  // and compare against the persisted snapshot. Any added / removed / changed
-  // product means the world moved since the counts — reject as stale.
-  await client.query(
-    `SELECT id FROM inventory
-      WHERE warehouse_id = $1 AND quantity <> 0
-      ORDER BY product
-      FOR UPDATE`,
-    [pilot.vehicleWarehouseId],
-  );
+  // Lock the shared parent row before reading the complete inventory row set.
+  // Unlike locking existing inventory rows, this also serializes a concurrent
+  // writer inserting a brand-new SKU.
+  await lockVehicleWarehouseStockMutation(client, pilot.vehicleWarehouseId);
 
   const current = await snapshotVehicleInventory(
     client,

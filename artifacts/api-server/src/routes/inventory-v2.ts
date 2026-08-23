@@ -1,7 +1,15 @@
 import { Router, type IRouter } from "express";
-import { pool } from "@workspace/db";
+import { pool as defaultPool } from "@workspace/db";
+import type { Pool } from "pg";
 import { actingUser } from "./ombor";
+import {
+  guardGenericInventoryWarehouses,
+  genericInventoryWarehouseErrorStatus,
+} from "../lib/genericInventoryWarehouseGuard";
 
+export function createInventoryV2Router(
+  pool: Pick<Pool, "query" | "connect"> = defaultPool,
+): IRouter {
 const router: IRouter = Router();
 
 /* ── GET /inventory/stock  — per-warehouse stock ── */
@@ -102,6 +110,12 @@ router.post("/inventory/movement", async (req, res): Promise<void> => {
   try {
     await client.query("BEGIN");
 
+    const referencedWarehouseIds = [
+      from_warehouse_id,
+      to_warehouse_id,
+    ].filter((id): id is number | string => id != null);
+    await guardGenericInventoryWarehouses(client, referencedWarehouseIds);
+
     // Og'irlik sinxroni (ombor.ts bilan bir xil qoida):
     // - OUT/TRANSFER: mavjud qatordagi og'irlikdan proporsional ayiramiz.
     // - IN: partiya nisbati (SUM(weight_kg)/SUM(quantity)) bo'yicha hisoblaymiz.
@@ -197,8 +211,13 @@ router.post("/inventory/movement", async (req, res): Promise<void> => {
 
     await client.query("COMMIT");
     res.json({ ok: true });
-  } catch (err) {
+  } catch (err: any) {
     await client.query("ROLLBACK");
+    const status = genericInventoryWarehouseErrorStatus(err);
+    if (status != null) {
+      res.status(status).json({ error: err.message });
+      return;
+    }
     throw err;
   } finally {
     client.release();
@@ -235,4 +254,7 @@ router.get("/inventory/movements", async (req, res): Promise<void> => {
   })));
 });
 
-export default router;
+return router;
+}
+
+export default createInventoryV2Router();

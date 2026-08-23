@@ -13,7 +13,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { RefreshCw, Truck, Box, MapPin, Package, AlertCircle, ArrowRightLeft, Database } from "lucide-react";
+import { RefreshCw, Truck, Box, MapPin, Package, AlertCircle, ArrowRightLeft, Database, ClipboardList } from "lucide-react";
+import { VehicleReconciliations } from "./VehicleReconciliations";
 
 // --- Subcomponents ---
 
@@ -235,8 +236,8 @@ export default function VehicleStockTab({ active }: { active: boolean }) {
       {/* Tabs for Stock & Movements */}
       <Tabs value={subTab} onValueChange={setSubTab}>
         <TabsList className="bg-slate-100 border-b border-slate-200 rounded-none w-full justify-start h-auto p-0 pb-px gap-6 px-4">
-          <TabsTrigger 
-            value="stock" 
+          <TabsTrigger
+            value="stock"
             className="rounded-none border-b-2 border-transparent data-[state=active]:border-indigo-600 data-[state=active]:bg-transparent data-[state=active]:shadow-none py-2.5 px-1 font-medium text-slate-600 data-[state=active]:text-indigo-700 transition-none"
           >
             <Box className="w-4 h-4 mr-2" />
@@ -247,12 +248,19 @@ export default function VehicleStockTab({ active }: { active: boolean }) {
               </Badge>
             )}
           </TabsTrigger>
-          <TabsTrigger 
+          <TabsTrigger
             value="movements"
             className="rounded-none border-b-2 border-transparent data-[state=active]:border-amber-500 data-[state=active]:bg-transparent data-[state=active]:shadow-none py-2.5 px-1 font-medium text-slate-600 data-[state=active]:text-amber-700 transition-none"
           >
             <ArrowRightLeft className="w-4 h-4 mr-2" />
             Harakatlar Tarixi
+          </TabsTrigger>
+          <TabsTrigger
+            value="reconciliations"
+            className="rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-500 data-[state=active]:bg-transparent data-[state=active]:shadow-none py-2.5 px-1 font-medium text-slate-600 data-[state=active]:text-emerald-700 transition-none"
+          >
+            <ClipboardList className="w-4 h-4 mr-2" />
+            Fizik Sanoq
           </TabsTrigger>
         </TabsList>
 
@@ -336,6 +344,10 @@ export default function VehicleStockTab({ active }: { active: boolean }) {
                 </TableBody>
               </Table>
             </div>
+          </TabsContent>
+
+          <TabsContent value="reconciliations" className="m-0 border-none p-0 outline-none">
+            <VehicleReconciliations active={active && subTab === "reconciliations"} />
           </TabsContent>
         </div>
       </Tabs>

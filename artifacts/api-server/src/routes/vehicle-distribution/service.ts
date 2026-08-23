@@ -38,6 +38,33 @@ export const PILOT_WAREHOUSE_PURPOSE = "finished";
 // bootstrap attempts (transaction-scoped, released on COMMIT/ROLLBACK).
 export const PILOT_LOCK_KEY = "vehicle_distribution:pilot:bootstrap";
 
+/**
+ * Serialize every dedicated mutation of a vehicle warehouse's inventory row
+ * set. Locking the parent warehouse row (rather than the inventory rows that
+ * happen to exist) also covers concurrent inserts of a brand-new SKU.
+ *
+ * Callers must already be in a transaction and must take this lock before
+ * reading or mutating vehicle inventory.
+ */
+export async function lockVehicleWarehouseStockMutation(
+  client: PoolClient,
+  warehouseId: number,
+): Promise<void> {
+  const { rows } = await client.query(
+    `SELECT id
+       FROM public.warehouses
+      WHERE id = $1
+        AND location_type = 'vehicle'
+      FOR UPDATE`,
+    [warehouseId],
+  );
+  if (rows.length !== 1) {
+    throw new PilotConflictError(
+      `Vehicle warehouse ${warehouseId} does not exist or is not location_type=vehicle`,
+    );
+  }
+}
+
 export type PilotAgent = { id: number; name: string };
 export type PilotVehicle = {
   id: number;

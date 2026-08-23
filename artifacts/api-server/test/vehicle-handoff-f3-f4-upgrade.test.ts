@@ -51,11 +51,16 @@ function tmpUrl(): string {
 const here = path.dirname(fileURLToPath(import.meta.url));
 const botDir = path.resolve(here, "../../distribution-bot");
 const BOT_KEY = "super-secret-bot-key-f3f4-upgrade";
+const {
+  RAILWAY_DATABASE_URL: _ignoredRailwayDatabaseUrl,
+  DATABASE_URL: _ignoredRuntimeDatabaseUrl,
+  ...isolatedBotBaseEnv
+} = process.env;
 
 // Bot env WITHOUT PRODUCTION_LABELS approval — the distribution-bot never
 // creates production_labels anyway; the API initDb owns that in step 2.
 const botEnv = {
-  ...process.env,
+  ...isolatedBotBaseEnv,
   ...botDbEnv(tmpUrl()),
   TELEGRAM_BOT_TOKEN: "123456:TEST_TOKEN_VH_F3F4",
   VEHICLE_DISTRIBUTION_SCHEMA_APPROVED: "1",

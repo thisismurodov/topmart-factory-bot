@@ -7,8 +7,13 @@ import type { Pool } from "pg";
 // ── Isolation ──────────────────────────────────────────────────────────────
 const SCHEMA = `topmart_invv2_attr_test_${process.pid}_${Date.now()}`;
 
-const baseUrl = process.env.RAILWAY_DATABASE_URL || process.env.DATABASE_URL;
-if (!baseUrl) throw new Error("DATABASE_URL must be set to run these tests");
+const baseUrl = process.env.VEHICLE_TEST_DATABASE_ADMIN_URL;
+if (!baseUrl) {
+  throw new Error("VEHICLE_TEST_DATABASE_ADMIN_URL must be set to run these tests");
+}
+if (!["127.0.0.1", "localhost", "::1"].includes(new URL(baseUrl).hostname)) {
+  throw new Error("VEHICLE_TEST_DATABASE_ADMIN_URL must use a loopback host");
+}
 {
   const u = new URL(baseUrl);
   u.searchParams.set("options", `-c search_path=${SCHEMA}`);

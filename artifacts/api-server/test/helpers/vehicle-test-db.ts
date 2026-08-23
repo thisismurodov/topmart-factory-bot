@@ -35,6 +35,12 @@ export function requireVehicleTestAdminUrl(): string {
         "postgresql://postgres@127.0.0.1:<port>/postgres.",
     );
   }
+  if (!isLoopback(url)) {
+    throw new Error(
+      "VEHICLE_TEST_DATABASE_ADMIN_URL must use a local loopback host " +
+        "(127.0.0.1, localhost, or ::1)",
+    );
+  }
   return url;
 }
 

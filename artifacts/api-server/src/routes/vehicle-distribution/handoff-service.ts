@@ -34,6 +34,7 @@ import {
   PILOT_WAREHOUSE_NAME,
   PILOT_WAREHOUSE_LOCATION_TYPE,
   PILOT_WAREHOUSE_PURPOSE,
+  lockVehicleWarehouseStockMutation,
 } from "./service";
 
 /** Actor identity assigned server-side by the auth layer. Never from the body. */
@@ -623,6 +624,10 @@ export async function markStockTransferredInTx(
   if (!items.length) {
     throw new HandoffConflictError("Handoff has no items to transfer");
   }
+
+  // Shared parent-row lock serializes the complete vehicle inventory row set,
+  // including inserts for SKUs which do not have an inventory row yet.
+  await lockVehicleWarehouseStockMutation(client, vehicleWarehouseId);
 
   // Revalidate: every claim for every item must be in 'printed' status.
   for (const it of items) {

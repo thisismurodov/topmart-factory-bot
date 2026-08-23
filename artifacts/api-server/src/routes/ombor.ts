@@ -4,6 +4,10 @@ import { getUsdToUzsRate } from "../lib/exchangeRate";
 import { notifyNegativeWip, NEGATIVE_WIP_EPS } from "../lib/wipAlerts";
 import { buildFlowGraph } from "../lib/flowGraph";
 import { buildDepartmentDetail } from "../lib/departmentDetail";
+import {
+  guardGenericInventoryWarehouses,
+  genericInventoryWarehouseErrorStatus,
+} from "../lib/genericInventoryWarehouseGuard";
 
 const router: IRouter = Router();
 
@@ -219,6 +223,7 @@ router.post("/ombor/transfer", async (req, res): Promise<void> => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await guardGenericInventoryWarehouses(client, [fromId, toId]);
 
     // FOR UPDATE: parallel transferlar bir xil qoldiqni ikki marta tekshirib,
     // zaxirani ikkilantirmasligi uchun manba qatorini tranzaksiya oxirigacha qulflaymiz.
@@ -265,7 +270,7 @@ router.post("/ombor/transfer", async (req, res): Promise<void> => {
     res.json({ ok: true });
   } catch (e: any) {
     await client.query("ROLLBACK");
-    res.status(500).json({ error: e.message });
+    res.status(genericInventoryWarehouseErrorStatus(e) ?? 500).json({ error: e.message });
   } finally {
     client.release();
   }
@@ -289,6 +294,7 @@ router.post("/ombor/finished-in", async (req, res): Promise<void> => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await guardGenericInventoryWarehouses(client, [warehouseId]);
     // Og'irlik: aniq kiritilgan bo'lsa o'shani, aks holda kg-mahsulot uchun
     // partiya nisbati bo'yicha hisoblaymiz (dona uchun 0).
     let addWeight = explicitWeight ?? 0;
@@ -324,7 +330,7 @@ router.post("/ombor/finished-in", async (req, res): Promise<void> => {
     res.json({ ok: true });
   } catch (e: any) {
     await client.query("ROLLBACK");
-    res.status(500).json({ error: e.message });
+    res.status(genericInventoryWarehouseErrorStatus(e) ?? 500).json({ error: e.message });
   } finally {
     client.release();
   }
@@ -350,6 +356,7 @@ router.post("/ombor/adjust", async (req, res): Promise<void> => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await guardGenericInventoryWarehouses(client, [warehouseId]);
 
     const curRes = await client.query(
       `SELECT i.quantity, i.weight_kg, i.product_type, LOWER(p.unit_type) AS unit_type
@@ -414,7 +421,7 @@ router.post("/ombor/adjust", async (req, res): Promise<void> => {
     res.json({ ok: true });
   } catch (e: any) {
     await client.query("ROLLBACK");
-    res.status(500).json({ error: e.message });
+    res.status(genericInventoryWarehouseErrorStatus(e) ?? 500).json({ error: e.message });
   } finally {
     client.release();
   }

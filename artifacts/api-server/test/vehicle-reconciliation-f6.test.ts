@@ -7,6 +7,8 @@ import http from "node:http";
 import express from "express";
 import pg from "pg";
 import { createVehicleDistributionRouter } from "../src/routes/vehicle-distribution/index";
+import { createVehicleHandoffRouter } from "../src/routes/vehicle-distribution/handoff-router";
+import { createInventoryV2Router } from "../src/routes/inventory-v2";
 import {
   PILOT_AGENT_NAME,
   PILOT_WAREHOUSE_NAME,
@@ -38,8 +40,13 @@ function tmpUrl(): string {
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const botDir = path.resolve(here, "../../distribution-bot");
+const {
+  RAILWAY_DATABASE_URL: _ignoredRailwayDatabaseUrl,
+  DATABASE_URL: _ignoredRuntimeDatabaseUrl,
+  ...isolatedBotBaseEnv
+} = process.env;
 const botEnv = {
-  ...process.env,
+  ...isolatedBotBaseEnv,
   ...botDbEnv(tmpUrl()),
   TELEGRAM_BOT_TOKEN: "123456:TEST_TOKEN_VEHICLE_RECON",
   VEHICLE_DISTRIBUTION_SCHEMA_APPROVED: "1",
@@ -175,6 +182,8 @@ function makeApp(): http.Server {
     next();
   });
   app.use(createVehicleDistributionRouter(testPool));
+  app.use(createVehicleHandoffRouter(testPool));
+  app.use(createInventoryV2Router(testPool));
   return http.createServer(app);
 }
 
@@ -259,6 +268,26 @@ async function inventorySnapshotHash(): Promise<string> {
 async function stockMovementCount(): Promise<number> {
   const r = await client.query(`SELECT count(*)::int AS c FROM stock_movements`);
   return Number(r.rows[0].c);
+}
+
+async function waitForWarehouseLockWaiters(expected: number): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const r = await client.query(
+      `SELECT COUNT(*)::int AS count
+         FROM pg_stat_activity
+        WHERE datname = current_database()
+          AND pid <> pg_backend_pid()
+          AND wait_event_type = 'Lock'
+          AND (
+            query LIKE '%FROM public.warehouses%'
+            OR query LIKE '%FROM warehouses%'
+          )`,
+    );
+    if (Number(r.rows[0].count) >= expected) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`Timed out waiting for ${expected} warehouse lock waiter(s)`);
 }
 
 let adminToken = "";
@@ -579,6 +608,26 @@ describe("F6 reconciliation — patch counts / review / apply / cancel", () => {
       body: {},
     });
     expect(ap.status).toBe(409);
+
+    // Disputed remains immutable/non-cancellable, but is not an active-create
+    // blocker for the next business date.
+    const cancel = await call("POST", `${LIST}/${rec.id}/cancel`, {
+      token: adminToken,
+      body: {},
+    });
+    expect(cancel.status).toBe(409);
+    const later = await call("POST", LIST, {
+      token: adminToken,
+      body: { reconciliationDate: "2026-03-05" },
+    });
+    expect(later.status).toBe(200);
+    expect(later.body.created).toBe(true);
+    expect(later.body.reconciliation.id).not.toBe(rec.id);
+    const sameDate = await call("POST", LIST, {
+      token: adminToken,
+      body: { reconciliationDate: "2026-03-04" },
+    });
+    expect(sameDate.status).toBe(409);
   });
 
   it("apply blocks when the snapshot is stale → 409", async () => {
@@ -688,6 +737,216 @@ describe("F6 reconciliation — patch counts / review / apply / cancel", () => {
   });
 });
 
+describe("F6 apply row-set concurrency with the real F3 stock writer", () => {
+  beforeEach(async () => {
+    await resetAndBootstrap();
+  });
+
+  async function approvedSnapshot(
+    date: string,
+    product: string,
+    initialQuantity: number | null,
+  ): Promise<any> {
+    await seedProduct(product, `SKU-${product.replace(/\W/g, "")}`);
+    if (initialQuantity != null) {
+      await seedVehicleStock(product, initialQuantity, initialQuantity);
+    }
+    const created = await call("POST", LIST, {
+      token: adminToken,
+      body: { reconciliationDate: date },
+    });
+    expect(created.status).toBe(200);
+    const rec = created.body.reconciliation;
+    if (rec.items.length > 0) {
+      const patched = await call("PATCH", `${LIST}/${rec.id}/items`, {
+        token: adminToken,
+        body: {
+          items: rec.items.map((item: any) => ({
+            itemId: item.id,
+            actualQuantity: item.expectedQuantity,
+          })),
+        },
+      });
+      expect(patched.status).toBe(200);
+    }
+    const reviewed = await call("POST", `${LIST}/${rec.id}/review`, {
+      token: adminToken,
+      body: {},
+    });
+    expect(reviewed.status).toBe(200);
+    expect(reviewed.body.status).toBe("approved");
+    return rec;
+  }
+
+  async function handedOverTransfer(product: string): Promise<number> {
+    const source = await client.query(
+      `INSERT INTO warehouses (name, active, location_type, purpose)
+       VALUES ($1, TRUE, 'general', 'finished') RETURNING id`,
+      [`Race source ${product}`],
+    );
+    const sourceId = Number(source.rows[0].id);
+    await client.query(
+      `INSERT INTO inventory (warehouse_id, product, quantity, weight_kg)
+       VALUES ($1, $2, 1, 1)`,
+      [sourceId, product],
+    );
+    const mahsulot = await client.query(
+      `INSERT INTO distribution.mahsulotlar (nomi, sku, faol)
+       VALUES ($1, $2, 1) RETURNING id`,
+      [product, `SKU-${product.replace(/\W/g, "")}`],
+    );
+    const target = await client.query(
+      `SELECT v.id AS vehicle_id, a.delivery_agent_id
+         FROM distribution.vehicles v
+         JOIN distribution.vehicle_assignments a ON a.vehicle_id = v.id
+        WHERE v.warehouse_id = $1 AND a.status = 'active'`,
+      [pilotWarehouseId],
+    );
+    const handoff = await client.query(
+      `INSERT INTO distribution.vehicle_handoffs
+         (vehicle_id, delivery_agent_id, source_warehouse_id,
+          vehicle_warehouse_id, handoff_date, status, operation_key)
+       VALUES ($1, $2, $3, $4, CURRENT_DATE, 'handed_over', $5)
+       RETURNING id`,
+      [
+        target.rows[0].vehicle_id,
+        target.rows[0].delivery_agent_id,
+        sourceId,
+        pilotWarehouseId,
+        `race-${product}-${Date.now()}`,
+      ],
+    );
+    const handoffId = Number(handoff.rows[0].id);
+    const item = await client.query(
+      `INSERT INTO distribution.vehicle_handoff_items
+         (handoff_id, mahsulot_id, sku, quantity_dispatched, product_name,
+          unit_weight_kg, total_weight_kg)
+       VALUES ($1, $2, $3, 1, $4, 1, 1) RETURNING id`,
+      [
+        handoffId,
+        mahsulot.rows[0].id,
+        `SKU-${product.replace(/\W/g, "")}`,
+        product,
+      ],
+    );
+    await client.query(
+      `INSERT INTO distribution.vehicle_label_claims
+         (vehicle_id, handoff_id, handoff_item_id, production_label_id,
+          barcode, mahsulot_id, sku, unit_weight_kg, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 1, 'printed')`,
+      [
+        target.rows[0].vehicle_id,
+        handoffId,
+        item.rows[0].id,
+        9_000_000 + handoffId,
+        `RACE-${handoffId}`,
+        mahsulot.rows[0].id,
+        `SKU-${product.replace(/\W/g, "")}`,
+      ],
+    );
+    return handoffId;
+  }
+
+  async function writerWinsRace(
+    product: string,
+    initialQuantity: number | null,
+    date: string,
+  ): Promise<void> {
+    const rec = await approvedSnapshot(date, product, initialQuantity);
+    const handoffId = await handedOverTransfer(product);
+    const blocker = await testPool.connect();
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query(
+        `SELECT id FROM public.warehouses WHERE id = $1 FOR UPDATE`,
+        [pilotWarehouseId],
+      );
+
+      const writer = call(
+        "POST",
+        `/vehicle-distribution/handoffs/${handoffId}/stock-transferred`,
+        { token: adminToken, body: {} },
+      );
+      await waitForWarehouseLockWaiters(1);
+      const apply = call("POST", `${LIST}/${rec.id}/apply`, {
+        token: adminToken,
+        body: {},
+      });
+      await waitForWarehouseLockWaiters(2);
+      await blocker.query("COMMIT");
+
+      const [writerResult, applyResult] = await Promise.all([writer, apply]);
+      expect(writerResult.status).toBe(200);
+      expect(applyResult.status).toBe(409);
+      const detail = await call("GET", `${LIST}/${rec.id}`, {
+        token: adminToken,
+      });
+      expect(detail.body.status).toBe("approved");
+      const stock = await client.query(
+        `SELECT quantity FROM inventory
+          WHERE warehouse_id = $1 AND product = $2`,
+        [pilotWarehouseId, product],
+      );
+      expect(Number(stock.rows[0].quantity)).toBe(
+        (initialQuantity ?? 0) + 1,
+      );
+    } finally {
+      await blocker.query("ROLLBACK").catch(() => {});
+      blocker.release();
+    }
+  }
+
+  it("writer-before-apply exposes a concurrent new-SKU insert as stale", async () => {
+    await writerWinsRace("Race New SKU", null, "2026-04-01");
+  });
+
+  it("writer-before-apply exposes a concurrent zero-to-nonzero update as stale", async () => {
+    await writerWinsRace("Race Zero SKU", 0, "2026-04-02");
+  });
+
+  it("approved apply overlaps a rejected generic vehicle target without becoming stale", async () => {
+    const product = "Generic Guard Race";
+    const rec = await approvedSnapshot("2026-04-03", product, 4);
+    const before = await inventorySnapshotHash();
+    const movementsBefore = await stockMovementCount();
+    const blocker = await testPool.connect();
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query(
+        `SELECT id FROM public.warehouses WHERE id = $1 FOR UPDATE`,
+        [pilotWarehouseId],
+      );
+
+      const generic = call("POST", "/inventory/movement", {
+        token: adminToken,
+        body: {
+          product: "Brand New Generic SKU",
+          quantity: 1,
+          movement_type: "IN",
+          to_warehouse_id: pilotWarehouseId,
+        },
+      });
+      const apply = call("POST", `${LIST}/${rec.id}/apply`, {
+        token: adminToken,
+        body: {},
+      });
+      await waitForWarehouseLockWaiters(2);
+      await blocker.query("COMMIT");
+
+      const [genericResult, applyResult] = await Promise.all([generic, apply]);
+      expect(genericResult.status).toBe(400);
+      expect(genericResult.body.error).toMatch(/Vehicle warehouses/);
+      expect(applyResult.status).toBe(200);
+      expect(applyResult.body.status).toBe("applied");
+      expect(await inventorySnapshotHash()).toBe(before);
+      expect(await stockMovementCount()).toBe(movementsBefore);
+    } finally {
+      await blocker.query("ROLLBACK").catch(() => {});
+      blocker.release();
+    }
+  });
+});
+
 // ── Static source guard: F6 service performs NO inventory/stock mutations ─────
 describe("F6 static guard — service is label-preserving", () => {
   it("reconciliation-service.ts contains no inventory/stock/claim/event mutations", () => {
@@ -716,5 +975,37 @@ describe("F6 static guard — service is label-preserving", () => {
     for (const re of forbidden) {
       expect(re.test(code), `forbidden mutation matched: ${re}`).toBe(false);
     }
+  });
+
+  it("F3 writer and F6 apply share the parent warehouse lock in order", () => {
+    const f3 = readFileSync(
+      path.join(here, "../src/routes/vehicle-distribution/handoff-service.ts"),
+      "utf8",
+    );
+    const f6 = readFileSync(
+      path.join(here, "../src/routes/vehicle-distribution/reconciliation-service.ts"),
+      "utf8",
+    );
+    const helper = readFileSync(
+      path.join(here, "../src/routes/vehicle-distribution/service.ts"),
+      "utf8",
+    );
+    expect(helper).toMatch(
+      /FROM public\.warehouses[\s\S]*location_type = 'vehicle'[\s\S]*FOR UPDATE/,
+    );
+    const f3Lock = f3.indexOf(
+      "lockVehicleWarehouseStockMutation(client, vehicleWarehouseId)",
+    );
+    const f3Mutation = f3.indexOf("UPDATE inventory");
+    expect(f3Lock).toBeGreaterThan(-1);
+    expect(f3Lock).toBeLessThan(f3Mutation);
+    const f6Lock = f6.indexOf(
+      "lockVehicleWarehouseStockMutation(client, pilot.vehicleWarehouseId)",
+    );
+    const f6Snapshot = f6.indexOf(
+      "const current = await snapshotVehicleInventory",
+    );
+    expect(f6Lock).toBeGreaterThan(-1);
+    expect(f6Lock).toBeLessThan(f6Snapshot);
   });
 });

@@ -7,8 +7,13 @@ import type { Pool } from "pg";
 // ── Isolation ──────────────────────────────────────────────────────────────
 const SCHEMA = `topmart_invv2_wt_test_${process.pid}_${Date.now()}`;
 
-const baseUrl = process.env.RAILWAY_DATABASE_URL || process.env.DATABASE_URL;
-if (!baseUrl) throw new Error("DATABASE_URL must be set to run these tests");
+const baseUrl = process.env.VEHICLE_TEST_DATABASE_ADMIN_URL;
+if (!baseUrl) {
+  throw new Error("VEHICLE_TEST_DATABASE_ADMIN_URL must be set to run these tests");
+}
+if (!["127.0.0.1", "localhost", "::1"].includes(new URL(baseUrl).hostname)) {
+  throw new Error("VEHICLE_TEST_DATABASE_ADMIN_URL must use a loopback host");
+}
 {
   const u = new URL(baseUrl);
   u.searchParams.set("options", `-c search_path=${SCHEMA}`);
@@ -21,6 +26,7 @@ let server: Server;
 let apiUrl: string;
 let whA: number;
 let whB: number;
+let vehicleWh: number;
 
 async function postMovement(body: Record<string, unknown>): Promise<{ status: number; json: any }> {
   const r = await fetch(`${apiUrl}/inventory/movement`, {
@@ -96,6 +102,11 @@ beforeAll(async () => {
   );
   whA = rows[0].id;
   whB = rows[1].id;
+  const vehicle = await pool.query(
+    `INSERT INTO warehouses (name, location_type)
+     VALUES ('Vehicle-K', 'vehicle') RETURNING id`,
+  );
+  vehicleWh = vehicle.rows[0].id;
 
   // kg-product with batch history: 10 kg per unit (100 units / 1000 kg).
   await pool.query(`INSERT INTO products (name, unit_type) VALUES ('KgMahsulot','kg'), ('DonaMahsulot','dona')`);
@@ -192,5 +203,52 @@ describe("POST /inventory/movement — weight_kg sync", () => {
     const row = await invRow(whA, "KgMahsulot");
     expect(row.quantity).toBe(0);
     expect(row.weight_kg).toBe(0);
+  });
+
+  it("rejects vehicle warehouses as either source or destination without writes", async () => {
+    await pool.query(
+      `INSERT INTO inventory (warehouse_id, product, quantity, weight_kg)
+       VALUES ($1, 'KgMahsulot', 10, 100)`,
+      [vehicleWh],
+    );
+    const attempts = [
+      {
+        product: "KgMahsulot",
+        quantity: 1,
+        movement_type: "IN",
+        to_warehouse_id: vehicleWh,
+      },
+      {
+        product: "KgMahsulot",
+        quantity: 1,
+        movement_type: "OUT",
+        from_warehouse_id: vehicleWh,
+      },
+      {
+        product: "KgMahsulot",
+        quantity: 1,
+        movement_type: "TRANSFER",
+        from_warehouse_id: whA,
+        to_warehouse_id: vehicleWh,
+      },
+      {
+        product: "KgMahsulot",
+        quantity: 1,
+        movement_type: "TRANSFER",
+        from_warehouse_id: vehicleWh,
+        to_warehouse_id: whA,
+      },
+    ];
+    for (const body of attempts) {
+      const result = await postMovement(body);
+      expect(result.status).toBe(400);
+      expect(result.json.error).toMatch(/Vehicle warehouses/);
+    }
+    const vehicleStock = await invRow(vehicleWh, "KgMahsulot");
+    expect(vehicleStock.quantity).toBe(10);
+    const movements = await pool.query(
+      `SELECT COUNT(*)::int AS count FROM stock_movements`,
+    );
+    expect(Number(movements.rows[0].count)).toBe(0);
   });
 });

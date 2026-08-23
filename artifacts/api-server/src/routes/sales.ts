@@ -5,6 +5,7 @@ import {
   HealthCheckResponse,
 } from "@workspace/api-zod";
 import { resolveProductPrice } from "../lib/pricing";
+import { guardGenericInventoryWarehouses } from "../lib/genericInventoryWarehouseGuard";
 
 const router: IRouter = Router();
 
@@ -291,19 +292,46 @@ router.post("/sales", async (req, res): Promise<void> => {
           let remainingKg = Number(it.quantity);
           if (remainingKg <= 0) continue;
 
-          const { rows: kgRows } = await client.query(
-            `SELECT warehouse_id, weight_kg FROM inventory
-              WHERE product = $1 AND COALESCE(weight_kg, 0) > 0
-              ORDER BY weight_kg DESC
-              FOR UPDATE`,
+          const { rows: kgWarehouseRows } = await client.query(
+            `SELECT i.warehouse_id
+               FROM inventory i
+               JOIN warehouses w ON w.id = i.warehouse_id
+              WHERE i.product = $1
+                AND COALESCE(i.weight_kg, 0) > 0
+                AND COALESCE(w.location_type,'general') != 'vehicle'
+              ORDER BY i.warehouse_id`,
             [it.productName],
+          );
+          const kgWarehouseIds = await guardGenericInventoryWarehouses(
+            client,
+            kgWarehouseRows.map((row) => row.warehouse_id),
+          );
+          const { rows: kgRows } = kgWarehouseIds.length === 0
+            ? { rows: [] }
+            : await client.query(
+            `SELECT i.warehouse_id, i.weight_kg
+               FROM inventory i
+               JOIN warehouses w ON w.id = i.warehouse_id
+              WHERE i.product = $1
+                AND COALESCE(i.weight_kg, 0) > 0
+                AND COALESCE(w.location_type,'general') != 'vehicle'
+                AND i.warehouse_id = ANY($2::int[])
+              ORDER BY weight_kg DESC
+              FOR UPDATE OF i`,
+            [it.productName, kgWarehouseIds],
           );
           for (const row of kgRows) {
             if (remainingKg <= 0) break;
             const takeKg = Math.min(Number(row.weight_kg), remainingKg);
             await client.query(
-              `UPDATE inventory SET weight_kg = COALESCE(weight_kg,0) - $1, updated_at = NOW()
-                WHERE product = $2 AND warehouse_id = $3`,
+              `UPDATE inventory i
+                  SET weight_kg = COALESCE(i.weight_kg,0) - $1, updated_at = NOW()
+                WHERE i.product = $2 AND i.warehouse_id = $3
+                  AND EXISTS (
+                    SELECT 1 FROM warehouses w
+                     WHERE w.id = i.warehouse_id
+                       AND COALESCE(w.location_type,'general') != 'vehicle'
+                  )`,
               [takeKg, it.productName, row.warehouse_id],
             );
             await client.query(
@@ -319,7 +347,10 @@ router.post("/sales", async (req, res): Promise<void> => {
           // (ortiqcha sotilgani ko'rinib turadi).
           if (remainingKg > 0) {
             const { rows: whRows } = await client.query(
-              "SELECT id FROM warehouses WHERE active=TRUE AND COALESCE(location_type,'general') != 'vehicle' ORDER BY id LIMIT 1",
+              `SELECT id FROM warehouses
+                WHERE active=TRUE
+                  AND COALESCE(location_type,'general') != 'vehicle'
+                ORDER BY id LIMIT 1 FOR UPDATE`,
             );
             const whId = whRows[0]?.id ?? null;
             if (whId) {
@@ -345,12 +376,31 @@ router.post("/sales", async (req, res): Promise<void> => {
         if (remaining <= 0) continue;
 
         // Zaxira bor omborlardan ketma-ket kamaytiramiz (ko'pi birinchi).
-        const { rows: stockRows } = await client.query(
-          `SELECT warehouse_id, quantity, weight_kg FROM inventory
-            WHERE product = $1 AND quantity > 0
-            ORDER BY quantity DESC
-            FOR UPDATE`,
+        const { rows: stockWarehouseRows } = await client.query(
+          `SELECT i.warehouse_id
+             FROM inventory i
+             JOIN warehouses w ON w.id = i.warehouse_id
+            WHERE i.product = $1 AND i.quantity > 0
+              AND COALESCE(w.location_type,'general') != 'vehicle'
+            ORDER BY i.warehouse_id`,
           [it.productName],
+        );
+        const stockWarehouseIds = await guardGenericInventoryWarehouses(
+          client,
+          stockWarehouseRows.map((row) => row.warehouse_id),
+        );
+        const { rows: stockRows } = stockWarehouseIds.length === 0
+          ? { rows: [] }
+          : await client.query(
+          `SELECT i.warehouse_id, i.quantity, i.weight_kg
+             FROM inventory i
+             JOIN warehouses w ON w.id = i.warehouse_id
+            WHERE i.product = $1 AND i.quantity > 0
+              AND COALESCE(w.location_type,'general') != 'vehicle'
+              AND i.warehouse_id = ANY($2::int[])
+            ORDER BY quantity DESC
+            FOR UPDATE OF i`,
+          [it.productName, stockWarehouseIds],
         );
         for (const row of stockRows) {
           if (remaining <= 0) break;
@@ -359,9 +409,14 @@ router.post("/sales", async (req, res): Promise<void> => {
           // Og'irlikni dona ulushiga proporsional kamaytiramiz (transfer bilan bir xil qoida).
           const takeW = rowW > 0 ? Math.min(rowW, (rowW * take) / Number(row.quantity)) : 0;
           await client.query(
-            `UPDATE inventory SET quantity = quantity - $1,
-                    weight_kg = GREATEST(0, COALESCE(weight_kg,0) - $2), updated_at = NOW()
-              WHERE product = $3 AND warehouse_id = $4`,
+            `UPDATE inventory i SET quantity = i.quantity - $1,
+                    weight_kg = GREATEST(0, COALESCE(i.weight_kg,0) - $2), updated_at = NOW()
+              WHERE i.product = $3 AND i.warehouse_id = $4
+                AND EXISTS (
+                  SELECT 1 FROM warehouses w
+                   WHERE w.id = i.warehouse_id
+                     AND COALESCE(w.location_type,'general') != 'vehicle'
+                )`,
             [take, takeW, it.productName, row.warehouse_id],
           );
           await client.query(
@@ -377,7 +432,10 @@ router.post("/sales", async (req, res): Promise<void> => {
         // (ombor manfiyga tushadi — ortiqcha sotilgani ko'rinib turadi).
         if (remaining > 0) {
           const { rows: whRows } = await client.query(
-            "SELECT id FROM warehouses WHERE active=TRUE AND COALESCE(location_type,'general') != 'vehicle' ORDER BY id LIMIT 1",
+            `SELECT id FROM warehouses
+              WHERE active=TRUE
+                AND COALESCE(location_type,'general') != 'vehicle'
+              ORDER BY id LIMIT 1 FOR UPDATE`,
           );
           const whId = whRows[0]?.id ?? null;
           if (whId) {

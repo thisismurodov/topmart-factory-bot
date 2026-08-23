@@ -65,8 +65,13 @@ function tmpUrl(): string {
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const botDir = path.resolve(here, "../../distribution-bot");
+const {
+  RAILWAY_DATABASE_URL: _ignoredRailwayDatabaseUrl,
+  DATABASE_URL: _ignoredRuntimeDatabaseUrl,
+  ...isolatedBotBaseEnv
+} = process.env;
 const botEnv = {
-  ...process.env,
+  ...isolatedBotBaseEnv,
   ...botDbEnv(tmpUrl()),
   TELEGRAM_BOT_TOKEN: "123456:TEST_TOKEN_VEHICLE_PILOT",
   VEHICLE_DISTRIBUTION_SCHEMA_APPROVED: "1",

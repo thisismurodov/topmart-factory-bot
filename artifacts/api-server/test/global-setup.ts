@@ -10,13 +10,16 @@
 // token '<'"). Har 10 sekundda yangi ulanish bilan SELECT 1 ping bazani
 // butun run davomida uyg'oq tutadi; ping o'zi ham uxlagan bazani uyg'otadi.
 import { Client } from "pg";
+import { provisionLocalTestPostgres } from "../../../scripts/src/local-test-postgres";
 
-export default function globalSetup(): () => void {
+export default async function globalSetup(): Promise<() => Promise<void>> {
+  const vehiclePostgres = await provisionLocalTestPostgres();
+  process.env.VEHICLE_TEST_DATABASE_ADMIN_URL = vehiclePostgres.url;
   const url = process.env.DATABASE_URL;
-  if (!url) return () => {};
 
   let pinging = false;
   const ping = async () => {
+    if (!url) return;
     if (pinging) return; // sekin uyg'onishda pinglar ustma-ust tushmasin
     pinging = true;
     const client = new Client({ connectionString: url });
@@ -31,8 +34,11 @@ export default function globalSetup(): () => void {
     }
   };
 
-  void ping();
-  const timer = setInterval(() => void ping(), 10_000);
+  const timer = url ? setInterval(() => void ping(), 10_000) : undefined;
+  if (url) void ping();
 
-  return () => clearInterval(timer);
+  return async () => {
+    if (timer) clearInterval(timer);
+    await vehiclePostgres.stop();
+  };
 }

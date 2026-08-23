@@ -97,6 +97,7 @@ describe("static vehicle guard for every public.inventory writer", () => {
       "routes/inventory-v2.ts",
       "routes/sales.ts",
       "routes/vehicle-distribution/handoff-service.ts",
+      "routes/vehicle-distribution/return-service.ts",
     ];
     const discovered = sourceFiles()
       .filter((file) => inventoryMutation.test(read(file)))
@@ -105,5 +106,8 @@ describe("static vehicle guard for every public.inventory writer", () => {
 
     const handoff = read("routes/vehicle-distribution/handoff-service.ts");
     expect(handoff).toContain("lockVehicleWarehouseStockMutation");
+    const vehicleReturn = read("routes/vehicle-distribution/return-service.ts");
+    expect(vehicleReturn).toContain("async function lockParents");
+    expect(vehicleReturn).toContain("await lockParents(client,");
   });
 });

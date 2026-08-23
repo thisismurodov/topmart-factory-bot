@@ -10,6 +10,7 @@ import {
   normalizeType,
   withDatabase,
 } from "./drift-utils";
+import { provisionLocalTestPostgres } from "./local-test-postgres";
 import {
   agentLocationsTable,
   aiSuggestCacheTable,
@@ -763,12 +764,9 @@ async function compareVehicleChecksAndPartialIndexes(
 }
 
 async function main(): Promise<void> {
-  const adminUrl = process.env.DATABASE_URL;
-  if (!adminUrl) throw new Error("DATABASE_URL must be set");
-  const adminHost = new URL(adminUrl).hostname;
-  if (!["localhost", "127.0.0.1", "::1"].includes(adminHost)) {
-    throw new Error("Distribution drift admin DATABASE_URL must use a loopback host");
-  }
+  const localPostgres = await provisionLocalTestPostgres();
+  const adminUrl = localPostgres.url;
+  try {
 
   // 1. Ikkita throwaway baza yaratish
   const adminPool = new pg.Pool({ connectionString: adminUrl });
@@ -851,25 +849,26 @@ async function main(): Promise<void> {
   const botIndexDrift = compareIndexes("bot _INIT_DDL", expectedIndexes, botActualIndexes);
   const tsIndexDrift = compareIndexes("init-distribution.ts", expectedIndexes, tsActualIndexes);
 
-  // Toza bo'lishi uchun throwaway bazalarni o'chirish
-  const cleanupPool = new pg.Pool({ connectionString: adminUrl });
-  for (const db of [BOT_DB, TS_DB]) {
-    await cleanupPool.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`).catch(() => {});
-  }
-  await cleanupPool.end();
-
   if (botDrift || tsDrift || botIndexDrift || tsIndexDrift || botCheckDrift || tsCheckDrift) {
     console.error(
       "\nDistribution sxema drifti aniqlandi. UCHALA nusxani ham yangilang: " +
         "artifacts/distribution-bot/database/connection.py (_INIT_DDL), " +
         "scripts/src/init-distribution.ts va lib/db/src/schema/distribution.ts.",
     );
-    process.exit(1);
+    throw new Error("Distribution schema drift detected");
   }
 
   console.log(
     "\nDistribution sxema mos — drift yo'q (bot DDL ↔ init skript ↔ Drizzle mirror; ustunlar + indekslar + vehicle CHECK + partial-index predicates).",
   );
+  } finally {
+    const cleanupPool = new pg.Pool({ connectionString: adminUrl });
+    for (const db of [BOT_DB, TS_DB]) {
+      await cleanupPool.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`).catch(() => {});
+    }
+    await cleanupPool.end().catch(() => {});
+    await localPostgres.stop();
+  }
 }
 
 main().catch((e) => {

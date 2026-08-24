@@ -5,6 +5,7 @@ description = "Add your description here"
 requires-python = ">=3.11"
 dependencies = [
     "pillow==10.4.0",
+    "pymupdf==1.26.3",
     "pytelegrambotapi==4.33.0",
     "python-barcode>=0.16.1",
     "python-telegram-bot==20.7",

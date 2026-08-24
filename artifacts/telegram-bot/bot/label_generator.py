@@ -410,6 +410,13 @@ def _render_pages(pages: list[Image.Image]) -> io.BytesIO:
     pdf_bytes = img2pdf.convert(
         png_pages,
         layout_fun=img2pdf.get_fixed_dpi_layout_fun((_DPI, _DPI)),
+        # pikepdf engine har serialize'da yangi trailer /ID beradi. Internal
+        # engine bir xil PNG sahifalardan deterministik PDF yozadi.
+        engine=img2pdf.Engine.internal,
+        # Reprint bir xil persisted passportlardan aynan bir xil PDF artifact
+        # berishi kerak. Default img2pdf CreationDate/ModDate va trailer /ID ni
+        # joriy vaqtga bog'laydi; nodate metadata driftini olib tashlaydi.
+        nodate=True,
     )
     out = io.BytesIO(pdf_bytes)
     out.seek(0)

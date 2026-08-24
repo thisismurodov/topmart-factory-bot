@@ -5,8 +5,10 @@ existing production label generator, reusing persisted barcodes + producedAt
 (rendered in Asia/Tashkent).
 """
 import unittest
+import time
 from datetime import datetime, timezone
 
+import fitz
 import zxingcpp
 
 from bot.vehicle_label_pdf import (
@@ -48,8 +50,8 @@ class VehicleLabelPdfTest(unittest.TestCase):
         pdf = build_batch_session_pdf(_payload(5))
         data = pdf.read()
         self.assertEqual(data[:4], b"%PDF")
-        pages = max(data.count(b"/Type /Page "), data.count(b"/Type/Page "))
-        self.assertEqual(pages, 5)
+        document = fitz.open(stream=data, filetype="pdf")
+        self.assertEqual(document.page_count, 5)
 
     def test_empty_payload_raises(self):
         with self.assertRaises(ValueError):
@@ -73,6 +75,9 @@ class VehicleLabelPdfTest(unittest.TestCase):
     def test_reprint_same_payload_is_byte_identical(self):
         payload = _payload(3)
         a = build_batch_session_pdf(payload).read()
+        # img2pdf default metadata second-resolution timestampga bog'liq edi;
+        # keyingi sekunddagi reprint ham aynan bir artifact bo'lishini tekshiramiz.
+        time.sleep(1.05)
         b = build_batch_session_pdf(payload).read()
         self.assertEqual(a, b)
 

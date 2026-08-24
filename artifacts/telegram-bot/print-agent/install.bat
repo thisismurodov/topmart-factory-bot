@@ -22,11 +22,14 @@ python -m pywin32_postinstall -install 2>nul
 echo.
 echo [3/3] Tayyor!
 echo.
-echo Endi config.py faylini oching va:
-echo   TELEGRAM_BOT_TOKEN = "tokeningiz"
-echo   ALLOWED_CHAT_IDS   = [chat_id_raqam]
-echo   PRINTER_NAME       = "printer nomi"
-echo ni kiriting.
+echo Majburiy Windows environment sozlamalari:
+echo   TELEGRAM_BOT_TOKEN
+echo   ALLOWED_CHAT_IDS            ^(masalan: 123456789,987654321^)
+echo   PRINTER_NAME                ^(Windows'dagi aynan printer nomi^)
+echo   API_BASE_URL                ^(oxirida /api^)
+echo   VEHICLE_DISTRIBUTION_BOT_KEY
+echo.
+echo Ularni setx orqali o'rnating. Birortasi bo'sh bo'lsa agent ishga tushmaydi.
 echo.
 echo Ishga tushirish uchun: run.bat
 pause

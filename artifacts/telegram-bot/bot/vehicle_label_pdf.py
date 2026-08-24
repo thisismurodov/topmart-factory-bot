@@ -12,12 +12,11 @@ reuses the persisted barcode values and the original produced_at timestamp
 from __future__ import annotations
 
 import io
-from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta, timezone
 
 from .label_generator import generate_batch_session_pdf
 
-_TASHKENT = ZoneInfo("Asia/Tashkent")
+_TASHKENT = timezone(timedelta(hours=5))
 
 
 def _parse_produced_at(value: str) -> datetime:
@@ -77,12 +76,35 @@ def build_batch_session_pdf(payload: dict) -> io.BytesIO:
         raise ValueError("payloadda labels yo'q — chop etish uchun passport yo'q")
 
     ordered = sorted(labels, key=lambda row: int(row["labelNumber"]))
+    declared_total = int(payload.get("totalLabels") or 0)
+    if declared_total != len(ordered):
+        raise ValueError(
+            f"totalLabels={declared_total}, passportlar soni={len(ordered)}"
+        )
+    expected_numbers = list(range(1, declared_total + 1))
+    actual_numbers = [int(row["labelNumber"]) for row in ordered]
+    if actual_numbers != expected_numbers:
+        raise ValueError(
+            f"Passport labelNumber qiymatlari uzluksiz emas: {actual_numbers}"
+        )
+    expected_batch = str(payload.get("batchCode") or "").strip()
+    if not expected_batch:
+        raise ValueError("batchCode bo'sh — vehicle handoff aniqlanmadi")
+    if any(str(row.get("batchCode") or "").strip() != expected_batch for row in ordered):
+        raise ValueError("Passport batchCode qiymatlari handoff payloadga mos emas")
+    barcode_values = [str(row.get("barcodeValue") or "").strip() for row in ordered]
+    if len(set(barcode_values)) != len(barcode_values):
+        raise ValueError("Bir xil persisted barcode bir necha passportda takrorlangan")
+    produced_values = [str(row.get("producedAt") or "").strip() for row in ordered]
+    if len(set(produced_values)) != 1:
+        raise ValueError("Passport producedAt snapshotlari bir xil emas")
+
     passport_rows = [_passport_row(label) for label in ordered]
 
     # produced_at is identical across a handoff's passports (handoff.created_at
     # snapshot); take it from the first label.
     produced_at = _parse_produced_at(str(ordered[0].get("producedAt") or ""))
-    batch_code = str(payload.get("batchCode") or "")
+    batch_code = expected_batch
     worker = str(ordered[0].get("workerName") or "")
 
     item = {

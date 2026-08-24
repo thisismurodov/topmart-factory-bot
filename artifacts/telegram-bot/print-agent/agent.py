@@ -1,14 +1,22 @@
 """
 TopMart Print Agent — Windows kompyuterda ishlaydigan script.
-Telegram'dan yangi etiketka rasmlarini qabul qilib, printerga avtomatik yuboradi.
+Telegram orqali tasdiqlangan vehicle handoff passport PDFlarini 100x80 printerga
+xavfsiz yuboradi. Legacy rasm etiketalari ham faqat ruxsatli chatdan qabul qilinadi.
 """
 import logging
 import asyncio
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, filters
 
-from config import TELEGRAM_BOT_TOKEN, ALLOWED_CHAT_IDS, PRINTER_NAME
+from config import ConfigError, PrintAgentConfig, load_config
 from printer import print_image, list_printers
+from vehicle_api import VehicleApiClient
+from vehicle_print import (
+    ConfirmationPending,
+    PrintJobStore,
+    VehiclePrintSafetyError,
+    VehiclePrintService,
+)
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -17,7 +25,25 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _config(context: ContextTypes.DEFAULT_TYPE) -> PrintAgentConfig:
+    return context.application.bot_data["config"]
+
+
+def _service(context: ContextTypes.DEFAULT_TYPE) -> VehiclePrintService:
+    return context.application.bot_data["vehicle_print_service"]
+
+
+def _allowed(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    chat = update.effective_chat
+    allowed = chat is not None and chat.id in _config(context).allowed_chat_ids
+    if not allowed:
+        logger.warning("Ruxsatsiz chatdan so'rov rad etildi")
+    return allowed
+
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _allowed(update, context):
+        return
     chat_id = update.effective_chat.id
     printers = list_printers()
     printer_list = "\n".join(f"  • {p}" for p in printers) or "  (topilmadi)"
@@ -25,16 +51,18 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"🖨️ *TopMart Print Agent*\n\n"
         f"Chat ID: `{chat_id}`\n\n"
         f"Mavjud printerlar:\n{printer_list}\n\n"
-        f"_config.py ga ALLOWED\\_CHAT\\_IDS va PRINTER\\_NAME ni kiriting._",
+        f"Vehicle print: `/vehicle_print HANDOFF_ID`\n"
+        f"Reprint: `/vehicle_reprint HANDOFF_ID`\n"
+        f"Tasdiqni davom ettirish: `/vehicle_resume JOB_ID`\n"
+        f"Noaniq jobni fizik tekshiruvdan so'ng tasdiqlash: "
+        f"`/vehicle_recover JOB_ID`\n"
+        f"Noaniq jobni to'liq qayta bosish: `/vehicle_retry JOB_ID`",
         parse_mode="Markdown",
     )
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    chat_id = update.effective_chat.id
-
-    if ALLOWED_CHAT_IDS and chat_id not in ALLOWED_CHAT_IDS:
-        logger.warning(f"Ruxsatsiz chat_id: {chat_id}")
+    if not _allowed(update, context):
         return
 
     if not update.message.photo:
@@ -51,7 +79,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     logger.info(f"Etiketka qabul qilindi: {caption[:60]}")
 
-    success = print_image(bytes(image_bytes), PRINTER_NAME)
+    success = await asyncio.to_thread(
+        print_image,
+        bytes(image_bytes),
+        _config(context).printer_name,
+    )
 
     if success:
         await update.message.reply_text("✅ Etiketka printerga yuborildi!")
@@ -60,16 +92,158 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text("❌ Printer xatosi. Log faylini tekshiring.")
 
 
+def _positive_id(context: ContextTypes.DEFAULT_TYPE, label: str) -> int:
+    if len(context.args) != 1:
+        raise ValueError(f"{label} bitta musbat ID qabul qiladi")
+    value = int(context.args[0])
+    if value <= 0:
+        raise ValueError(f"{label} musbat son bo'lishi kerak")
+    return value
+
+
+async def _vehicle_print_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    explicit_reprint: bool,
+) -> None:
+    if not _allowed(update, context):
+        return
+    try:
+        handoff_id = _positive_id(context, "Handoff ID")
+    except (ValueError, TypeError) as exc:
+        await update.message.reply_text(f"❌ {exc}")
+        return
+
+    action = "qayta chop" if explicit_reprint else "chop"
+    await update.message.reply_text(
+        f"⏳ Handoff #{handoff_id} {action} etilmoqda..."
+    )
+    try:
+        outcome = await asyncio.to_thread(
+            _service(context).print_handoff,
+            handoff_id,
+            update.effective_chat.id,
+            update.effective_message.message_id,
+            explicit_reprint=explicit_reprint,
+        )
+        suffix = " (takroriy so'rov, qayta bosilmadi)" if outcome.deduplicated else ""
+        await update.message.reply_text(
+            f"✅ Job #{outcome.job_id}: {outcome.page_count} ta 100×80 sahifa "
+            f"printer spooleriga topshirildi va lifecycle tasdiqlandi{suffix}."
+        )
+    except ConfirmationPending as exc:
+        await update.message.reply_text(
+            f"⚠️ Job #{exc.job_id} printerga topshirildi, lekin API tasdig'i "
+            f"yetib bormadi. Qayta bosmang. `/vehicle_resume {exc.job_id}` ni yuboring.",
+            parse_mode="Markdown",
+        )
+    except Exception as exc:
+        logger.exception("Vehicle print xatosi")
+        await update.message.reply_text(f"❌ Vehicle print rad etildi: {exc}")
+
+
+async def cmd_vehicle_print(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    await _vehicle_print_command(update, context, explicit_reprint=False)
+
+
+async def cmd_vehicle_reprint(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    await _vehicle_print_command(update, context, explicit_reprint=True)
+
+
+async def cmd_vehicle_resume(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    if not _allowed(update, context):
+        return
+    try:
+        job_id = _positive_id(context, "Job ID")
+        outcome = await asyncio.to_thread(
+            _service(context).resume_confirmation,
+            job_id,
+        )
+        await update.message.reply_text(
+            f"✅ Job #{outcome.job_id} lifecycle tasdig'i yakunlandi. "
+            "Etiketkalar qayta bosilmadi."
+        )
+    except Exception as exc:
+        logger.exception("Vehicle print resume xatosi")
+        await update.message.reply_text(f"❌ Tasdiq davom ettirilmadi: {exc}")
+
+
+async def cmd_vehicle_recover(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    if not _allowed(update, context):
+        return
+    try:
+        job_id = _positive_id(context, "Job ID")
+        outcome = await asyncio.to_thread(
+            _service(context).recover_ambiguous_confirmation,
+            job_id,
+        )
+        await update.message.reply_text(
+            f"✅ Job #{outcome.job_id}: operator tekshirgan fizik bosma "
+            "lifecycle'da tasdiqlandi. Qayta bosilmadi."
+        )
+    except Exception as exc:
+        logger.exception("Vehicle print recover xatosi")
+        await update.message.reply_text(f"❌ Recover bajarilmadi: {exc}")
+
+
+async def cmd_vehicle_retry(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    if not _allowed(update, context):
+        return
+    try:
+        job_id = _positive_id(context, "Job ID")
+        outcome = await asyncio.to_thread(
+            _service(context).retry_ambiguous,
+            job_id,
+            update.effective_chat.id,
+            update.effective_message.message_id,
+        )
+        await update.message.reply_text(
+            f"✅ Job #{outcome.job_id}: {outcome.page_count} ta sahifa to'liq "
+            "qayta bosildi va lifecycle tasdiqlandi."
+        )
+    except Exception as exc:
+        logger.exception("Vehicle print retry xatosi")
+        await update.message.reply_text(f"❌ Retry bajarilmadi: {exc}")
+
+
 def main() -> None:
-    if not TELEGRAM_BOT_TOKEN:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN ni config.py ga kiriting!")
+    try:
+        config = load_config()
+    except ConfigError as exc:
+        raise RuntimeError(f"Print Agent fail-closed: {exc}") from exc
 
     logger.info("TopMart Print Agent ishga tushdi...")
     printers = list_printers()
     logger.info(f"Mavjud printerlar: {printers}")
+    if config.printer_name not in printers:
+        raise RuntimeError(
+            f"Print Agent fail-closed: PRINTER_NAME topilmadi: {config.printer_name}"
+        )
 
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+    app = ApplicationBuilder().token(config.telegram_bot_token).build()
+    app.bot_data["config"] = config
+    app.bot_data["vehicle_print_service"] = VehiclePrintService(
+        VehicleApiClient(config.api_base_url, config.vehicle_bot_key),
+        PrintJobStore(config.job_db_path),
+        config.printer_name,
+    )
     app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("vehicle_print", cmd_vehicle_print))
+    app.add_handler(CommandHandler("vehicle_reprint", cmd_vehicle_reprint))
+    app.add_handler(CommandHandler("vehicle_resume", cmd_vehicle_resume))
+    app.add_handler(CommandHandler("vehicle_recover", cmd_vehicle_recover))
+    app.add_handler(CommandHandler("vehicle_retry", cmd_vehicle_retry))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
     logger.info("Telegram'dan etiketkalar kutilmoqda...")

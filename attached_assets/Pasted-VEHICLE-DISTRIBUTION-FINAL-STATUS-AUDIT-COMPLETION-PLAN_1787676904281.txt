@@ -1,0 +1,601 @@
+VEHICLE DISTRIBUTION — FINAL STATUS AUDIT & COMPLETION PLAN
+
+IMPORTANT:
+You have been working on the Vehicle Distribution / NAVRUZBEK /
+DM-001 pilot for approximately two days.
+
+DO NOT start another implementation blindly.
+
+STOP CURRENT DEVELOPMENT ACTIONS FIRST.
+
+We need a complete, evidence-based status audit:
+WHAT IS DONE → WHAT IS WORKING → WHAT IS NOT DONE →
+WHAT IS BLOCKING PILOT → EXACTLY HOW TO FINISH.
+
+Do not assume anything.
+Do not infer missing configuration.
+Do not reuse existing admin recipients.
+Do not send Telegram messages.
+Do not print labels.
+Do not activate the pilot.
+
+PRODUCTION SAFETY:
+
+- Production writes = 0 unless an explicitly documented previous
+  approved action already exists.
+- Feature flags remain OFF.
+- NAVRUZBEK / DM-001 remains inactive.
+- Telegram sendMessage = 0.
+- Physical printer = 0.
+- No bootstrap.
+- No rollout.
+- No destructive changes.
+
+==================================================
+PART 1 — ORIGINAL REQUIREMENTS RECONCILIATION
+==================================================
+
+Take the original Vehicle Distribution requirements and create a
+checklist.
+
+For EVERY requirement mark exactly one:
+
+✅ DONE
+🟡 PARTIALLY DONE
+🔴 NOT DONE
+⛔ BLOCKED
+
+Original business flow:
+
+WAREHOUSE
+→ VEHICLE LOAD
+→ INDIVIDUAL LABEL GENERATION
+→ LABEL PRINT
+→ PHYSICAL LABEL ATTACHED
+→ HANDOFF TO AGENT
+→ VEHICLE STOCK
+
+Then:
+
+VEHICLE
+→ DISTRIBUTION SALES
+→ VEHICLE STOCK DECREASE
+
+End of route:
+
+SALES
+→ AUTOMATIC REPLENISHMENT CALCULATION
+→ WAREHOUSE TELEGRAM BOT
+→ WAREHOUSE PREPARES PRODUCTS
+→ INDIVIDUAL LABELS
+→ HANDOFF
+→ VEHICLE STOCK
+
+Return:
+
+VEHICLE
+→ WAREHOUSE
+
+Weekly:
+
+EXPECTED STOCK
+↔
+PHYSICAL COUNT
+→ DIFFERENCE
+→ APPROVAL
+→ AUDIT
+
+Also verify:
+
+- Agent management
+- Vehicle management
+- Vehicle ↔ agent assignment
+- Vehicle as separate stock location
+- Warehouse KPI isolation
+- Individual product/unit identity
+- Real barcode
+- 100×80 label
+- Sales deduction
+- Replenishment
+- Return
+- Reconciliation
+- Audit trail
+- Idempotency
+- Locking
+- Authorization
+- Rollback/compensating movements
+
+
+==================================================
+PART 2 — IMPLEMENTATION INVENTORY
+==================================================
+
+List EXACTLY what has been implemented.
+
+For each:
+
+- file/module
+- route/API
+- database table
+- migration
+- bot handler
+- frontend page/component
+- print service
+- Telegram service
+- transaction
+- test
+- feature flag
+
+Do not just say "implemented".
+
+Give evidence:
+file path + relevant function/route/table name.
+
+Separate:
+
+A. CODE EXISTS
+B. TESTED
+C. CONNECTED TO REAL SYSTEM
+D. PRODUCTION-READY
+
+These are NOT the same thing.
+
+
+==================================================
+PART 3 — DATABASE STATUS
+==================================================
+
+Report the current schema status for Vehicle Distribution.
+
+Verify:
+
+- vehicles
+- vehicle_assignments
+- vehicle_handoffs
+- vehicle_handoff_items
+- vehicle_unit_events
+- vehicle_sale_allocations
+- vehicle_stock_targets
+- vehicle_reconciliations
+- vehicle_reconciliation_items
+- vehicle_returns
+- vehicle_return_items
+- notification tables/config
+- print-job tables/config
+
+For each table:
+
+EXISTS / MISSING / PARTIAL
+
+Also verify:
+- schema-drift
+- migration status
+- indexes
+- unique constraints
+- foreign keys
+- CHECK constraints
+
+DO NOT create anything during this audit.
+
+
+==================================================
+PART 4 — NAVRUZBEK / DM-001
+==================================================
+
+Verify production state:
+
+Agent:
+NAVRUZBEK
+
+Vehicle:
+DM-001
+
+Type:
+DAMAS
+
+Report:
+
+- agent exists?
+- active?
+- Telegram linked?
+- vehicle exists?
+- vehicle warehouse exists?
+- assignment exists?
+- feature flag?
+- pilot flag?
+- initial stock?
+- permissions?
+
+Do NOT create missing records.
+
+Just report what is missing.
+
+
+==================================================
+PART 5 — LABEL SYSTEM
+==================================================
+
+We already have a 100×80 mm thermal label requirement.
+
+Required fields:
+
+- Product name
+- Product SKU
+- Product KG
+- Product meter
+- Produced by
+- Date
+- Time
+- REAL BARCODE
+
+No:
+- company branding
+- Top Mart branding
+- QR code
+
+Verify the actual current implementation.
+
+Important distinction:
+
+PDF GENERATED
+≠
+PRINT SENT
+≠
+PHYSICAL PRINT CONFIRMED
+≠
+HANDOFF COMPLETED
+
+Report which of these are actually implemented and tested.
+
+Also report:
+
+- printer bridge status
+- Windows print-agent status
+- authentication
+- idempotency
+- retry
+- duplicate print protection
+- 100×80 physical dimensions
+- real DTP-4207 test status
+
+Do not print anything.
+
+
+==================================================
+PART 6 — TELEGRAM
+==================================================
+
+CRITICAL BUSINESS DECISION:
+
+THERE IS NO WAREHOUSE TELEGRAM GROUP.
+
+Do NOT create a group.
+
+Do NOT invent a group chat ID.
+
+Do NOT reuse the existing admin recipient.
+
+The desired flow is:
+
+VEHICLE SALES
+→ REPLENISHMENT REQUIRED
+→ WAREHOUSE OPERATOR PRIVATE TELEGRAM CHAT
+→ WAREHOUSE PREPARES GOODS
+
+We need an explicit warehouse operator recipient.
+
+Audit:
+
+1. Does the existing warehouse/distribution bot already have a
+   user registration/linking flow?
+
+2. Can a warehouse operator explicitly link their Telegram account?
+
+3. Where is their chat_id stored?
+
+4. Is the recipient configurable?
+
+5. Is notification idempotency implemented?
+
+6. Is retry implemented?
+
+7. Is recipient authorization implemented?
+
+8. Can multiple warehouse operators exist?
+
+9. Can the system distinguish warehouse operator from admin?
+
+10. Can getChat verify the explicitly registered chat_id?
+
+IMPORTANT:
+
+Do NOT send a Telegram message.
+
+Do NOT reuse admin recipient.
+
+If the only missing thing is the warehouse operator's explicit
+Telegram registration/chat_id, state that clearly as:
+
+EXTERNAL CONFIGURATION REQUIRED
+
+If a code/config change is required, state exactly what.
+
+
+==================================================
+PART 7 — SALES → VEHICLE STOCK
+==================================================
+
+Verify the complete real transaction:
+
+Distribution sale
+→ agent
+→ active vehicle assignment
+→ vehicle inventory
+→ stock deduction
+→ stock movement
+→ vehicle sale allocation
+→ unit event
+
+Verify:
+
+- insufficient stock protection
+- concurrent sale locking
+- idempotency
+- bot sale path
+- Field Assistant sale path
+- debt/sale integration
+- existing sales history isolation
+
+Use tests/evidence.
+
+Do not create production sales.
+
+
+==================================================
+PART 8 — REPLENISHMENT
+==================================================
+
+Verify the exact algorithm:
+
+target
+− expected vehicle stock
+− open handoff
+=
+required replenishment
+
+Verify:
+
+- daily calculation
+- end-of-route calculation
+- duplicate suppression
+- warehouse notification creation
+- Telegram notification
+- retry
+- acknowledgement
+- handoff linkage
+
+Clearly separate:
+
+"request generated"
+
+from
+
+"Telegram notification actually delivered".
+
+Do not send real notifications.
+
+
+==================================================
+PART 9 — RETURN
+==================================================
+
+Verify:
+
+VEHICLE → WAREHOUSE
+
+Check:
+
+- schema
+- API
+- bot
+- authorization
+- atomic transaction
+- inventory movement
+- stock movement
+- unit events
+- damaged/quarantine handling
+- idempotency
+- rollback
+
+If anything is missing, identify it precisely.
+
+
+==================================================
+PART 10 — WEEKLY RECONCILIATION
+==================================================
+
+Verify:
+
+EXPECTED
+vs
+PHYSICAL
+vs
+DIFFERENCE
+
+Check:
+
+- snapshot
+- operator input
+- authorization
+- approval
+- adjustment movement
+- audit trail
+- no automatic hidden correction
+
+Do not apply any reconciliation.
+
+
+==================================================
+PART 11 — TEST STATUS
+==================================================
+
+Give a single test matrix.
+
+Include:
+
+- unit
+- integration
+- PostgreSQL
+- transaction
+- idempotency
+- authorization
+- rollback
+- schema drift
+- typecheck
+- codegen
+- API
+- bot
+- label
+- printer
+- Telegram
+- desktop E2E
+- mobile E2E
+- architect review
+
+For each:
+
+PASS / FAIL / NOT RUN / BLOCKED
+
+Include exact command and result where available.
+
+Also list the known pre-existing:
+
+products-distribution-propagation.test.ts
+
+9 failures separately.
+
+Do NOT mix them with Vehicle Distribution failures.
+
+
+==================================================
+PART 12 — DEPLOYMENT
+==================================================
+
+Verify:
+
+- reviewed commit SHA
+- current workspace SHA
+- origin/main SHA
+- live production revision
+- source SHA
+- schema migration state
+- feature flags
+
+We need an unambiguous answer:
+
+IS LIVE PRODUCTION RUNNING THE REVIEWED VEHICLE DISTRIBUTION
+CODE?
+
+YES / NO / UNKNOWN
+
+If UNKNOWN:
+BLOCK PILOT.
+
+
+==================================================
+PART 13 — EXACT REMAINING WORK
+==================================================
+
+After the complete audit, create ONLY the remaining work.
+
+For every remaining item:
+
+ID
+NAME
+WHY NEEDED
+CURRENT STATE
+EXACT FILES/TABLES
+DEPENDENCY
+ESTIMATED COMPLEXITY
+TEST REQUIRED
+PRODUCTION ACTION REQUIRED?
+EXTERNAL CONFIGURATION REQUIRED?
+
+Separate:
+
+A. CODE WORK
+B. DATABASE WORK
+C. EXTERNAL CONFIGURATION
+D. HARDWARE/PRINTER
+E. DEPLOYMENT
+F. FINAL PILOT PREFLIGHT
+
+
+==================================================
+PART 14 — COMPLETION PATH
+==================================================
+
+Give us the shortest safe path to:
+
+NAVRUZBEK / DM-001
+PILOT ACTIVE
+
+Example:
+
+STEP 1
+Fix X
+
+STEP 2
+Configure Y
+
+STEP 3
+Test Z
+
+STEP 4
+Fresh managed review
+
+STEP 5
+Production revision verification
+
+STEP 6
+Pilot preflight
+
+STEP 7
+Separate NAVRUZBEK / DM-001 GO
+
+Do NOT start these steps automatically.
+
+We want the PLAN ONLY.
+
+
+==================================================
+PART 15 — FINAL VERDICT
+==================================================
+
+Give exactly one:
+
+🟢 READY FOR PILOT
+🟡 EXTERNAL CONFIGURATION ONLY
+🟠 CODE WORK REMAINING
+🔴 BLOCKED
+
+Then give:
+
+"WHAT IS THE ONE THING WE NEED TO DO NEXT?"
+
+in one sentence.
+
+IMPORTANT:
+
+Do not modify code during this audit.
+Do not create tables.
+Do not run migrations.
+Do not write production data.
+Do not send Telegram messages.
+Do not print labels.
+Do not activate flags.
+Do not rollout.
+
+This is an AUDIT + COMPLETION PLAN ONLY.
+
+STOP AFTER THE REPORT.

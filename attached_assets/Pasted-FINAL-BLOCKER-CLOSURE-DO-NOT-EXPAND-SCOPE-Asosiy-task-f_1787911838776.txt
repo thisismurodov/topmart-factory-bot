@@ -1,0 +1,103 @@
+FINAL BLOCKER CLOSURE — DO NOT EXPAND SCOPE
+
+Asosiy task final audit qabul qilindi.
+
+Hozir faqat quyidagi 2 blocker bilan ishlaymiz:
+
+1. #218 Telegram notification
+2. DTP-4207 physical printer acceptance
+
+Boshqa feature yoki architecture QO‘SHMA.
+
+==================================================
+#218 TELEGRAM
+==================================================
+
+Verified warehouse private chat_id:
+
+1261052681
+
+Secret:
+VEHICLE_REPLENISHMENT_TELEGRAM_CHAT_IDS
+
+Chat ID already verified with Distribution Bot getChat.
+
+#218 implementationni yakunla va MAIN branchga merge qil.
+
+Tekshir:
+
+- replenishment request
+- recipient resolution
+- PENDING / SENT / FAILED / ACKNOWLEDGED
+- duplicate suppression
+- retry
+- no admin fallback
+- private chat only
+
+Real Telegram send faqat controlled acceptance test uchun.
+
+#218 merge'dan keyin targeted tests + relevant regressionsni
+yugurt.
+
+==================================================
+PRINTER
+==================================================
+
+Code-side:
+47/47 PASS.
+
+Endi faqat REAL hardware acceptance:
+
+DTP-4207
+Windows print-agent
+100×80 mm
+100% scale
+
+Tekshir:
+
+1. persisted barcode label
+2. actual print
+3. spool/page count
+4. physical 100×80 dimension
+5. barcode scanner read
+6. retry
+7. duplicate print protection
+
+PDF generation = physical print confirmation emas.
+
+Agar printer/Windows host hozir mavjud bo‘lmasa:
+BLOCKED deb aniq ayt.
+Taxminiy PASS bermagin.
+
+==================================================
+AFTER A+B PASS
+==================================================
+
+Shundan keyingina:
+
+- reviewed revision production deploy
+- live healthz commit SHA verification
+- source SHA verification
+- feature flags remain OFF
+- no automatic pilot activation
+
+Production deployni o‘zboshimchalik bilan boshlama.
+
+DM-001 bootstrapni ham hozir qilma.
+
+Final output faqat:
+
+#218 — PASS / BLOCKED
+PRINTER — PASS / BLOCKED
+
+Agar ikkalasi PASS bo‘lsa:
+
+READY FOR PRODUCTION DEPLOY
+
+Agar biri BLOCKED bo‘lsa:
+faqat bitta aniq sababni yoz.
+
+No scope expansion.
+No new architecture.
+No unnecessary review cycle.
+STOP.

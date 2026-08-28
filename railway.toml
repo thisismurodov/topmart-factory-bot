@@ -10,7 +10,7 @@ buildCommand = "cd /workspace && npm install -g pnpm@9 && pnpm install --frozen-
 dockerfilePath = "artifacts/api-server/Dockerfile"
 
 [services.deploy]
-startCommand = "env VEHICLE_DISTRIBUTION_ENABLED=1 VEHICLE_DISTRIBUTION_SCHEMA_APPROVED=1 PRODUCTION_LABELS_SCHEMA_APPROVED=1 node --enable-source-maps /workspace/artifacts/api-server/dist/index.mjs"
+startCommand = "node --enable-source-maps /workspace/artifacts/api-server/dist/index.mjs"
 healthcheckPath = "/api/health"
 restartPolicyType = "on_failure"
 

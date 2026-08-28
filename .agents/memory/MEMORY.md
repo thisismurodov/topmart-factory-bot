@@ -57,4 +57,3 @@
 - [Vehicle weekly readiness semantics](vehicle-weekly-readiness.md) — weekly cockpit is read-only diagnostics; handed-back returns make physical balance indeterminate, never approved.
 - [Vehicle label printer safety](vehicle-label-printer-safety.md) — exact 100×80 named-printer spool receipt gates lifecycle; crash recovery is explicit and reprints reuse deterministic PDF identity.
 - [DM-001 pilot scope freeze](dm001-pilot-scope-freeze.md) — first pilot is one Distribution Bot loop only; Field sales, damaged returns, and stock adjustments are explicitly excluded.
-- [Railway pilot gate activation](railway-pilot-gate-activation.md) — verify gates through authenticated routes; attached MCP tools or root start-command overrides may be unavailable/ignored.

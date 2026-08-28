@@ -1,0 +1,235 @@
+FINAL PILOT COMPLETION — NAVRUZBEK / DM-001
+
+Maqsad: Vehicle Distribution pilotni imkon qadar tez, xavfsiz va
+minimal scope bilan yakunlash.
+
+Endi yangi architecture, yangi feature yoki scope expansion QILMA.
+
+QOLGAN ISHLARNI BIR OQIMDA YAKUNLA:
+
+1. TELEGRAM
+2. DTP-4207 PRINTER
+3. PRODUCTION DEPLOY
+4. DM-001 BOOTSTRAP
+5. FINAL PILOT PREFLIGHT
+
+==================================================
+1. TELEGRAM — WAREHOUSE PRIVATE CHAT
+==================================================
+
+Warehouse Telegram GROUP YO‘Q.
+
+Existing admin recipientni ishlatma.
+
+`VEHICLE_REPLENISHMENT_TELEGRAM_CHAT_IDS` uchun faqat men
+beradigan warehouse operator private chat_id ishlatiladi.
+
+Chat ID hali berilmagan bo‘lsa:
+
+- code/configni tayyor holatda qoldir;
+- sendMessage QILMA;
+- admin IDni taxmin qilma;
+- menga aynan bitta kerakli external configuration:
+  WAREHOUSE PRIVATE TELEGRAM CHAT ID
+
+deb bildir.
+
+Chat ID berilgandan keyin:
+
+1. Secretga saqla.
+2. `getChat` bilan tekshir.
+3. type=private ekanini tasdiqla.
+4. Distribution Bot ekanini tasdiqla.
+5. sendMessage faqat final pilot testida ishlatiladi.
+6. PENDING/SENT/FAILED/ACKNOWLEDGED + retry + dedup ishlasin.
+
+==================================================
+2. DTP-4207 PRINTER
+==================================================
+
+Real Windows print-agent bilan 100×80 mm acceptance testni
+tayyorla.
+
+Tekshir:
+
+- exact printer name
+- DTP-4207 driver
+- 100×80 mm
+- 100% scale
+- persisted barcode label
+- barcode scanner verification
+- page count
+- spool receipt
+- duplicate print protection
+- retry
+
+PDF yaratish = PRINT CONFIRMED emas.
+
+PRINT CONFIRMED = HANDOFF uchun prerequisite.
+
+Agar physical printerga ulanish uchun tashqi config kerak bo‘lsa,
+aniq configni ayt.
+
+Printer mavjud bo‘lmasa, code-side testni tugatib,
+hardware acceptanceni BLOCKED deb aniq ko‘rsat.
+Taxmin qilma.
+
+==================================================
+3. PRODUCTION DEPLOY
+==================================================
+
+Reviewed Vehicle Distribution revisionni productionga chiqar.
+
+Lekin deploydan oldin:
+
+- typecheck
+- codegen
+- schema-drift
+- relevant API tests
+- transaction tests
+- idempotency tests
+- auth tests
+
+yugurt.
+
+Known pre-existing:
+`products-distribution-propagation.test.ts`
+9 failure — bularni yangi Vehicle Distribution failure deb
+hisoblama.
+
+Deploydan keyin:
+
+- live commit SHA
+- reviewed commit SHA
+- source SHA-256
+
+aniq solishtir.
+
+Mismatch bo‘lsa STOP.
+
+==================================================
+4. DM-001 BOOTSTRAP
+==================================================
+
+Faqat final pilot activation bosqichida:
+
+Agent:
+NAVRUZBEK
+
+Vehicle:
+DM-001
+
+Type:
+DAMAS
+
+yaratiladi/bog‘lanadi.
+
+Vehicle warehouse yaratiladi.
+
+Assignment:
+
+NAVRUZBEK ↔ DM-001
+
+tasdiqlanadi.
+
+Vehicle stock umumiy warehouse KPIga qo‘shilmasligi tekshirilsin.
+
+Productionda mavjud sales history o‘zgartirilmasin.
+
+==================================================
+5. FINAL SMOKE TEST
+==================================================
+
+Faqat staging/test yoki xavfsiz pilot preparation orqali quyidagi
+to‘liq flowni tekshir:
+
+WAREHOUSE
+→ PRODUCT
+→ QUANTITY
+→ AUTO KG
+→ INDIVIDUAL LABELS
+→ 100×80 PRINT
+→ PHYSICAL/HANDOFF CONFIRMATION
+→ DM-001 STOCK
+
+keyin:
+
+DM-001
+→ DISTRIBUTION BOT SALE
+→ VEHICLE STOCK DECREASE
+
+keyin:
+
+LOW STOCK
+→ REPLENISHMENT REQUEST
+→ WAREHOUSE PRIVATE TELEGRAM
+
+Tekshir:
+
+- stock
+- kg
+- movement
+- label identity
+- barcode
+- audit
+- idempotency
+- authorization
+
+==================================================
+IMPORTANT SCOPE FREEZE
+==================================================
+
+Birinchi pilot uchun quyidagilarni HOZIR QURMA:
+
+- Field Assistant vehicle sales
+- multi-agent rollout
+- multi-vehicle rollout
+- damaged/quarantine expansion
+- advanced reconciliation adjustment
+- yangi analytics
+- yangi architecture
+
+Pilotning birinchi maqsadi:
+
+NAVRUZBEK / DM-001
+
+bitta real ishlaydigan loop.
+
+==================================================
+FINAL REPORT
+==================================================
+
+Barcha ish tugagach faqat quyidagi formatda hisobot ber:
+
+A. Telegram — PASS / BLOCKED
+B. Printer — PASS / BLOCKED
+C. Production Deploy — PASS / BLOCKED
+D. DM-001 — PASS / BLOCKED
+E. End-to-End Flow — PASS / BLOCKED
+
+Agar BLOCKED bo‘lsa:
+- bitta aniq sabab
+- menga kerak bo‘lgan bitta aniq action
+
+Agar A–E hammasi PASS bo‘lsa:
+
+READY FOR NAVRUZBEK / DM-001 PILOT
+
+deb yoz.
+
+PILOTNI O‘ZING AKTIVLASHTIRMA.
+
+Men alohida:
+NAVRUZBEK / DM-001 PILOT GO
+
+degan buyruq beraman.
+
+PRODUCTION SAFETY:
+- destructive operation yo‘q
+- existing sales history o‘zgarmasin
+- admin recipient reuse yo‘q
+- Telegram send faqat final approved testda
+- pilot flag mening GO'msiz ON bo‘lmasin
+
+Endi yangi report/report loop boshlama.
+Qolgan ishni amaliy ravishda yakunla va STOP.

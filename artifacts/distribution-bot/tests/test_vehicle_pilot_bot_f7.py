@@ -53,6 +53,13 @@ class Msg:
     text = "📦 Tovar berish"
 
 
+def message(text, uid=700):
+    msg = Mock()
+    msg.from_user.id = uid
+    msg.text = text
+    return msg
+
+
 class VehiclePilotBotF7(unittest.TestCase):
     def setUp(self):
         main.user_state.clear()
@@ -81,7 +88,8 @@ class VehiclePilotBotF7(unittest.TestCase):
                 raise main.VehiclePilotSaleError("Etiketka yetarli emas")
             return (44, None, 0)
         main.set_state(700, "savdo_foto", data)
-        with patch.object(main, "get_user", return_value=USER_PILOT), \
+        with patch.dict(os.environ, {"VEHICLE_DISTRIBUTION_ENABLED": "1"}), \
+             patch.object(main, "get_user", return_value=USER_PILOT), \
              patch.object(main, "_dokon_ruxsat_guard", return_value=True), \
              patch.object(main, "create_vehicle_pilot_sale", side_effect=pilot), \
              patch.object(main, "create_sale") as legacy, \
@@ -98,30 +106,112 @@ class VehiclePilotBotF7(unittest.TestCase):
         self.assertTrue(any("Savdo saqlandi" in str(c) for c in send.call_args_list))
 
     @patch.object(main.bot, "send_message")
-    def test_exact_navruzbek_routes_pilot_nonpilot_legacy(self, _send):
+    def test_navruzbek_vehicle_routing_requires_exact_enabled_flag(self, _send):
         with patch.object(main, "_dokon_ruxsat_guard", return_value=True), \
              patch.object(main, "all_admin_ids", return_value=[]), \
              patch.object(main, "main_kb", return_value=None), \
              patch.object(main, "create_vehicle_pilot_sale", return_value=(1, None, 0)) as pilot, \
              patch.object(main, "create_sale", return_value=(2, None, 0)) as legacy:
-            with patch.object(main, "get_user", return_value=USER_PILOT):
+            for flag in (None, "0"):
+                with self.subTest(flag=flag), \
+                     patch.dict(os.environ, {}, clear=False), \
+                     patch.object(main, "get_user", return_value=USER_PILOT):
+                    os.environ.pop("VEHICLE_DISTRIBUTION_ENABLED", None)
+                    if flag is not None:
+                        os.environ["VEHICLE_DISTRIBUTION_ENABLED"] = flag
+                    main._save_savdo(700, sale_data())
+                pilot.assert_not_called()
+            self.assertEqual(legacy.call_count, 2)
+
+            pilot.reset_mock()
+            legacy.reset_mock()
+            with patch.dict(os.environ, {"VEHICLE_DISTRIBUTION_ENABLED": "1"}), \
+                 patch.object(main, "get_user", return_value=USER_PILOT):
                 main._save_savdo(700, sale_data())
             pilot.assert_called_once()
             legacy.assert_not_called()
-            pilot.reset_mock()
-            with patch.object(main, "get_user", return_value=USER_LEGACY):
-                d = sale_data()
-                d["balans_ishlatildi"] = 0
-                main._save_savdo(701, d)
-            legacy.assert_called_once()
-            pilot.assert_not_called()
+
+    @patch.object(main.bot, "send_message")
+    def test_enabled_flag_does_not_change_normal_non_vehicle_sales(self, _send):
+        data = sale_data()
+        data["balans_ishlatildi"] = 0
+        with patch.dict(os.environ, {"VEHICLE_DISTRIBUTION_ENABLED": "1"}), \
+             patch.object(main, "get_user", return_value=USER_LEGACY), \
+             patch.object(main, "_dokon_ruxsat_guard", return_value=True), \
+             patch.object(main, "all_admin_ids", return_value=[]), \
+             patch.object(main, "main_kb", return_value=None), \
+             patch.object(main, "create_vehicle_pilot_sale") as pilot, \
+             patch.object(main, "create_sale", return_value=(2, None, 0)) as legacy:
+            main._save_savdo(701, data)
+        legacy.assert_called_once()
+        pilot.assert_not_called()
+
+    @patch.object(main.bot, "send_message")
+    def test_disabled_navruzbek_keeps_normal_fractional_quantity_flow(self, _send):
+        for flag in (None, "0"):
+            with self.subTest(flag=flag), \
+                 patch.dict(os.environ, {}, clear=False), \
+                 patch.object(main, "get_user", return_value=USER_PILOT), \
+                 patch.object(main, "_next_kb", return_value=None):
+                os.environ.pop("VEHICLE_DISTRIBUTION_ENABLED", None)
+                if flag is not None:
+                    os.environ["VEHICLE_DISTRIBUTION_ENABLED"] = flag
+                data = sale_data()
+                data.update({
+                    "cur_mid": 5,
+                    "cur_nomi": "Rope",
+                    "cur_narx": 100,
+                    "cur_birlik": "dona",
+                })
+                main.set_state(700, "savdo_miqdor", data)
+                main.s_savdo_miqdor(message("1.5"))
+                state = main.get_state(700)
+                self.assertEqual(state["state"], "savdo_next")
+                self.assertEqual(state["data"]["tanlangan"][5], 3.5)
+
+    @patch.object(main.bot, "send_message")
+    def test_disabled_navruzbek_uses_normal_balance_deduction_boundaries(self, _send):
+        for flag in (None, "0"):
+            with self.subTest(boundary="precheck", flag=flag), \
+                 patch.dict(os.environ, {}, clear=False), \
+                 patch.object(main, "_dokon_ruxsat_guard", return_value=True), \
+                 patch.object(main, "get_user", return_value=USER_PILOT), \
+                 patch.object(main, "get_balans", return_value=80), \
+                 patch.object(main, "apply_balans_delta") as external, \
+                 patch.object(main, "_save_savdo") as save:
+                os.environ.pop("VEHICLE_DISTRIBUTION_ENABLED", None)
+                if flag is not None:
+                    os.environ["VEHICLE_DISTRIBUTION_ENABLED"] = flag
+                data = sale_data()
+                data.pop("balans_ishlatildi")
+                data.pop("yangi_balans")
+                main._check_balans_before_save(700, data)
+                external.assert_called_once_with(10, -80)
+                save.assert_called_once_with(700, data)
+
+            with self.subTest(boundary="confirm", flag=flag), \
+                 patch.dict(os.environ, {}, clear=False), \
+                 patch.object(main, "_dokon_ruxsat_guard", return_value=True), \
+                 patch.object(main, "get_user", return_value=USER_PILOT), \
+                 patch.object(main, "apply_balans_delta") as external, \
+                 patch.object(main, "_save_savdo") as save:
+                os.environ.pop("VEHICLE_DISTRIBUTION_ENABLED", None)
+                if flag is not None:
+                    os.environ["VEHICLE_DISTRIBUTION_ENABLED"] = flag
+                data = sale_data()
+                data["mavjud_balans"] = 80
+                main.set_state(700, "savdo_balans_confirm", data)
+                main.s_savdo_balans_confirm(message("✅ Ha, ayirish"))
+                external.assert_called_once_with(10, -80)
+                save.assert_called_once_with(700, data)
 
     @patch.object(main.bot, "send_message")
     def test_pilot_balance_decision_never_calls_external_delta(self, _send):
         data = sale_data()
         data.pop("balans_ishlatildi")
         data.pop("yangi_balans")
-        with patch.object(main, "_dokon_ruxsat_guard", return_value=True), \
+        with patch.dict(os.environ, {"VEHICLE_DISTRIBUTION_ENABLED": "1"}), \
+             patch.object(main, "_dokon_ruxsat_guard", return_value=True), \
              patch.object(main, "get_user", return_value=USER_PILOT), \
              patch.object(main, "get_balans", return_value=80), \
              patch.object(main, "apply_balans_delta") as external, \

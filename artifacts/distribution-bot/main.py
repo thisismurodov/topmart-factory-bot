@@ -2589,6 +2589,13 @@ def s_savdo_pick_mah(msg):
                 reply_markup=cancel_kb())
             return
 
+def _is_vehicle_distribution_pilot_user(user):
+    return bool(
+        os.environ.get("VEHICLE_DISTRIBUTION_ENABLED") == "1"
+        and user
+        and str(user[2] or "").strip().upper()=="NAVRUZBEK"
+    )
+
 @bot.message_handler(func=lambda m:get_state(m.from_user.id)["state"]=="savdo_miqdor")
 def s_savdo_miqdor(msg):
     uid=msg.from_user.id; data=get_state(uid)["data"]
@@ -2598,7 +2605,7 @@ def s_savdo_miqdor(msg):
     except:
         bot.send_message(uid,"❗ Iltimos, musbat son kiriting (masalan: 1.5):"); return
     user=get_user(uid)
-    if user and str(user[2] or "").strip().upper()=="NAVRUZBEK" and not miqdor.is_integer():
+    if _is_vehicle_distribution_pilot_user(user) and not miqdor.is_integer():
         bot.send_message(uid,"❗ Mashina savdosida miqdor faqat musbat butun dona bo'lishi kerak."); return
     mid=data["cur_mid"]; nomi=data["cur_nomi"]
     narx=data["cur_narx"]; birlik=data["cur_birlik"]
@@ -2717,7 +2724,7 @@ def _check_balans_before_save(uid,data):
     if not _dokon_ruxsat_guard(uid,did): return
     balans=get_balans(did)
     user=get_user(uid)
-    pilot=bool(user and str(user[2] or "").strip().upper()=="NAVRUZBEK")
+    pilot=_is_vehicle_distribution_pilot_user(user)
     if balans>0 and tolov=="nasiya":
         jami=sum(m[2]*data["tanlangan"].get(m[0],0) for m in data["mahsulotlar"])
         deducted=min(balans,jami); yangi_balans=balans-deducted
@@ -2754,7 +2761,7 @@ def s_savdo_balans_confirm(msg):
         jami=sum(m[2]*data["tanlangan"].get(m[0],0) for m in data["mahsulotlar"])
         deducted=min(balans,jami); yangi_balans=balans-deducted
         user=get_user(uid)
-        if not (user and str(user[2] or "").strip().upper()=="NAVRUZBEK"):
+        if not _is_vehicle_distribution_pilot_user(user):
             apply_balans_delta(data["dokon_id"],-deducted)
         data["balans_ishlatildi"]=deducted; data["yangi_balans"]=yangi_balans
         _save_savdo(uid,data)
@@ -2777,7 +2784,7 @@ def _save_savdo(uid,data):
     # MUHIM: bu nuqtaga kelguncha balans allaqachon yechilgan bo'lishi mumkin
     # (_check_balans_before_save / savdo_balans_confirm). Ruxsat rad etilsa,
     # yechilgan balans qaytariladi — aks holda mijoz savdo yozuvisiz pul yo'qotadi.
-    pilot=bool(user and str(user[2] or "").strip().upper()=="NAVRUZBEK")
+    pilot=_is_vehicle_distribution_pilot_user(user)
     if not _dokon_ruxsat_guard(uid,data["dokon_id"],user):
         deducted=data.get("balans_ishlatildi",0)
         if deducted>0 and not pilot:

@@ -2,14 +2,14 @@ FROM node:20-slim
 
 WORKDIR /workspace
 
-RUN npm install -g pnpm@9
+RUN npm install -g pnpm@10.26.1
 
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY lib/ ./lib/
 COPY artifacts/api-server/ ./artifacts/api-server/
 COPY artifacts/dashboard/ ./artifacts/dashboard/
 
-RUN pnpm install --no-frozen-lockfile
+RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @workspace/api-server run build
 
 EXPOSE 8080

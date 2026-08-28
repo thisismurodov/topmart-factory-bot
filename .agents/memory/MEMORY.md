@@ -55,3 +55,4 @@
 - [Vehicle replenishment lifecycle](vehicle-replenishment-lifecycle.md) — low stock opens one request; full approval creates F3 handoff; only final transfer fulfills and changes stock.
 - [Vehicle return label lifecycle](vehicle-return-label-lifecycle.md) — returns reserve loaded labels, transfer them to original sources, and make returned identities terminal for the pilot.
 - [Vehicle weekly readiness semantics](vehicle-weekly-readiness.md) — weekly cockpit is read-only diagnostics; handed-back returns make physical balance indeterminate, never approved.
+- [Railway pilot gate activation](railway-pilot-gate-activation.md) — verify gates through authenticated routes; attached MCP tools or root start-command overrides may be unavailable/ignored.

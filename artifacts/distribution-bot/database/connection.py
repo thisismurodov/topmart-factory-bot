@@ -789,6 +789,34 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_replenishment_handoff
     ON distribution.vehicle_replenishment_requests (handoff_id)
     WHERE handoff_id IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS distribution.vehicle_replenishment_outbox (
+    id                    SERIAL PRIMARY KEY,
+    request_id            INTEGER NOT NULL,
+    recipient_chat_id     BIGINT NOT NULL,
+    status                TEXT NOT NULL DEFAULT 'PENDING',
+    attempt_count         INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    last_error            TEXT,
+    telegram_message_id   BIGINT,
+    claimed_at            TIMESTAMP WITH TIME ZONE,
+    claim_token           TEXT,
+    sent_at               TIMESTAMP WITH TIME ZONE,
+    acknowledged_at       TIMESTAMP WITH TIME ZONE,
+    created_at            TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at            TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    CONSTRAINT vehicle_replenishment_outbox_request_fk FOREIGN KEY (request_id)
+        REFERENCES distribution.vehicle_replenishment_requests(id) ON DELETE CASCADE,
+    CONSTRAINT vehicle_replenishment_outbox_status_check
+        CHECK (status IN ('PENDING','SENT','FAILED','ACKNOWLEDGED')),
+    CONSTRAINT vehicle_replenishment_outbox_attempt_check CHECK (attempt_count >= 0)
+);
+ALTER TABLE distribution.vehicle_replenishment_outbox
+    ADD COLUMN IF NOT EXISTS claim_token TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_replenishment_outbox_request_recipient
+    ON distribution.vehicle_replenishment_outbox (request_id, recipient_chat_id);
+CREATE INDEX IF NOT EXISTS idx_vehicle_replenishment_outbox_retry
+    ON distribution.vehicle_replenishment_outbox (status, next_attempt_at, claimed_at);
+
 CREATE TABLE IF NOT EXISTS distribution.vehicle_reconciliations (
     id                   SERIAL PRIMARY KEY,
     vehicle_id           INTEGER NOT NULL,

@@ -802,6 +802,45 @@ export const vehicleReplenishmentRequestsTable = distribution.table(
   ],
 );
 
+/** Durable Telegram delivery state for low-stock replenishment requests. */
+export const vehicleReplenishmentOutboxTable = distribution.table(
+  "vehicle_replenishment_outbox",
+  {
+    id: serial("id").primaryKey(),
+    requestId: integer("request_id")
+      .notNull()
+      .references(() => vehicleReplenishmentRequestsTable.id, { onDelete: "cascade" }),
+    recipientChatId: bigint("recipient_chat_id", { mode: "number" }).notNull(),
+    status: text("status").notNull().default("PENDING"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
+    lastError: text("last_error"),
+    telegramMessageId: bigint("telegram_message_id", { mode: "number" }),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    claimToken: text("claim_token"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    acknowledgedAt: timestamp("acknowledged_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("uq_vehicle_replenishment_outbox_request_recipient").on(
+      t.requestId,
+      t.recipientChatId,
+    ),
+    index("idx_vehicle_replenishment_outbox_retry").on(
+      t.status,
+      t.nextAttemptAt,
+      t.claimedAt,
+    ),
+    check(
+      "vehicle_replenishment_outbox_status_check",
+      sql`${t.status} IN ('PENDING','SENT','FAILED','ACKNOWLEDGED')`,
+    ),
+    check("vehicle_replenishment_outbox_attempt_check", sql`${t.attemptCount} >= 0`),
+  ],
+);
+
 /** Reconciliation session header: end-of-day vehicle stock reconciliation.
  *
  *  Lifecycle: draft → approved → applied | disputed | cancelled

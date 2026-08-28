@@ -2,8 +2,8 @@
 
 Maps the immutable label payload returned by the Node API
 (GET /vehicle-distribution/handoffs/:id/labels or the confirm result) onto the
-existing production label generator (generate_batch_session_pdf), producing one
-100mm × 80mm page per physical label.
+separate branded Vehicle Distribution template, producing one 100mm × 80mm page
+per physical label.
 
 This module NEVER touches the database and NEVER generates barcodes — it only
 reuses the persisted barcode values and the original produced_at timestamp
@@ -14,7 +14,10 @@ from __future__ import annotations
 import io
 from datetime import datetime, timedelta, timezone
 
-from .label_generator import generate_batch_session_pdf
+from .label_generator import _render_pages
+from .vehicle_distribution_label_generator import (
+    build_vehicle_distribution_label,
+)
 
 _TASHKENT = timezone(timedelta(hours=5))
 
@@ -107,18 +110,21 @@ def build_batch_session_pdf(payload: dict) -> io.BytesIO:
     batch_code = expected_batch
     worker = str(ordered[0].get("workerName") or "")
 
-    item = {
-        "product": passport_rows[0]["product_name"],
-        "quantity": passport_rows[0]["quantity_total"],
-        "weight_kg": passport_rows[0]["weight_kg"],
-        "pieces_per_box": passport_rows[0]["pieces_per_box"],
-        "sku": passport_rows[0]["product_sku"],
-        "labels": passport_rows,
-    }
-
-    return generate_batch_session_pdf(
-        batch_code=batch_code,
-        worker=worker,
-        items=[item],
-        created_at=produced_at,
-    )
+    pages = [
+        build_vehicle_distribution_label(
+            batch_code=str(row["batch_code"] or batch_code),
+            worker=str(row["worker_name"] or worker),
+            product=str(row["product_name"]),
+            unit_num=int(row["label_number"]),
+            total_units=int(row["total_labels"]),
+            unit_weight=float(row["weight_kg"]),
+            ts=produced_at,
+            per_box=int(row["pieces_per_box"]),
+            sku=str(row["product_sku"]),
+            metr=row["length_m"],
+            in_box=int(row["pieces_in_label"]),
+            barcode_value=str(row["barcode_value"]),
+        )
+        for row in passport_rows
+    ]
+    return _render_pages(pages)

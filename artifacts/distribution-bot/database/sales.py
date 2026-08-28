@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import uuid
+import logging
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
@@ -11,6 +12,9 @@ import psycopg2
 
 from .connection import transaction
 from .customers import update_dokon_repeat, update_balans_delta
+from .replenishment_delivery import configured_recipient_ids
+
+log = logging.getLogger("distribution.sales")
 
 
 class VehiclePilotSaleError(ValueError):
@@ -216,12 +220,40 @@ def _create_auto_replenishment_request(c, *, sale_id, detail_id, agent_id,
            VALUES (%s,%s,%s,%s,%s,%s,%s,'pending',%s,%s,%s,%s,NOW())
            ON CONFLICT (vehicle_id,public_product_id)
              WHERE status IN ('pending','approved')
-           DO NOTHING""",
+           DO NOTHING
+           RETURNING id""",
         (
             vehicle_id, agent_id, mahsulot_id, public_product_id, product_name,
             sku, deficit, operation_key, request_fingerprint, target_qty, current,
         ),
     )
+    inserted = c.fetchone()
+    if inserted:
+        request_id = inserted[0]
+    else:
+        c.execute(
+            """SELECT id FROM distribution.vehicle_replenishment_requests
+               WHERE vehicle_id=%s AND public_product_id=%s
+                 AND status IN ('pending','approved')""",
+            (vehicle_id, public_product_id),
+        )
+        winner = c.fetchone()
+        if not winner:
+            return
+        request_id = winner[0]
+    try:
+        recipients = configured_recipient_ids()
+    except ValueError as exc:
+        log.error("Vehicle replenishment Telegram config rejected: %s", exc)
+        recipients = ()
+    for recipient_id in recipients:
+        c.execute(
+            """INSERT INTO distribution.vehicle_replenishment_outbox
+                 (request_id,recipient_chat_id)
+               VALUES (%s,%s)
+               ON CONFLICT (request_id,recipient_chat_id) DO NOTHING""",
+            (request_id, recipient_id),
+        )
 
 
 def _create_vehicle_pilot_once(dokon_id, agent_id, items, jami, tolov, foto,

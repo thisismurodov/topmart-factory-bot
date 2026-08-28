@@ -84,7 +84,50 @@ from database import (
     update_dokon_repeat, create_sale, record_pul_olish, pay_nasiya_fifo,
     create_vehicle_pilot_sale, VehiclePilotSaleError,
     get_admin_telegram_ids,
+    acknowledge, deliver_retryable,
 )
+
+def _replenishment_ack_markup(outbox_id):
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton(
+        "✅ Qabul qilindi",
+        callback_data="replenishment_ack:%s" % outbox_id,
+    ))
+    return kb
+
+def run_replenishment_delivery():
+    """Retry durable low-stock notifications without blocking bot polling."""
+    while True:
+        try:
+            deliver_retryable(bot, _replenishment_ack_markup)
+        except Exception as exc:
+            log.exception("Vehicle replenishment delivery loop failed: %s", exc)
+        time.sleep(10)
+
+@bot.callback_query_handler(
+    func=lambda call: (call.data or "").startswith("replenishment_ack:")
+)
+def acknowledge_replenishment(call):
+    try:
+        outbox_id = int(call.data.split(":", 1)[1])
+        chat_id = call.message.chat.id
+        if acknowledge(outbox_id, chat_id):
+            bot.answer_callback_query(call.id, "Qabul qilindi")
+            try:
+                bot.edit_message_reply_markup(
+                    chat_id, call.message.message_id, reply_markup=None
+                )
+            except Exception:
+                pass
+        else:
+            bot.answer_callback_query(call.id, "Tasdiqlash rad etildi", show_alert=True)
+    except Exception as exc:
+        log.exception("Vehicle replenishment ACK failed: %s", exc)
+        try:
+            bot.answer_callback_query(call.id, "Vaqtincha xato", show_alert=True)
+        except Exception:
+            pass
+
 def is_admin(tid):
     if tid in ADMIN_IDS: return True
     u=get_user(tid); return u and u[3]=="admin"
@@ -4736,5 +4779,6 @@ if __name__=="__main__":
     init_db()
     threading.Thread(target=run_scheduler,daemon=True).start()
     threading.Thread(target=run_health_server,daemon=True).start()
+    threading.Thread(target=run_replenishment_delivery,daemon=True).start()
     print("✅ TOP MART bot ishga tushdi!")
     bot.infinity_polling(timeout=30, long_polling_timeout=30)

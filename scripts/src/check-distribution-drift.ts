@@ -41,6 +41,7 @@ import {
   vehicleLabelPrintSessionsTable,
   vehicleStockTargetsTable,
   vehicleReplenishmentRequestsTable,
+  vehicleReplenishmentOutboxTable,
   vehicleReconciliationsTable,
   vehicleReconciliationItemsTable,
   vehicleReturnsTable,
@@ -111,6 +112,7 @@ const TABLES = {
   vehicle_label_print_sessions: vehicleLabelPrintSessionsTable,
   vehicle_stock_targets: vehicleStockTargetsTable,
   vehicle_replenishment_requests: vehicleReplenishmentRequestsTable,
+  vehicle_replenishment_outbox: vehicleReplenishmentOutboxTable,
   vehicle_reconciliations: vehicleReconciliationsTable,
   vehicle_reconciliation_items: vehicleReconciliationItemsTable,
   vehicle_returns: vehicleReturnsTable,
@@ -554,6 +556,8 @@ const EXPECTED_CHECKS: CheckSpec[] = [
      AND cancelled_at IS NOT NULL AND fulfilled_at IS NULL)
     OR (status = 'rejected' AND handoff_id IS NULL AND fulfilled_at IS NULL)
   `) },
+  { table: "vehicle_replenishment_outbox", name: "vehicle_replenishment_outbox_status_check", expr: normalizeExpr("status IN ('PENDING','SENT','FAILED','ACKNOWLEDGED')") },
+  { table: "vehicle_replenishment_outbox", name: "vehicle_replenishment_outbox_attempt_check", expr: normalizeExpr("attempt_count >= 0") },
   { table: "vehicle_reconciliations", name: "vehicle_reconciliations_status_check", expr: normalizeExpr("status IN ('draft','approved','applied','disputed','cancelled')") },
   { table: "vehicle_reconciliation_items", name: "vehicle_reconciliation_items_expected_check", expr: normalizeExpr("expected_quantity >= 0") },
   { table: "vehicle_reconciliation_items", name: "vehicle_reconciliation_items_expected_weight_check", expr: normalizeExpr("expected_weight_kg IS NULL OR expected_weight_kg >= 0") },

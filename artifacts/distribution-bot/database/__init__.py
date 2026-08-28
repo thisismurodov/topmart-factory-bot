@@ -12,6 +12,9 @@ from .sales import (
     VehiclePilotIdempotencyConflict,
 )
 from .payments import record_pul_olish, pay_nasiya_fifo
+from .replenishment_delivery import (
+    acknowledge, configured_recipient_ids, deliver_retryable,
+)
 
 __all__ = [
     "get_db",
@@ -29,4 +32,7 @@ __all__ = [
     "create_sale",
     "record_pul_olish",
     "pay_nasiya_fifo",
+    "acknowledge",
+    "configured_recipient_ids",
+    "deliver_retryable",
 ]

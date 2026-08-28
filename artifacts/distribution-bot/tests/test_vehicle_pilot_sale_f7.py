@@ -33,6 +33,7 @@ CHILD_URL = urlunparse(_parsed._replace(path="/" + DB_NAME))
 os.environ.pop("RAILWAY_DATABASE_URL", None)
 os.environ["DATABASE_URL"] = CHILD_URL
 os.environ["VEHICLE_DISTRIBUTION_SCHEMA_APPROVED"] = "1"
+os.environ["VEHICLE_REPLENISHMENT_TELEGRAM_CHAT_IDS"] = "900001"
 
 from database.connection import close_pool, init_db  # noqa: E402
 from database.sales import (  # noqa: E402
@@ -40,6 +41,11 @@ from database.sales import (  # noqa: E402
     VehiclePilotSaleError,
     create_sale,
     create_vehicle_pilot_sale,
+)
+from database.replenishment_delivery import (  # noqa: E402
+    acknowledge,
+    configured_recipient_ids,
+    deliver_retryable,
 )
 
 
@@ -115,6 +121,7 @@ class VehiclePilotSaleF7(unittest.TestCase):
         with _db() as conn, conn.cursor() as c:
             c.execute("""
               TRUNCATE distribution.vehicle_sale_allocations,
+                distribution.vehicle_replenishment_outbox,
                 distribution.vehicle_replenishment_requests,
                 distribution.vehicle_stock_targets,
                 distribution.vehicle_reconciliation_items,
@@ -195,6 +202,7 @@ class VehiclePilotSaleF7(unittest.TestCase):
             "savdolar", "savdo_tafsilot", "nasiya", "revisitlar",
             "vehicle_sale_allocations", "vehicle_unit_events",
             "vehicle_replenishment_requests",
+            "vehicle_replenishment_outbox",
         ]
         out = {}
         with _db() as conn, conn.cursor() as c:
@@ -466,6 +474,14 @@ class VehiclePilotSaleF7(unittest.TestCase):
             ),
             target_id,
         )
+        self.assertEqual(
+            self.scalar(
+                """SELECT count(*) FROM distribution.vehicle_replenishment_outbox
+                   WHERE request_id=(SELECT id FROM distribution.vehicle_replenishment_requests)
+                     AND recipient_chat_id=900001 AND status='PENDING'"""
+            ),
+            1,
+        )
 
     def test_f8_sale_replay_does_not_duplicate_request(self):
         self.add_target(target=10, minimum=3)
@@ -475,6 +491,186 @@ class VehiclePilotSaleF7(unittest.TestCase):
         self.assertEqual(self.sale(key), first)
         self.assertEqual(self.snapshot(), before)
         self.assertEqual(before["vehicle_replenishment_requests"], 1)
+        self.assertEqual(before["vehicle_replenishment_outbox"], 1)
+
+    def test_f8_existing_open_request_gets_one_outbox_row(self):
+        self.add_target(target=10, minimum=5)
+        self.sale(key=str(uuid.uuid4()), qty=1, total=100, debt=0, prepayment=0)
+        self.sale(key=str(uuid.uuid4()), qty=1, total=100, debt=0, prepayment=0)
+        self.assertEqual(self.snapshot()["vehicle_replenishment_requests"], 1)
+        self.assertEqual(self.snapshot()["vehicle_replenishment_outbox"], 1)
+
+    def test_replenishment_recipient_config_has_no_admin_fallback(self):
+        self.assertEqual(
+            configured_recipient_ids({
+                "VEHICLE_REPLENISHMENT_TELEGRAM_CHAT_IDS": " 900001, -77,900001 ",
+                "ADMIN_IDS": "123",
+            }),
+            (900001, -77),
+        )
+        self.assertEqual(configured_recipient_ids({"ADMIN_IDS": "123"}), ())
+        with self.assertRaises(ValueError):
+            configured_recipient_ids({
+                "VEHICLE_REPLENISHMENT_TELEGRAM_CHAT_IDS": "900001;123"
+            })
+
+    def test_replenishment_delivery_is_inert_when_schema_gate_is_closed(self):
+        self.add_target(target=10, minimum=3)
+        self.sale()
+
+        class UnexpectedBot:
+            calls = 0
+
+            def send_message(self, *_args, **_kwargs):
+                self.calls += 1
+                raise AssertionError("closed gate must not send")
+
+        bot = UnexpectedBot()
+        previous = os.environ.pop("VEHICLE_DISTRIBUTION_SCHEMA_APPROVED", None)
+        try:
+            self.assertEqual(deliver_retryable(bot, lambda _oid: object()), 0)
+            outbox_id = self.scalar(
+                "SELECT id FROM distribution.vehicle_replenishment_outbox"
+            )
+            self.assertFalse(acknowledge(outbox_id, 900001))
+        finally:
+            if previous is not None:
+                os.environ["VEHICLE_DISTRIBUTION_SCHEMA_APPROVED"] = previous
+        self.assertEqual(bot.calls, 0)
+        self.assertEqual(
+            self.scalar("SELECT status FROM distribution.vehicle_replenishment_outbox"),
+            "PENDING",
+        )
+
+    def test_replenishment_delivery_failure_retry_sent_and_ack(self):
+        self.add_target(target=10, minimum=3)
+        self.sale()
+
+        class FailingBot:
+            def send_message(self, *_args, **_kwargs):
+                raise RuntimeError("telegram unavailable")
+
+        deliver_retryable(FailingBot(), lambda _oid: object())
+        self.assertEqual(
+            self.scalar("SELECT status FROM distribution.vehicle_replenishment_outbox"),
+            "FAILED",
+        )
+        self._exec(
+            "UPDATE distribution.vehicle_replenishment_outbox SET next_attempt_at=NOW()"
+        )
+
+        class Sent:
+            message_id = 456
+
+        class WorkingBot:
+            def __init__(self):
+                self.calls = []
+
+            def send_message(self, *args, **kwargs):
+                self.calls.append((args, kwargs))
+                return Sent()
+
+        bot = WorkingBot()
+        self.assertEqual(deliver_retryable(bot, lambda oid: ("ack", oid)), 1)
+        self.assertEqual(len(bot.calls), 1)
+        outbox_id = self.scalar(
+            "SELECT id FROM distribution.vehicle_replenishment_outbox"
+        )
+        with _db() as conn, conn.cursor() as c:
+            c.execute(
+                """SELECT status,attempt_count,telegram_message_id,claimed_at
+                   FROM distribution.vehicle_replenishment_outbox WHERE id=%s""",
+                (outbox_id,),
+            )
+            self.assertEqual(c.fetchone(), ("SENT", 2, 456, None))
+        self.assertFalse(acknowledge(outbox_id, 123))
+        self.assertTrue(acknowledge(outbox_id, 900001))
+        first_ack = self.scalar(
+            "SELECT acknowledged_at FROM distribution.vehicle_replenishment_outbox"
+        )
+        self.assertTrue(acknowledge(outbox_id, 900001))
+        self.assertEqual(
+            self.scalar(
+                "SELECT acknowledged_at FROM distribution.vehicle_replenishment_outbox"
+            ),
+            first_ack,
+        )
+
+    def test_telegram_failure_cannot_rollback_committed_sale(self):
+        self.add_target(target=10, minimum=3)
+        sid = self.sale()[0]
+
+        class FailingBot:
+            def send_message(self, *_args, **_kwargs):
+                raise RuntimeError("telegram unavailable")
+
+        deliver_retryable(FailingBot(), lambda _oid: object())
+        self.assertEqual(
+            self.scalar("SELECT count(*) FROM distribution.savdolar WHERE id=%s", (sid,)),
+            1,
+        )
+        self.assertEqual(
+            self.scalar("SELECT status FROM distribution.vehicle_replenishment_outbox"),
+            "FAILED",
+        )
+
+    def test_inflight_send_renews_claim_and_suppresses_stale_reclaim(self):
+        from database import replenishment_delivery as delivery
+
+        self.add_target(target=10, minimum=3)
+        self.sale()
+        started = threading.Event()
+        release = threading.Event()
+
+        class Sent:
+            message_id = 789
+
+        class SlowBot:
+            calls = 0
+
+            def send_message(self, *_args, **_kwargs):
+                self.calls += 1
+                started.set()
+                self.assert_released = release.wait(3)
+                return Sent()
+
+        class UnexpectedBot:
+            calls = 0
+
+            def send_message(self, *_args, **_kwargs):
+                self.calls += 1
+                return Sent()
+
+        slow = SlowBot()
+        unexpected = UnexpectedBot()
+        previous_heartbeat = delivery.CLAIM_HEARTBEAT_SECONDS
+        delivery.CLAIM_HEARTBEAT_SECONDS = 0.02
+        worker = threading.Thread(
+            target=lambda: delivery.deliver_retryable(slow, lambda oid: ("ack", oid))
+        )
+        try:
+            worker.start()
+            self.assertTrue(started.wait(2))
+            self._exec(
+                """UPDATE distribution.vehicle_replenishment_outbox
+                      SET claimed_at=NOW()-INTERVAL '10 minutes'"""
+            )
+            time.sleep(0.08)
+            self.assertEqual(
+                delivery.deliver_retryable(unexpected, lambda oid: ("ack", oid)),
+                0,
+            )
+            self.assertEqual(unexpected.calls, 0)
+        finally:
+            release.set()
+            worker.join(3)
+            delivery.CLAIM_HEARTBEAT_SECONDS = previous_heartbeat
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(slow.calls, 1)
+        self.assertEqual(
+            self.scalar("SELECT status FROM distribution.vehicle_replenishment_outbox"),
+            "SENT",
+        )
 
     def test_f8_concurrent_sales_leave_one_open_request_without_sale_failure(self):
         self.add_target(target=10, minimum=5)

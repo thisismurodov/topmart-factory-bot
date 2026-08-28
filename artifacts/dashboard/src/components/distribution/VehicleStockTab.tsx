@@ -78,7 +78,7 @@ function MovementsPage({
              {m.product}
            </TableCell>
            <TableCell className="text-right font-semibold text-sm">
-             {m.quantity.toLocaleString("uz-UZ")}
+              {m.quantity.toLocaleString("uz-UZ")} dona
            </TableCell>
            <TableCell className="text-right text-muted-foreground text-sm">
              {m.weightKg ? `${m.weightKg.toLocaleString("uz-UZ")} kg` : "—"}
@@ -211,8 +211,8 @@ export default function VehicleStockTab({ active }: { active: boolean }) {
             {isBootstrapped && (
               <div className="flex items-center gap-3 bg-white px-3 py-1.5 rounded-md border border-slate-200 shadow-sm text-sm">
                 <div className="flex flex-col">
-                  <span className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">Jami Mahsulot</span>
-                  <span className="font-bold text-slate-700">{stockData?.totalQuantity?.toLocaleString("uz-UZ") ?? 0} ta</span>
+                  <span className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">Jami mahsulot (dona)</span>
+                  <span className="font-bold text-slate-700">{stockData?.totalQuantity?.toLocaleString("uz-UZ") ?? 0} dona</span>
                 </div>
                 <div className="w-px h-6 bg-slate-200 mx-1"></div>
                 <div className="flex flex-col">
@@ -316,7 +316,7 @@ export default function VehicleStockTab({ active }: { active: boolean }) {
                     <TableRow className="hover:bg-slate-50">
                       <TableHead className="w-[120px]">Kodu</TableHead>
                       <TableHead>Nomi</TableHead>
-                      <TableHead className="text-right">Miqdor</TableHead>
+                       <TableHead className="text-right">Miqdor (dona)</TableHead>
                       <TableHead className="text-right">Vazn (kg)</TableHead>
                       <TableHead className="w-[150px]">Oxirgi yangilanish</TableHead>
                     </TableRow>
@@ -332,7 +332,7 @@ export default function VehicleStockTab({ active }: { active: boolean }) {
                         </TableCell>
                         <TableCell className="text-right">
                           <span className="inline-flex items-center justify-center min-w-[3rem] px-2 py-0.5 rounded-md bg-slate-100 font-semibold text-slate-700 text-sm">
-                            {item.quantity.toLocaleString("uz-UZ")}
+                             {item.quantity.toLocaleString("uz-UZ")} dona
                           </span>
                         </TableCell>
                         <TableCell className="text-right text-slate-600 text-sm">
@@ -357,7 +357,7 @@ export default function VehicleStockTab({ active }: { active: boolean }) {
                     <TableHead className="w-[130px]">Sana</TableHead>
                     <TableHead className="w-[100px]">Turi</TableHead>
                     <TableHead>Mahsulot</TableHead>
-                    <TableHead className="text-right w-[100px]">Miqdor</TableHead>
+                     <TableHead className="text-right w-[110px]">Miqdor (dona)</TableHead>
                     <TableHead className="text-right w-[100px]">Vazn</TableHead>
                     <TableHead>Yo'nalish</TableHead>
                     <TableHead className="w-[200px]">Izoh</TableHead>

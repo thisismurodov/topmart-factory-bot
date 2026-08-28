@@ -493,7 +493,7 @@ def init_db() -> None:
                     CONSTRAINT production_labels_number_check
                       CHECK (label_number > 0 AND total_labels >= label_number),
                     CONSTRAINT production_labels_pieces_check
-                      CHECK (pieces_in_label > 0),
+                      CHECK (pieces_in_label > 0 AND pieces_in_label <= pieces_per_box),
                     CONSTRAINT production_labels_box_capacity_check
                       CHECK (pieces_per_box > 0),
                     CONSTRAINT production_labels_quantity_check
@@ -509,6 +509,26 @@ def init_db() -> None:
                     CONSTRAINT production_labels_print_count_check
                       CHECK (print_count >= 0)
                 )
+            """)
+            # Converge existing passport schemas as well as fresh databases.
+            # Both values are identity snapshots and are protected by the
+            # immutable trigger below once present.
+            cur.execute("""
+                ALTER TABLE production_labels
+                  ADD COLUMN IF NOT EXISTS pieces_in_label INTEGER NOT NULL DEFAULT 1,
+                  ADD COLUMN IF NOT EXISTS pieces_per_box INTEGER NOT NULL DEFAULT 1
+            """)
+            cur.execute("""
+                ALTER TABLE production_labels
+                  DROP CONSTRAINT IF EXISTS production_labels_pieces_check,
+                  DROP CONSTRAINT IF EXISTS production_labels_box_capacity_check
+            """)
+            cur.execute("""
+                ALTER TABLE production_labels
+                  ADD CONSTRAINT production_labels_pieces_check
+                    CHECK (pieces_in_label > 0 AND pieces_in_label <= pieces_per_box),
+                  ADD CONSTRAINT production_labels_box_capacity_check
+                    CHECK (pieces_per_box > 0)
             """)
             cur.execute("""
                 CREATE UNIQUE INDEX IF NOT EXISTS uq_production_labels_barcode

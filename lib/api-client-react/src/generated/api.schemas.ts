@@ -105,6 +105,7 @@ export interface VehicleWeeklyProduct {
   publicProductId: number;
   productName: string;
   sku: string;
+  physicalLabelCount: number;
   inventoryCurrent: VehicleWeeklyMetric;
   expectedCurrent: VehicleWeeklyMetric;
   handedBackReserved: VehicleWeeklyMetric;
@@ -169,6 +170,7 @@ export type VehiclePilotWeeklySummaryTolerances = {
 
 export type VehiclePilotWeeklySummaryKpis = {
   productCount: number;
+  physicalLabelCount: number;
   inventoryCurrent: VehicleWeeklyMetric;
   expectedCurrent: VehicleWeeklyMetric;
   eventNet: VehicleWeeklyMetric;
@@ -262,6 +264,8 @@ export interface VehicleHandoffItem {
   /** @nullable */
   productName: string | null;
   quantity: number;
+  /** @minimum 1 */
+  piecesPerBox: number;
   /** @nullable */
   unitWeightKg: number | null;
   /** @nullable */
@@ -326,6 +330,8 @@ export interface VehicleHandoffLabelPassport {
   piecesInLabel: number;
   piecesPerBox: number;
   quantityTotal: number;
+  /** @minimum 0 */
+  remainingQuantity: number;
   weightKg: number;
   /** @nullable */
   lengthM: number | null;
@@ -350,6 +356,10 @@ export interface VehicleHandoffLabelsPayload {
   vehicleId: number;
   batchCode: string;
   totalLabels: number;
+  /** @minimum 0 */
+  totalPieces: number;
+  /** @minimum 0 */
+  remainingPieces: number;
   /** @nullable */
   preparedActorType: string | null;
   /** @nullable */
@@ -492,6 +502,9 @@ export interface VehicleReturnableLabel {
   sku: string;
   /** @exclusiveMinimum 0 */
   unitWeightKg: number;
+  piecesInLabel: number;
+  remainingQuantity: number;
+  remainingWeightKg: number;
   destinationWarehouseId: number;
 }
 
@@ -529,6 +542,8 @@ export interface VehicleReturnItem {
   productName: string;
   sku: string;
   unitWeightKg: number;
+  returnQuantity: number;
+  returnWeightKg: number;
   destinationWarehouseId: number;
   movementReference: string;
 }

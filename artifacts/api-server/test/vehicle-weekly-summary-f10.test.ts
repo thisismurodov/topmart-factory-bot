@@ -13,7 +13,7 @@ import {
   createVehicleWeeklySummaryRouter,
   makeWeeklySummaryAdminAuth,
 } from "../src/routes/vehicle-distribution/weekly-summary-router";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 
 const weeklySummaryFixture: Awaited<
   ReturnType<typeof readPilotWeeklySummary>
@@ -34,6 +34,7 @@ const weeklySummaryFixture: Awaited<
   tolerances: { quantity: 0.001, weightKg: 0.001 },
   kpis: {
     productCount: 0,
+    physicalLabelCount: 0,
     inventoryCurrent: { quantity: 0, weightKg: 0 },
     expectedCurrent: { quantity: 0, weightKg: 0 },
     eventNet: { quantity: 0, weightKg: 0 },
@@ -182,6 +183,70 @@ describe("F10 date-only response serialization", () => {
         process.env.VEHICLE_DISTRIBUTION_SCHEMA_APPROVED = previous.schema;
       }
     }
+  });
+});
+
+describe("F10 package-aware claim aggregation", () => {
+  it("aggregates remaining pieces while counting physical package claims separately", async () => {
+    const packageClaims = [100, 50].map((remaining_quantity, index) => ({
+      id: index + 1,
+      status: "loaded",
+      sku: "SKU-PACK",
+      unit_weight_kg: 0.23,
+      remaining_quantity,
+      return_status: null,
+      public_product_id: 7,
+      product_name: "Pack product",
+      canonical_sku: "SKU-PACK",
+      active: true,
+      mahsulot_active: 1,
+      mahsulot_sku: "SKU-PACK",
+      mapping_count: 1,
+    }));
+    const responses = [
+      [{
+        vehicle_id: 1,
+        warehouse_id: 2,
+        plate_number: "DM-001",
+        vehicle_type: "DAMAS",
+        name: "DM-001 mashina ombori",
+        active: true,
+        location_type: "vehicle",
+        purpose: "finished",
+      }],
+      [{
+        id: 1,
+        product: "Pack product",
+        quantity: 150,
+        weight_kg: 34.5,
+        public_product_id: 7,
+        product_name: "Pack product",
+        sku: "SKU-PACK",
+        active: true,
+        mapping_count: 1,
+      }],
+      packageClaims,
+      [], [], [], [], [], [], [],
+    ];
+    const client = {
+      query: async () => ({ rows: responses.shift() ?? [] }),
+    } as unknown as PoolClient;
+
+    const summary = await readPilotWeeklySummary(
+      client,
+      "2025-01-06",
+      new Date("2025-01-13T00:00:00Z"),
+    );
+    expect(summary.products).toHaveLength(1);
+    expect(summary.products[0]).toMatchObject({
+      sku: "SKU-PACK",
+      physicalLabelCount: 2,
+      expectedCurrent: { quantity: 150, weightKg: 34.5 },
+    });
+    expect(summary.kpis).toMatchObject({
+      expectedCurrent: { quantity: 150, weightKg: 34.5 },
+      physicalLabelCount: 2,
+    });
   });
 });
 

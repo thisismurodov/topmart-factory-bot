@@ -54,7 +54,10 @@ export const productionLabelsTable = pgTable("production_labels", {
     "production_labels_number_check",
     sql`${t.labelNumber} > 0 AND ${t.totalLabels} >= ${t.labelNumber}`,
   ),
-  check("production_labels_pieces_check", sql`${t.piecesInLabel} > 0`),
+  check(
+    "production_labels_pieces_check",
+    sql`${t.piecesInLabel} > 0 AND ${t.piecesInLabel} <= ${t.piecesPerBox}`,
+  ),
   check("production_labels_box_capacity_check", sql`${t.piecesPerBox} > 0`),
   check("production_labels_quantity_check", sql`${t.quantityTotal} > 0`),
   check("production_labels_weight_check", sql`${t.weightKg} >= 0`),

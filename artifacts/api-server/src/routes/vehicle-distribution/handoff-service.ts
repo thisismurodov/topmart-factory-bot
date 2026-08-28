@@ -18,8 +18,10 @@
 //   - stock is ONLY moved on the handed_over → stock_transferred transition,
 //     verifying the exact snapshot quantity + total weight are available with NO
 //     GREATEST masking, and writing a stock_movements ledger row per item.
-//   - a cross-handoff vehicle_label_claim per physical unit gates label printing
-//     and loading (one claim per production_label_id, globally unique).
+//   - a cross-handoff vehicle_label_claim per physical package gates label
+//     printing and loading (one claim per production_label_id, globally unique).
+//     Inventory quantities stay in pieces; claims snapshot how many pieces the
+//     package initially contains and how many remain after partial sales.
 //
 // All mutating operations take a per-handoff advisory lock plus row locks so
 // concurrent transitions on the same handoff serialize, and concurrent
@@ -63,6 +65,7 @@ export type HandoffItem = {
   quantity: number;
   unitWeightKg: number | null;
   totalWeightKg: number | null;
+  piecesPerBox: number;
 };
 
 export type HandoffDetail = {
@@ -230,7 +233,7 @@ async function readItems(
 ): Promise<HandoffItem[]> {
   const { rows } = await client.query(
     `SELECT id, mahsulot_id, sku, product_name, quantity_dispatched,
-            unit_weight_kg, total_weight_kg
+             unit_weight_kg, total_weight_kg, pieces_per_box
        FROM distribution.vehicle_handoff_items
       WHERE handoff_id = $1
       ORDER BY id`,
@@ -244,6 +247,7 @@ async function readItems(
     quantity: Number(r.quantity_dispatched),
     unitWeightKg: r.unit_weight_kg == null ? null : Number(r.unit_weight_kg),
     totalWeightKg: r.total_weight_kg == null ? null : Number(r.total_weight_kg),
+    piecesPerBox: Number(r.pieces_per_box ?? 1),
   }));
 }
 
@@ -335,10 +339,12 @@ type ResolvedItem = {
   unitWeightKg: number;
   quantity: number;
   totalWeightKg: number;
+  piecesPerBox: number;
 };
 
 /** Resolve one distribution product + its unique public.products SKU mapping.
- *  Snapshots the public product name, sku and positive per-unit weight. */
+ *  Snapshots the public product name, sku, positive per-unit weight and
+ *  positive package capacity. */
 async function resolveItem(
   client: PoolClient,
   input: HandoffItemInput,
@@ -362,7 +368,7 @@ async function resolveItem(
   const sku = String(dp.rows[0].sku);
   // Exactly one active public product mapped by that SKU.
   const pp = await client.query(
-    `SELECT name, sku, weight FROM products
+    `SELECT name, sku, weight, pieces_per_box FROM products
       WHERE sku = $1 AND active = TRUE`,
     [sku],
   );
@@ -378,6 +384,12 @@ async function resolveItem(
       `Public product ${productName} has a non-positive weight`,
     );
   }
+  const piecesPerBox = Number(pp.rows[0].pieces_per_box ?? 1);
+  if (!Number.isInteger(piecesPerBox) || piecesPerBox <= 0) {
+    throw new HandoffValidationError(
+      `Public product ${productName} has an invalid pieces_per_box`,
+    );
+  }
   const totalWeightKg =
     Math.round(unitWeightKg * input.quantity * 1000) / 1000;
   return {
@@ -387,6 +399,7 @@ async function resolveItem(
     unitWeightKg,
     quantity: input.quantity,
     totalWeightKg,
+    piecesPerBox,
   };
 }
 
@@ -512,8 +525,8 @@ export async function createHandoffInTx(
     await client.query(
       `INSERT INTO distribution.vehicle_handoff_items
          (handoff_id, mahsulot_id, sku, quantity_dispatched, product_name,
-          unit_weight_kg, total_weight_kg)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          unit_weight_kg, total_weight_kg, pieces_per_box)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
       [
         handoffId,
         r.mahsulotId,
@@ -522,6 +535,7 @@ export async function createHandoffInTx(
         r.productName,
         r.unitWeightKg,
         r.totalWeightKg,
+        r.piecesPerBox,
       ],
     );
   }
@@ -650,22 +664,33 @@ export async function markStockTransferredInTx(
   // including inserts for SKUs which do not have an inventory row yet.
   await lockVehicleWarehouseStockMutation(client, vehicleWarehouseId);
 
-  // Revalidate: every claim for every item must be in 'printed' status.
+  // Revalidate: package claims must cover every dispatched piece exactly and
+  // every claim must still be in 'printed' status.
   for (const it of items) {
     const { rows: claims } = await client.query(
-      `SELECT id, status FROM distribution.vehicle_label_claims
+      `SELECT id, status, pieces_in_label, remaining_quantity
+         FROM distribution.vehicle_label_claims
         WHERE handoff_item_id = $1 ORDER BY id FOR UPDATE`,
       [it.id],
     );
-    if (claims.length !== it.quantity) {
+    const claimedPieces = claims.reduce(
+      (sum, claim) => sum + Number(claim.pieces_in_label),
+      0,
+    );
+    if (claimedPieces !== it.quantity) {
       throw new HandoffConflictError(
-        `Item ${it.id} requires ${it.quantity} printed claim(s) but found ${claims.length}`,
+        `Item ${it.id} requires ${it.quantity} labelled piece(s) but claims cover ${claimedPieces}`,
       );
     }
     for (const c of claims) {
       if (String(c.status) !== "printed") {
         throw new HandoffConflictError(
           `Label claim ${c.id} is not in 'printed' status`,
+        );
+      }
+      if (Number(c.remaining_quantity) !== Number(c.pieces_in_label)) {
+        throw new HandoffConflictError(
+          `Label claim ${c.id} no longer contains its full prepared quantity`,
         );
       }
     }
@@ -759,9 +784,11 @@ export async function markStockTransferredInTx(
       ],
     );
 
-    // Mark this item's claims loaded + insert idempotent load unit events.
+    // Mark this item's package claims loaded + insert idempotent load events in
+    // piece units (not physical-label count).
     const { rows: claims } = await client.query(
-      `SELECT id, production_label_id, barcode FROM distribution.vehicle_label_claims
+      `SELECT id, production_label_id, barcode, pieces_in_label
+         FROM distribution.vehicle_label_claims
         WHERE handoff_item_id = $1 ORDER BY id`,
       [it.id],
     );
@@ -777,7 +804,7 @@ export async function markStockTransferredInTx(
         `INSERT INTO distribution.vehicle_unit_events
            (vehicle_id, handoff_id, handoff_item_id, mahsulot_id, sku, event_type,
             quantity, actor_id, production_label_id, barcode, label_claim_id, operation_key)
-         VALUES ($1, $2, $3, $4, $5, 'load', 1, $6, $7, $8, $9, $10)
+         VALUES ($1, $2, $3, $4, $5, 'load', $6, $7, $8, $9, $10, $11)
          ON CONFLICT (operation_key) WHERE operation_key IS NOT NULL DO NOTHING`,
         [
           vehicleId,
@@ -785,6 +812,7 @@ export async function markStockTransferredInTx(
           it.id,
           it.mahsulotId,
           it.sku,
+          c.pieces_in_label,
           actor.actorId,
           c.production_label_id,
           c.barcode,

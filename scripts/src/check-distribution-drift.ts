@@ -508,15 +508,18 @@ const EXPECTED_CHECKS: CheckSpec[] = [
   { table: "vehicle_handoffs", name: "vehicle_handoffs_status_check", expr: normalizeExpr("status IN ('prepared','labels_printed','handed_over','stock_transferred','cancelled')") },
   { table: "vehicle_handoff_items", name: "vehicle_handoff_items_qty_check",  expr: normalizeExpr("quantity_dispatched > 0") },
   { table: "vehicle_handoff_items", name: "vehicle_handoff_items_cost_check", expr: normalizeExpr("unit_cost >= 0") },
+  { table: "vehicle_handoff_items", name: "vehicle_handoff_items_pieces_per_box_check", expr: normalizeExpr("pieces_per_box > 0") },
   { table: "vehicle_handoff_items", name: "vehicle_handoff_items_unit_weight_check",  expr: normalizeExpr("unit_weight_kg IS NULL OR unit_weight_kg >= 0") },
   { table: "vehicle_handoff_items", name: "vehicle_handoff_items_total_weight_check", expr: normalizeExpr("total_weight_kg IS NULL OR total_weight_kg >= 0") },
   { table: "vehicle_unit_events", name: "vehicle_unit_events_type_check", expr: normalizeExpr("event_type IN ('load','unload','return','adjustment','sale','label_prepared','label_printed')") },
   { table: "vehicle_unit_events", name: "vehicle_unit_events_qty_check",  expr: normalizeExpr("quantity <> 0") },
   { table: "vehicle_sale_allocations", name: "vehicle_sale_allocations_qty_check",    expr: normalizeExpr("allocated_quantity > 0") },
-  { table: "vehicle_sale_allocations", name: "vehicle_sale_allocations_concrete_qty_check", expr: normalizeExpr("label_claim_id IS NULL OR allocated_quantity = 1") },
   { table: "vehicle_sale_allocations", name: "vehicle_sale_allocations_weight_check", expr: normalizeExpr("allocated_weight_kg > 0") },
   { table: "vehicle_label_claims", name: "vehicle_label_claims_status_check", expr: normalizeExpr("status IN ('prepared','printed','loaded','return_reserved','sold','returned')") },
   { table: "vehicle_label_claims", name: "vehicle_label_claims_weight_check", expr: normalizeExpr("unit_weight_kg > 0") },
+  { table: "vehicle_label_claims", name: "vehicle_label_claims_pieces_in_label_check", expr: normalizeExpr("pieces_in_label > 0") },
+  { table: "vehicle_label_claims", name: "vehicle_label_claims_remaining_quantity_check", expr: normalizeExpr("remaining_quantity >= 0 AND remaining_quantity <= pieces_in_label") },
+  { table: "vehicle_label_claims", name: "vehicle_label_claims_status_remaining_check", expr: normalizeExpr("(status IN ('sold','returned') AND remaining_quantity = 0) OR (status IN ('prepared','printed','loaded','return_reserved') AND remaining_quantity > 0)") },
   { table: "vehicle_label_claims", name: "vehicle_label_claims_return_linkage_check", expr: normalizeExpr(`
     (status = 'return_reserved' AND return_id IS NOT NULL AND returned_at IS NULL AND returned_by IS NULL)
     OR (status = 'returned' AND
@@ -579,6 +582,8 @@ const EXPECTED_CHECKS: CheckSpec[] = [
      AND cancelled_by IS NOT NULL AND cancelled_at IS NOT NULL)
   `) },
   { table: "vehicle_return_items", name: "vehicle_return_items_weight_check", expr: normalizeExpr("unit_weight_kg > 0") },
+  { table: "vehicle_return_items", name: "vehicle_return_items_return_quantity_check", expr: normalizeExpr("return_quantity > 0") },
+  { table: "vehicle_return_items", name: "vehicle_return_items_return_weight_check", expr: normalizeExpr("return_weight_kg > 0") },
   { table: "vehicle_return_items", name: "vehicle_return_items_identity_check", expr: normalizeExpr("btrim(barcode) <> '' AND btrim(product_name) <> '' AND btrim(sku) <> ''") },
 ];
 
@@ -633,16 +638,6 @@ const EXPECTED_PARTIAL_INDEXES: PartialIdxSpec[] = [
     table: "vehicle_unit_events",
     name: "uq_vehicle_unit_events_return_label_claim",
     predicate: normalizeExpr("event_type = 'return' AND label_claim_id IS NOT NULL"),
-  },
-  {
-    table: "vehicle_sale_allocations",
-    name: "uq_vehicle_sale_allocations_source_unit_event",
-    predicate: normalizeExpr("source_unit_event_id IS NOT NULL"),
-  },
-  {
-    table: "vehicle_sale_allocations",
-    name: "uq_vehicle_sale_allocations_label_claim",
-    predicate: normalizeExpr("label_claim_id IS NOT NULL"),
   },
   {
     table: "vehicle_stock_targets",

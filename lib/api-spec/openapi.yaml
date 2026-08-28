@@ -2094,6 +2094,7 @@ components:
         publicProductId: { type: integer }
         productName: { type: string }
         sku: { type: string }
+        physicalLabelCount: { type: integer }
         inventoryCurrent: { $ref: "#/components/schemas/VehicleWeeklyMetric" }
         expectedCurrent: { $ref: "#/components/schemas/VehicleWeeklyMetric" }
         handedBackReserved: { $ref: "#/components/schemas/VehicleWeeklyMetric" }
@@ -2111,6 +2112,7 @@ components:
         - publicProductId
         - productName
         - sku
+        - physicalLabelCount
         - inventoryCurrent
         - expectedCurrent
         - handedBackReserved
@@ -2191,6 +2193,7 @@ components:
           type: object
           properties:
             productCount: { type: integer }
+            physicalLabelCount: { type: integer }
             inventoryCurrent: { $ref: "#/components/schemas/VehicleWeeklyMetric" }
             expectedCurrent: { $ref: "#/components/schemas/VehicleWeeklyMetric" }
             eventNet: { $ref: "#/components/schemas/VehicleWeeklyMetric" }
@@ -2198,7 +2201,7 @@ components:
             requiredDays: { type: integer }
             appliedDays: { type: integer }
             blockerCount: { type: integer }
-          required: [productCount, inventoryCurrent, expectedCurrent, eventNet, movementNet, requiredDays, appliedDays, blockerCount]
+          required: [productCount, physicalLabelCount, inventoryCurrent, expectedCurrent, eventNet, movementNet, requiredDays, appliedDays, blockerCount]
         products:
           type: array
           items: { $ref: "#/components/schemas/VehicleWeeklyProduct" }
@@ -2335,11 +2338,14 @@ components:
           type: ["string", "null"]
         quantity:
           type: integer
+        piecesPerBox:
+          type: integer
+          minimum: 1
         unitWeightKg:
           type: ["number", "null"]
         totalWeightKg:
           type: ["number", "null"]
-      required: [id, mahsulotId, sku, productName, quantity, unitWeightKg, totalWeightKg]
+      required: [id, mahsulotId, sku, productName, quantity, piecesPerBox, unitWeightKg, totalWeightKg]
 
     VehicleHandoffDetail:
       type: object
@@ -2454,6 +2460,9 @@ components:
           type: integer
         quantityTotal:
           type: integer
+        remainingQuantity:
+          type: integer
+          minimum: 0
         weightKg:
           type: number
         lengthM:
@@ -2488,6 +2497,7 @@ components:
         - piecesInLabel
         - piecesPerBox
         - quantityTotal
+        - remainingQuantity
         - weightKg
         - lengthM
         - productName
@@ -2515,6 +2525,12 @@ components:
           type: string
         totalLabels:
           type: integer
+        totalPieces:
+          type: integer
+          minimum: 0
+        remainingPieces:
+          type: integer
+          minimum: 0
         preparedActorType:
           type: ["string", "null"]
         preparedActorRef:
@@ -2528,6 +2544,8 @@ components:
         - vehicleId
         - batchCode
         - totalLabels
+        - totalPieces
+        - remainingPieces
         - preparedActorType
         - preparedActorRef
         - labels
@@ -2662,7 +2680,7 @@ components:
 
     VehicleReturnableLabel:
       type: object
-      required: [labelClaimId, productionLabelId, barcode, handoffId, handoffItemId, mahsulotId, publicProductId, productName, sku, unitWeightKg, destinationWarehouseId]
+      required: [labelClaimId, productionLabelId, barcode, handoffId, handoffItemId, mahsulotId, publicProductId, productName, sku, unitWeightKg, piecesInLabel, remainingQuantity, remainingWeightKg, destinationWarehouseId]
       properties:
         labelClaimId: { type: integer }
         productionLabelId: { type: integer }
@@ -2674,6 +2692,9 @@ components:
         productName: { type: string }
         sku: { type: string }
         unitWeightKg: { type: number, exclusiveMinimum: 0 }
+        piecesInLabel: { type: integer }
+        remainingQuantity: { type: integer }
+        remainingWeightKg: { type: number }
         destinationWarehouseId: { type: integer }
     VehicleReturnableLabelList:
       type: object
@@ -2701,7 +2722,7 @@ components:
       properties: {}
     VehicleReturnItem:
       type: object
-      required: [id, labelClaimId, productionLabelId, barcode, handoffId, handoffItemId, mahsulotId, publicProductId, productName, sku, unitWeightKg, destinationWarehouseId, movementReference]
+      required: [id, labelClaimId, productionLabelId, barcode, handoffId, handoffItemId, mahsulotId, publicProductId, productName, sku, unitWeightKg, returnQuantity, returnWeightKg, destinationWarehouseId, movementReference]
       properties:
         id: { type: integer }
         labelClaimId: { type: integer }
@@ -2714,6 +2735,8 @@ components:
         productName: { type: string }
         sku: { type: string }
         unitWeightKg: { type: number }
+        returnQuantity: { type: integer }
+        returnWeightKg: { type: number }
         destinationWarehouseId: { type: integer }
         movementReference: { type: string }
     VehicleReturn:

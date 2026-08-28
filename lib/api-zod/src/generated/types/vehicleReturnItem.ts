@@ -18,6 +18,8 @@ export interface VehicleReturnItem {
   productName: string;
   sku: string;
   unitWeightKg: number;
+  returnQuantity: number;
+  returnWeightKg: number;
   destinationWarehouseId: number;
   movementReference: string;
 }

@@ -158,13 +158,14 @@ beforeEach(async () => {
       (handoff_id,mahsulot_id,sku,quantity_dispatched,product_name,unit_weight_kg,total_weight_kg)
       VALUES (1,1,'SKU-A',1,'Product A',2,2),(2,2,'SKU-B',1,'Product B',3,3);
     INSERT INTO distribution.vehicle_label_claims
-      (vehicle_id,handoff_id,handoff_item_id,production_label_id,barcode,mahsulot_id,sku,unit_weight_kg,status)
-      VALUES (1,1,1,101,'TMRETURNLABELAAAA',1,'SKU-A',2,'loaded'),
-             (1,2,2,102,'TMRETURNLABELBBBB',2,'SKU-B',3,'loaded'),
-             (1,1,1,103,'TMSOLDLABELAAAAAA',1,'SKU-A',2,'sold'),
-             (1,1,1,104,'TMRETURNEDLABELAA',1,'SKU-A',2,'returned'),
-             (1,1,1,105,'TMRETURNLABELCCCC',1,'SKU-A',2,'loaded'),
-             (1,2,2,106,'TMRETURNLABELDDDD',2,'SKU-B',3,'loaded');
+      (vehicle_id,handoff_id,handoff_item_id,production_label_id,barcode,mahsulot_id,sku,
+       unit_weight_kg,pieces_in_label,remaining_quantity,status)
+      VALUES (1,1,1,101,'TMRETURNLABELAAAA',1,'SKU-A',2,1,1,'loaded'),
+             (1,2,2,102,'TMRETURNLABELBBBB',2,'SKU-B',3,1,1,'loaded'),
+             (1,1,1,103,'TMSOLDLABELAAAAAA',1,'SKU-A',2,1,0,'sold'),
+             (1,1,1,104,'TMRETURNEDLABELAA',1,'SKU-A',2,1,0,'returned'),
+             (1,1,1,105,'TMRETURNLABELCCCC',1,'SKU-A',2,1,1,'loaded'),
+             (1,2,2,106,'TMRETURNLABELDDDD',2,'SKU-B',3,1,1,'loaded');
     INSERT INTO distribution.vehicle_unit_events
       (vehicle_id,handoff_id,handoff_item_id,mahsulot_id,sku,event_type,quantity,
        actor_id,production_label_id,barcode,label_claim_id,operation_key)
@@ -183,7 +184,10 @@ describe("F9 exact-pilot vehicle returns", () => {
   it.each([1, 2, 3])(
     "serializes actual F7 sale vs F9 reservation on the vehicle parent (iteration %s)",
     async (iteration) => {
-      await pool.query(`UPDATE distribution.vehicle_label_claims SET status='sold' WHERE id IN (5,6)`);
+      await pool.query(
+        `UPDATE distribution.vehicle_label_claims
+            SET status='sold',remaining_quantity=0 WHERE id IN (5,6)`,
+      );
       const blocker = await pool.connect();
       await blocker.query("BEGIN");
       await blocker.query(`SELECT id FROM warehouses WHERE id=1 FOR UPDATE`);
@@ -469,6 +473,51 @@ describe("F9 exact-pilot vehicle returns", () => {
     expect(Number((await pool.query(`SELECT sum(quantity) q FROM inventory WHERE warehouse_id=1`)).rows[0].q)).toBe(0);
     expect((await pool.query(`SELECT status FROM distribution.vehicle_label_claims WHERE id IN (1,2) ORDER BY id`)).rows.map((x) => x.status))
       .toEqual(["returned", "returned"]);
+  });
+
+  it("returns the remaining 50 pieces of a partially consumed package at its exact weight", async () => {
+    await pool.query(`
+      UPDATE products SET weight=0.23 WHERE name='Product A';
+      UPDATE distribution.vehicle_label_claims
+         SET pieces_in_label=100,remaining_quantity=50,unit_weight_kg=0.23
+       WHERE id=1;
+      UPDATE inventory SET quantity=50,weight_kg=11.5
+       WHERE warehouse_id=1 AND product='Product A';
+    `);
+    const ret = await transaction((c) => createReturnInTx(c, {
+      barcodes: ["TMRETURNLABELAAAA"],
+      operationKey: "f9-partial-package-return",
+      notes: null,
+    }, actor));
+    expect(ret.items).toHaveLength(1);
+    expect(ret.items[0]).toMatchObject({
+      returnQuantity: 50,
+      returnWeightKg: 11.5,
+    });
+    await transaction((c) => markReturnHandedBackInTx(c, ret.id, actor));
+    await transaction((c) => transferReturnStockInTx(c, ret.id, actor));
+
+    expect((await pool.query(
+      `SELECT status,remaining_quantity FROM distribution.vehicle_label_claims WHERE id=1`,
+    )).rows).toEqual([{ status: "returned", remaining_quantity: 0 }]);
+    const returnedMovement = (await pool.query(
+      `SELECT quantity,weight_kg FROM stock_movements WHERE reference LIKE 'vehicle-return:%'`,
+    )).rows[0];
+    expect(Number(returnedMovement.quantity)).toBe(50);
+    expect(Number(returnedMovement.weight_kg)).toBe(11.5);
+    expect((await pool.query(
+      `SELECT quantity FROM distribution.vehicle_unit_events WHERE event_type='return'`,
+    )).rows.map((row) => Number(row.quantity))).toEqual([-50]);
+    const vehicleInventory = (await pool.query(
+      `SELECT quantity,weight_kg FROM inventory WHERE warehouse_id=1 AND product='Product A'`,
+    )).rows[0];
+    expect(Number(vehicleInventory.quantity)).toBe(0);
+    expect(Number(vehicleInventory.weight_kg)).toBe(0);
+    const sourceInventory = (await pool.query(
+      `SELECT quantity,weight_kg FROM inventory WHERE warehouse_id=2 AND product='Product A'`,
+    )).rows[0];
+    expect(Number(sourceInventory.quantity)).toBe(54);
+    expect(Number(sourceInventory.weight_kg)).toBe(19.5);
   });
 
   it("insufficient stock rolls back every item and prepared cancel releases exactly once", async () => {

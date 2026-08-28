@@ -21,6 +21,8 @@ export interface VehicleHandoffLabelPassport {
   piecesInLabel: number;
   piecesPerBox: number;
   quantityTotal: number;
+  /** @minimum 0 */
+  remainingQuantity: number;
   weightKg: number;
   /** @nullable */
   lengthM: number | null;

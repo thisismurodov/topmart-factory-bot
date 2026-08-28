@@ -38,6 +38,8 @@ export type ReturnItem = {
   productName: string;
   sku: string;
   unitWeightKg: number;
+  returnQuantity: number;
+  returnWeightKg: number;
   destinationWarehouseId: number;
   movementReference: string;
 };
@@ -118,7 +120,8 @@ const HEADER = `id, vehicle_id, vehicle_assignment_id, delivery_agent_id,
 async function items(client: PoolClient, id: number): Promise<ReturnItem[]> {
   const { rows } = await client.query(
     `SELECT id,label_claim_id,production_label_id,barcode,handoff_id,handoff_item_id,
-            mahsulot_id,public_product_id,product_name,sku,unit_weight_kg,
+             mahsulot_id,public_product_id,product_name,sku,unit_weight_kg,
+             return_quantity,return_weight_kg,
             destination_warehouse_id,movement_reference
        FROM distribution.vehicle_return_items WHERE return_id=$1 ORDER BY id`,
     [id],
@@ -130,6 +133,8 @@ async function items(client: PoolClient, id: number): Promise<ReturnItem[]> {
     mahsulotId: Number(r.mahsulot_id), publicProductId: Number(r.public_product_id),
     productName: String(r.product_name), sku: String(r.sku),
     unitWeightKg: Number(r.unit_weight_kg),
+    returnQuantity: Number(r.return_quantity),
+    returnWeightKg: Number(r.return_weight_kg),
     destinationWarehouseId: Number(r.destination_warehouse_id),
     movementReference: String(r.movement_reference),
   }));
@@ -178,7 +183,8 @@ export async function listReturnableLabels(client: PoolClient, search?: string) 
   const q = search?.trim() || null;
   const { rows } = await client.query(
     `SELECT c.id label_claim_id,c.production_label_id,c.barcode,c.handoff_id,c.handoff_item_id,
-            c.mahsulot_id,c.sku,c.unit_weight_kg,h.source_warehouse_id destination_warehouse_id,
+             c.mahsulot_id,c.sku,c.unit_weight_kg,c.pieces_in_label,
+             c.remaining_quantity,h.source_warehouse_id destination_warehouse_id,
             p.id public_product_id,p.name product_name
        FROM distribution.vehicle_label_claims c
        JOIN distribution.vehicle_handoffs h ON h.id=c.handoff_id
@@ -198,6 +204,10 @@ export async function listReturnableLabels(client: PoolClient, search?: string) 
     barcode: String(r.barcode), handoffId: Number(r.handoff_id),
     handoffItemId: Number(r.handoff_item_id), mahsulotId: Number(r.mahsulot_id),
     sku: String(r.sku), unitWeightKg: Number(r.unit_weight_kg),
+    piecesInLabel: Number(r.pieces_in_label),
+    remainingQuantity: Number(r.remaining_quantity),
+    remainingWeightKg:
+      Number(r.remaining_quantity) * Number(r.unit_weight_kg),
     destinationWarehouseId: Number(r.destination_warehouse_id),
     publicProductId: Number(r.public_product_id), productName: String(r.product_name),
   })) };
@@ -237,7 +247,8 @@ export async function createReturnInTx(
   }
   const { rows: claims } = await client.query(
     `SELECT c.id,c.vehicle_id,c.production_label_id,c.barcode,c.handoff_id,c.handoff_item_id,
-            c.mahsulot_id,c.sku,c.unit_weight_kg,c.status,h.source_warehouse_id,
+             c.mahsulot_id,c.sku,c.unit_weight_kg,c.pieces_in_label,
+             c.remaining_quantity,c.status,h.source_warehouse_id,
             h.status handoff_status,w.active,w.purpose,COALESCE(w.location_type,'general') location_type
        FROM distribution.vehicle_label_claims c
        JOIN distribution.vehicle_handoffs h ON h.id=c.handoff_id
@@ -249,6 +260,7 @@ export async function createReturnInTx(
   if (claims.length !== input.barcodes.length) throw new ReturnConflictError("A label is missing or unavailable");
   for (const c of claims) {
     if (Number(c.vehicle_id) !== pilot.vehicleId || c.status !== "loaded" ||
+        Number(c.remaining_quantity) <= 0 ||
         c.handoff_status !== "stock_transferred" || !c.active ||
         c.location_type === "vehicle" || c.purpose !== "finished")
       throw new ReturnConflictError(`Label ${c.barcode} is not returnable`);
@@ -279,10 +291,12 @@ export async function createReturnInTx(
       `INSERT INTO distribution.vehicle_return_items
        (return_id,label_claim_id,production_label_id,barcode,handoff_id,handoff_item_id,
         mahsulot_id,public_product_id,product_name,sku,unit_weight_kg,
-        destination_warehouse_id,movement_reference)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+         return_quantity,return_weight_kg,destination_warehouse_id,movement_reference)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
       [returnId,c.id,c.production_label_id,c.barcode,c.handoff_id,c.handoff_item_id,
-       c.mahsulot_id,p.id,p.name,p.sku,c.unit_weight_kg,c.source_warehouse_id,movementReference],
+       c.mahsulot_id,p.id,p.name,p.sku,c.unit_weight_kg,c.remaining_quantity,
+       Number(c.remaining_quantity) * Number(c.unit_weight_kg),
+       c.source_warehouse_id,movementReference],
     );
     await client.query(
       `UPDATE distribution.vehicle_return_items SET movement_reference=$2 WHERE id=$1`,
@@ -379,35 +393,38 @@ export async function transferReturnStockInTx(client: PoolClient, id: number, ac
       [it.productName, Math.min(pilot.vehicleWarehouseId,it.destinationWarehouseId), Math.max(pilot.vehicleWarehouseId,it.destinationWarehouseId)],
     );
     const dec = await client.query(
-      `UPDATE public.inventory SET quantity=quantity-1,weight_kg=weight_kg-$3,updated_at=NOW()
-        WHERE warehouse_id=$1 AND product=$2 AND quantity>=1 AND COALESCE(weight_kg,0)>=$3`,
-      [pilot.vehicleWarehouseId,it.productName,it.unitWeightKg],
+      `UPDATE public.inventory SET quantity=quantity-$3,weight_kg=weight_kg-$4,updated_at=NOW()
+        WHERE warehouse_id=$1 AND product=$2 AND quantity>=$3 AND COALESCE(weight_kg,0)>=$4`,
+      [pilot.vehicleWarehouseId,it.productName,it.returnQuantity,it.returnWeightKg],
     );
     if (dec.rowCount !== 1) throw new ReturnConflictError(`Insufficient vehicle inventory for ${it.productName}`);
     await client.query(
       `INSERT INTO public.inventory (warehouse_id,product,quantity,weight_kg,product_type)
-       VALUES ($1,$2,1,$3,'finished')
+       VALUES ($1,$2,$3,$4,'finished')
        ON CONFLICT (warehouse_id,product) DO UPDATE SET
-         quantity=inventory.quantity+1,weight_kg=COALESCE(inventory.weight_kg,0)+EXCLUDED.weight_kg,updated_at=NOW()`,
-      [it.destinationWarehouseId,it.productName,it.unitWeightKg],
+         quantity=inventory.quantity+EXCLUDED.quantity,
+         weight_kg=COALESCE(inventory.weight_kg,0)+EXCLUDED.weight_kg,updated_at=NOW()`,
+      [it.destinationWarehouseId,it.productName,it.returnQuantity,it.returnWeightKg],
     );
     await client.query(
       `INSERT INTO public.stock_movements
        (product,quantity,movement_type,from_warehouse_id,to_warehouse_id,note,created_by,product_type,weight_kg,reference)
-       VALUES ($1,1,'TRANSFER',$2,$3,$4,$5,'finished',$6,$7)`,
-      [it.productName,pilot.vehicleWarehouseId,it.destinationWarehouseId,
-       `Vehicle return ${id}, label ${it.barcode}`,actor.ref,it.unitWeightKg,it.movementReference],
+       VALUES ($1,$2,'TRANSFER',$3,$4,$5,$6,'finished',$7,$8)`,
+      [it.productName,it.returnQuantity,pilot.vehicleWarehouseId,
+       it.destinationWarehouseId, `Vehicle return ${id}, label ${it.barcode}`,
+       actor.ref,it.returnWeightKg,it.movementReference],
     );
     await client.query(
       `INSERT INTO distribution.vehicle_unit_events
        (vehicle_id,handoff_id,handoff_item_id,mahsulot_id,sku,event_type,quantity,
         actor_id,production_label_id,barcode,label_claim_id,operation_key)
-       VALUES ($1,$2,$3,$4,$5,'return',-1,$6,$7,$8,$9,$10)`,
-      [pilot.vehicleId,it.handoffId,it.handoffItemId,it.mahsulotId,it.sku,actor.actorId,
+       VALUES ($1,$2,$3,$4,$5,'return',$6,$7,$8,$9,$10,$11)`,
+      [pilot.vehicleId,it.handoffId,it.handoffItemId,it.mahsulotId,it.sku,
+       -it.returnQuantity,actor.actorId,
        it.productionLabelId,it.barcode,it.labelClaimId,`vehicle-return:${id}:item:${it.id}`],
     );
     const done = await client.query(
-      `UPDATE distribution.vehicle_label_claims SET status='returned',returned_at=NOW(),
+      `UPDATE distribution.vehicle_label_claims SET status='returned',remaining_quantity=0,returned_at=NOW(),
         returned_by=$2,updated_at=NOW() WHERE id=$1 AND status='return_reserved' AND return_id=$3`,
       [it.labelClaimId,actor.actorId,id],
     );

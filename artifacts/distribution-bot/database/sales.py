@@ -325,22 +325,35 @@ def _create_vehicle_pilot_once(dokon_id, agent_id, items, jami, tolov, foto,
                 raise VehiclePilotSaleError("Mashina omborida mahsulot qoldig'i topilmadi.")
             c.execute(
                 """SELECT cl.id,cl.handoff_id,cl.handoff_item_id,cl.production_label_id,
-                          cl.barcode,cl.unit_weight_kg,ev.id
+                           cl.barcode,cl.unit_weight_kg,cl.pieces_in_label,
+                           cl.remaining_quantity,ev.id
                    FROM distribution.vehicle_label_claims cl
                    JOIN distribution.vehicle_unit_events ev
                      ON ev.label_claim_id=cl.id AND ev.event_type='load'
                     AND ev.vehicle_id=cl.vehicle_id
                    WHERE cl.vehicle_id=%s AND cl.mahsulot_id=%s AND cl.sku=%s
-                     AND cl.status='loaded'
-                   ORDER BY cl.id,ev.id FOR UPDATE OF cl,ev""",
+                      AND cl.status='loaded' AND cl.remaining_quantity>0
+                    ORDER BY ev.event_at,ev.id,cl.id FOR UPDATE OF cl,ev""",
                 (vehicle_id, mid, sku))
             claims = c.fetchall()
-            if len(claims) < qty:
+            selected = []
+            remaining_to_allocate = Decimal(qty)
+            for claim in claims:
+                unit_weight = Decimal(str(claim[5]))
+                claim_pieces = Decimal(str(claim[6]))
+                claim_remaining = Decimal(str(claim[7]))
+                if (unit_weight <= 0 or claim_pieces <= 0 or claim_remaining <= 0
+                        or claim_remaining > claim_pieces
+                        or claim_remaining != claim_remaining.to_integral_value()):
+                    raise VehiclePilotSaleError("Yuklangan etiketka dona yoki og'irligi noto'g'ri.")
+                allocated = min(remaining_to_allocate, claim_remaining)
+                selected.append((claim, allocated, unit_weight * allocated))
+                remaining_to_allocate -= allocated
+                if remaining_to_allocate == 0:
+                    break
+            if remaining_to_allocate != 0:
                 raise VehiclePilotSaleError("Yuklangan etiketkali dona yetarli emas.")
-            selected = claims[:qty]
-            if any(Decimal(str(r[5])) <= 0 for r in selected):
-                raise VehiclePilotSaleError("Etiketka og'irligi musbat bo'lishi kerak.")
-            total_weight = sum((Decimal(str(r[5])) for r in selected), Decimal("0"))
+            total_weight = sum((allocation[2] for allocation in selected), Decimal("0"))
             c.execute(
                 """UPDATE public.inventory
                    SET quantity=quantity-%s,weight_kg=weight_kg-%s,updated_at=NOW()
@@ -375,30 +388,36 @@ def _create_vehicle_pilot_once(dokon_id, agent_id, items, jami, tolov, foto,
                    VALUES (%s,%s,'OUT',%s,%s,%s,'finished',%s,%s,'vehicle_sale')""",
                 (product_name, qty, warehouse_id, "DM-001 pilot savdo", str(agent_id),
                  total_weight, reference))
-            for seq, claim in enumerate(selected, 1):
-                claim_id, handoff_id, handoff_item_id, label_id, barcode, weight, load_event_id = claim
+            for claim, allocated_quantity, allocated_weight in selected:
+                (claim_id, handoff_id, handoff_item_id, label_id, barcode, _unit_weight,
+                 _pieces_in_label, _remaining_quantity, load_event_id) = claim
                 unit_key = "%s:detail:%s:claim:%s" % (operation_key, detail_id, claim_id)
                 c.execute(
                     """INSERT INTO distribution.vehicle_sale_allocations
                        (handoff_id,savdo_id,savdo_tafsilot_id,mahsulot_id,product_name,
                         product_sku,vehicle_id,allocated_quantity,allocated_weight_kg,
                         production_label_id,barcode,source_unit_event_id,label_claim_id,operation_key)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,1,%s,%s,%s,%s,%s,%s)""",
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     (handoff_id, sid, detail_id, mid, product_name, sku, vehicle_id,
-                     weight, label_id, barcode, load_event_id, claim_id, unit_key))
+                     allocated_quantity, allocated_weight, label_id, barcode,
+                     load_event_id, claim_id, unit_key))
                 c.execute(
                     """UPDATE distribution.vehicle_label_claims
-                       SET status='sold',updated_at=NOW()
-                       WHERE id=%s AND status='loaded'""", (claim_id,))
+                        SET remaining_quantity=remaining_quantity-%s,
+                            status=CASE WHEN remaining_quantity-%s=0 THEN 'sold'
+                                        ELSE 'loaded' END,
+                            updated_at=NOW()
+                        WHERE id=%s AND status='loaded' AND remaining_quantity>=%s""",
+                    (allocated_quantity, allocated_quantity, claim_id, allocated_quantity))
                 if c.rowcount != 1:
                     raise VehiclePilotSaleError("Etiketka holati o'zgargan.")
                 c.execute(
                     """INSERT INTO distribution.vehicle_unit_events
                        (vehicle_id,handoff_id,handoff_item_id,mahsulot_id,sku,event_type,
                         quantity,actor_id,production_label_id,barcode,operation_key,label_claim_id,notes)
-                       VALUES (%s,%s,%s,%s,%s,'sale',-1,%s,%s,%s,%s,%s,%s)""",
-                    (vehicle_id, handoff_id, handoff_item_id, mid, sku, agent_id,
-                     label_id, barcode, unit_key + ":event", claim_id,
+                        VALUES (%s,%s,%s,%s,%s,'sale',%s,%s,%s,%s,%s,%s,%s)""",
+                    (vehicle_id, handoff_id, handoff_item_id, mid, sku, -allocated_quantity,
+                     agent_id, label_id, barcode, unit_key + ":event", claim_id,
                      "vehicle sale %s detail %s" % (sid, detail_id)))
             _create_auto_replenishment_request(
                 c,

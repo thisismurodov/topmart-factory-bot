@@ -150,7 +150,7 @@ class VehiclePilotSaleF7(unittest.TestCase):
                       "VALUES('DM-001 mashina ombori',TRUE,'vehicle','finished') RETURNING id")
             self.warehouse = c.fetchone()[0]
             c.execute("INSERT INTO public.inventory(warehouse_id,product,quantity,weight_kg) "
-                      "VALUES(%s,'ERP rope',5,7.5)", (self.warehouse,))
+                      "VALUES(%s,'ERP rope',5,6.25)", (self.warehouse,))
             c.execute("INSERT INTO distribution.delivery_agents(name,telegram_id,faol) "
                       "VALUES('NAVRUZBEK',700,1) RETURNING id")
             da = c.fetchone()[0]
@@ -164,26 +164,51 @@ class VehiclePilotSaleF7(unittest.TestCase):
                        handoff_date,status) VALUES(%s,%s,%s,%s,CURRENT_DATE,'stock_transferred')
                       RETURNING id""", (self.vehicle, da, self.warehouse, self.warehouse))
             handoff = c.fetchone()[0]
+            self.handoff = handoff
             c.execute("""INSERT INTO distribution.vehicle_handoff_items
                       (handoff_id,mahsulot_id,sku,quantity_dispatched)
                       VALUES(%s,%s,'SKU-1',5) RETURNING id""", (handoff, self.mid))
             item = c.fetchone()[0]
+            self.handoff_item = item
             self.claims = []
-            for i, weight in enumerate(("1.200", "1.300", "1.400"), 1):
+            for i, (pieces, weight) in enumerate(((5, "1.250"),), 1):
                 c.execute("""INSERT INTO distribution.vehicle_label_claims
                     (vehicle_id,handoff_id,handoff_item_id,production_label_id,barcode,
-                     mahsulot_id,sku,unit_weight_kg,status)
-                    VALUES(%s,%s,%s,%s,%s,%s,'SKU-1',%s,'loaded') RETURNING id""",
-                    (self.vehicle, handoff, item, i, "BC-%s" % i, self.mid, weight))
+                     mahsulot_id,sku,unit_weight_kg,pieces_in_label,remaining_quantity,status)
+                     VALUES(%s,%s,%s,%s,%s,%s,'SKU-1',%s,%s,%s,'loaded') RETURNING id""",
+                    (self.vehicle, handoff, item, i, "BC-%s" % i, self.mid,
+                     weight, pieces, pieces))
                 claim = c.fetchone()[0]
                 self.claims.append(claim)
                 c.execute("""INSERT INTO distribution.vehicle_unit_events
                     (vehicle_id,handoff_id,handoff_item_id,mahsulot_id,sku,event_type,
                      quantity,actor_id,production_label_id,barcode,label_claim_id)
-                    VALUES(%s,%s,%s,%s,'SKU-1','load',1,700,%s,%s,%s)""",
-                    (self.vehicle, handoff, item, self.mid, i, "BC-%s" % i, claim))
+                     VALUES(%s,%s,%s,%s,'SKU-1','load',%s,700,%s,%s,%s)""",
+                    (self.vehicle, handoff, item, self.mid, pieces, i, "BC-%s" % i, claim))
             c.execute("INSERT INTO distribution.mijoz_balans(dokon_id,balans) VALUES(%s,80)",
                       (self.shop,))
+
+    def add_claim(self, pieces, weight, label_number):
+        with _db() as conn, conn.cursor() as c:
+            c.execute(
+                """INSERT INTO distribution.vehicle_label_claims
+                   (vehicle_id,handoff_id,handoff_item_id,production_label_id,barcode,
+                    mahsulot_id,sku,unit_weight_kg,pieces_in_label,remaining_quantity,status)
+                   VALUES(%s,%s,%s,%s,%s,%s,'SKU-1',%s,%s,%s,'loaded') RETURNING id""",
+                (self.vehicle, self.handoff, self.handoff_item, label_number,
+                 "BC-%s" % label_number, self.mid, weight, pieces, pieces),
+            )
+            claim = c.fetchone()[0]
+            c.execute(
+                """INSERT INTO distribution.vehicle_unit_events
+                   (vehicle_id,handoff_id,handoff_item_id,mahsulot_id,sku,event_type,
+                    quantity,actor_id,production_label_id,barcode,label_claim_id)
+                   VALUES(%s,%s,%s,%s,'SKU-1','load',%s,700,%s,%s,%s)""",
+                (self.vehicle, self.handoff, self.handoff_item, self.mid, pieces,
+                 label_number, "BC-%s" % label_number, claim),
+            )
+        self.claims.append(claim)
+        return claim
 
     def sale(self, key=None, qty=2, total=None, debt=120, prepayment=80):
         return create_vehicle_pilot_sale(
@@ -256,11 +281,11 @@ class VehiclePilotSaleF7(unittest.TestCase):
         self.assertEqual(
             self.scalar("SELECT qoldiq FROM distribution.nasiya"), 120)
         self.assertEqual(before["balance"], 0)
-        self.assertEqual(before["inventory"], (Decimal("3"), Decimal("5.000")))
+        self.assertEqual(before["inventory"], (Decimal("3"), Decimal("3.750")))
         self.assertEqual(before["movements"], 1)
-        self.assertEqual(before["vehicle_sale_allocations"], 2)
-        self.assertEqual(before["vehicle_unit_events"], 2)
-        self.assertEqual(before["sold"], 2)
+        self.assertEqual(before["vehicle_sale_allocations"], 1)
+        self.assertEqual(before["vehicle_unit_events"], 1)
+        self.assertEqual(before["sold"], 0)
         with _db() as conn, conn.cursor() as c:
             c.execute("SELECT status,operation_key,posted_at FROM distribution.savdolar")
             status, op, posted = c.fetchone()
@@ -269,14 +294,135 @@ class VehiclePilotSaleF7(unittest.TestCase):
             c.execute("""SELECT allocated_quantity,label_claim_id,source_unit_event_id,barcode
                          FROM distribution.vehicle_sale_allocations ORDER BY id""")
             rows = c.fetchall()
-            self.assertEqual([r[0] for r in rows], [Decimal("1"), Decimal("1")])
-            self.assertEqual(len({r[1] for r in rows}), 2)
-            self.assertEqual(len({r[2] for r in rows}), 2)
-            self.assertEqual(len({r[3] for r in rows}), 2)
+            self.assertEqual([r[0] for r in rows], [Decimal("2")])
+            self.assertEqual(len({r[1] for r in rows}), 1)
+            self.assertEqual(len({r[2] for r in rows}), 1)
+            self.assertEqual(len({r[3] for r in rows}), 1)
             c.execute("SELECT quantity,weight_kg,reference FROM public.stock_movements")
             movement = c.fetchone()
             self.assertEqual(movement[:2], (Decimal("2"), Decimal("2.500")))
             self.assertRegex(movement[2], r"^vehicle-sale:\d+:detail:\d+$")
+            c.execute("""SELECT status,remaining_quantity FROM distribution.vehicle_label_claims
+                         WHERE id=%s""", (self.claims[0],))
+            self.assertEqual(c.fetchone(), ("loaded", Decimal("3")))
+
+    def test_hundred_piece_label_partial_sale_then_full_sale(self):
+        self._exec(
+            """UPDATE distribution.vehicle_label_claims
+                  SET pieces_in_label=100,remaining_quantity=100,unit_weight_kg=1.250
+                WHERE id=%s""",
+            (self.claims[0],),
+        )
+        self._exec(
+            """UPDATE distribution.vehicle_unit_events SET quantity=100
+                 WHERE label_claim_id=%s AND event_type='load'""",
+            (self.claims[0],),
+        )
+        self._exec(
+            "UPDATE public.inventory SET quantity=100,weight_kg=125 WHERE warehouse_id=%s",
+            (self.warehouse,),
+        )
+        self.sale(qty=50, total=5000, debt=0, prepayment=0)
+        self.assertEqual(
+            self.scalar("""SELECT remaining_quantity FROM distribution.vehicle_label_claims
+                           WHERE id=%s""", (self.claims[0],)),
+            Decimal("50"),
+        )
+        self.assertEqual(
+            self.scalar("SELECT status FROM distribution.vehicle_label_claims WHERE id=%s",
+                        (self.claims[0],)),
+            "loaded",
+        )
+        self.sale(qty=50, total=5000, debt=0, prepayment=0)
+        self.assertEqual(
+            self.scalar("""SELECT status FROM distribution.vehicle_label_claims WHERE id=%s""",
+                        (self.claims[0],)),
+            "sold",
+        )
+        with _db() as conn, conn.cursor() as c:
+            c.execute("""SELECT allocated_quantity,allocated_weight_kg
+                           FROM distribution.vehicle_sale_allocations ORDER BY id""")
+            self.assertEqual(c.fetchall(), [
+                (Decimal("50"), Decimal("62.500")),
+                (Decimal("50"), Decimal("62.500")),
+            ])
+            c.execute("""SELECT quantity FROM distribution.vehicle_unit_events
+                         WHERE event_type='sale' ORDER BY id""")
+            self.assertEqual(c.fetchall(), [(Decimal("-50"),), (Decimal("-50"),)])
+            c.execute("SELECT quantity,weight_kg FROM public.inventory WHERE warehouse_id=%s",
+                      (self.warehouse,))
+            self.assertEqual(c.fetchone(), (Decimal("0"), Decimal("0.000")))
+
+    def test_fifo_allocation_spans_package_labels_with_exact_weights(self):
+        self._exec(
+            """UPDATE distribution.vehicle_label_claims
+                  SET pieces_in_label=2,remaining_quantity=2,unit_weight_kg=1.200
+                WHERE id=%s""",
+            (self.claims[0],),
+        )
+        self._exec("""UPDATE distribution.vehicle_unit_events SET quantity=2
+                      WHERE label_claim_id=%s AND event_type='load'""", (self.claims[0],))
+        second = self.add_claim(3, "1.300", 2)
+        self.sale(qty=4, total=400, debt=0, prepayment=0)
+        with _db() as conn, conn.cursor() as c:
+            c.execute("""SELECT label_claim_id,allocated_quantity,allocated_weight_kg
+                           FROM distribution.vehicle_sale_allocations ORDER BY id""")
+            self.assertEqual(c.fetchall(), [
+                (self.claims[0], Decimal("2"), Decimal("2.400")),
+                (second, Decimal("2"), Decimal("2.600")),
+            ])
+            c.execute("""SELECT status,remaining_quantity FROM distribution.vehicle_label_claims
+                         WHERE id=%s""", (second,))
+            self.assertEqual(c.fetchone(), ("loaded", Decimal("1")))
+            c.execute("""SELECT quantity,weight_kg FROM public.stock_movements
+                         WHERE movement_type='OUT'""")
+            self.assertEqual(c.fetchone(), (Decimal("4"), Decimal("5.000")))
+
+    def test_fifo_uses_load_chronology_not_claim_id(self):
+        # The first claim was created first, but its package was loaded later.
+        self._exec(
+            """UPDATE distribution.vehicle_label_claims
+                  SET pieces_in_label=2,remaining_quantity=2 WHERE id=%s""",
+            (self.claims[0],),
+        )
+        self._exec("""UPDATE distribution.vehicle_unit_events
+                         SET quantity=2,event_at='2025-01-02 10:00:00+00'
+                       WHERE label_claim_id=%s AND event_type='load'""",
+                   (self.claims[0],))
+        earlier_loaded_claim = self.add_claim(3, "1.300", 2)
+        self._exec("""UPDATE distribution.vehicle_unit_events
+                         SET event_at='2025-01-01 10:00:00+00'
+                       WHERE label_claim_id=%s AND event_type='load'""",
+                   (earlier_loaded_claim,))
+
+        self.sale(qty=1, total=100, debt=0, prepayment=0)
+        with _db() as conn, conn.cursor() as c:
+            c.execute("""SELECT label_claim_id,allocated_quantity
+                           FROM distribution.vehicle_sale_allocations""")
+            self.assertEqual(
+                c.fetchone(),
+                (earlier_loaded_claim, Decimal("1")),
+            )
+            c.execute("""SELECT remaining_quantity FROM distribution.vehicle_label_claims
+                         WHERE id=%s""", (earlier_loaded_claim,))
+            self.assertEqual(c.fetchone()[0], Decimal("2"))
+            c.execute("""SELECT remaining_quantity FROM distribution.vehicle_label_claims
+                         WHERE id=%s""", (self.claims[0],))
+            self.assertEqual(c.fetchone()[0], Decimal("2"))
+
+    def test_oversell_package_pieces_rolls_back(self):
+        self._exec(
+            """UPDATE distribution.vehicle_label_claims
+                  SET pieces_in_label=100,remaining_quantity=100 WHERE id=%s""",
+            (self.claims[0],),
+        )
+        self._exec("""UPDATE distribution.vehicle_unit_events SET quantity=100
+                      WHERE label_claim_id=%s AND event_type='load'""", (self.claims[0],))
+        self._exec("UPDATE public.inventory SET quantity=101,weight_kg=126.25")
+        before = self.snapshot()
+        with self.assertRaises(VehiclePilotSaleError):
+            self.sale(qty=101, total=10100, debt=0, prepayment=0)
+        self.assertEqual(self.snapshot(), before)
 
     def test_key_fingerprint_conflict(self):
         key = str(uuid.uuid4())
@@ -303,7 +449,7 @@ class VehiclePilotSaleF7(unittest.TestCase):
         self.assertEqual(results[0], results[1])
         s = self.snapshot()
         self.assertEqual((s["savdolar"], s["movements"], s["balance"]), (1, 1, 0))
-        self.assertEqual(s["inventory"], (Decimal("3"), Decimal("5.000")))
+        self.assertEqual(s["inventory"], (Decimal("3"), Decimal("3.750")))
 
     def assert_rollback(self, mutate, **sale_kwargs):
         mutate()
@@ -321,7 +467,8 @@ class VehiclePilotSaleF7(unittest.TestCase):
         self.setUp()
         self.assert_rollback(
             lambda: self._exec("UPDATE distribution.vehicle_label_claims "
-                               "SET status='returned' WHERE id<>%s", (self.claims[0],)), qty=2)
+                               "SET status='returned',remaining_quantity=0 WHERE id=%s",
+                               (self.claims[0],)), qty=2)
         for bad in (Decimal("1.5"), float("nan"), float("inf")):
             self.setUp()
             before = self.snapshot()
@@ -388,30 +535,23 @@ class VehiclePilotSaleF7(unittest.TestCase):
         self.assertEqual(self.scalar("SELECT jami_summa FROM distribution.savdolar WHERE id=%s",
                                      (legacy,)), 101)
 
-    def test_partial_unique_constraints(self):
-        sid = self.sale()[0]
+    def test_allocation_operation_key_and_stock_movement_references_are_unique(self):
+        self.sale()
         with _db() as conn, conn.cursor() as c:
             c.execute("SELECT * FROM distribution.vehicle_sale_allocations LIMIT 1")
             cols = [d.name for d in c.description]
             row = dict(zip(cols, c.fetchone()))
-        def duplicate(column):
-            fields = [
-                "handoff_id","savdo_id","savdo_tafsilot_id","mahsulot_id","product_name",
-                "product_sku","vehicle_id","allocated_quantity","allocated_weight_kg",
-                "production_label_id","barcode","source_unit_event_id","label_claim_id","operation_key",
-            ]
-            vals = [row[x] for x in fields]
-            vals[-1] = "different-" + uuid.uuid4().hex
-            if column == "source_unit_event_id":
-                vals[-2] = None
-            else:
-                vals[-3] = None
-            with self.assertRaises(psycopg2.Error):
-                self._exec(
-                    "INSERT INTO distribution.vehicle_sale_allocations(%s) VALUES(%s)" %
-                    (",".join(fields), ",".join(["%s"] * len(fields))), tuple(vals))
-        duplicate("label_claim_id")
-        duplicate("source_unit_event_id")
+        fields = [
+            "handoff_id","savdo_id","savdo_tafsilot_id","mahsulot_id","product_name",
+            "product_sku","vehicle_id","allocated_quantity","allocated_weight_kg",
+            "production_label_id","barcode","source_unit_event_id","label_claim_id","operation_key",
+        ]
+        with self.assertRaises(psycopg2.Error):
+            self._exec(
+                "INSERT INTO distribution.vehicle_sale_allocations(%s) VALUES(%s)" %
+                (",".join(fields), ",".join(["%s"] * len(fields))),
+                tuple(row[x] for x in fields),
+            )
         ref = self.scalar("SELECT reference FROM public.stock_movements LIMIT 1")
         with self.assertRaises(psycopg2.Error):
             self._exec("""INSERT INTO public.stock_movements
@@ -821,7 +961,7 @@ class VehiclePilotSaleF7(unittest.TestCase):
             c.execute("""INSERT INTO distribution.vehicle_reconciliation_items
                       (reconciliation_id,public_product_id,product_name,sku,
                        expected_quantity,expected_weight_kg,actual_quantity,discrepancy)
-                      SELECT %s,p.id,p.name,p.sku,5,7.5,5,0
+                       SELECT %s,p.id,p.name,p.sku,5,6.25,5,0
                       FROM public.products p WHERE p.sku='SKU-1'""", (rid,))
             return rid
 

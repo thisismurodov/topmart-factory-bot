@@ -15,6 +15,10 @@ export interface VehicleHandoffLabelsPayload {
   vehicleId: number;
   batchCode: string;
   totalLabels: number;
+  /** @minimum 0 */
+  totalPieces: number;
+  /** @minimum 0 */
+  remainingPieces: number;
   /** @nullable */
   preparedActorType: string | null;
   /** @nullable */

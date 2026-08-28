@@ -136,6 +136,7 @@ async function createPublicBaseTables(c: pg.Client): Promise<void> {
     CREATE TABLE IF NOT EXISTS products (
       id SERIAL UNIQUE NOT NULL, name TEXT PRIMARY KEY,
       sku TEXT NOT NULL DEFAULT '', weight NUMERIC(12,3) NOT NULL DEFAULT 1,
+      pieces_per_box INTEGER NOT NULL DEFAULT 1,
       active BOOLEAN NOT NULL DEFAULT TRUE)`);
   await c.query(`
     CREATE TABLE IF NOT EXISTS stock_movements (

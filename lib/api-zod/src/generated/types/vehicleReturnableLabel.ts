@@ -18,5 +18,8 @@ export interface VehicleReturnableLabel {
   sku: string;
   /** @exclusiveMinimum 0 */
   unitWeightKg: number;
+  piecesInLabel: number;
+  remainingQuantity: number;
+  remainingWeightKg: number;
   destinationWarehouseId: number;
 }

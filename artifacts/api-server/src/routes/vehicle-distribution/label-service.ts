@@ -4,7 +4,7 @@
 // Owns the production-label passport lifecycle for a prepared handoff:
 //   prepare  → materialise one public.production_labels row + one
 //              distribution.vehicle_label_claim + one label_prepared unit event
-//              per physical unit, idempotent on a client operationKey and a
+//              per physical package, idempotent on a client operationKey and a
 //              canonical request fingerprint. Barcodes are generated ONLY here
 //              (Node randomBytes → RFC4648 Base32, TM prefix, 16 chars).
 //   confirm  → first print (prepared → labels_printed) OR reprint; owns the
@@ -70,6 +70,7 @@ async function insertProductionLabel(
     labelNumber: number;
     totalLabels: number;
     piecesPerBox: number;
+    piecesInLabel: number;
     quantityTotal: number;
     weightKg: number;
     lengthM: number | null;
@@ -87,17 +88,19 @@ async function insertProductionLabel(
       const res = await client.query(
         `INSERT INTO production_labels
            (barcode_value, batch_id, batch_code, label_type, label_number,
-            total_labels, pieces_in_label, pieces_per_box, quantity_total,
+             total_labels, pieces_in_label, pieces_per_box, quantity_total,
             weight_kg, length_m, product_name, product_sku, worker_name,
             produced_at, warehouse_id, warehouse_name, status)
-         VALUES ($1, NULL, $2, 'unit', $3, $4, 1, $5, $6, $7, $8, $9, $10, $11,
-                 $12, $13, $14, 'created')
+         VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+                  $14, $15, $16, 'created')
          RETURNING id, barcode_value`,
         [
           barcode,
           row.batchCode,
+          row.piecesPerBox > 1 ? "box" : "unit",
           row.labelNumber,
           row.totalLabels,
+          row.piecesInLabel,
           row.piecesPerBox,
           row.quantityTotal,
           row.weightKg,
@@ -141,6 +144,7 @@ export type LabelPassport = {
   labelNumber: number;
   totalLabels: number;
   piecesInLabel: number;
+  remainingQuantity: number;
   piecesPerBox: number;
   quantityTotal: number;
   weightKg: number;
@@ -161,6 +165,8 @@ export type LabelsPayload = {
   vehicleId: number;
   batchCode: string;
   totalLabels: number;
+  totalPieces: number;
+  remainingPieces: number;
   preparedActorType: string | null;
   preparedActorRef: string | null;
   labels: LabelPassport[];
@@ -192,6 +198,7 @@ function computeFingerprint(handoff: HandoffDetail): string {
       productName: i.productName,
       quantity: i.quantity,
       unitWeightKg: i.unitWeightKg,
+      piecesPerBox: i.piecesPerBox,
     }))
     .sort((a, b) => a.mahsulotId - b.mahsulotId);
   const canonical = JSON.stringify({
@@ -218,7 +225,7 @@ async function readLabelsPayloadInTx(
             pl.product_name, pl.product_sku, pl.worker_name, pl.produced_at,
             pl.warehouse_id, pl.warehouse_name, pl.status, pl.print_count,
             pl.last_printed_at, c.handoff_item_id, c.mahsulot_id,
-            c.status AS claim_status
+            c.status AS claim_status, c.remaining_quantity
        FROM production_labels pl
        JOIN distribution.vehicle_label_claims c
          ON c.production_label_id = pl.id
@@ -244,6 +251,7 @@ async function readLabelsPayloadInTx(
     labelNumber: Number(r.label_number),
     totalLabels: Number(r.total_labels),
     piecesInLabel: Number(r.pieces_in_label),
+    remainingQuantity: Number(r.remaining_quantity),
     piecesPerBox: Number(r.pieces_per_box),
     quantityTotal: Number(r.quantity_total),
     weightKg: Number(r.weight_kg),
@@ -263,6 +271,11 @@ async function readLabelsPayloadInTx(
     vehicleId: handoff.vehicleId,
     batchCode,
     totalLabels: labels.length,
+    totalPieces: labels.reduce((sum, label) => sum + label.piecesInLabel, 0),
+    remainingPieces: labels.reduce(
+      (sum, label) => sum + label.remainingQuantity,
+      0,
+    ),
     preparedActorType: handoff.preparedActorType,
     preparedActorRef: handoff.preparedActorRef,
     labels,
@@ -290,30 +303,26 @@ export async function getLabelsPayload(
 async function pilotProductSnapshot(
   client: PoolClient,
   sku: string,
-): Promise<{ piecesPerBox: number; lengthM: number | null }> {
-  // Snapshot pieces_per_box + roll_length_m from the current public product,
-  // when available. Some deployments (and test harnesses) carry a slimmer
-  // products table, so we probe the columns first and fail-open on absence:
-  // pieces_per_box defaults to 1, length null.
+): Promise<{ lengthM: number | null }> {
+  // Package capacity is immutable on the handoff item. Only optional roll
+  // length is read here for the production-label passport.
   const cols = await client.query(
     `SELECT column_name FROM information_schema.columns
       WHERE table_schema = 'public' AND table_name = 'products'
-        AND column_name IN ('pieces_per_box','roll_length_m')`,
+        AND column_name = 'roll_length_m'`,
   );
   const have = new Set(cols.rows.map((r) => String(r.column_name)));
-  const ppbCol = have.has("pieces_per_box") ? "pieces_per_box" : "1";
   const lenCol = have.has("roll_length_m") ? "roll_length_m" : "NULL";
   const { rows } = await client.query(
-    `SELECT ${ppbCol} AS pieces_per_box, ${lenCol} AS roll_length_m
+    `SELECT ${lenCol} AS roll_length_m
        FROM products WHERE sku = $1 AND active = TRUE`,
     [sku],
   );
-  if (!rows.length) return { piecesPerBox: 1, lengthM: null };
-  const ppb = rows[0].pieces_per_box == null ? 1 : Number(rows[0].pieces_per_box);
+  if (!rows.length) return { lengthM: null };
   const lenRaw = rows[0].roll_length_m;
   // roll_length_m defaults to 0 in the real schema; treat 0 as "no length".
   const lengthM = lenRaw == null || Number(lenRaw) === 0 ? null : Number(lenRaw);
-  return { piecesPerBox: ppb > 0 ? ppb : 1, lengthM };
+  return { lengthM };
 }
 
 export async function prepareLabelsInTx(
@@ -371,8 +380,11 @@ export async function prepareLabelsInTx(
     throw new HandoffConflictError("Handoff has no items to prepare labels for");
   }
 
-  // Total physical units across all items = total labels.
-  const totalLabels = handoff.items.reduce((n, it) => n + it.quantity, 0);
+  // Inventory quantities stay in pieces. Physical labels are package-counts.
+  const totalLabels = handoff.items.reduce(
+    (n, it) => n + Math.ceil(it.quantity / it.piecesPerBox),
+    0,
+  );
   if (!(totalLabels > 0)) {
     throw new HandoffConflictError("Handoff has no physical units");
   }
@@ -387,7 +399,7 @@ export async function prepareLabelsInTx(
   );
   const warehouseName = whRes.rows.length ? String(whRes.rows[0].name) : "";
 
-  // Globally ordered label_number 1..totalLabels across all items.
+  // Globally ordered label_number 1..totalLabels across all package labels.
   let labelNumber = 0;
   for (const it of handoff.items) {
     if (it.unitWeightKg == null || !(it.unitWeightKg > 0)) {
@@ -395,8 +407,17 @@ export async function prepareLabelsInTx(
         `Item ${it.id} has no positive unit weight snapshot`,
       );
     }
+    if (!Number.isInteger(it.piecesPerBox) || it.piecesPerBox <= 0) {
+      throw new HandoffConflictError(
+        `Item ${it.id} has an invalid pieces_per_box snapshot`,
+      );
+    }
     const snap = await pilotProductSnapshot(client, it.sku);
-    for (let u = 0; u < it.quantity; u++) {
+    let remaining = it.quantity;
+    while (remaining > 0) {
+      const piecesInLabel = Math.min(it.piecesPerBox, remaining);
+      const packageWeightKg =
+        Math.round(it.unitWeightKg * piecesInLabel * 1000) / 1000;
       labelNumber += 1;
       const { id: productionLabelId, barcode } = await insertProductionLabel(
         client,
@@ -404,9 +425,10 @@ export async function prepareLabelsInTx(
           batchCode,
           labelNumber,
           totalLabels,
-          piecesPerBox: snap.piecesPerBox,
+          piecesPerBox: it.piecesPerBox,
+          piecesInLabel,
           quantityTotal: it.quantity,
-          weightKg: it.unitWeightKg,
+          weightKg: packageWeightKg,
           lengthM: snap.lengthM,
           productName: it.productName ?? "",
           productSku: it.sku,
@@ -416,12 +438,14 @@ export async function prepareLabelsInTx(
         },
       );
 
-      // One cross-handoff claim per physical unit.
+      // One cross-handoff claim per physical package. The per-piece weight and
+      // remaining piece quantity make partial sales exact.
       await client.query(
         `INSERT INTO distribution.vehicle_label_claims
            (vehicle_id, handoff_id, handoff_item_id, production_label_id, barcode,
-            mahsulot_id, sku, unit_weight_kg, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'prepared')`,
+             mahsulot_id, sku, unit_weight_kg, pieces_in_label,
+             remaining_quantity, status)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, 'prepared')`,
         [
           handoff.vehicleId,
           handoffId,
@@ -431,16 +455,17 @@ export async function prepareLabelsInTx(
           it.mahsulotId,
           it.sku,
           it.unitWeightKg,
+          piecesInLabel,
         ],
       );
 
-      // Idempotent label_prepared unit event, one per physical unit.
+      // Idempotent label_prepared event, measured in pieces.
       const opKey = `label_prepared:${handoffId}:${productionLabelId}`;
       await client.query(
         `INSERT INTO distribution.vehicle_unit_events
            (vehicle_id, handoff_id, handoff_item_id, mahsulot_id, sku, event_type,
             quantity, actor_id, production_label_id, barcode, operation_key)
-         VALUES ($1, $2, $3, $4, $5, 'label_prepared', 1, $6, $7, $8, $9)
+          VALUES ($1, $2, $3, $4, $5, 'label_prepared', $6, $7, $8, $9, $10)
          ON CONFLICT (operation_key) WHERE operation_key IS NOT NULL DO NOTHING`,
         [
           handoff.vehicleId,
@@ -448,12 +473,14 @@ export async function prepareLabelsInTx(
           it.id,
           it.mahsulotId,
           it.sku,
+          piecesInLabel,
           actor.actorId,
           productionLabelId,
           barcode,
           opKey,
         ],
       );
+      remaining -= piecesInLabel;
     }
   }
 
@@ -538,7 +565,7 @@ export async function confirmLabelsPrintedInTx(
 
   // Lock all claims for this handoff.
   const { rows: claims } = await client.query(
-    `SELECT id, production_label_id, status
+    `SELECT id, production_label_id, status, pieces_in_label
        FROM distribution.vehicle_label_claims
       WHERE handoff_id = $1 ORDER BY id FOR UPDATE`,
     [handoffId],
@@ -603,7 +630,7 @@ export async function confirmLabelsPrintedInTx(
            (vehicle_id, handoff_id, mahsulot_id, sku, event_type, quantity,
             actor_id, production_label_id, label_claim_id, operation_key)
          SELECT c.vehicle_id, c.handoff_id, c.mahsulot_id, c.sku, 'label_printed',
-                1, $2, c.production_label_id, c.id, $3
+                 c.pieces_in_label, $2, c.production_label_id, c.id, $3
            FROM distribution.vehicle_label_claims c WHERE c.id = $1
          ON CONFLICT (operation_key) WHERE operation_key IS NOT NULL DO NOTHING`,
         [c.id, actor.actorId, opKey],

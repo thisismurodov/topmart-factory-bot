@@ -108,6 +108,7 @@ beforeAll(async () => {
       currency_type TEXT NOT NULL DEFAULT 'UZS',
       default_sale_price NUMERIC(12,2) NOT NULL DEFAULT 0,
       weight NUMERIC(12,3) NOT NULL DEFAULT 1,
+      roll_length_m NUMERIC(12,2) NOT NULL DEFAULT 0,
       rate NUMERIC(12,2) NOT NULL DEFAULT 0,
       rate_type TEXT NOT NULL DEFAULT 'dona',
       salary_cost NUMERIC(12,2) NOT NULL DEFAULT 0,

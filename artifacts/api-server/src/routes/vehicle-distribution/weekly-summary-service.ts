@@ -26,6 +26,7 @@ type ProductAcc = {
   handedBack: Metric;
   events: Metric;
   movements: Metric;
+  physicalLabels: number;
   identityBlocked: boolean;
 };
 type Blocker = {
@@ -173,6 +174,7 @@ function getProduct(
       handedBack: zero(),
       events: zero(),
       movements: zero(),
+      physicalLabels: 0,
       identityBlocked: false,
     };
     products.set(id, p);
@@ -222,7 +224,8 @@ export async function readPilotWeeklySummary(
   }
 
   const claims = await client.query(
-    `SELECT c.id,c.status,c.sku,c.unit_weight_kg,r.status return_status,
+    `SELECT c.id,c.status,c.sku,c.unit_weight_kg,c.remaining_quantity,
+             r.status return_status,
             p.id public_product_id,p.name product_name,p.sku canonical_sku,p.active,
             m.faol mahsulot_active,m.sku mahsulot_sku,
             count(p.id) OVER (PARTITION BY c.id) mapping_count
@@ -252,10 +255,14 @@ export async function readPilotWeeklySummary(
       continue;
     }
     const p = getProduct(products, r);
+    const remainingQuantity = Number(r.remaining_quantity);
+    const remainingWeight = remainingQuantity * Number(r.unit_weight_kg);
     if (r.status === "loaded" || r.return_status === "prepared") {
-      add(p.claims, 1, Number(r.unit_weight_kg));
+      p.physicalLabels += 1;
+      add(p.claims, remainingQuantity, remainingWeight);
     } else if (r.status === "return_reserved" && r.return_status === "handed_back") {
-      add(p.handedBack, 1, Number(r.unit_weight_kg));
+      p.physicalLabels += 1;
+      add(p.handedBack, remainingQuantity, remainingWeight);
       pushBlocker(
         blockers,
         "handed_back_reservations",
@@ -428,6 +435,7 @@ export async function readPilotWeeklySummary(
         publicProductId: p.publicProductId,
         productName: p.productName,
         sku: p.sku,
+        physicalLabelCount: p.physicalLabels,
         inventoryCurrent: p.inventory,
         expectedCurrent: p.claims,
         handedBackReserved: p.handedBack,
@@ -483,6 +491,10 @@ export async function readPilotWeeklySummary(
     },
     kpis: {
       productCount: productRows.length,
+      physicalLabelCount: productRows.reduce(
+        (sum, product) => sum + product.physicalLabelCount,
+        0,
+      ),
       inventoryCurrent: totals("inventoryCurrent"),
       expectedCurrent: totals("expectedCurrent"),
       eventNet: totals("eventNet"),

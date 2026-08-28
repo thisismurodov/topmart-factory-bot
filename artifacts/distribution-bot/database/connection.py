@@ -407,17 +407,22 @@ CREATE TABLE IF NOT EXISTS distribution.vehicle_handoff_items (
     quantity_dispatched  NUMERIC(12,3) NOT NULL,
     unit_cost            NUMERIC(12,2) NOT NULL DEFAULT 0,
     product_name         TEXT,
+    pieces_per_box       INTEGER NOT NULL DEFAULT 1,
     unit_weight_kg       NUMERIC(12,3),
     total_weight_kg      NUMERIC(12,3),
     created_at           TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     CONSTRAINT vehicle_handoff_items_qty_check  CHECK (quantity_dispatched > 0),
     CONSTRAINT vehicle_handoff_items_cost_check CHECK (unit_cost >= 0),
+    CONSTRAINT vehicle_handoff_items_pieces_per_box_check CHECK (pieces_per_box > 0),
     CONSTRAINT vehicle_handoff_items_unit_weight_check  CHECK (unit_weight_kg  IS NULL OR unit_weight_kg  >= 0),
     CONSTRAINT vehicle_handoff_items_total_weight_check CHECK (total_weight_kg IS NULL OR total_weight_kg >= 0)
 );
 ALTER TABLE distribution.vehicle_handoff_items ADD COLUMN IF NOT EXISTS product_name    TEXT;
+ALTER TABLE distribution.vehicle_handoff_items ADD COLUMN IF NOT EXISTS pieces_per_box  INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE distribution.vehicle_handoff_items ADD COLUMN IF NOT EXISTS unit_weight_kg  NUMERIC(12,3);
 ALTER TABLE distribution.vehicle_handoff_items ADD COLUMN IF NOT EXISTS total_weight_kg NUMERIC(12,3);
+ALTER TABLE distribution.vehicle_handoff_items DROP CONSTRAINT IF EXISTS vehicle_handoff_items_pieces_per_box_check;
+ALTER TABLE distribution.vehicle_handoff_items ADD CONSTRAINT vehicle_handoff_items_pieces_per_box_check CHECK (pieces_per_box > 0);
 CREATE INDEX        IF NOT EXISTS idx_vehicle_handoff_items_handoff          ON distribution.vehicle_handoff_items (handoff_id);
 CREATE INDEX        IF NOT EXISTS idx_vehicle_handoff_items_mahsulot         ON distribution.vehicle_handoff_items (mahsulot_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_handoff_items_handoff_mahsulot  ON distribution.vehicle_handoff_items (handoff_id, mahsulot_id);
@@ -487,12 +492,20 @@ CREATE TABLE IF NOT EXISTS distribution.vehicle_label_claims (
     mahsulot_id         INTEGER NOT NULL,
     sku                 TEXT NOT NULL DEFAULT '',
     unit_weight_kg      NUMERIC(12,3) NOT NULL,
+    pieces_in_label     INTEGER NOT NULL DEFAULT 1,
+    remaining_quantity  INTEGER NOT NULL DEFAULT 1,
     status              TEXT NOT NULL DEFAULT 'prepared',
     operation_key       TEXT,
     created_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     CONSTRAINT vehicle_label_claims_status_check CHECK (status IN ('prepared','printed','loaded','sold','returned')),
-    CONSTRAINT vehicle_label_claims_weight_check CHECK (unit_weight_kg > 0)
+    CONSTRAINT vehicle_label_claims_weight_check CHECK (unit_weight_kg > 0),
+    CONSTRAINT vehicle_label_claims_pieces_in_label_check CHECK (pieces_in_label > 0),
+    CONSTRAINT vehicle_label_claims_remaining_quantity_check CHECK (remaining_quantity >= 0 AND remaining_quantity <= pieces_in_label),
+    CONSTRAINT vehicle_label_claims_status_remaining_check CHECK (
+        (status IN ('sold','returned') AND remaining_quantity = 0)
+        OR (status IN ('prepared','printed','loaded','return_reserved') AND remaining_quantity > 0)
+    )
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_label_claims_production_label ON distribution.vehicle_label_claims (production_label_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_label_claims_barcode         ON distribution.vehicle_label_claims (barcode);
@@ -557,26 +570,19 @@ CREATE TABLE IF NOT EXISTS distribution.vehicle_sale_allocations (
     allocated_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     created_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     CONSTRAINT vehicle_sale_allocations_qty_check    CHECK (allocated_quantity > 0),
-    CONSTRAINT vehicle_sale_allocations_concrete_qty_check
-        CHECK (label_claim_id IS NULL OR allocated_quantity = 1),
     CONSTRAINT vehicle_sale_allocations_weight_check CHECK (allocated_weight_kg > 0)
 );
 ALTER TABLE distribution.vehicle_sale_allocations
     ADD COLUMN IF NOT EXISTS label_claim_id INTEGER;
 ALTER TABLE distribution.vehicle_sale_allocations
     DROP CONSTRAINT IF EXISTS vehicle_sale_allocations_concrete_qty_check;
-ALTER TABLE distribution.vehicle_sale_allocations
-    ADD CONSTRAINT vehicle_sale_allocations_concrete_qty_check
-    CHECK (label_claim_id IS NULL OR allocated_quantity = 1);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_sale_allocations_op_key  ON distribution.vehicle_sale_allocations (operation_key);
--- Partial unique: a unit-tracked load event supplies at most one allocation.
--- NULL source_unit_event_id (aggregate allocations) are exempt.
-CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_sale_allocations_source_unit_event
-    ON distribution.vehicle_sale_allocations (source_unit_event_id)
-    WHERE source_unit_event_id IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_sale_allocations_label_claim
-    ON distribution.vehicle_sale_allocations (label_claim_id)
-    WHERE label_claim_id IS NOT NULL;
+DROP INDEX IF EXISTS distribution.uq_vehicle_sale_allocations_source_unit_event;
+DROP INDEX IF EXISTS distribution.uq_vehicle_sale_allocations_label_claim;
+CREATE INDEX IF NOT EXISTS idx_vehicle_sale_allocations_source_unit_event
+    ON distribution.vehicle_sale_allocations (source_unit_event_id);
+CREATE INDEX IF NOT EXISTS idx_vehicle_sale_allocations_label_claim
+    ON distribution.vehicle_sale_allocations (label_claim_id);
 CREATE INDEX        IF NOT EXISTS idx_vehicle_sale_allocations_handoff ON distribution.vehicle_sale_allocations (handoff_id);
 CREATE INDEX        IF NOT EXISTS idx_vehicle_sale_allocations_savdo   ON distribution.vehicle_sale_allocations (savdo_id);
 CREATE INDEX        IF NOT EXISTS idx_vehicle_sale_allocations_vehicle ON distribution.vehicle_sale_allocations (vehicle_id);
@@ -947,10 +953,24 @@ CREATE INDEX IF NOT EXISTS idx_vehicle_returns_vehicle_created
 ALTER TABLE distribution.vehicle_label_claims
     ADD COLUMN IF NOT EXISTS return_id INTEGER,
     ADD COLUMN IF NOT EXISTS returned_at TIMESTAMP WITH TIME ZONE,
-    ADD COLUMN IF NOT EXISTS returned_by BIGINT;
+    ADD COLUMN IF NOT EXISTS returned_by BIGINT,
+    ADD COLUMN IF NOT EXISTS pieces_in_label INTEGER NOT NULL DEFAULT 1,
+    ADD COLUMN IF NOT EXISTS remaining_quantity INTEGER NOT NULL DEFAULT 1;
+UPDATE distribution.vehicle_label_claims
+   SET remaining_quantity = CASE WHEN status IN ('sold','returned') THEN 0 ELSE 1 END
+ WHERE remaining_quantity = 1;
 ALTER TABLE distribution.vehicle_label_claims DROP CONSTRAINT IF EXISTS vehicle_label_claims_status_check;
 ALTER TABLE distribution.vehicle_label_claims ADD CONSTRAINT vehicle_label_claims_status_check
     CHECK (status IN ('prepared','printed','loaded','return_reserved','sold','returned'));
+ALTER TABLE distribution.vehicle_label_claims DROP CONSTRAINT IF EXISTS vehicle_label_claims_pieces_in_label_check;
+ALTER TABLE distribution.vehicle_label_claims ADD CONSTRAINT vehicle_label_claims_pieces_in_label_check CHECK (pieces_in_label > 0);
+ALTER TABLE distribution.vehicle_label_claims DROP CONSTRAINT IF EXISTS vehicle_label_claims_remaining_quantity_check;
+ALTER TABLE distribution.vehicle_label_claims ADD CONSTRAINT vehicle_label_claims_remaining_quantity_check CHECK (remaining_quantity >= 0 AND remaining_quantity <= pieces_in_label);
+ALTER TABLE distribution.vehicle_label_claims DROP CONSTRAINT IF EXISTS vehicle_label_claims_status_remaining_check;
+ALTER TABLE distribution.vehicle_label_claims ADD CONSTRAINT vehicle_label_claims_status_remaining_check CHECK (
+    (status IN ('sold','returned') AND remaining_quantity = 0)
+    OR (status IN ('prepared','printed','loaded','return_reserved') AND remaining_quantity > 0)
+);
 ALTER TABLE distribution.vehicle_label_claims DROP CONSTRAINT IF EXISTS vehicle_label_claims_return_linkage_check;
 ALTER TABLE distribution.vehicle_label_claims ADD CONSTRAINT vehicle_label_claims_return_linkage_check CHECK (
     (status='return_reserved' AND return_id IS NOT NULL AND returned_at IS NULL AND returned_by IS NULL)
@@ -987,13 +1007,29 @@ CREATE TABLE IF NOT EXISTS distribution.vehicle_return_items (
     product_name TEXT NOT NULL,
     sku TEXT NOT NULL,
     unit_weight_kg NUMERIC(12,3) NOT NULL,
+    return_quantity INTEGER NOT NULL DEFAULT 1,
+    return_weight_kg NUMERIC(12,3) NOT NULL DEFAULT 1,
     destination_warehouse_id INTEGER NOT NULL,
     movement_reference TEXT NOT NULL UNIQUE,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     CONSTRAINT vehicle_return_items_weight_check CHECK (unit_weight_kg > 0),
+    CONSTRAINT vehicle_return_items_return_quantity_check CHECK (return_quantity > 0),
+    CONSTRAINT vehicle_return_items_return_weight_check CHECK (return_weight_kg > 0),
     CONSTRAINT vehicle_return_items_identity_check
       CHECK (btrim(barcode) <> '' AND btrim(product_name) <> '' AND btrim(sku) <> '')
 );
+ALTER TABLE distribution.vehicle_return_items
+    ADD COLUMN IF NOT EXISTS return_quantity INTEGER NOT NULL DEFAULT 1,
+    ADD COLUMN IF NOT EXISTS return_weight_kg NUMERIC(12,3) NOT NULL DEFAULT 1;
+UPDATE distribution.vehicle_return_items
+   SET return_weight_kg = unit_weight_kg
+ WHERE return_quantity = 1
+   AND return_weight_kg = 1
+   AND unit_weight_kg <> 1;
+ALTER TABLE distribution.vehicle_return_items DROP CONSTRAINT IF EXISTS vehicle_return_items_return_quantity_check;
+ALTER TABLE distribution.vehicle_return_items ADD CONSTRAINT vehicle_return_items_return_quantity_check CHECK (return_quantity > 0);
+ALTER TABLE distribution.vehicle_return_items DROP CONSTRAINT IF EXISTS vehicle_return_items_return_weight_check;
+ALTER TABLE distribution.vehicle_return_items ADD CONSTRAINT vehicle_return_items_return_weight_check CHECK (return_weight_kg > 0);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_return_items_return_barcode
     ON distribution.vehicle_return_items (return_id, barcode);
 CREATE INDEX IF NOT EXISTS idx_vehicle_return_items_return

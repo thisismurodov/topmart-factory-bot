@@ -13,6 +13,8 @@ export interface VehicleHandoffItem {
   /** @nullable */
   productName: string | null;
   quantity: number;
+  /** @minimum 1 */
+  piecesPerBox: number;
   /** @nullable */
   unitWeightKg: number | null;
   /** @nullable */

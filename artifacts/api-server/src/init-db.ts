@@ -415,7 +415,7 @@ export async function initDb(): Promise<void> {
         CONSTRAINT production_labels_number_check
           CHECK (label_number > 0 AND total_labels >= label_number),
         CONSTRAINT production_labels_pieces_check
-          CHECK (pieces_in_label > 0),
+          CHECK (pieces_in_label > 0 AND pieces_in_label <= pieces_per_box),
         CONSTRAINT production_labels_box_capacity_check
           CHECK (pieces_per_box > 0),
         CONSTRAINT production_labels_quantity_check
@@ -447,6 +447,24 @@ export async function initDb(): Promise<void> {
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_production_labels_product
         ON production_labels(product_name)
+    `);
+    // Package-aware vehicle labels read these immutable production snapshots.
+    // Converge existing approved schemas as well as fresh CREATE TABLE installs.
+    await pool.query(`
+      ALTER TABLE production_labels
+        ADD COLUMN IF NOT EXISTS pieces_in_label INTEGER NOT NULL DEFAULT 1,
+        ADD COLUMN IF NOT EXISTS pieces_per_box INTEGER NOT NULL DEFAULT 1
+    `);
+    await pool.query(`
+      ALTER TABLE production_labels
+        DROP CONSTRAINT IF EXISTS production_labels_pieces_check,
+        DROP CONSTRAINT IF EXISTS production_labels_box_capacity_check
+    `);
+    await pool.query(`
+      ALTER TABLE production_labels
+        ADD CONSTRAINT production_labels_pieces_check
+          CHECK (pieces_in_label > 0 AND pieces_in_label <= pieces_per_box),
+        ADD CONSTRAINT production_labels_box_capacity_check CHECK (pieces_per_box > 0)
     `);
     // F4: vehicle-handoff passports carry batch_id NULL + batch_code 'VH-<handoffId>'.
     // The (batch_id, label_number) unique index does not constrain NULL batch_id

@@ -48,7 +48,7 @@ function number(value: number) {
 }
 
 function metric(value: VehicleWeeklyMetric) {
-  return `${number(value.quantity)} ta · ${number(value.weightKg)} kg`;
+  return `${number(value.quantity)} dona · ${number(value.weightKg)} kg`;
 }
 
 function statusOf(error: unknown) {
@@ -108,6 +108,7 @@ function ProductCard({ product }: { product: VehicleWeeklyProduct }) {
         <div className="min-w-0">
           <p className="break-words font-semibold text-slate-800">{product.productName}</p>
           <p className="break-all font-mono text-xs text-slate-500">{product.sku}</p>
+          <p className="mt-1 text-xs text-slate-500">Jismoniy yorliqlar: <strong className="text-slate-700">{product.physicalLabelCount.toLocaleString("uz-UZ")} ta</strong></p>
         </div>
         {product.indeterminate && (
           <div data-testid={`status-indeterminate-${product.publicProductId}`} role="alert" className="rounded-md border border-amber-300 bg-amber-50 p-2.5 text-sm text-amber-900">
@@ -116,11 +117,11 @@ function ProductCard({ product }: { product: VehicleWeeklyProduct }) {
         )}
         <div className="grid grid-cols-2 gap-2">
           <MetricPair title="Ochilish: inventar" value={product.inventoryOpening} testId={`text-inventory-opening-${product.publicProductId}`} />
-          <MetricPair title="Ochilish: aniq yorliq" value={product.expectedOpening} testId={`text-label-opening-${product.publicProductId}`} />
+          <MetricPair title="Ochilish: yorliqdagi dona" value={product.expectedOpening} testId={`text-label-opening-${product.publicProductId}`} />
           <MetricPair title="Yuk / savdo / qaytarish (sof)" value={product.eventNet} testId={`text-event-net-${product.publicProductId}`} />
           <MetricPair title="Ombor harakati (sof)" value={product.movementNet} testId={`text-movement-net-${product.publicProductId}`} />
           <MetricPair title="Joriy inventar" value={product.inventoryCurrent} testId={`text-inventory-current-${product.publicProductId}`} />
-          <MetricPair title="Joriy aniq yorliqlar" value={product.expectedCurrent} testId={`text-label-current-${product.publicProductId}`} />
+          <MetricPair title="Joriy: yorliqdagi dona" value={product.expectedCurrent} testId={`text-label-current-${product.publicProductId}`} />
         </div>
         <div className="grid gap-2 text-sm">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -285,6 +286,7 @@ export function VehicleWeeklyReadiness({ active }: { active: boolean }) {
           <section aria-label="Haftalik asosiy ko‘rsatkichlar" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <Card><CardContent className="p-3 sm:p-4"><Scale className="mb-2 h-5 w-5 text-indigo-600" /><span className="text-xs text-slate-500">Joriy avto zaxirasi</span><strong data-testid="text-weekly-current-stock" className="mt-1 block break-words">{metric(data.kpis.inventoryCurrent)}</strong></CardContent></Card>
             <Card><CardContent className="p-3 sm:p-4"><Tags className="mb-2 h-5 w-5 text-cyan-700" /><span className="text-xs text-slate-500">Hafta: yuk / savdo / qaytarish</span><strong data-testid="text-weekly-event-net" className="mt-1 block break-words">{metric(data.kpis.eventNet)} sof</strong></CardContent></Card>
+            <Card><CardContent className="p-3 sm:p-4"><Tags className="mb-2 h-5 w-5 text-violet-700" /><span className="text-xs text-slate-500">Jismoniy yorliqlar</span><strong data-testid="text-weekly-physical-label-count" className="mt-1 block text-xl">{data.kpis.physicalLabelCount.toLocaleString("uz-UZ")} ta</strong></CardContent></Card>
             <Card><CardContent className="p-3 sm:p-4"><ShieldAlert className="mb-2 h-5 w-5 text-red-600" /><span className="text-xs text-slate-500">To‘siqlar</span><strong data-testid="text-weekly-blockers" className="mt-1 block text-xl">{data.kpis.blockerCount}</strong></CardContent></Card>
             <Card><CardContent className="p-3 sm:p-4"><ClipboardCheck className="mb-2 h-5 w-5 text-emerald-600" /><span className="text-xs text-slate-500">F6 qamrovi</span><strong data-testid="text-weekly-f6-coverage" className="mt-1 block text-xl">{data.kpis.appliedDays}/{data.kpis.requiredDays}</strong></CardContent></Card>
           </section>
@@ -299,10 +301,10 @@ export function VehicleWeeklyReadiness({ active }: { active: boolean }) {
                 <div className="grid min-w-0 gap-3 md:hidden">{data.products.map((product) => <ProductCard key={product.publicProductId} product={product} />)}</div>
                 <div className="hidden overflow-x-auto rounded-md border md:block">
                   <Table className="min-w-[1100px]">
-                    <TableHeader className="bg-slate-50"><TableRow><TableHead>Mahsulot</TableHead><TableHead>Ochilish inventar / yorliq</TableHead><TableHead>Yuk / savdo / qaytarish / harakat (sof)</TableHead><TableHead>Joriy inventar / aniq yorliq</TableHead><TableHead>Inventar ↔ yorliq farqi</TableHead><TableHead>Hodisa ↔ harakat farqi</TableHead></TableRow></TableHeader>
+                    <TableHeader className="bg-slate-50"><TableRow><TableHead>Mahsulot</TableHead><TableHead>Ochilish inventar / yorliqdagi dona</TableHead><TableHead>Yuk / savdo / qaytarish / harakat (sof)</TableHead><TableHead>Joriy inventar / yorliqdagi dona</TableHead><TableHead>Inventar ↔ yorliq farqi</TableHead><TableHead>Hodisa ↔ harakat farqi</TableHead></TableRow></TableHeader>
                     <TableBody>{data.products.map((product) => (
                       <TableRow key={product.publicProductId} data-testid={`row-weekly-product-${product.publicProductId}`}>
-                        <TableCell><p className="font-medium">{product.productName}</p><p className="font-mono text-xs text-slate-500">{product.sku}</p>{product.indeterminate && <Badge variant="outline" className="mt-2 border-amber-300 bg-amber-50 text-amber-800">Aniqlanmagan · band {metric(product.handedBackReserved)}</Badge>}</TableCell>
+                        <TableCell><p className="font-medium">{product.productName}</p><p className="font-mono text-xs text-slate-500">{product.sku}</p><p className="mt-1 text-xs text-slate-500">Jismoniy yorliqlar: {product.physicalLabelCount.toLocaleString("uz-UZ")} ta</p>{product.indeterminate && <Badge variant="outline" className="mt-2 border-amber-300 bg-amber-50 text-amber-800">Aniqlanmagan · band {metric(product.handedBackReserved)}</Badge>}</TableCell>
                         <TableCell className="text-xs"><p>{metric(product.inventoryOpening)}</p><p className="mt-1 text-slate-500">{metric(product.expectedOpening)}</p></TableCell>
                         <TableCell className="text-xs"><p>{metric(product.eventNet)}</p><p className="mt-1 text-slate-500">{metric(product.movementNet)}</p></TableCell>
                         <TableCell className="text-xs"><p>{metric(product.inventoryCurrent)}</p><p className="mt-1 text-slate-500">{metric(product.expectedCurrent)}</p></TableCell>

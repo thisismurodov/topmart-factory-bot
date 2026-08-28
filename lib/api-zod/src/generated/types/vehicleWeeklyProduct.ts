@@ -11,6 +11,7 @@ export interface VehicleWeeklyProduct {
   publicProductId: number;
   productName: string;
   sku: string;
+  physicalLabelCount: number;
   inventoryCurrent: VehicleWeeklyMetric;
   expectedCurrent: VehicleWeeklyMetric;
   handedBackReserved: VehicleWeeklyMetric;

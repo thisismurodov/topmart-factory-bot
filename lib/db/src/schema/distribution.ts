@@ -434,6 +434,8 @@ export const vehicleHandoffItemsTable = distribution.table(
     unitCost: numeric("unit_cost", { precision: 12, scale: 2 }).notNull().default("0"),
     /** F3: snapshot of public.products name at prepare time (nullable). */
     productName: text("product_name"),
+    /** Number of pieces in each source box at prepare time. */
+    piecesPerBox: integer("pieces_per_box").notNull().default(1),
     /** F3: snapshot per-unit weight (kg) at prepare time (nullable, >=0 if set). */
     unitWeightKg: numeric("unit_weight_kg", { precision: 12, scale: 3 }),
     /** F3: snapshot total weight (kg) = unit_weight_kg * quantity (nullable, >=0). */
@@ -446,6 +448,7 @@ export const vehicleHandoffItemsTable = distribution.table(
     uniqueIndex("uq_vehicle_handoff_items_handoff_mahsulot").on(t.handoffId, t.mahsulotId),
     check("vehicle_handoff_items_qty_check", sql`${t.quantityDispatched} > 0`),
     check("vehicle_handoff_items_cost_check", sql`${t.unitCost} >= 0`),
+    check("vehicle_handoff_items_pieces_per_box_check", sql`${t.piecesPerBox} > 0`),
     check("vehicle_handoff_items_unit_weight_check", sql`${t.unitWeightKg} IS NULL OR ${t.unitWeightKg} >= 0`),
     check("vehicle_handoff_items_total_weight_check", sql`${t.totalWeightKg} IS NULL OR ${t.totalWeightKg} >= 0`),
   ],
@@ -534,14 +537,10 @@ export const vehicleSaleAllocationsTable = distribution.table(
     productionLabelId: integer("production_label_id"),
     /** Logical ref to public.production_labels.barcode_value (nullable). */
     barcode: text("barcode"),
-    /** Logical ref to distribution.vehicle_unit_events.id — the 'load' event
-     *  that supplied this unit-tracked sale (nullable). A partial unique index
-     *  (source_unit_event_id WHERE source_unit_event_id IS NOT NULL) enforces
-     *  that each unit-tracked load supplies at most one allocation; NULL
-     *  (aggregate) allocations are exempt. That WHERE predicate is enforced in
-     *  runtime DDL and validated via pg_catalog — not expressible in Drizzle. */
+    /** Logical ref to distribution.vehicle_unit_events.id that supplied this
+     *  allocation (nullable). Multiple partial allocations may share an event. */
     sourceUnitEventId: integer("source_unit_event_id"),
-    /** F7 concrete physical-unit claim (partial unique when non-null). */
+    /** Concrete physical-label claim; multiple partial allocations may share it. */
     labelClaimId: integer("label_claim_id"),
     /** Client-generated idempotency token — UNIQUE, prevents duplicate allocation. */
     operationKey: text("operation_key").notNull(),
@@ -553,18 +552,16 @@ export const vehicleSaleAllocationsTable = distribution.table(
     index("idx_vehicle_sale_allocations_handoff").on(t.handoffId),
     index("idx_vehicle_sale_allocations_savdo").on(t.savdoId),
     index("idx_vehicle_sale_allocations_vehicle").on(t.vehicleId),
+    index("idx_vehicle_sale_allocations_source_unit_event").on(t.sourceUnitEventId),
+    index("idx_vehicle_sale_allocations_label_claim").on(t.labelClaimId),
     check("vehicle_sale_allocations_qty_check", sql`${t.allocatedQuantity} > 0`),
-    check(
-      "vehicle_sale_allocations_concrete_qty_check",
-      sql`${t.labelClaimId} IS NULL OR ${t.allocatedQuantity} = 1`,
-    ),
     check("vehicle_sale_allocations_weight_check", sql`${t.allocatedWeightKg} > 0`),
   ],
 );
 
-/** F3: cross-handoff physical-unit label claim.
+/** F3: cross-handoff physical-package label claim.
  *
- *  One row per physical labelled unit (production_label_id), globally unique
+ *  One row per physical labelled package (production_label_id), globally unique
  *  across ALL handoffs — the cross-handoff invariant that a physical unit can
  *  only ever be claimed by one handoff item. barcode/sku/unit_weight_kg are
  *  self-describing snapshots. Partial unique on non-null operation_key is
@@ -583,6 +580,10 @@ export const vehicleLabelClaimsTable = distribution.table(
     /** Logical ref to distribution.mahsulotlar.id. */
     mahsulotId: integer("mahsulot_id").notNull(),
     sku: text("sku").notNull().default(""),
+    /** Original quantity represented by the physical label. */
+    piecesInLabel: integer("pieces_in_label").notNull().default(1),
+    /** Unsold/unreturned quantity currently represented by this claim. */
+    remainingQuantity: integer("remaining_quantity").notNull().default(1),
     unitWeightKg: numeric("unit_weight_kg", { precision: 12, scale: 3 }).notNull(),
     status: text("status").notNull().default("prepared"),
     /** Client idempotency token (nullable; partial-unique in runtime DDL). */
@@ -607,6 +608,13 @@ export const vehicleLabelClaimsTable = distribution.table(
       sql`${t.status} IN ('prepared','printed','loaded','return_reserved','sold','returned')`,
     ),
     check("vehicle_label_claims_weight_check", sql`${t.unitWeightKg} > 0`),
+    check("vehicle_label_claims_pieces_in_label_check", sql`${t.piecesInLabel} > 0`),
+    check("vehicle_label_claims_remaining_quantity_check", sql`${t.remainingQuantity} >= 0 AND ${t.remainingQuantity} <= ${t.piecesInLabel}`),
+    check(
+      "vehicle_label_claims_status_remaining_check",
+      sql`(${t.status} IN ('sold','returned') AND ${t.remainingQuantity} = 0)
+           OR (${t.status} IN ('prepared','printed','loaded','return_reserved') AND ${t.remainingQuantity} > 0)`,
+    ),
     check(
       "vehicle_label_claims_return_linkage_check",
       sql`(${t.status} = 'return_reserved' AND ${t.returnId} IS NOT NULL
@@ -1002,6 +1010,8 @@ export const vehicleReturnItemsTable = distribution.table(
     productName: text("product_name").notNull(),
     sku: text("sku").notNull(),
     unitWeightKg: numeric("unit_weight_kg", { precision: 12, scale: 3 }).notNull(),
+    returnQuantity: integer("return_quantity").notNull().default(1),
+    returnWeightKg: numeric("return_weight_kg", { precision: 12, scale: 3 }).notNull().default("1"),
     destinationWarehouseId: integer("destination_warehouse_id").notNull(),
     movementReference: text("movement_reference").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -1013,6 +1023,8 @@ export const vehicleReturnItemsTable = distribution.table(
     index("idx_vehicle_return_items_return").on(t.returnId),
     index("idx_vehicle_return_items_destination").on(t.destinationWarehouseId),
     check("vehicle_return_items_weight_check", sql`${t.unitWeightKg} > 0`),
+    check("vehicle_return_items_return_quantity_check", sql`${t.returnQuantity} > 0`),
+    check("vehicle_return_items_return_weight_check", sql`${t.returnWeightKg} > 0`),
     check(
       "vehicle_return_items_identity_check",
       sql`btrim(${t.barcode}) <> '' AND btrim(${t.productName}) <> '' AND btrim(${t.sku}) <> ''`,

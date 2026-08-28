@@ -99,7 +99,9 @@ function LabelCard({ label, checked, onCheckedChange }: {
         <span className="block break-all font-mono text-sm font-semibold text-slate-800">{label.barcode}</span>
         <span className="mt-1 block break-words text-sm">{label.productName} <span className="font-mono text-xs text-slate-500">· {label.sku}</span></span>
         <span className="mt-1 flex flex-wrap gap-x-3 text-xs text-slate-500">
-          <span>{formatWeight(label.unitWeightKg)}</span>
+          <span>Qolgan: {label.remainingQuantity.toLocaleString("uz-UZ")} dona</span>
+          <span>Qolgan vazn: {formatWeight(label.remainingWeightKg)}</span>
+          <span>Yorliq sig‘imi: {label.piecesInLabel.toLocaleString("uz-UZ")} dona</span>
           <span>Asl manba: Ombor #{label.destinationWarehouseId}</span>
         </span>
       </span>
@@ -171,7 +173,8 @@ export function VehicleReturns({ active }: { active: boolean }) {
     () => (labels.data?.labels || []).filter((label) => selected.has(label.barcode)),
     [labels.data, selected],
   );
-  const totalWeight = selectedLabels.reduce((total, label) => total + label.unitWeightKg, 0);
+  const totalPieces = selectedLabels.reduce((total, label) => total + label.remainingQuantity, 0);
+  const totalWeight = selectedLabels.reduce((total, label) => total + label.remainingWeightKg, 0);
 
   useEffect(() => {
     if (!labels.data) return;
@@ -335,8 +338,9 @@ export function VehicleReturns({ active }: { active: boolean }) {
                       <p className="mt-1 text-xs text-slate-500">Faqat tanlangan shtrix-kodlar yuboriladi. Yaratish va qabul qilishda zaxira o‘zgarmaydi.</p>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
-                      <div className="rounded-md bg-slate-50 p-3 text-center"><span className="block text-xs text-slate-500">Yorliqlar</span><strong data-testid="text-selected-return-count" className="text-lg">{selectedLabels.length}</strong></div>
-                      <div className="rounded-md bg-slate-50 p-3 text-center"><span className="block text-xs text-slate-500">Aniq jami vazn</span><strong data-testid="text-selected-return-weight" className="text-lg">{formatWeight(totalWeight)}</strong></div>
+                      <div className="rounded-md bg-slate-50 p-3 text-center"><span className="block text-xs text-slate-500">Jismoniy yorliqlar</span><strong data-testid="text-selected-return-count" className="text-lg">{selectedLabels.length} ta</strong></div>
+                      <div className="rounded-md bg-slate-50 p-3 text-center"><span className="block text-xs text-slate-500">Qaytariladigan dona</span><strong data-testid="text-selected-return-pieces" className="text-lg">{totalPieces.toLocaleString("uz-UZ")} dona</strong></div>
+                      <div className="col-span-2 rounded-md bg-slate-50 p-3 text-center"><span className="block text-xs text-slate-500">Aniq jami vazn</span><strong data-testid="text-selected-return-weight" className="text-lg">{formatWeight(totalWeight)}</strong></div>
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="return-notes">Izoh (ixtiyoriy)</Label>
@@ -356,7 +360,8 @@ export function VehicleReturns({ active }: { active: boolean }) {
             {!returns.data?.returns.length ? (
               <div data-testid="status-no-return-history" className="rounded-md border border-dashed p-8 text-center text-sm text-slate-500"><History className="mx-auto mb-2 h-7 w-7 opacity-40" /> Qaytarish tarixi yo‘q.</div>
             ) : returns.data.returns.map((value) => {
-              const weight = value.items.reduce((sum, item) => sum + item.unitWeightKg, 0);
+              const quantity = value.items.reduce((sum, item) => sum + item.returnQuantity, 0);
+              const weight = value.items.reduce((sum, item) => sum + item.returnWeightKg, 0);
               return (
                 <Card key={value.id} data-testid={`card-return-${value.id}`}>
                   <CardContent className="space-y-4 p-4">
@@ -365,14 +370,14 @@ export function VehicleReturns({ active }: { active: boolean }) {
                       <ReturnStatus status={value.status} />
                     </div>
                     <div className="grid grid-cols-2 gap-2 text-sm sm:max-w-sm">
-                      <div className="rounded bg-slate-50 p-2"><span className="block text-xs text-slate-500">Miqdor</span><b>{value.items.length} ta yorliq</b></div>
+                      <div className="rounded bg-slate-50 p-2"><span className="block text-xs text-slate-500">Qaytarilgan miqdor</span><b>{quantity.toLocaleString("uz-UZ")} dona</b><span className="block text-xs text-slate-500">{value.items.length} ta yorliq</span></div>
                       <div className="rounded bg-slate-50 p-2"><span className="block text-xs text-slate-500">Jami vazn</span><b>{formatWeight(weight)}</b></div>
                     </div>
                     <div className="overflow-x-auto rounded-md border">
                       <table className="w-full min-w-[580px] text-left text-sm">
                         <caption className="sr-only">Qaytarish #{value.id} yorliqlari</caption>
-                        <thead className="bg-slate-50 text-xs text-slate-500"><tr><th className="p-2 font-medium">Shtrix-kod</th><th className="p-2 font-medium">Mahsulot / SKU</th><th className="p-2 font-medium">Asl manba</th><th className="p-2 text-right font-medium">Vazn</th></tr></thead>
-                        <tbody>{value.items.map((item) => <tr key={item.id} className="border-t"><td className="break-all p-2 font-mono text-xs">{item.barcode}</td><td className="p-2">{item.productName}<span className="block font-mono text-xs text-slate-500">{item.sku}</span></td><td className="p-2">Ombor #{item.destinationWarehouseId}</td><td className="p-2 text-right">{formatWeight(item.unitWeightKg)}</td></tr>)}</tbody>
+                        <thead className="bg-slate-50 text-xs text-slate-500"><tr><th className="p-2 font-medium">Shtrix-kod</th><th className="p-2 font-medium">Mahsulot / SKU</th><th className="p-2 font-medium">Asl manba</th><th className="p-2 text-right font-medium">Miqdor</th><th className="p-2 text-right font-medium">Vazn</th></tr></thead>
+                        <tbody>{value.items.map((item) => <tr key={item.id} className="border-t"><td className="break-all p-2 font-mono text-xs">{item.barcode}</td><td className="p-2">{item.productName}<span className="block font-mono text-xs text-slate-500">{item.sku}</span></td><td className="p-2">Ombor #{item.destinationWarehouseId}</td><td className="p-2 text-right">{item.returnQuantity.toLocaleString("uz-UZ")} dona</td><td className="p-2 text-right">{formatWeight(item.returnWeightKg)}</td></tr>)}</tbody>
                       </table>
                     </div>
                     {value.notes && <p className="break-words text-sm"><span className="text-slate-500">Izoh:</span> {value.notes}</p>}

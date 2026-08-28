@@ -9,6 +9,7 @@ import type { VehicleWeeklyMetric } from './vehicleWeeklyMetric';
 
 export type VehiclePilotWeeklySummaryKpis = {
   productCount: number;
+  physicalLabelCount: number;
   inventoryCurrent: VehicleWeeklyMetric;
   expectedCurrent: VehicleWeeklyMetric;
   eventNet: VehicleWeeklyMetric;

@@ -746,6 +746,7 @@ export const GetVehicleDistributionPilotWeeklySummaryResponse = zod.object({
 }),
   "kpis": zod.object({
   "productCount": zod.number(),
+  "physicalLabelCount": zod.number(),
   "inventoryCurrent": zod.object({
   "quantity": zod.number(),
   "weightKg": zod.number()
@@ -770,6 +771,7 @@ export const GetVehicleDistributionPilotWeeklySummaryResponse = zod.object({
   "publicProductId": zod.number(),
   "productName": zod.string(),
   "sku": zod.string(),
+  "physicalLabelCount": zod.number(),
   "inventoryCurrent": zod.object({
   "quantity": zod.number(),
   "weightKg": zod.number()
@@ -951,6 +953,9 @@ export const GetVehicleDistributionPilotMovementsResponse = zod.object({
  * Returns the prepared/lifecycle handoffs for the single active pilot vehicle (server-resolved). Authenticated via the dedicated vehicle-handoff auth wall (admin Bearer session OR the vehicle-distribution bot key). Fails closed (404) unless enabled, 503 when enabled without schema approval.
  * @summary List handoffs for the pilot vehicle
  */
+
+
+
 export const ListVehicleHandoffsResponse = zod.object({
   "vehicleId": zod.number(),
   "handoffs": zod.array(zod.object({
@@ -977,6 +982,7 @@ export const ListVehicleHandoffsResponse = zod.object({
   "sku": zod.string(),
   "productName": zod.string().nullable(),
   "quantity": zod.number(),
+  "piecesPerBox": zod.number().min(1),
   "unitWeightKg": zod.number().nullable(),
   "totalWeightKg": zod.number().nullable()
 }))
@@ -1003,6 +1009,9 @@ export const CreateVehicleHandoffBody = zod.object({
   "operationKey": zod.string().min(1)
 }).describe('Strict prepared-handoff creation body. Only these fields are accepted; agent, vehicle and vehicle-warehouse targets plus the actor are all resolved server-side. operationKey is a required client idempotency token.')
 
+
+
+
 export const CreateVehicleHandoffResponse = zod.object({
   "id": zod.number(),
   "vehicleId": zod.number(),
@@ -1027,6 +1036,7 @@ export const CreateVehicleHandoffResponse = zod.object({
   "sku": zod.string(),
   "productName": zod.string().nullable(),
   "quantity": zod.number(),
+  "piecesPerBox": zod.number().min(1),
   "unitWeightKg": zod.number().nullable(),
   "totalWeightKg": zod.number().nullable()
 }))
@@ -1039,6 +1049,9 @@ export const CreateVehicleHandoffResponse = zod.object({
 export const GetVehicleHandoffParams = zod.object({
   "handoffId": zod.coerce.number()
 })
+
+
+
 
 export const GetVehicleHandoffResponse = zod.object({
   "id": zod.number(),
@@ -1064,6 +1077,7 @@ export const GetVehicleHandoffResponse = zod.object({
   "sku": zod.string(),
   "productName": zod.string().nullable(),
   "quantity": zod.number(),
+  "piecesPerBox": zod.number().min(1),
   "unitWeightKg": zod.number().nullable(),
   "totalWeightKg": zod.number().nullable()
 }))
@@ -1085,11 +1099,21 @@ export const PrepareVehicleHandoffLabelsBody = zod.object({
   "operationKey": zod.string().min(1)
 }).describe('Strict operation body for F4 label prepare\/confirm. Carries only a required client idempotency operationKey; all other authority is resolved server-side.')
 
+export const prepareVehicleHandoffLabelsResponseTotalPiecesMin = 0;
+
+export const prepareVehicleHandoffLabelsResponseRemainingPiecesMin = 0;
+
+export const prepareVehicleHandoffLabelsResponseLabelsItemRemainingQuantityMin = 0;
+
+
+
 export const PrepareVehicleHandoffLabelsResponse = zod.object({
   "handoffId": zod.number(),
   "vehicleId": zod.number(),
   "batchCode": zod.string(),
   "totalLabels": zod.number(),
+  "totalPieces": zod.number().min(prepareVehicleHandoffLabelsResponseTotalPiecesMin),
+  "remainingPieces": zod.number().min(prepareVehicleHandoffLabelsResponseRemainingPiecesMin),
   "preparedActorType": zod.string().nullable(),
   "preparedActorRef": zod.string().nullable(),
   "labels": zod.array(zod.object({
@@ -1104,6 +1128,7 @@ export const PrepareVehicleHandoffLabelsResponse = zod.object({
   "piecesInLabel": zod.number(),
   "piecesPerBox": zod.number(),
   "quantityTotal": zod.number(),
+  "remainingQuantity": zod.number().min(prepareVehicleHandoffLabelsResponseLabelsItemRemainingQuantityMin),
   "weightKg": zod.number(),
   "lengthM": zod.number().nullable(),
   "productName": zod.string(),
@@ -1127,11 +1152,21 @@ export const GetVehicleHandoffLabelsParams = zod.object({
   "handoffId": zod.coerce.number()
 })
 
+export const getVehicleHandoffLabelsResponseTotalPiecesMin = 0;
+
+export const getVehicleHandoffLabelsResponseRemainingPiecesMin = 0;
+
+export const getVehicleHandoffLabelsResponseLabelsItemRemainingQuantityMin = 0;
+
+
+
 export const GetVehicleHandoffLabelsResponse = zod.object({
   "handoffId": zod.number(),
   "vehicleId": zod.number(),
   "batchCode": zod.string(),
   "totalLabels": zod.number(),
+  "totalPieces": zod.number().min(getVehicleHandoffLabelsResponseTotalPiecesMin),
+  "remainingPieces": zod.number().min(getVehicleHandoffLabelsResponseRemainingPiecesMin),
   "preparedActorType": zod.string().nullable(),
   "preparedActorRef": zod.string().nullable(),
   "labels": zod.array(zod.object({
@@ -1146,6 +1181,7 @@ export const GetVehicleHandoffLabelsResponse = zod.object({
   "piecesInLabel": zod.number(),
   "piecesPerBox": zod.number(),
   "quantityTotal": zod.number(),
+  "remainingQuantity": zod.number().min(getVehicleHandoffLabelsResponseLabelsItemRemainingQuantityMin),
   "weightKg": zod.number(),
   "lengthM": zod.number().nullable(),
   "productName": zod.string(),
@@ -1176,6 +1212,15 @@ export const ConfirmVehicleHandoffLabelsPrintedBody = zod.object({
   "operationKey": zod.string().min(1)
 }).describe('Strict operation body for F4 label prepare\/confirm. Carries only a required client idempotency operationKey; all other authority is resolved server-side.')
 
+
+export const confirmVehicleHandoffLabelsPrintedResponseLabelsTotalPiecesMin = 0;
+
+export const confirmVehicleHandoffLabelsPrintedResponseLabelsRemainingPiecesMin = 0;
+
+export const confirmVehicleHandoffLabelsPrintedResponseLabelsLabelsItemRemainingQuantityMin = 0;
+
+
+
 export const ConfirmVehicleHandoffLabelsPrintedResponse = zod.object({
   "handoff": zod.object({
   "id": zod.number(),
@@ -1201,6 +1246,7 @@ export const ConfirmVehicleHandoffLabelsPrintedResponse = zod.object({
   "sku": zod.string(),
   "productName": zod.string().nullable(),
   "quantity": zod.number(),
+  "piecesPerBox": zod.number().min(1),
   "unitWeightKg": zod.number().nullable(),
   "totalWeightKg": zod.number().nullable()
 }))
@@ -1210,6 +1256,8 @@ export const ConfirmVehicleHandoffLabelsPrintedResponse = zod.object({
   "vehicleId": zod.number(),
   "batchCode": zod.string(),
   "totalLabels": zod.number(),
+  "totalPieces": zod.number().min(confirmVehicleHandoffLabelsPrintedResponseLabelsTotalPiecesMin),
+  "remainingPieces": zod.number().min(confirmVehicleHandoffLabelsPrintedResponseLabelsRemainingPiecesMin),
   "preparedActorType": zod.string().nullable(),
   "preparedActorRef": zod.string().nullable(),
   "labels": zod.array(zod.object({
@@ -1224,6 +1272,7 @@ export const ConfirmVehicleHandoffLabelsPrintedResponse = zod.object({
   "piecesInLabel": zod.number(),
   "piecesPerBox": zod.number(),
   "quantityTotal": zod.number(),
+  "remainingQuantity": zod.number().min(confirmVehicleHandoffLabelsPrintedResponseLabelsLabelsItemRemainingQuantityMin),
   "weightKg": zod.number(),
   "lengthM": zod.number().nullable(),
   "productName": zod.string(),
@@ -1254,6 +1303,9 @@ export const MarkVehicleHandoffHandedOverBody = zod.object({
 
 }).describe('Lifecycle transition body. Carries no overridable fields — actor and timestamps are server-assigned. Exists so transitions have a typed (empty) body contract.')
 
+
+
+
 export const MarkVehicleHandoffHandedOverResponse = zod.object({
   "id": zod.number(),
   "vehicleId": zod.number(),
@@ -1278,6 +1330,7 @@ export const MarkVehicleHandoffHandedOverResponse = zod.object({
   "sku": zod.string(),
   "productName": zod.string().nullable(),
   "quantity": zod.number(),
+  "piecesPerBox": zod.number().min(1),
   "unitWeightKg": zod.number().nullable(),
   "totalWeightKg": zod.number().nullable()
 }))
@@ -1295,6 +1348,9 @@ export const MarkVehicleHandoffStockTransferredParams = zod.object({
 export const MarkVehicleHandoffStockTransferredBody = zod.object({
 
 }).describe('Lifecycle transition body. Carries no overridable fields — actor and timestamps are server-assigned. Exists so transitions have a typed (empty) body contract.')
+
+
+
 
 export const MarkVehicleHandoffStockTransferredResponse = zod.object({
   "id": zod.number(),
@@ -1320,6 +1376,7 @@ export const MarkVehicleHandoffStockTransferredResponse = zod.object({
   "sku": zod.string(),
   "productName": zod.string().nullable(),
   "quantity": zod.number(),
+  "piecesPerBox": zod.number().min(1),
   "unitWeightKg": zod.number().nullable(),
   "totalWeightKg": zod.number().nullable()
 }))
@@ -1337,6 +1394,9 @@ export const CancelVehicleHandoffParams = zod.object({
 export const CancelVehicleHandoffBody = zod.object({
 
 }).describe('Lifecycle transition body. Carries no overridable fields — actor and timestamps are server-assigned. Exists so transitions have a typed (empty) body contract.')
+
+
+
 
 export const CancelVehicleHandoffResponse = zod.object({
   "id": zod.number(),
@@ -1362,6 +1422,7 @@ export const CancelVehicleHandoffResponse = zod.object({
   "sku": zod.string(),
   "productName": zod.string().nullable(),
   "quantity": zod.number(),
+  "piecesPerBox": zod.number().min(1),
   "unitWeightKg": zod.number().nullable(),
   "totalWeightKg": zod.number().nullable()
 }))
@@ -1653,6 +1714,9 @@ export const ListVehicleReturnableLabelsResponse = zod.object({
   "productName": zod.string(),
   "sku": zod.string(),
   "unitWeightKg": zod.number().gt(listVehicleReturnableLabelsResponseLabelsItemUnitWeightKgExclusiveMin),
+  "piecesInLabel": zod.number(),
+  "remainingQuantity": zod.number(),
+  "remainingWeightKg": zod.number(),
   "destinationWarehouseId": zod.number()
 }))
 })
@@ -1695,6 +1759,8 @@ export const ListVehicleReturnsResponse = zod.object({
   "productName": zod.string(),
   "sku": zod.string(),
   "unitWeightKg": zod.number(),
+  "returnQuantity": zod.number(),
+  "returnWeightKg": zod.number(),
   "destinationWarehouseId": zod.number(),
   "movementReference": zod.string()
 }))
@@ -1751,6 +1817,8 @@ export const CreateVehicleReturnResponse = zod.object({
   "productName": zod.string(),
   "sku": zod.string(),
   "unitWeightKg": zod.number(),
+  "returnQuantity": zod.number(),
+  "returnWeightKg": zod.number(),
   "destinationWarehouseId": zod.number(),
   "movementReference": zod.string()
 }))
@@ -1796,6 +1864,8 @@ export const GetVehicleReturnResponse = zod.object({
   "productName": zod.string(),
   "sku": zod.string(),
   "unitWeightKg": zod.number(),
+  "returnQuantity": zod.number(),
+  "returnWeightKg": zod.number(),
   "destinationWarehouseId": zod.number(),
   "movementReference": zod.string()
 }))
@@ -1845,6 +1915,8 @@ export const MarkVehicleReturnHandedBackResponse = zod.object({
   "productName": zod.string(),
   "sku": zod.string(),
   "unitWeightKg": zod.number(),
+  "returnQuantity": zod.number(),
+  "returnWeightKg": zod.number(),
   "destinationWarehouseId": zod.number(),
   "movementReference": zod.string()
 }))
@@ -1894,6 +1966,8 @@ export const TransferVehicleReturnStockResponse = zod.object({
   "productName": zod.string(),
   "sku": zod.string(),
   "unitWeightKg": zod.number(),
+  "returnQuantity": zod.number(),
+  "returnWeightKg": zod.number(),
   "destinationWarehouseId": zod.number(),
   "movementReference": zod.string()
 }))
@@ -1943,6 +2017,8 @@ export const CancelVehicleReturnResponse = zod.object({
   "productName": zod.string(),
   "sku": zod.string(),
   "unitWeightKg": zod.number(),
+  "returnQuantity": zod.number(),
+  "returnWeightKg": zod.number(),
   "destinationWarehouseId": zod.number(),
   "movementReference": zod.string()
 }))

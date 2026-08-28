@@ -110,6 +110,7 @@ async function createPublicTables(c: pg.Client): Promise<void> {
       name              TEXT PRIMARY KEY,
       sku               TEXT NOT NULL DEFAULT '',
       weight            NUMERIC(12,3) NOT NULL DEFAULT 1,
+      pieces_per_box    INTEGER NOT NULL DEFAULT 1,
       active            BOOLEAN NOT NULL DEFAULT TRUE
     )`);
   await c.query(`
@@ -272,15 +273,17 @@ async function seedProduct(
   sku: string,
   name: string,
   weight: number,
+  piecesPerBox = 1,
 ): Promise<{ mahsulotId: number; name: string; sku: string }> {
   const dp = await client.query(
     `INSERT INTO distribution.mahsulotlar (nomi, sku, faol) VALUES ($1,$2,1) RETURNING id`,
     [name, sku],
   );
   await client.query(
-    `INSERT INTO products (name, sku, weight, active) VALUES ($1,$2,$3,TRUE)
-     ON CONFLICT (name) DO UPDATE SET sku=EXCLUDED.sku, weight=EXCLUDED.weight, active=TRUE`,
-    [name, sku, weight],
+    `INSERT INTO products (name, sku, weight, pieces_per_box, active) VALUES ($1,$2,$3,$4,TRUE)
+     ON CONFLICT (name) DO UPDATE SET sku=EXCLUDED.sku, weight=EXCLUDED.weight,
+       pieces_per_box=EXCLUDED.pieces_per_box, active=TRUE`,
+    [name, sku, weight, piecesPerBox],
   );
   return { mahsulotId: Number(dp.rows[0].id), name, sku };
 }
@@ -473,6 +476,15 @@ beforeEach(async () => {
   process.env.VEHICLE_DISTRIBUTION_BOT_KEY = BOT_KEY;
   process.env.PRODUCTION_LABELS_SCHEMA_APPROVED = "1";
   await cleanHandoffs();
+  // Package snapshots are taken when creating a handoff. Restore the explicit
+  // legacy unit-package defaults after package-aware scenarios mutate them.
+  await client.query(
+    `UPDATE products
+        SET weight=CASE name WHEN $1 THEN 2.5 WHEN $2 THEN 1.0 ELSE weight END,
+            pieces_per_box=1
+      WHERE name IN ($1,$2)`,
+    [prodA.name, prodB.name],
+  );
   await setStock(erpWarehouseId, prodA.name, 100, 250);
   await setStock(erpWarehouseId, prodB.name, 100, 100);
   await setStock(vehicleWarehouseId, prodA.name, 0, 0);
@@ -643,7 +655,7 @@ describe("F4 prepare labels", () => {
     expect(r.status).toBe(400);
   });
 
-  it("first prepare: exact counts of passports, claims, events + barcode identity", async () => {
+  it("legacy pieces_per_box=1: exact per-piece passports, claims, and events", async () => {
     const r = await call("POST", "/vehicle-distribution/handoffs", {
       token: adminToken,
       body: {
@@ -698,6 +710,92 @@ describe("F4 prepare labels", () => {
       .sort((a: number, b: number) => a - b);
     expect(nums).toEqual([1, 2, 3, 4, 5]);
     for (const l of p.body.labels) expect(l.totalLabels).toBe(5);
+  });
+
+  it("creates one box label and claim for 100 pieces when pieces_per_box is 100", async () => {
+    await client.query(
+      `UPDATE products SET weight=0.115, pieces_per_box=100 WHERE name=$1`,
+      [prodA.name],
+    );
+    const { handoffId } = await makePrepared(100);
+    const prepared = await prepareLabels(handoffId);
+
+    expect(prepared.status).toBe(200);
+    expect(prepared.body.totalLabels).toBe(1);
+    expect(prepared.body.remainingPieces).toBe(100);
+    expect(prepared.body.labels).toHaveLength(1);
+    expect(prepared.body.labels[0]).toMatchObject({
+      piecesInLabel: 100,
+      remainingQuantity: 100,
+      piecesPerBox: 100,
+      weightKg: 11.5,
+      labelType: "box",
+    });
+    const claims = await client.query(
+      `SELECT pieces_in_label,remaining_quantity,status
+         FROM distribution.vehicle_label_claims WHERE handoff_id=$1`,
+      [handoffId],
+    );
+    expect(claims.rows).toEqual([
+      { pieces_in_label: 100, remaining_quantity: 100, status: "prepared" },
+    ]);
+
+    await confirmPrinted(handoffId);
+    await call("POST", `/vehicle-distribution/handoffs/${handoffId}/handed-over`, {
+      token: adminToken,
+    });
+    const transferred = await call(
+      "POST",
+      `/vehicle-distribution/handoffs/${handoffId}/stock-transferred`,
+      { token: adminToken },
+    );
+    expect(transferred.status).toBe(200);
+    const load = await client.query(
+      `SELECT quantity FROM distribution.vehicle_unit_events
+        WHERE handoff_id=$1 AND event_type='load'`,
+      [handoffId],
+    );
+    expect(load.rows.map((row) => Number(row.quantity))).toEqual([100]);
+    const persistedMovement = await client.query(
+      `SELECT quantity,weight_kg FROM stock_movements
+        WHERE reference LIKE $1`,
+      [`vehicle-handoff:${handoffId}:item:%`],
+    );
+    expect(persistedMovement.rows).toHaveLength(1);
+    expect(Number(persistedMovement.rows[0].quantity)).toBe(100);
+    expect(Number(persistedMovement.rows[0].weight_kg)).toBe(11.5);
+  });
+
+  it("creates one 10-piece box label with exact package weight", async () => {
+    await client.query(
+      `UPDATE products SET weight=1.3, pieces_per_box=10 WHERE name=$1`,
+      [prodA.name],
+    );
+    const { handoffId } = await makePrepared(10);
+    const prepared = await prepareLabels(handoffId);
+    expect(prepared.status).toBe(200);
+    expect(prepared.body.totalLabels).toBe(1);
+    expect(prepared.body.labels[0]).toMatchObject({
+      piecesInLabel: 10,
+      remainingQuantity: 10,
+      weightKg: 13,
+      labelType: "box",
+    });
+  });
+
+  it("splits a partial final package into 100- and 50-piece labels", async () => {
+    await client.query(
+      `UPDATE products SET pieces_per_box=100 WHERE name=$1`,
+      [prodA.name],
+    );
+    await setStock(erpWarehouseId, prodA.name, 150, 375);
+    const { handoffId } = await makePrepared(150);
+    const prepared = await prepareLabels(handoffId);
+    expect(prepared.status).toBe(200);
+    expect(prepared.body.totalLabels).toBe(2);
+    expect(prepared.body.remainingPieces).toBe(150);
+    expect(prepared.body.labels.map((label: any) => label.piecesInLabel)).toEqual([100, 50]);
+    expect(prepared.body.labels.map((label: any) => label.labelType)).toEqual(["box", "box"]);
   });
 
   it("prepare does not mutate inventory or move stock", async () => {

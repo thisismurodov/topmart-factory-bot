@@ -6,6 +6,7 @@ import unittest
 import math
 from datetime import datetime
 
+import fitz
 import zxingcpp
 from PIL import Image, ImageDraw
 
@@ -238,8 +239,8 @@ class LabelGeneratorTest(unittest.TestCase):
         ], created_at=TS)
         data = pdf.read()
         self.assertEqual(data[:4], b"%PDF")
-        pages = max(data.count(b"/Type /Page "), data.count(b"/Type/Page "))
-        self.assertEqual(pages, 3 + 2)
+        with fitz.open(stream=data, filetype="pdf") as document:
+            self.assertEqual(document.page_count, 3 + 2)
 
 
 if __name__ == "__main__":

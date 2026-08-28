@@ -20,11 +20,16 @@ export function getBuildRevision(): {
   commit: string;
   sourceSha256: string;
 } {
+  const compiledCommit = definedBuildValue("commit")?.trim();
   const commit = (
-    definedBuildValue("commit")
+    compiledCommit && compiledCommit.toLowerCase() !== "unknown"
+      ? compiledCommit
+      : undefined
+  ) ?? (
+    process.env.RAILWAY_GIT_COMMIT_SHA
     ?? process.env.TOPMART_BUILD_COMMIT
     ?? "unknown"
-  ).trim();
+  );
   const sourceSha256 = (
     definedBuildValue("sourceSha256")
     ?? process.env.TOPMART_SOURCE_SHA256
@@ -32,7 +37,7 @@ export function getBuildRevision(): {
   ).trim().toLowerCase();
 
   return {
-    commit: commit || "unknown",
+    commit: commit.trim() || "unknown",
     sourceSha256: SHA256_RE.test(sourceSha256) ? sourceSha256 : "unknown",
   };
 }

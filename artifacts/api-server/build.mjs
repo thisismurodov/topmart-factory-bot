@@ -27,17 +27,19 @@ const EXCLUDED_NAMES = new Set([
   "node_modules",
 ]);
 
-async function sourceFiles(relativePath) {
-  const absolutePath = path.resolve(workspaceDir, relativePath);
+async function sourceFiles(rootDir, relativePath) {
+  const absolutePath = path.resolve(rootDir, relativePath);
   const entries = await readdir(absolutePath, { withFileTypes: true }).catch(() => null);
   if (!entries) return [relativePath];
 
   const files = [];
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-    if (EXCLUDED_NAMES.has(entry.name)) continue;
+    if (EXCLUDED_NAMES.has(entry.name) || entry.name.endsWith(".tsbuildinfo")) {
+      continue;
+    }
     const child = path.posix.join(relativePath.replaceAll(path.sep, "/"), entry.name);
     if (entry.isDirectory()) {
-      files.push(...await sourceFiles(child));
+      files.push(...await sourceFiles(rootDir, child));
     } else if (entry.isFile()) {
       files.push(child);
     }
@@ -45,19 +47,21 @@ async function sourceFiles(relativePath) {
   return files;
 }
 
-async function computeSourceSha256() {
-  const files = (await Promise.all(SOURCE_ROOTS.map(sourceFiles))).flat().sort();
+export async function computeSourceSha256(rootDir = workspaceDir) {
+  const files = (
+    await Promise.all(SOURCE_ROOTS.map((relativePath) => sourceFiles(rootDir, relativePath)))
+  ).flat().sort();
   const hash = createHash("sha256");
   for (const relativePath of files) {
     hash.update(relativePath);
     hash.update("\0");
-    hash.update(await readFile(path.resolve(workspaceDir, relativePath)));
+    hash.update(await readFile(path.resolve(rootDir, relativePath)));
     hash.update("\0");
   }
   return hash.digest("hex");
 }
 
-function resolveCommitSha() {
+export function resolveCommitSha() {
   for (const key of [
     "RAILWAY_GIT_COMMIT_SHA",
     "REPLIT_GIT_COMMIT_SHA",
@@ -194,7 +198,12 @@ globalThis.__dirname = __bannerPath.dirname(globalThis.__filename);
   });
 }
 
-buildAll().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+const isDirectExecution = process.argv[1]
+  && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isDirectExecution) {
+  buildAll().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

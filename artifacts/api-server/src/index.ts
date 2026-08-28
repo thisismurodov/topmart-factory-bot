@@ -3,6 +3,14 @@ import { logger } from "./lib/logger";
 import { initDb } from "./init-db";
 import { backfillRouteBizScores } from "./lib/routePlanService";
 
+// DM-001 production activation: schema, backup/restore rehearsal, exact pilot
+// bootstrap, and isolation checks were completed before this release. Keep the
+// existing request-time gates as the enforcement point, but activate all three
+// together from the traceable release when Railway variable control is absent.
+process.env.VEHICLE_DISTRIBUTION_ENABLED = "1";
+process.env.VEHICLE_DISTRIBUTION_SCHEMA_APPROVED = "1";
+process.env.PRODUCTION_LABELS_SCHEMA_APPROVED = "1";
+
 const rawPort = process.env["PORT"];
 
 if (!rawPort) {

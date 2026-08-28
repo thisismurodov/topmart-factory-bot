@@ -9,7 +9,7 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, filters
 
 from config import ConfigError, PrintAgentConfig, load_config
-from printer import print_image, list_printers
+from printer import print_image, list_printers, probe_printer_health
 from vehicle_api import VehicleApiClient
 from vehicle_print import (
     ConfirmationPending,
@@ -217,6 +217,30 @@ async def cmd_vehicle_retry(
         await update.message.reply_text(f"❌ Retry bajarilmadi: {exc}")
 
 
+async def report_health(context: ContextTypes.DEFAULT_TYPE) -> None:
+    config = _config(context)
+    health = await asyncio.to_thread(probe_printer_health, config.printer_name)
+    payload = {
+        "agentId": config.agent_id,
+        "printerName": health.printer_name,
+        "printerAvailable": health.printer_available,
+        "mediaValid": health.media_valid,
+        "printableAreaValid": health.printable_area_valid,
+        "physicalWidthMm": health.physical_width_mm,
+        "physicalHeightMm": health.physical_height_mm,
+        "printableWidthMm": health.printable_width_mm,
+        "printableHeightMm": health.printable_height_mm,
+        "detail": health.detail,
+    }
+    try:
+        await asyncio.to_thread(
+            context.application.bot_data["vehicle_api"].send_heartbeat,
+            payload,
+        )
+    except Exception:
+        logger.exception("Print Agent heartbeat API'ga yetib bormadi")
+
+
 def main() -> None:
     try:
         config = load_config()
@@ -227,14 +251,18 @@ def main() -> None:
     printers = list_printers()
     logger.info(f"Mavjud printerlar: {printers}")
     if config.printer_name not in printers:
-        raise RuntimeError(
-            f"Print Agent fail-closed: PRINTER_NAME topilmadi: {config.printer_name}"
+        logger.error(
+            "PRINTER_NAME topilmadi; chop etish fail-closed, heartbeat unhealthy "
+            "holatni omborga yuboradi: %s",
+            config.printer_name,
         )
 
     app = ApplicationBuilder().token(config.telegram_bot_token).build()
     app.bot_data["config"] = config
+    vehicle_api = VehicleApiClient(config.api_base_url, config.vehicle_bot_key)
+    app.bot_data["vehicle_api"] = vehicle_api
     app.bot_data["vehicle_print_service"] = VehiclePrintService(
-        VehicleApiClient(config.api_base_url, config.vehicle_bot_key),
+        vehicle_api,
         PrintJobStore(config.job_db_path),
         config.printer_name,
     )
@@ -245,6 +273,14 @@ def main() -> None:
     app.add_handler(CommandHandler("vehicle_recover", cmd_vehicle_recover))
     app.add_handler(CommandHandler("vehicle_retry", cmd_vehicle_retry))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    if app.job_queue is None:
+        raise RuntimeError("Print Agent heartbeat scheduler mavjud emas")
+    app.job_queue.run_repeating(
+        report_health,
+        interval=config.heartbeat_interval_seconds,
+        first=0,
+        name="print-agent-health",
+    )
 
     logger.info("Telegram'dan etiketkalar kutilmoqda...")
     app.run_polling(drop_pending_updates=True)

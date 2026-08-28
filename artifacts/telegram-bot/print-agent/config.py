@@ -31,10 +31,20 @@ class PrintAgentConfig:
     api_base_url: str
     vehicle_bot_key: str
     job_db_path: str
+    agent_id: str
+    heartbeat_interval_seconds: int
 
 
 def load_config(environ: Mapping[str, str] | None = None) -> PrintAgentConfig:
     env = os.environ if environ is None else environ
+    try:
+        heartbeat_interval_seconds = int(
+            env.get("PRINT_AGENT_HEARTBEAT_SECONDS", "60").strip()
+        )
+    except ValueError as exc:
+        raise ConfigError(
+            "PRINT_AGENT_HEARTBEAT_SECONDS butun son bo'lishi kerak"
+        ) from exc
     config = PrintAgentConfig(
         telegram_bot_token=env.get("TELEGRAM_BOT_TOKEN", "").strip(),
         allowed_chat_ids=_parse_chat_ids(env.get("ALLOWED_CHAT_IDS", "")),
@@ -45,6 +55,8 @@ def load_config(environ: Mapping[str, str] | None = None) -> PrintAgentConfig:
             "PRINT_JOB_DB",
             str(Path(__file__).with_name("print_jobs.sqlite3")),
         ).strip(),
+        agent_id=env.get("PRINT_AGENT_ID", "").strip(),
+        heartbeat_interval_seconds=heartbeat_interval_seconds,
     )
     missing: list[str] = []
     if not config.telegram_bot_token:
@@ -59,6 +71,12 @@ def load_config(environ: Mapping[str, str] | None = None) -> PrintAgentConfig:
         missing.append("VEHICLE_DISTRIBUTION_BOT_KEY")
     if not config.job_db_path:
         missing.append("PRINT_JOB_DB")
+    if not config.agent_id:
+        missing.append("PRINT_AGENT_ID")
+    if config.heartbeat_interval_seconds < 15:
+        raise ConfigError("PRINT_AGENT_HEARTBEAT_SECONDS kamida 15 bo'lishi kerak")
+    if config.heartbeat_interval_seconds > 120:
+        raise ConfigError("PRINT_AGENT_HEARTBEAT_SECONDS ko'pi bilan 120 bo'lishi kerak")
     if missing:
         raise ConfigError(
             "Majburiy sozlamalar yo'q yoki bo'sh: " + ", ".join(missing)

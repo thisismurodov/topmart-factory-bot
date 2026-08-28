@@ -754,6 +754,39 @@ def init_db() -> None:
                 PRIMARY KEY (line_id, alert_date)
             )
         """)
+        # Windows label printer agent heartbeat holati. API initDb va Drizzle
+        # schema bilan sinxron; bu jadval label/handoff lifecycle'ga bog'lanmaydi.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS print_agent_health (
+                agent_id TEXT PRIMARY KEY,
+                printer_name TEXT NOT NULL,
+                printer_available BOOLEAN NOT NULL,
+                media_valid BOOLEAN NOT NULL,
+                printable_area_valid BOOLEAN NOT NULL,
+                physical_width_mm NUMERIC(8,2),
+                physical_height_mm NUMERIC(8,2),
+                printable_width_mm NUMERIC(8,2),
+                printable_height_mm NUMERIC(8,2),
+                healthy BOOLEAN NOT NULL,
+                detail TEXT NOT NULL DEFAULT '',
+                last_seen_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                last_transition_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                last_notified_status TEXT,
+                notified_chat_ids TEXT[] NOT NULL DEFAULT '{}',
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                CONSTRAINT print_agent_health_notified_status_check
+                  CHECK (last_notified_status IS NULL OR last_notified_status IN ('healthy','unhealthy'))
+            )
+        """)
+        cur.execute("""
+            ALTER TABLE print_agent_health
+              ADD COLUMN IF NOT EXISTS notified_chat_ids TEXT[] NOT NULL DEFAULT '{}'
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_print_agent_health_last_seen
+              ON print_agent_health (last_seen_at)
+        """)
         # Ishlab chiqaruvchi (producer) rollarini 'individual' deb belgilaymiz:
         # config roli a'zolari standart 'producer' rolini ham tutsa — bu producer roli.
         # Idempotent: producer = individual o'zgarmas qoida (qayta ishga tushishda xavfsiz).

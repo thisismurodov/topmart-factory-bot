@@ -73,6 +73,11 @@ class VehicleApiClient:
             "GET", f"/vehicle-distribution/handoffs/{int(handoff_id)}"
         )
 
+    def send_heartbeat(self, payload: dict) -> dict:
+        return self._request(
+            "POST", "/vehicle-distribution/print-agent/heartbeat", payload
+        )
+
     def get_labels(self, handoff_id: int) -> dict:
         return self._request(
             "GET",

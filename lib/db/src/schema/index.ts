@@ -24,3 +24,4 @@ export * from "./inventory";
 export * from "./stock_movements";
 export * from "./distribution";
 export * from "./production_labels";
+export * from "./print_agent_health";

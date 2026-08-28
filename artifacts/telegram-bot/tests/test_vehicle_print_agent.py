@@ -22,6 +22,7 @@ from printer import (
     require_named_printer,
     validate_100x80_media,
     validate_100x80_printable_area,
+    probe_printer_health,
 )
 from vehicle_api import VehicleApiClient, VehicleApiError
 from vehicle_print import (
@@ -259,6 +260,7 @@ class FailClosedConfigTest(unittest.TestCase):
                     "API_BASE_URL": "https://api.example/api",
                     "VEHICLE_DISTRIBUTION_BOT_KEY": "key",
                     "PRINT_JOB_DB": "jobs.sqlite3",
+                    "PRINT_AGENT_ID": "warehouse-1",
                 }
             )
         self.assertIn("ALLOWED_CHAT_IDS", str(caught.exception))
@@ -273,6 +275,27 @@ class FailClosedConfigTest(unittest.TestCase):
             require_named_printer("Zebra", ["Default", "Zebra"]),
             "Zebra",
         )
+
+    def test_health_probe_missing_exact_printer_never_spools(self):
+        with mock.patch.object(printer_module, "list_printers", return_value=["Other"]):
+            health = probe_printer_health("Zebra")
+        self.assertFalse(health.printer_available)
+        self.assertFalse(health.media_valid)
+        self.assertFalse(health.printable_area_valid)
+
+    def test_config_loads_agent_identity_and_heartbeat_interval(self):
+        config = load_config({
+            "TELEGRAM_BOT_TOKEN": "token",
+            "ALLOWED_CHAT_IDS": "123",
+            "PRINTER_NAME": "Zebra",
+            "API_BASE_URL": "https://api.example/api",
+            "VEHICLE_DISTRIBUTION_BOT_KEY": "key",
+            "PRINT_JOB_DB": "jobs.sqlite3",
+            "PRINT_AGENT_ID": "warehouse-1",
+            "PRINT_AGENT_HEARTBEAT_SECONDS": "30",
+        })
+        self.assertEqual(config.agent_id, "warehouse-1")
+        self.assertEqual(config.heartbeat_interval_seconds, 30)
 
     def test_active_media_must_be_100x80_in_print_orientation(self):
         width, height = validate_100x80_media(799, 639, 203, 203)

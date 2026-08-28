@@ -12,6 +12,19 @@ class PrintReceipt:
     spool_job_id: int
 
 
+@dataclass(frozen=True)
+class PrinterHealth:
+    printer_name: str
+    printer_available: bool
+    media_valid: bool
+    printable_area_valid: bool
+    physical_width_mm: float | None
+    physical_height_mm: float | None
+    printable_width_mm: float | None
+    printable_height_mm: float | None
+    detail: str
+
+
 class PrintDeliveryError(RuntimeError):
     def __init__(self, message: str, *, may_have_printed: bool = False):
         super().__init__(message)
@@ -96,6 +109,65 @@ def validate_100x80_printable_area(
             f"{minimum_height:.1f} mm kerak"
         )
     return width_mm, height_mm
+
+
+def probe_printer_health(printer_name: str) -> PrinterHealth:
+    target = (printer_name or "").strip()
+    try:
+        require_named_printer(target)
+    except Exception as exc:
+        return PrinterHealth(target, False, False, False, None, None, None, None, str(exc))
+    try:
+        import win32con
+        import win32ui
+        dc = win32ui.CreateDC()
+        try:
+            try:
+                dc.CreatePrinterDC(target)
+            except Exception as exc:
+                return PrinterHealth(
+                    target, False, False, False,
+                    None, None, None, None,
+                    f"Printer driver/DC ochilmadi: {exc}",
+                )
+            dpi_x = int(dc.GetDeviceCaps(win32con.LOGPIXELSX))
+            dpi_y = int(dc.GetDeviceCaps(win32con.LOGPIXELSY))
+            physical_w = int(dc.GetDeviceCaps(win32con.PHYSICALWIDTH))
+            physical_h = int(dc.GetDeviceCaps(win32con.PHYSICALHEIGHT))
+            printable_w = int(dc.GetDeviceCaps(win32con.HORZRES))
+            printable_h = int(dc.GetDeviceCaps(win32con.VERTRES))
+            physical = (physical_w / dpi_x * 25.4, physical_h / dpi_y * 25.4)
+            printable = (printable_w / dpi_x * 25.4, printable_h / dpi_y * 25.4)
+            try:
+                validate_100x80_media(physical_w, physical_h, dpi_x, dpi_y)
+                media_valid = True
+                media_detail = ""
+            except Exception as exc:
+                media_valid = False
+                media_detail = str(exc)
+            try:
+                validate_100x80_printable_area(
+                    printable_w, printable_h, dpi_x, dpi_y
+                )
+                printable_valid = True
+                printable_detail = ""
+            except Exception as exc:
+                printable_valid = False
+                printable_detail = str(exc)
+            detail = "; ".join(
+                part for part in (media_detail, printable_detail) if part
+            ) or "Tayyor"
+            return PrinterHealth(
+                target, True, media_valid, printable_valid,
+                physical[0], physical[1], printable[0], printable[1], detail,
+            )
+        finally:
+            dc.DeleteDC()
+    except Exception as exc:
+        return PrinterHealth(
+            target, True, False, False,
+            None, None, None, None, str(exc),
+        )
 
 
 def _spool_images(images, printer_name: str, document_name: str) -> PrintReceipt:

@@ -28,6 +28,7 @@ echo   ALLOWED_CHAT_IDS            ^(masalan: 123456789,987654321^)
 echo   PRINTER_NAME                ^(Windows'dagi aynan printer nomi^)
 echo   API_BASE_URL                ^(oxirida /api^)
 echo   VEHICLE_DISTRIBUTION_BOT_KEY
+echo   PRINT_AGENT_ID              ^(masalan: ombor-label-1^)
 echo.
 echo Ularni setx orqali o'rnating. Birortasi bo'sh bo'lsa agent ishga tushmaydi.
 echo.

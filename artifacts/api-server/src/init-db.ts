@@ -12,6 +12,38 @@ import { logger } from "./lib/logger";
 // against a throwaway database, so keep all schema bootstrapping here (do not
 // inline schema DDL back into index.ts).
 export async function initDb(): Promise<void> {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS print_agent_health (
+      agent_id TEXT PRIMARY KEY,
+      printer_name TEXT NOT NULL,
+      printer_available BOOLEAN NOT NULL,
+      media_valid BOOLEAN NOT NULL,
+      printable_area_valid BOOLEAN NOT NULL,
+      physical_width_mm NUMERIC(8,2),
+      physical_height_mm NUMERIC(8,2),
+      printable_width_mm NUMERIC(8,2),
+      printable_height_mm NUMERIC(8,2),
+      healthy BOOLEAN NOT NULL,
+      detail TEXT NOT NULL DEFAULT '',
+      last_seen_at TIMESTAMP WITH TIME ZONE NOT NULL,
+      last_transition_at TIMESTAMP WITH TIME ZONE NOT NULL,
+      last_notified_status TEXT,
+      notified_chat_ids TEXT[] NOT NULL DEFAULT '{}',
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+      CONSTRAINT print_agent_health_notified_status_check
+        CHECK (last_notified_status IS NULL OR last_notified_status IN ('healthy','unhealthy'))
+    )
+  `);
+  await pool.query(`
+    ALTER TABLE print_agent_health
+      ADD COLUMN IF NOT EXISTS notified_chat_ids TEXT[] NOT NULL DEFAULT '{}'
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_print_agent_health_last_seen
+      ON print_agent_health (last_seen_at)
+  `);
+
   // admin_users jadvali (Drizzle schema bor, lekin Railway DB'da bo'lmasligi mumkin)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS admin_users (

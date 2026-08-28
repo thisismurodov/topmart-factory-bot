@@ -32,6 +32,7 @@ import vehicleHandoffRouter from "./vehicle-distribution/handoff-router";
 import vehicleReplenishmentRouter from "./vehicle-distribution/replenishment-router";
 import vehicleReturnRouter from "./vehicle-distribution/return-router";
 import vehicleWeeklySummaryRouter from "./vehicle-distribution/weekly-summary-router";
+import printAgentHealthRouter from "./vehicle-distribution/print-agent-health-router";
 
 const router: IRouter = Router();
 
@@ -65,6 +66,7 @@ router.use(vehicleHandoffRouter);
 router.use(vehicleReplenishmentRouter);
 router.use(vehicleReturnRouter);
 router.use(vehicleWeeklySummaryRouter);
+router.use(printAgentHealthRouter);
 
 // ── Auth wall: everything below requires a valid session ──────────────────────
 router.use(requireAuth);

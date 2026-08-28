@@ -2,6 +2,7 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { initDb } from "./init-db";
 import { backfillRouteBizScores } from "./lib/routePlanService";
+import { startPrintAgentHealthMonitor } from "./routes/vehicle-distribution/print-agent-health-router";
 
 const rawPort = process.env["PORT"];
 
@@ -20,6 +21,7 @@ if (Number.isNaN(port) || port <= 0) {
 initDb()
   .then(() => {
     logger.info("DB initialized");
+    startPrintAgentHealthMonitor();
     // Eski marshrut qatorlariga biz_score/biz_reasons backfill (idempotent,
     // faqat NULL qatorlar). Xato bo'lsa server baribir ishga tushadi.
     backfillRouteBizScores()

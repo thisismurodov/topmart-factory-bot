@@ -35,10 +35,16 @@ setx ALLOWED_CHAT_IDS "123456789,987654321"
 setx PRINTER_NAME "ZDesigner ZD220-203dpi ZPL"
 setx API_BASE_URL "https://example.com/api"
 setx VEHICLE_DISTRIBUTION_BOT_KEY "..."
+setx PRINT_AGENT_ID "ombor-label-1"
+setx PRINT_AGENT_HEARTBEAT_SECONDS "60"
 ```
 
 Qiymatlarni chatga yoki logga yozmang. `setx` dan keyin yangi terminal oching va
 `run.bat` ni ishga tushiring.
+
+Agent printer mavjudligi, aktiv 100×80 media va kamida 98×78 mm printable area
+holatini API'ga davriy yuboradi. Heartbeat hech qachon etiketka chop etmaydi yoki
+handoff/label lifecycle holatini o'zgartirmaydi.
 
 ## Buyruqlar
 

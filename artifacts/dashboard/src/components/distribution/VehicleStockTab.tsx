@@ -13,7 +13,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { RefreshCw, Truck, Box, MapPin, Package, AlertCircle, ArrowRightLeft, Database, ClipboardList, PackagePlus, Undo2, CalendarCheck2 } from "lucide-react";
+import { RefreshCw, Truck, Box, MapPin, Package, AlertCircle, ArrowRightLeft, Database, ClipboardList, PackageCheck, PackagePlus, Undo2, CalendarCheck2 } from "lucide-react";
+import { VehicleHandoffs } from "./VehicleHandoffs";
 import { VehicleReconciliations } from "./VehicleReconciliations";
 import { VehicleReplenishment } from "./VehicleReplenishment";
 import { VehicleReturns } from "./VehicleReturns";
@@ -261,6 +262,15 @@ export default function VehicleStockTab({ active }: { active: boolean }) {
             <span className="sr-only sm:hidden">To‘ldirish</span>
           </TabsTrigger>
           <TabsTrigger
+            value="handoffs"
+            data-testid="tab-vehicle-handoffs"
+            className="rounded-none shrink-0 border-b-2 border-transparent data-[state=active]:border-blue-600 data-[state=active]:bg-transparent data-[state=active]:shadow-none py-2.5 px-1 font-medium text-slate-600 data-[state=active]:text-blue-700 transition-none"
+          >
+            <PackageCheck className="w-4 h-4 sm:mr-2" />
+            <span className="hidden sm:inline">Topshirishlar</span>
+            <span className="sr-only sm:hidden">Topshirishlar</span>
+          </TabsTrigger>
+          <TabsTrigger
             value="movements"
             className="rounded-none shrink-0 border-b-2 border-transparent data-[state=active]:border-amber-500 data-[state=active]:bg-transparent data-[state=active]:shadow-none py-2.5 px-1 font-medium text-slate-600 data-[state=active]:text-amber-700 transition-none"
           >
@@ -380,6 +390,10 @@ export default function VehicleStockTab({ active }: { active: boolean }) {
 
           <TabsContent value="replenishment" className="m-0 border-none p-0 outline-none">
             <VehicleReplenishment active={active && subTab === "replenishment"} />
+          </TabsContent>
+
+          <TabsContent value="handoffs" className="m-0 border-none p-0 outline-none">
+            <VehicleHandoffs active={active && subTab === "handoffs"} />
           </TabsContent>
 
           <TabsContent value="reconciliations" className="m-0 border-none p-0 outline-none">

@@ -2368,6 +2368,8 @@ components:
           type: integer
         sourceWarehouseId:
           type: integer
+        sourceWarehouseName:
+          type: ["string", "null"]
         vehicleWarehouseId:
           type: integer
         handoffDate:
@@ -2403,6 +2405,7 @@ components:
         - vehicleId
         - deliveryAgentId
         - sourceWarehouseId
+        - sourceWarehouseName
         - vehicleWarehouseId
         - handoffDate
         - status
@@ -2645,7 +2648,7 @@ components:
       additionalProperties: false
       required: [id, vehicleId, requestedBy, mahsulotId, publicProductId,
         productName, sku, requestedQuantity, approvedQuantity,
-        targetQuantitySnapshot, currentQuantitySnapshot, sourceWarehouseId,
+        targetQuantitySnapshot, currentQuantitySnapshot, sourceWarehouseId, sourceWarehouseName,
         handoffId, handoffStatus, operationKey, status, requestedAt, resolvedAt,
         approvedBy, approvedAt, cancelledBy, cancelledAt, fulfilledAt, notes,
         createdAt]
@@ -2662,6 +2665,7 @@ components:
         targetQuantitySnapshot: { type: number }
         currentQuantitySnapshot: { type: number }
         sourceWarehouseId: { type: [integer, "null"] }
+        sourceWarehouseName: { type: [string, "null"] }
         handoffId: { type: [integer, "null"] }
         handoffStatus: { type: [string, "null"] }
         operationKey: { type: [string, "null"] }

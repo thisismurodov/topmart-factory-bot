@@ -92,7 +92,7 @@ function HandoffCard({ handoff }: { handoff: VehicleHandoffDetail }) {
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
           <span><span className="text-slate-500">Jami:</span> <b>{totalPieces.toLocaleString("uz-UZ")} dona</b> · <b>{formatKg(totalKg)}</b></span>
           <span className="text-slate-500">Yorliqlar: {labelCount} ta</span>
-          <span className="text-slate-500">Manba: Ombor #{handoff.sourceWarehouseId}</span>
+          <span className="text-slate-500">Manba: {handoff.sourceWarehouseName ?? `Ombor #${handoff.sourceWarehouseId}`}</span>
         </div>
 
         <HandoffSteps handoff={handoff} />

@@ -78,6 +78,7 @@ export type HandoffDetail = {
   vehicleId: number;
   deliveryAgentId: number;
   sourceWarehouseId: number;
+  sourceWarehouseName: string | null;
   vehicleWarehouseId: number;
   handoffDate: string;
   status: string;
@@ -262,6 +263,7 @@ function mapHandoffRow(row: Record<string, unknown>): Omit<HandoffDetail, "items
     vehicleId: Number(row.vehicle_id),
     deliveryAgentId: Number(row.delivery_agent_id),
     sourceWarehouseId: Number(row.source_warehouse_id),
+    sourceWarehouseName: (row.source_warehouse_name as string | null) ?? null,
     vehicleWarehouseId: Number(row.vehicle_warehouse_id),
     handoffDate: iso(row.handoff_date as Date | string) ?? String(row.handoff_date),
     status: String(row.status),
@@ -281,7 +283,8 @@ function mapHandoffRow(row: Record<string, unknown>): Omit<HandoffDetail, "items
 const HANDOFF_COLUMNS = `id, vehicle_id, delivery_agent_id, source_warehouse_id,
   vehicle_warehouse_id, handoff_date, status, operation_key, movement_reference,
   prepared_actor_type, prepared_actor_ref, notes, labels_printed_at,
-  handed_over_at, stock_transferred_at, cancelled_at, created_at`;
+  handed_over_at, stock_transferred_at, cancelled_at, created_at,
+  (SELECT w.name FROM public.warehouses w WHERE w.id = source_warehouse_id) AS source_warehouse_name`;
 
 /** Load a single handoff and scope it to the exact active pilot vehicle.
  *

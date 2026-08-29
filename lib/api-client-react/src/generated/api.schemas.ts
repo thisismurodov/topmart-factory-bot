@@ -285,6 +285,8 @@ export interface VehicleHandoffDetail {
   vehicleId: number;
   deliveryAgentId: number;
   sourceWarehouseId: number;
+  /** @nullable */
+  sourceWarehouseName: string | null;
   vehicleWarehouseId: number;
   handoffDate: string;
   status: string;
@@ -468,6 +470,8 @@ export interface VehicleReplenishmentRequest {
   currentQuantitySnapshot: number;
   /** @nullable */
   sourceWarehouseId: number | null;
+  /** @nullable */
+  sourceWarehouseName: string | null;
   /** @nullable */
   handoffId: number | null;
   /** @nullable */

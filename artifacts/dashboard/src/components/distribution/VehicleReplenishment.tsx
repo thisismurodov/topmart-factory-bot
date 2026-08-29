@@ -441,7 +441,7 @@ export function VehicleReplenishment({ active }: { active: boolean }) {
                             <span><span className="text-slate-500">So‘ralgan (dona):</span> <b>{request.requestedQuantity} dona</b></span>
                             <span><span className="text-slate-500">Joriy surat (dona):</span> {request.currentQuantitySnapshot} dona</span>
                             <span><span className="text-slate-500">Maqsad surat (dona):</span> {request.targetQuantitySnapshot} dona</span>
-                            <span><span className="text-slate-500">Manba:</span> {request.sourceWarehouseId ? `Ombor #${request.sourceWarehouseId}` : "—"}</span>
+                            <span><span className="text-slate-500">Manba:</span> {request.sourceWarehouseName ?? (request.sourceWarehouseId ? `Ombor #${request.sourceWarehouseId}` : "—")}</span>
                           </div>
                           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500"><span>So‘raldi: {formatDate(request.requestedAt)}</span><span>Tasdiqlandi: {formatDate(request.approvedAt)}</span><span>Topshirildi: {formatDate(request.fulfilledAt)}</span><span>Bekor qilindi: {formatDate(request.cancelledAt)}</span></div>
                           {request.handoffId && <p className="text-sm text-indigo-700">Bog‘langan handoff: <b>#{request.handoffId}</b> · {request.handoffStatus || "holat noma’lum"}</p>}

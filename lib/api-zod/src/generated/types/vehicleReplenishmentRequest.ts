@@ -23,6 +23,8 @@ export interface VehicleReplenishmentRequest {
   /** @nullable */
   sourceWarehouseId: number | null;
   /** @nullable */
+  sourceWarehouseName: string | null;
+  /** @nullable */
   handoffId: number | null;
   /** @nullable */
   handoffStatus: string | null;

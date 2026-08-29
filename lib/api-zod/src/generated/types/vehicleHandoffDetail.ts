@@ -12,6 +12,8 @@ export interface VehicleHandoffDetail {
   vehicleId: number;
   deliveryAgentId: number;
   sourceWarehouseId: number;
+  /** @nullable */
+  sourceWarehouseName: string | null;
   vehicleWarehouseId: number;
   handoffDate: string;
   status: string;

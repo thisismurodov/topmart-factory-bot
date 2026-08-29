@@ -251,6 +251,7 @@ function mapRequest(r: Record<string, unknown>) {
     targetQuantitySnapshot: Number(r.target_quantity_snapshot),
     currentQuantitySnapshot: Number(r.current_quantity_snapshot),
     sourceWarehouseId: numberOrNull(r.source_warehouse_id),
+    sourceWarehouseName: r.source_warehouse_name == null ? null : String(r.source_warehouse_name),
     handoffId: numberOrNull(r.handoff_id),
     handoffStatus: r.handoff_status == null ? null : String(r.handoff_status),
     operationKey: r.operation_key == null ? null : String(r.operation_key),
@@ -267,12 +268,13 @@ function mapRequest(r: Record<string, unknown>) {
   };
 }
 
-const REQUEST_SELECT = `r.*, h.status handoff_status`;
+const REQUEST_SELECT = `r.*, h.status handoff_status, sw.name source_warehouse_name`;
 async function loadRequest(client: PoolClient, id: number, vehicleId: number) {
   const { rows } = await client.query(
     `SELECT ${REQUEST_SELECT}
        FROM distribution.vehicle_replenishment_requests r
        LEFT JOIN distribution.vehicle_handoffs h ON h.id=r.handoff_id
+       LEFT JOIN public.warehouses sw ON sw.id=r.source_warehouse_id
       WHERE r.id=$1 AND r.vehicle_id=$2`,
     [id, vehicleId],
   );
@@ -286,6 +288,7 @@ export async function listReplenishmentRequests(client: PoolClient) {
     `SELECT ${REQUEST_SELECT}
        FROM distribution.vehicle_replenishment_requests r
        LEFT JOIN distribution.vehicle_handoffs h ON h.id=r.handoff_id
+       LEFT JOIN public.warehouses sw ON sw.id=r.source_warehouse_id
       WHERE r.vehicle_id=$1 ORDER BY r.id DESC`,
     [pilot.vehicleId],
   );

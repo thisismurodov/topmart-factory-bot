@@ -5,6 +5,7 @@ import secrets
 import time
 import logging
 from datetime import date
+from decimal import Decimal
 from contextlib import contextmanager
 
 import psycopg2
@@ -2543,9 +2544,10 @@ def get_vehicle_handoff_hidden_products(warehouse_id: int) -> list[dict]:
     return hidden
 
 
-def get_mahsulot_prices(mahsulot_ids: list[int]) -> dict[int, float | None]:
+def get_mahsulot_prices(mahsulot_ids: list[int]) -> dict[int, Decimal | None]:
     """Savdo bot narxlari (distribution.mahsulotlar.narx, UZS) by mahsulot id.
-    Missing ids are simply absent from the dict; NULL narx maps to None."""
+    Missing ids are simply absent from the dict; NULL narx maps to None.
+    NUMERIC stays Decimal end-to-end — pul hech qachon binary float'dan o'tmaydi."""
     ids = [int(x) for x in mahsulot_ids]
     if not ids:
         return {}
@@ -2556,7 +2558,7 @@ def get_mahsulot_prices(mahsulot_ids: list[int]) -> dict[int, float | None]:
         )
         rows = cur.fetchall()
     return {
-        int(r["id"]): (float(r["narx"]) if r["narx"] is not None else None)
+        int(r["id"]): (Decimal(str(r["narx"])) if r["narx"] is not None else None)
         for r in rows
     }
 

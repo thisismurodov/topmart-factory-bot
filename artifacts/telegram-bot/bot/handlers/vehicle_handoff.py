@@ -8,6 +8,7 @@ catalog (distribution.mahsulotlar.narx).
 """
 import hashlib
 import re
+from decimal import Decimal, ROUND_HALF_UP
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -50,8 +51,14 @@ def _buttons(rows):
     return InlineKeyboardMarkup(rows)
 
 
-def _money(value: float) -> str:
-    return f"{value:,.0f}".replace(",", " ") + " so‘m"
+def _dec(value) -> Decimal:
+    """Money-safe coercion: Decimal stays Decimal; float/int go through str."""
+    return value if isinstance(value, Decimal) else Decimal(str(value))
+
+
+def _money(value) -> str:
+    whole = _dec(value).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    return f"{int(whole):,}".replace(",", " ") + " so‘m"
 
 
 def _hidden_lines(title: str, rows: list[dict], key: str) -> str:
@@ -69,17 +76,17 @@ def _hidden_lines(title: str, rows: list[dict], key: str) -> str:
     return "\n".join(lines)
 
 
-def _cart_totals(cart: list[dict], prices: dict | None) -> tuple[int, float, float, list[str]]:
+def _cart_totals(cart: list[dict], prices: dict | None) -> tuple[int, float, Decimal, list[str]]:
     total_qty = sum(int(it["quantity"]) for it in cart)
     total_kg = sum(float(it["weight"]) for it in cart)
-    total_sum = 0.0
+    total_sum = Decimal("0")
     missing: list[str] = []
     for it in cart:
         narx = (prices or {}).get(int(it["mahsulot_id"]))
-        if narx is None or narx <= 0:
+        if narx is None or _dec(narx) <= 0:
             missing.append(it["name"])
         else:
-            total_sum += float(narx) * int(it["quantity"])
+            total_sum += _dec(narx) * int(it["quantity"])
     return total_qty, total_kg, total_sum, missing
 
 
@@ -113,7 +120,7 @@ def _review_view(state: dict) -> tuple[str, InlineKeyboardMarkup]:
         if narx is None or narx <= 0:
             price_part = "narxi yo‘q"
         else:
-            price_part = f"{_money(float(narx))} × {qty} = *{_money(float(narx) * qty)}*"
+            price_part = f"{_money(narx)} × {qty} = *{_money(_dec(narx) * qty)}*"
         lines.append(f"{i}. {it['name']} — {qty} dona / {float(it['weight']):g} kg · {price_part}")
     total_qty, total_kg, total_sum, missing = _cart_totals(cart, prices)
     lines += ["", f"📦 Jami: {len(cart)} tovar · {total_qty} dona · ⚖️ {total_kg:g} kg",

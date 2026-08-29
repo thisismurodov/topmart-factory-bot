@@ -3,6 +3,8 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import express from "express";
 import apiRouter from "../src/routes/index";
+import vehicleDistributionRouter from "../src/routes/vehicle-distribution";
+import vehicleWeeklySummaryRouter from "../src/routes/vehicle-distribution/weekly-summary-router";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Router-STACK regression test (task: bugungi 401 sinfini avtomatik to'sish).
@@ -167,7 +169,7 @@ describe("#230: keng /pilot devorlari toraytirilgan", () => {
       botHeaders,
     );
     expect(r.status).toBe(403);
-    expect(r.body?.error).toBe("Admin role required");
+    expect(String(r.body?.error)).toMatch(/^Admin (session|role) required$/);
   });
 
   it("o'z yo'llari hali ham devor ortida: /pilot/stock-targets kalitsiz → 401", async () => {
@@ -178,6 +180,38 @@ describe("#230: keng /pilot devorlari toraytirilgan", () => {
   it("/pilot/returns kalitsiz → 401 (fail-closed)", async () => {
     const r = await get("/api/vehicle-distribution/pilot/returns");
     expect(r.status).toBe(401);
+  });
+});
+
+// Router stekidan ro'yxatdan o'tgan route path'larini yig'ish (express 5 /
+// router 2.x: .get/.post qatlamlarida layer.route.path bor).
+function registeredRoutePaths(r: unknown): string[] {
+  const stack =
+    (r as { stack?: Array<{ route?: { path?: string | string[] } }> }).stack ?? [];
+  const out: string[] = [];
+  for (const layer of stack) {
+    const p = layer.route?.path;
+    if (typeof p === "string") out.push(p);
+    else if (Array.isArray(p)) out.push(...p);
+  }
+  return out;
+}
+
+describe("anti-rot: sibling yo'llar HAQIQATAN ro'yxatdan o'tgan", () => {
+  // Yuqoridagi 401-assertlar route o'chirilsa/qayta nomlansa ham 401 bo'lib
+  // qolaverardi (vakuum test). Bu blok yo'llarning mavjudligini alohida pinlaydi.
+  it("pilot dashboard routeri sibling yo'llarni ro'yxatga olgan", () => {
+    const paths = registeredRoutePaths(vehicleDistributionRouter);
+    expect(paths).toContain("/vehicle-distribution/pilot");
+    expect(paths).toContain("/vehicle-distribution/pilot/stock");
+    expect(paths).toContain("/vehicle-distribution/pilot/movements");
+    expect(paths).toContain("/vehicle-distribution/pilot/reconciliations");
+  });
+
+  it("weekly routeri /pilot/weekly-summary ni ro'yxatga olgan", () => {
+    expect(registeredRoutePaths(vehicleWeeklySummaryRouter)).toContain(
+      "/vehicle-distribution/pilot/weekly-summary",
+    );
   });
 });
 

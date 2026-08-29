@@ -922,8 +922,8 @@ describe("Vehicle F1 schema: constraint and partial-index behavioral assertions"
     ).rejects.toThrow(/vehicle_sale_allocations_weight_check/i);
   });
 
-  it("vehicle_sale_allocations: partial unique on source_unit_event_id — one load event supplies at most one allocation", async () => {
-    // First unit-tracked allocation referencing load event 42001 succeeds
+  it("vehicle_sale_allocations: one load event may supply multiple partial-sale allocations", async () => {
+    // First allocation from load event 42001 succeeds.
     await client.query(`
       INSERT INTO distribution.vehicle_sale_allocations
         (handoff_id, savdo_id, savdo_tafsilot_id, mahsulot_id,
@@ -932,20 +932,23 @@ describe("Vehicle F1 schema: constraint and partial-index behavioral assertions"
       VALUES (1, 10, 10, 1, 'Arqon', 'SKU-1', 1, 1, 0.5, 42001, 'op-key-src-unit-a')
     `);
 
-    // Second allocation with a DIFFERENT operation_key but the SAME
-    // source_unit_event_id is rejected by the partial unique index.
-    await expect(
-      client.query(`
-        INSERT INTO distribution.vehicle_sale_allocations
-          (handoff_id, savdo_id, savdo_tafsilot_id, mahsulot_id,
-           product_name, product_sku, vehicle_id,
-           allocated_quantity, allocated_weight_kg, source_unit_event_id, operation_key)
-        VALUES (1, 11, 11, 1, 'Arqon', 'SKU-1', 1, 1, 0.5, 42001, 'op-key-src-unit-b')
-      `),
-    ).rejects.toThrow(/unique/i);
+    // Partial sales intentionally reuse the same load identity under distinct,
+    // idempotent operation keys until the package claim reaches zero.
+    await client.query(`
+      INSERT INTO distribution.vehicle_sale_allocations
+        (handoff_id, savdo_id, savdo_tafsilot_id, mahsulot_id,
+         product_name, product_sku, vehicle_id,
+         allocated_quantity, allocated_weight_kg, source_unit_event_id, operation_key)
+      VALUES (1, 11, 11, 1, 'Arqon', 'SKU-1', 1, 1, 0.5, 42001, 'op-key-src-unit-b')
+    `);
+    const reused = await client.query(
+      `SELECT COUNT(*)::int AS count
+         FROM distribution.vehicle_sale_allocations
+        WHERE source_unit_event_id = 42001`,
+    );
+    expect(reused.rows[0].count).toBe(2);
 
-    // Aggregate allocations (NULL source_unit_event_id) remain allowed and may
-    // coexist multiple times — the partial predicate excludes NULLs.
+    // Aggregate allocations with NULL source identity also remain allowed.
     await client.query(`
       INSERT INTO distribution.vehicle_sale_allocations
         (handoff_id, savdo_id, savdo_tafsilot_id, mahsulot_id,

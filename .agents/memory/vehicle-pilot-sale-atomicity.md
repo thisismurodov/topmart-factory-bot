@@ -13,3 +13,9 @@ Pilot routing must never key on users.name spelling — prod spells the same per
 The pilot decision is PINNED once per sale flow and re-checked only at the final write: a mid-flow assignment change must abort with refund + explicit error, never switch writers.
 **Why:** dispatch and the transactional guard must share one identity source; a DB-backed decision re-evaluated mid-flow becomes a money-corruption window (double debit or unbacked debt reduction).
 **How to apply:** pilot-gated features read the pinned flow flag / shared helper — never re-compare names, never re-evaluate the route mid-flow.
+
+## kg (o'lchovli) qatorlar — 2026-08-29
+Pilot savdosida birlik!='dona' qatorlar ODDIY savdo qatori: savdo_tafsilot'ga yoziladi, mashina zaxirasi / etiketka claims / allocations / unit-events / replenishment'ga TEGMAYDI (yuklash F6 faqat dona-etiketka, kg mashinada bo'lishi mumkin emas). Chegara: lower(btrim(COALESCE(NULLIF(birlik,''),'dona'))) — bo'sh/NULL birlik dona hisoblanadi. Dona qatorlar avvalgidek qat'iy: butun son, SKU->public.products mapping, FIFO claims.
+Jami tekshiruvi: deklaratsiya qilingan jami 0.001 to'rida YOTISHI va qatorlar yig'indisiga AYNAN teng bo'lishi shart. Ikkala tomonni kvantlash mumkin emas — +-0.0005 boshqa jami o'tkazib, BIGINT yumaloqlashda sarlavha/qator summalarini ajratadi (arxitektor ko'rigi topdi). Bot jami'ni round(...,3) bilan yuboradi. Bot gate: dona=butun son, kg<=3 kasr xona, nan/inf parse bosqichida rad (round(inf,3) OverflowError berar edi).
+**Why:** kg mahsulot mashinaga yuklanmaydi — usiz pilot sotuvchi kg mahsulotni umuman sota olmas edi.
+**How to apply:** kg qatorda "stock yechilmadi" — bug EMAS, dizayn. Fingerprint (_qty_key) butun miqdorlarni JSON int saqlaydi — eski dona imzolar buzilmaydi; kasrlar normalized string.

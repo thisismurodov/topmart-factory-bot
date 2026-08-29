@@ -23,6 +23,7 @@ import {
   HandoffNotFoundError,
   handoffLockKey,
   getHandoff,
+  allocatePackageWeightsKg,
   type HandoffActor,
   type HandoffDetail,
 } from "./handoff-service";
@@ -198,6 +199,7 @@ function computeFingerprint(handoff: HandoffDetail): string {
       productName: i.productName,
       quantity: i.quantity,
       unitWeightKg: i.unitWeightKg,
+      totalWeightKg: i.totalWeightKg,
       piecesPerBox: i.piecesPerBox,
     }))
     .sort((a, b) => a.mahsulotId - b.mahsulotId);
@@ -407,6 +409,11 @@ export async function prepareLabelsInTx(
         `Item ${it.id} has no positive unit weight snapshot`,
       );
     }
+    if (it.totalWeightKg == null || !(it.totalWeightKg > 0)) {
+      throw new HandoffConflictError(
+        `Item ${it.id} has no positive total weight snapshot`,
+      );
+    }
     if (!Number.isInteger(it.piecesPerBox) || it.piecesPerBox <= 0) {
       throw new HandoffConflictError(
         `Item ${it.id} has an invalid pieces_per_box snapshot`,
@@ -414,10 +421,15 @@ export async function prepareLabelsInTx(
     }
     const snap = await pilotProductSnapshot(client, it.sku);
     let remaining = it.quantity;
+    const packageWeightsKg = allocatePackageWeightsKg(
+      it.totalWeightKg,
+      it.quantity,
+      it.piecesPerBox,
+    );
+    let packageIndex = 0;
     while (remaining > 0) {
       const piecesInLabel = Math.min(it.piecesPerBox, remaining);
-      const packageWeightKg =
-        Math.round(it.unitWeightKg * piecesInLabel * 1000) / 1000;
+      const packageWeightKg = packageWeightsKg[packageIndex++];
       labelNumber += 1;
       const { id: productionLabelId, barcode } = await insertProductionLabel(
         client,

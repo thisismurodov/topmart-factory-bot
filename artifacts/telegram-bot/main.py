@@ -22,6 +22,7 @@ from bot.handlers.report import register as register_report_handlers
 from bot.handlers.ai import register as register_ai_handlers
 from bot.handlers.inventory import build_inventory_handler
 from bot.handlers.debts import register as register_debt_handlers
+from bot.handlers.vehicle_handoff import build_vehicle_handoff_handler
 from bot.scheduler import start_scheduler
 from bot.config import AI_HOUR
 
@@ -78,6 +79,7 @@ def main() -> None:
     register_sales_handlers(app)
     register_debt_handlers(app)
     app.add_handler(build_inventory_handler())
+    app.add_handler(build_vehicle_handoff_handler())
     app.add_handler(build_admin_handler())
     app.add_handler(build_packer_handler())
     register_close_day_handlers(app)

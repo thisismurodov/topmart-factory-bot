@@ -398,6 +398,8 @@ export const vehicleHandoffsTable = distribution.table(
     /** F3: client idempotency token for prepared-handoff creation (nullable;
      *  partial-unique on non-null values, enforced in runtime DDL only). */
     operationKey: text("operation_key"),
+    /** Canonical raw create-request fingerprint for idempotent replay checks. */
+    requestFingerprint: text("request_fingerprint"),
     /** F3: server-assigned actor that prepared the handoff (admin|warehouse_bot). */
     preparedActorType: text("prepared_actor_type"),
     /** F3: server-assigned actor ref (admin username or bot name). */

@@ -2282,14 +2282,24 @@ components:
     # ── Vehicle Distribution (F3 handoff) ───────────────────────────
     CreateVehicleHandoffItemInput:
       type: object
-      description: A requested handoff line — a distribution product and the
-        positive integer number of physical units to dispatch.
+      description: >-
+        A requested handoff line — a distribution product and the positive
+        integer number of physical units to dispatch. totalWeightKg optionally
+        supplies the measured total weight for the whole line; when omitted,
+        the active product profile weight is used. Pilot fills are limited to
+        100000 pieces and 100 physical package labels per line.
       properties:
         mahsulotId:
           type: integer
         quantity:
           type: integer
           minimum: 1
+          maximum: 100000
+        totalWeightKg:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 999999999.999
+          multipleOf: 0.001
       required: [mahsulotId, quantity]
       additionalProperties: false
 

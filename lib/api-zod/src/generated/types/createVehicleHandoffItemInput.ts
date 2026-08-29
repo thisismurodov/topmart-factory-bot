@@ -7,10 +7,18 @@
  */
 
 /**
- * A requested handoff line — a distribution product and the positive integer number of physical units to dispatch.
+ * A requested handoff line — a distribution product and the positive integer number of physical units to dispatch. totalWeightKg optionally supplies the measured total weight for the whole line; when omitted, the active product profile weight is used. Pilot fills are limited to 100000 pieces and 100 physical package labels per line.
  */
 export interface CreateVehicleHandoffItemInput {
   mahsulotId: number;
-  /** @minimum 1 */
+  /**
+     * @minimum 1
+     * @maximum 100000
+     */
   quantity: number;
+  /**
+     * @maximum 999999999.999
+     * @exclusiveMinimum 0
+     */
+  totalWeightKg?: number;
 }

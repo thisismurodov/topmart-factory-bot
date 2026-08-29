@@ -68,6 +68,51 @@ def vehicle_post(path: str, payload: dict | None = None) -> tuple[bool, object]:
     return _vehicle_request("POST", path, payload)
 
 
+def list_vehicle_handoffs() -> tuple[bool, object]:
+    """List persisted DM-001 handoffs."""
+    return vehicle_get("/vehicle-distribution/handoffs")
+
+
+def get_vehicle_handoff(handoff_id: int) -> tuple[bool, object]:
+    """Fetch one persisted handoff and its item snapshots."""
+    return vehicle_get(f"/vehicle-distribution/handoffs/{int(handoff_id)}")
+
+
+def create_vehicle_handoff(
+    source_warehouse_id: int,
+    mahsulot_id: int,
+    quantity: int,
+    total_weight_kg: float,
+    operation_key: str,
+    notes: str | None = None,
+) -> tuple[bool, object]:
+    """Create one idempotent prepared handoff for the frozen pilot vehicle."""
+    payload = {
+        "sourceWarehouseId": int(source_warehouse_id),
+        "items": [{
+            "mahsulotId": int(mahsulot_id),
+            "quantity": int(quantity),
+            "totalWeightKg": float(total_weight_kg),
+        }],
+        "operationKey": operation_key,
+    }
+    if notes:
+        payload["notes"] = notes
+    return vehicle_post("/vehicle-distribution/handoffs", payload)
+
+
+def mark_handoff_handed_over(handoff_id: int) -> tuple[bool, object]:
+    return vehicle_post(
+        f"/vehicle-distribution/handoffs/{int(handoff_id)}/handed-over", {}
+    )
+
+
+def mark_handoff_stock_transferred(handoff_id: int) -> tuple[bool, object]:
+    return vehicle_post(
+        f"/vehicle-distribution/handoffs/{int(handoff_id)}/stock-transferred", {}
+    )
+
+
 def prepare_handoff_labels(
     handoff_id: int, operation_key: str
 ) -> tuple[bool, object]:

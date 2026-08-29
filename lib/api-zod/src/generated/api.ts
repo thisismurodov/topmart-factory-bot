@@ -994,6 +994,11 @@ export const ListVehicleHandoffsResponse = zod.object({
  * Creates a prepared (not yet loaded) handoff. The actor, agent, vehicle and vehicle-warehouse target are all resolved server-side; only the source warehouse, line items, notes and a client operationKey are accepted. Idempotent on operationKey — replaying the same key returns the same handoff, while a payload mismatch on replay yields 409. No inventory is mutated.
  * @summary Create a prepared handoff for the pilot vehicle
  */
+export const createVehicleHandoffBodyItemsItemQuantityMax = 100000;
+
+export const createVehicleHandoffBodyItemsItemTotalWeightKgExclusiveMin = 0;
+export const createVehicleHandoffBodyItemsItemTotalWeightKgMax = 999999999.999;
+export const createVehicleHandoffBodyItemsItemTotalWeightKgMultipleOf = 0.001;
 
 
 
@@ -1003,8 +1008,9 @@ export const CreateVehicleHandoffBody = zod.object({
   "sourceWarehouseId": zod.number(),
   "items": zod.array(zod.object({
   "mahsulotId": zod.number(),
-  "quantity": zod.number().min(1)
-}).describe('A requested handoff line — a distribution product and the positive integer number of physical units to dispatch.')).min(1),
+  "quantity": zod.number().min(1).max(createVehicleHandoffBodyItemsItemQuantityMax),
+  "totalWeightKg": zod.number().gt(createVehicleHandoffBodyItemsItemTotalWeightKgExclusiveMin).max(createVehicleHandoffBodyItemsItemTotalWeightKgMax).multipleOf(createVehicleHandoffBodyItemsItemTotalWeightKgMultipleOf).optional()
+}).describe('A requested handoff line — a distribution product and the positive integer number of physical units to dispatch. totalWeightKg optionally supplies the measured total weight for the whole line; when omitted, the active product profile weight is used. Pilot fills are limited to 100000 pieces and 100 physical package labels per line.')).min(1),
   "notes": zod.string().nullish(),
   "operationKey": zod.string().min(1)
 }).describe('Strict prepared-handoff creation body. Only these fields are accepted; agent, vehicle and vehicle-warehouse targets plus the actor are all resolved server-side. operationKey is a required client idempotency token.')

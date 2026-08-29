@@ -2432,6 +2432,56 @@ def get_warehouses() -> list[dict]:
         return cur.fetchall()
 
 
+def get_vehicle_handoff_source_warehouses() -> list[dict]:
+    """Active finished-goods sources accepted by the vehicle handoff API."""
+    with get_conn() as (conn, cur):
+        cur.execute(
+            """SELECT w.id, w.name
+                 FROM warehouses w
+                WHERE w.active=TRUE
+                  AND COALESCE(w.location_type, 'general') <> 'vehicle'
+                  AND w.purpose='finished'
+                  AND EXISTS (
+                    SELECT 1
+                      FROM inventory i
+                      JOIN products p ON p.name=i.product AND p.active=TRUE
+                     WHERE i.warehouse_id=w.id AND i.quantity>0
+                       AND COALESCE(p.sku, '') <> ''
+                       AND (SELECT COUNT(*) FROM distribution.mahsulotlar d
+                             WHERE d.sku=p.sku AND d.faol=1
+                               AND COALESCE(d.sku, '') <> '')=1
+                       AND (SELECT COUNT(*) FROM products px
+                             WHERE px.sku=p.sku AND px.active=TRUE)=1
+                  )
+                ORDER BY w.name"""
+        )
+        return cur.fetchall()
+
+
+def get_vehicle_handoff_products(warehouse_id: int) -> list[dict]:
+    """Unique active SKU mappings that currently have piece stock at a source."""
+    with get_conn() as (conn, cur):
+        cur.execute(
+            """SELECT d.id AS mahsulot_id, p.name, p.sku,
+                      i.quantity AS available_quantity,
+                      COALESCE(i.weight_kg, 0) AS available_weight_kg,
+                      p.weight AS unit_weight_kg
+                 FROM inventory i
+                 JOIN products p ON p.name=i.product AND p.active=TRUE
+                 JOIN distribution.mahsulotlar d ON d.sku=p.sku
+                WHERE i.warehouse_id=%s AND i.quantity>0
+                  AND d.faol=1 AND COALESCE(d.sku, '') <> ''
+                  AND (SELECT COUNT(*) FROM distribution.mahsulotlar dx
+                        WHERE dx.sku=p.sku AND dx.faol=1
+                          AND COALESCE(dx.sku, '') <> '')=1
+                  AND (SELECT COUNT(*) FROM products px
+                        WHERE px.sku=p.sku AND px.active=TRUE)=1
+                ORDER BY p.name""",
+            (warehouse_id,),
+        )
+        return cur.fetchall()
+
+
 def get_containers() -> list[dict]:
     """Konteyner va ayvon turidagi omborlarni qaytaradi (C-01…C-27, Ayvon 1…3)."""
     with get_conn() as (conn, cur):

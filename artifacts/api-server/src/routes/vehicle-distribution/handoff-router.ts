@@ -230,6 +230,7 @@ export function createVehicleHandoffRouter(pool: Pool): IRouter {
             items: body.items.map((i) => ({
               mahsulotId: i.mahsulotId,
               quantity: i.quantity,
+              totalWeightKg: i.totalWeightKg,
             })),
             notes: body.notes ?? null,
             operationKey: body.operationKey,

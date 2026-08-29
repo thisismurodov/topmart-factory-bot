@@ -29,6 +29,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { PoolClient } from "pg";
+import { createHash } from "node:crypto";
 import {
   PILOT_AGENT_NAME,
   PILOT_VEHICLE_PLATE,
@@ -49,7 +50,11 @@ export type HandoffActor = {
   actorId: number;
 };
 
-export type HandoffItemInput = { mahsulotId: number; quantity: number };
+export type HandoffItemInput = {
+  mahsulotId: number;
+  quantity: number;
+  totalWeightKg?: number;
+};
 export type CreateHandoffInput = {
   sourceWarehouseId: number;
   items: HandoffItemInput[];
@@ -342,6 +347,141 @@ type ResolvedItem = {
   piecesPerBox: number;
 };
 
+/** Weight snapshots are NUMERIC(12,3). Keep all API-side calculations on that
+ * same stable precision so JS floating-point tails never affect persistence,
+ * replay checks, or package passports. */
+function roundWeightKg(value: number): number {
+  return Math.round((value + Number.EPSILON) * 1000) / 1000;
+}
+
+const MAX_WEIGHT_KG = 999_999_999.999;
+/** Conservative pilot bounds for manual Telegram warehouse fills. */
+export const MAX_HANDOFF_QUANTITY = 100_000;
+export const MAX_HANDOFF_LABELS_PER_LINE = 100;
+
+export function validateHandoffPackagePlan(
+  quantity: number,
+  piecesPerBox: number,
+): number {
+  if (
+    !Number.isSafeInteger(quantity) ||
+    quantity <= 0 ||
+    quantity > MAX_HANDOFF_QUANTITY
+  ) {
+    throw new HandoffValidationError(
+      `Item quantity must be a safe integer between 1 and ${MAX_HANDOFF_QUANTITY}`,
+    );
+  }
+  if (!Number.isSafeInteger(piecesPerBox) || piecesPerBox <= 0) {
+    throw new HandoffValidationError(
+      "Item pieces_per_box must be a positive safe integer",
+    );
+  }
+  const packageCount = Math.ceil(quantity / piecesPerBox);
+  if (packageCount > MAX_HANDOFF_LABELS_PER_LINE) {
+    throw new HandoffValidationError(
+      `Item requires ${packageCount} physical labels; maximum is ${MAX_HANDOFF_LABELS_PER_LINE}`,
+    );
+  }
+  return packageCount;
+}
+
+function canonicalSnapshotWeightKg(
+  value: number,
+  mahsulotId: number,
+  source: "totalWeightKg" | "profile-derived total weight",
+): number {
+  if (!Number.isFinite(value) || value <= 0 || value > MAX_WEIGHT_KG) {
+    throw new HandoffValidationError(
+      `Item ${source} must be a positive finite number within the supported range (mahsulotId=${mahsulotId})`,
+    );
+  }
+  const canonical = roundWeightKg(value);
+  // Only absorb binary floating-point representation noise, never a material
+  // fourth decimal place that NUMERIC(12,3) would silently round.
+  const tolerance = Number.EPSILON * Math.max(1, Math.abs(value)) * 2;
+  if (Math.abs(value - canonical) > tolerance) {
+    throw new HandoffValidationError(
+      `Item ${source} must have at most 3 decimal places (mahsulotId=${mahsulotId})`,
+    );
+  }
+  return canonical;
+}
+
+function canonicalExplicitTotalWeightKg(value: number, mahsulotId: number): number {
+  return canonicalSnapshotWeightKg(value, mahsulotId, "totalWeightKg");
+}
+
+function validateExplicitTotalForQuantity(
+  value: number,
+  quantity: number,
+  mahsulotId: number,
+): number {
+  const canonical = canonicalExplicitTotalWeightKg(value, mahsulotId);
+  const totalMilliKg = Math.round(canonical * 1000);
+  if (
+    Number.isInteger(quantity) &&
+    quantity > 0 &&
+    totalMilliKg % quantity !== 0
+  ) {
+    throw new HandoffValidationError(
+      `Item totalWeightKg must divide exactly by quantity at 3-decimal precision (mahsulotId=${mahsulotId})`,
+    );
+  }
+  return canonical;
+}
+
+function createRequestFingerprint(input: CreateHandoffInput): string {
+  const items = input.items
+    .map((item) => ({
+      mahsulotId: item.mahsulotId,
+      quantity: item.quantity,
+      hasTotalWeightKg: item.totalWeightKg !== undefined,
+      totalWeightKg:
+        item.totalWeightKg === undefined
+          ? null
+          : canonicalExplicitTotalWeightKg(
+              item.totalWeightKg,
+              item.mahsulotId,
+            ),
+    }))
+    .sort((a, b) => a.mahsulotId - b.mahsulotId);
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        sourceWarehouseId: input.sourceWarehouseId,
+        notes: input.notes ?? null,
+        items,
+      }),
+    )
+    .digest("hex");
+}
+
+/** Deterministically allocate a persisted line total to its physical packages.
+ * Cumulative rounding guarantees that all package weights sum to the total. */
+export function allocatePackageWeightsKg(
+  totalWeightKg: number,
+  quantity: number,
+  piecesPerBox: number,
+): number[] {
+  validateHandoffPackagePlan(quantity, piecesPerBox);
+  const weights: number[] = [];
+  let allocatedPieces = 0;
+  let allocatedWeightKg = 0;
+  let remaining = quantity;
+  while (remaining > 0) {
+    const piecesInLabel = Math.min(piecesPerBox, remaining);
+    allocatedPieces += piecesInLabel;
+    const cumulativeWeightKg = roundWeightKg(
+      (totalWeightKg * allocatedPieces) / quantity,
+    );
+    weights.push(roundWeightKg(cumulativeWeightKg - allocatedWeightKg));
+    allocatedWeightKg = cumulativeWeightKg;
+    remaining -= piecesInLabel;
+  }
+  return weights;
+}
+
 /** Resolve one distribution product + its unique public.products SKU mapping.
  *  Snapshots the public product name, sku, positive per-unit weight and
  *  positive package capacity. */
@@ -349,11 +489,23 @@ async function resolveItem(
   client: PoolClient,
   input: HandoffItemInput,
 ): Promise<ResolvedItem> {
-  if (!Number.isInteger(input.quantity) || input.quantity <= 0) {
+  if (
+    !Number.isSafeInteger(input.quantity) ||
+    input.quantity <= 0 ||
+    input.quantity > MAX_HANDOFF_QUANTITY
+  ) {
     throw new HandoffValidationError(
-      `Item quantity must be a positive integer (mahsulotId=${input.mahsulotId})`,
+      `Item quantity must be a safe integer between 1 and ${MAX_HANDOFF_QUANTITY} (mahsulotId=${input.mahsulotId})`,
     );
   }
+  const explicitTotalWeightKg =
+    input.totalWeightKg === undefined
+      ? undefined
+      : validateExplicitTotalForQuantity(
+          input.totalWeightKg,
+          input.quantity,
+          input.mahsulotId,
+        );
   // Exactly one active distribution product with a nonempty SKU.
   const dp = await client.query(
     `SELECT id, sku FROM distribution.mahsulotlar
@@ -378,8 +530,11 @@ async function resolveItem(
     );
   }
   const productName = String(pp.rows[0].name);
-  const unitWeightKg = Number(pp.rows[0].weight);
-  if (!(unitWeightKg > 0)) {
+  const profileUnitWeightKg = Number(pp.rows[0].weight);
+  if (
+    explicitTotalWeightKg === undefined &&
+    (!Number.isFinite(profileUnitWeightKg) || !(profileUnitWeightKg > 0))
+  ) {
     throw new HandoffValidationError(
       `Public product ${productName} has a non-positive weight`,
     );
@@ -390,8 +545,36 @@ async function resolveItem(
       `Public product ${productName} has an invalid pieces_per_box`,
     );
   }
-  const totalWeightKg =
-    Math.round(unitWeightKg * input.quantity * 1000) / 1000;
+  validateHandoffPackagePlan(input.quantity, piecesPerBox);
+  const totalWeightKg = canonicalSnapshotWeightKg(
+    explicitTotalWeightKg === undefined
+      ? profileUnitWeightKg * input.quantity
+      : explicitTotalWeightKg,
+    input.mahsulotId,
+    explicitTotalWeightKg === undefined
+      ? "profile-derived total weight"
+      : "totalWeightKg",
+  );
+  const unitWeightKg =
+    explicitTotalWeightKg === undefined
+      ? roundWeightKg(totalWeightKg / input.quantity)
+      : Math.round(explicitTotalWeightKg * 1000) /
+        input.quantity /
+        1000;
+  if (!(totalWeightKg > 0) || !(unitWeightKg > 0)) {
+    throw new HandoffValidationError(
+      `Item weight is too small for the supported kilogram precision (mahsulotId=${input.mahsulotId})`,
+    );
+  }
+  if (
+    allocatePackageWeightsKg(totalWeightKg, input.quantity, piecesPerBox).some(
+      (weightKg) => !(weightKg > 0),
+    )
+  ) {
+    throw new HandoffValidationError(
+      `Item totalWeightKg cannot produce a positive 3-decimal weight for every package (mahsulotId=${input.mahsulotId})`,
+    );
+  }
   return {
     mahsulotId: input.mahsulotId,
     sku,
@@ -413,10 +596,24 @@ function replayMatches(
   if (existing.vehicleId !== pilot.vehicleId) return false;
   if ((existing.notes ?? null) !== (input.notes ?? null)) return false;
   if (existing.items.length !== input.items.length) return false;
-  const want = new Map<number, number>();
-  for (const it of input.items) want.set(it.mahsulotId, it.quantity);
+  const want = new Map<number, HandoffItemInput>();
+  for (const it of input.items) want.set(it.mahsulotId, it);
   for (const it of existing.items) {
-    if (want.get(it.mahsulotId) !== it.quantity) return false;
+    const requested = want.get(it.mahsulotId);
+    if (requested == null || requested.quantity !== it.quantity) {
+      return false;
+    }
+    // An omitted total retains the established raw-request replay behavior:
+    // existing operation keys never depend on today's mutable product catalog.
+    if (
+      requested.totalWeightKg !== undefined &&
+      canonicalExplicitTotalWeightKg(
+        requested.totalWeightKg,
+        requested.mahsulotId,
+      ) !== roundWeightKg(it.totalWeightKg ?? 0)
+    ) {
+      return false;
+    }
   }
   return true;
 }
@@ -435,13 +632,24 @@ export async function createHandoffInTx(
   input: CreateHandoffInput,
   actor: HandoffActor,
 ): Promise<HandoffDetail> {
+  for (const item of input.items) {
+    if (item.totalWeightKg !== undefined) {
+      validateExplicitTotalForQuantity(
+        item.totalWeightKg,
+        item.quantity,
+        item.mahsulotId,
+      );
+    }
+  }
+  const requestFingerprint = createRequestFingerprint(input);
+
   await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
     createLockKey(input.operationKey),
   ]);
 
   // Idempotency: existing handoff for this operationKey?
   const existingRes = await client.query(
-    `SELECT id FROM distribution.vehicle_handoffs WHERE operation_key = $1`,
+    `SELECT id, request_fingerprint FROM distribution.vehicle_handoffs WHERE operation_key = $1`,
     [input.operationKey],
   );
   if (existingRes.rows.length) {
@@ -456,7 +664,12 @@ export async function createHandoffInTx(
       );
     }
     const pilot = await resolveActivePilot(client);
-    if (!replayMatches(existing, input, pilot)) {
+    const storedFingerprint = existingRes.rows[0].request_fingerprint;
+    if (
+      (storedFingerprint != null &&
+        String(storedFingerprint) !== requestFingerprint) ||
+      (storedFingerprint == null && !replayMatches(existing, input, pilot))
+    ) {
       throw new HandoffConflictError(
         "operationKey replay with a different payload",
       );
@@ -497,16 +710,16 @@ export async function createHandoffInTx(
     seen.add(it.mahsulotId);
   }
 
-  const resolved: ResolvedItem[] = [];
-  for (const it of input.items) {
-    resolved.push(await resolveItem(client, it));
+  const resolvedItems: ResolvedItem[] = [];
+  for (const item of input.items) {
+    resolvedItems.push(await resolveItem(client, item));
   }
 
   const ins = await client.query(
     `INSERT INTO distribution.vehicle_handoffs
        (vehicle_id, delivery_agent_id, source_warehouse_id, vehicle_warehouse_id,
-        handoff_date, status, operation_key, prepared_actor_type, prepared_actor_ref, notes)
-     VALUES ($1, $2, $3, $4, CURRENT_DATE, 'prepared', $5, $6, $7, $8)
+         handoff_date, status, operation_key, request_fingerprint, prepared_actor_type, prepared_actor_ref, notes)
+     VALUES ($1, $2, $3, $4, CURRENT_DATE, 'prepared', $5, $6, $7, $8, $9)
      RETURNING ${HANDOFF_COLUMNS}`,
     [
       pilot.vehicleId,
@@ -514,6 +727,7 @@ export async function createHandoffInTx(
       input.sourceWarehouseId,
       pilot.vehicleWarehouseId,
       input.operationKey,
+      requestFingerprint,
       actor.type,
       actor.ref,
       input.notes,
@@ -521,7 +735,7 @@ export async function createHandoffInTx(
   );
   const handoffId = Number(ins.rows[0].id);
 
-  for (const r of resolved) {
+  for (const r of resolvedItems) {
     await client.query(
       `INSERT INTO distribution.vehicle_handoff_items
          (handoff_id, mahsulot_id, sku, quantity_dispatched, product_name,

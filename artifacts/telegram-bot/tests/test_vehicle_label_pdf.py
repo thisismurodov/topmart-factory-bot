@@ -21,6 +21,7 @@ from bot.vehicle_distribution_label_generator import (
     VEHICLE_DISTRIBUTION_BRANDING,
     build_vehicle_distribution_label,
 )
+from unittest import mock
 
 _TOKEN_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
 
@@ -160,6 +161,28 @@ class VehicleLabelPdfTest(unittest.TestCase):
         loc = _parse_produced_at(payload["labels"][0]["producedAt"])
         # 20:00Z + 5h = 01:00 next local day.
         self.assertEqual(loc.day, 2)
+
+    def test_partial_box_passes_package_and_per_piece_kg(self):
+        payload = _payload(1)
+        payload["labels"][0].update({
+            "piecesInLabel": 3,
+            "piecesPerBox": 25,
+            "quantityTotal": 3,
+            "weightKg": 7.5,
+        })
+        captured = {}
+
+        def fake_builder(*args, **kwargs):
+            captured.update(kwargs)
+            from PIL import Image
+            return Image.new("RGB", (799, 639), "white")
+
+        with mock.patch("bot.vehicle_label_pdf.build_vehicle_distribution_label",
+                        side_effect=fake_builder):
+            build_batch_session_pdf(payload)
+        self.assertEqual(captured["in_box"], 3)
+        self.assertEqual(captured["unit_weight"], 7.5)
+        self.assertEqual(captured["piece_weight"], 2.5)
 
 
 if __name__ == "__main__":

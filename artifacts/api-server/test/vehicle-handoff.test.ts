@@ -798,6 +798,96 @@ describe("F4 prepare labels", () => {
     expect(prepared.body.labels.map((label: any) => label.labelType)).toEqual(["box", "box"]);
   });
 
+  it("allocates explicit line total weight across full and partial packages", async () => {
+    await client.query(
+      `UPDATE products SET pieces_per_box=100 WHERE name=$1`,
+      [prodA.name],
+    );
+    const created = await call("POST", "/vehicle-distribution/handoffs", {
+      token: adminToken,
+      body: {
+        sourceWarehouseId: erpWarehouseId,
+        items: [
+          {
+            mahsulotId: prodA.mahsulotId,
+            quantity: 150,
+            totalWeightKg: 15,
+          },
+        ],
+        operationKey: opKey(),
+      },
+    });
+    expect(created.status).toBe(200);
+
+    const prepared = await prepareLabels(created.body.id);
+    expect(prepared.status).toBe(200);
+    expect(
+      prepared.body.labels.map((label: any) => ({
+        pieces: label.piecesInLabel,
+        weight: label.weightKg,
+      })),
+    ).toEqual([
+      { pieces: 100, weight: 10 },
+      { pieces: 50, weight: 5 },
+    ]);
+    expect(
+      prepared.body.labels.reduce(
+        (sum: number, label: any) => sum + label.weightKg,
+        0,
+      ),
+    ).toBeCloseTo(15, 3);
+  });
+
+  it("rejects totals that cannot give every package a positive 3-decimal weight", async () => {
+    const cases = [
+      { quantity: 3, totalWeightKg: 0.002, piecesPerBox: 1 },
+      { quantity: 101, totalWeightKg: 0.002, piecesPerBox: 100 },
+    ];
+    for (const scenario of cases) {
+      await client.query(
+        `UPDATE products SET pieces_per_box=$2 WHERE name=$1`,
+        [prodA.name, scenario.piecesPerBox],
+      );
+      const created = await call("POST", "/vehicle-distribution/handoffs", {
+        token: adminToken,
+        body: {
+          sourceWarehouseId: erpWarehouseId,
+          items: [
+            {
+              mahsulotId: prodA.mahsulotId,
+              quantity: scenario.quantity,
+              totalWeightKg: scenario.totalWeightKg,
+            },
+          ],
+          operationKey: opKey(),
+        },
+      });
+      expect(created.status).toBe(400);
+    }
+  });
+
+  it("revalidates package-count bounds before preparing labels", async () => {
+    await client.query(
+      `UPDATE products SET pieces_per_box=101 WHERE name=$1`,
+      [prodA.name],
+    );
+    const { handoffId, itemId } = await makePrepared(101);
+    // Simulate a corrupt/legacy snapshot that would otherwise drive an
+    // unbounded passport insertion loop.
+    await client.query(
+      `UPDATE distribution.vehicle_handoff_items SET pieces_per_box=1 WHERE id=$1`,
+      [itemId],
+    );
+
+    const prepared = await prepareLabels(handoffId);
+    expect(prepared.status).toBe(400);
+    const passports = await client.query(
+      `SELECT COUNT(*)::int AS n FROM production_labels WHERE batch_code=$1`,
+      [`VH-${handoffId}`],
+    );
+    expect(Number(passports.rows[0].n)).toBe(0);
+  });
+
   it("prepare does not mutate inventory or move stock", async () => {
     const { handoffId } = await makePrepared(2);
     await prepareLabels(handoffId);
@@ -1049,6 +1139,202 @@ describe("create prepared handoff", () => {
     expect(Number(src.rows[0].quantity)).toBe(100);
   });
 
+  it("uses an explicit line total and derives a stable per-unit weight", async () => {
+    const r = await call("POST", "/vehicle-distribution/handoffs", {
+      token: adminToken,
+      body: {
+        sourceWarehouseId: erpWarehouseId,
+        items: [
+          {
+            mahsulotId: prodA.mahsulotId,
+            quantity: 3,
+            totalWeightKg: 9.999,
+          },
+        ],
+        operationKey: opKey(),
+      },
+    });
+    expect(r.status).toBe(200);
+    expect(r.body.items[0].totalWeightKg).toBe(9.999);
+    expect(r.body.items[0].unitWeightKg).toBe(3.333);
+  });
+
+  it("accepts exactly divisible milli-kilogram totals such as 11.5 / 100", async () => {
+    await client.query(
+      `UPDATE products SET pieces_per_box=100 WHERE name=$1`,
+      [prodA.name],
+    );
+    const r = await call("POST", "/vehicle-distribution/handoffs", {
+      token: adminToken,
+      body: {
+        sourceWarehouseId: erpWarehouseId,
+        items: [
+          {
+            mahsulotId: prodA.mahsulotId,
+            quantity: 100,
+            totalWeightKg: 11.5,
+          },
+        ],
+        operationKey: opKey(),
+      },
+    });
+    expect(r.status).toBe(200);
+    expect(r.body.items[0].unitWeightKg).toBe(0.115);
+    expect(r.body.items[0].totalWeightKg).toBe(11.5);
+  });
+
+  it.each([
+    { totalWeightKg: 1.001, quantity: 7, unitWeightKg: 0.143 },
+    { totalWeightKg: 1.005, quantity: 5, unitWeightKg: 0.201 },
+  ])(
+    "uses integer milli-kg divisibility for binary-tail decimal $totalWeightKg",
+    async ({ totalWeightKg, quantity, unitWeightKg }) => {
+      await client.query(
+        `UPDATE products SET pieces_per_box=$2 WHERE name=$1`,
+        [prodA.name, quantity],
+      );
+      const r = await call("POST", "/vehicle-distribution/handoffs", {
+        token: adminToken,
+        body: {
+          sourceWarehouseId: erpWarehouseId,
+          items: [
+            {
+              mahsulotId: prodA.mahsulotId,
+              quantity,
+              totalWeightKg,
+            },
+          ],
+          operationKey: opKey(),
+        },
+      });
+      expect(r.status).toBe(200);
+      expect(r.body.items[0].unitWeightKg).toBe(unitWeightKg);
+      expect(r.body.items[0].totalWeightKg).toBe(totalWeightKg);
+    },
+  );
+
+  it.each([0, -1])("rejects non-positive explicit total weight %s", async (weight) => {
+    const r = await call("POST", "/vehicle-distribution/handoffs", {
+      token: adminToken,
+      body: {
+        sourceWarehouseId: erpWarehouseId,
+        items: [
+          {
+            mahsulotId: prodA.mahsulotId,
+            quantity: 3,
+            totalWeightKg: weight,
+          },
+        ],
+        operationKey: opKey(),
+      },
+    });
+    expect(r.status).toBe(400);
+  });
+
+  it("rejects explicit totals with more than three decimal places", async () => {
+    const r = await call("POST", "/vehicle-distribution/handoffs", {
+      token: adminToken,
+      body: {
+        sourceWarehouseId: erpWarehouseId,
+        items: [
+          {
+            mahsulotId: prodA.mahsulotId,
+            quantity: 1,
+            totalWeightKg: 1.0001,
+          },
+        ],
+        operationKey: opKey(),
+      },
+    });
+    expect(r.status).toBe(400);
+  });
+
+  it.each([
+    Number.MAX_SAFE_INTEGER + 1,
+    100_001,
+  ])("rejects unsafe or over-limit quantity %s without a handoff", async (quantity) => {
+    const key = opKey();
+    const r = await call("POST", "/vehicle-distribution/handoffs", {
+      token: adminToken,
+      body: {
+        sourceWarehouseId: erpWarehouseId,
+        items: [{ mahsulotId: prodA.mahsulotId, quantity }],
+        operationKey: key,
+      },
+    });
+    expect(r.status).toBe(400);
+    const persisted = await client.query(
+      `SELECT COUNT(*)::int AS n FROM distribution.vehicle_handoffs WHERE operation_key=$1`,
+      [key],
+    );
+    expect(Number(persisted.rows[0].n)).toBe(0);
+  });
+
+  it("rejects a line requiring more than 100 physical labels", async () => {
+    await client.query(
+      `UPDATE products SET pieces_per_box=1 WHERE name=$1`,
+      [prodA.name],
+    );
+    const key = opKey();
+    const r = await call("POST", "/vehicle-distribution/handoffs", {
+      token: adminToken,
+      body: {
+        sourceWarehouseId: erpWarehouseId,
+        items: [{ mahsulotId: prodA.mahsulotId, quantity: 101 }],
+        operationKey: key,
+      },
+    });
+    expect(r.status).toBe(400);
+    const persisted = await client.query(
+      `SELECT COUNT(*)::int AS n FROM distribution.vehicle_handoffs WHERE operation_key=$1`,
+      [key],
+    );
+    expect(Number(persisted.rows[0].n)).toBe(0);
+  });
+
+  it.each(["NaN", "999999999.999"])(
+    "rejects invalid profile-derived total from unit weight %s without a handoff",
+    async (profileWeight) => {
+      await client.query(`UPDATE products SET weight=$2 WHERE name=$1`, [
+        prodA.name,
+        profileWeight,
+      ]);
+      const key = opKey();
+      const r = await call("POST", "/vehicle-distribution/handoffs", {
+        token: adminToken,
+        body: {
+          sourceWarehouseId: erpWarehouseId,
+          items: [{ mahsulotId: prodA.mahsulotId, quantity: 2 }],
+          operationKey: key,
+        },
+      });
+      expect(r.status).toBe(400);
+      const persisted = await client.query(
+        `SELECT COUNT(*)::int AS n FROM distribution.vehicle_handoffs WHERE operation_key=$1`,
+        [key],
+      );
+      expect(Number(persisted.rows[0].n)).toBe(0);
+    },
+  );
+
+  it("rejects a 3-decimal total that cannot divide exactly by quantity", async () => {
+    const r = await call("POST", "/vehicle-distribution/handoffs", {
+      token: adminToken,
+      body: {
+        sourceWarehouseId: erpWarehouseId,
+        items: [
+          {
+            mahsulotId: prodA.mahsulotId,
+            quantity: 150,
+            totalWeightKg: 15.001,
+          },
+        ],
+        operationKey: opKey(),
+      },
+    });
+    expect(r.status).toBe(400);
+  });
+
   it("bot-created handoff carries the warehouse_bot actor", async () => {
     const r = await call("POST", "/vehicle-distribution/handoffs", {
       botKey: BOT_KEY,
@@ -1087,6 +1373,92 @@ describe("create prepared handoff", () => {
     expect(Number(n.rows[0].n)).toBe(1);
   });
 
+  it("omitted-weight replay does not resolve a changed product catalog", async () => {
+    const key = opKey();
+    const body = {
+      sourceWarehouseId: erpWarehouseId,
+      items: [{ mahsulotId: prodA.mahsulotId, quantity: 2 }],
+      operationKey: key,
+    };
+    const first = await call("POST", "/vehicle-distribution/handoffs", {
+      token: adminToken,
+      body,
+    });
+    expect(first.status).toBe(200);
+
+    try {
+      // A replay must only compare the stored raw request fields; catalog
+      // deactivation/remapping after creation cannot invalidate its operationKey.
+      await client.query(
+        `UPDATE distribution.mahsulotlar SET faol=0, sku='SKU-CHANGED' WHERE id=$1`,
+        [prodA.mahsulotId],
+      );
+      await client.query(`UPDATE products SET active=FALSE WHERE sku='SKU-A'`);
+
+      const replay = await call("POST", "/vehicle-distribution/handoffs", {
+        token: adminToken,
+        body,
+      });
+      expect(replay.status).toBe(200);
+      expect(replay.body.id).toBe(first.body.id);
+    } finally {
+      await client.query(
+        `UPDATE distribution.mahsulotlar SET faol=1, sku='SKU-A' WHERE id=$1`,
+        [prodA.mahsulotId],
+      );
+      await client.query(`UPDATE products SET active=TRUE WHERE sku='SKU-A'`);
+    }
+  });
+
+  it("treats explicit and omitted totals as different idempotent requests", async () => {
+    const explicitFirstKey = opKey();
+    const omittedFirstKey = opKey();
+    const explicitBody = (key: string) => ({
+      sourceWarehouseId: erpWarehouseId,
+      items: [{ mahsulotId: prodA.mahsulotId, quantity: 2, totalWeightKg: 5 }],
+      operationKey: key,
+    });
+    const omittedBody = (key: string) => ({
+      sourceWarehouseId: erpWarehouseId,
+      items: [{ mahsulotId: prodA.mahsulotId, quantity: 2 }],
+      operationKey: key,
+    });
+
+    expect(
+      (
+        await call("POST", "/vehicle-distribution/handoffs", {
+          token: adminToken,
+          body: explicitBody(explicitFirstKey),
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await call("POST", "/vehicle-distribution/handoffs", {
+          token: adminToken,
+          body: omittedBody(explicitFirstKey),
+        })
+      ).status,
+    ).toBe(409);
+
+    expect(
+      (
+        await call("POST", "/vehicle-distribution/handoffs", {
+          token: adminToken,
+          body: omittedBody(omittedFirstKey),
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await call("POST", "/vehicle-distribution/handoffs", {
+          token: adminToken,
+          body: explicitBody(omittedFirstKey),
+        })
+      ).status,
+    ).toBe(409);
+  });
+
   it("replay with a different payload → 409", async () => {
     const key = opKey();
     await call("POST", "/vehicle-distribution/handoffs", {
@@ -1106,6 +1478,35 @@ describe("create prepared handoff", () => {
       },
     });
     expect(r2.status).toBe(409);
+  });
+
+  it("replay with a different explicit total weight → 409", async () => {
+    const key = opKey();
+    const base = {
+      sourceWarehouseId: erpWarehouseId,
+      items: [
+        {
+          mahsulotId: prodA.mahsulotId,
+          quantity: 2,
+          totalWeightKg: 5,
+        },
+      ],
+      operationKey: key,
+    };
+    const first = await call("POST", "/vehicle-distribution/handoffs", {
+      token: adminToken,
+      body: base,
+    });
+    expect(first.status).toBe(200);
+
+    const replay = await call("POST", "/vehicle-distribution/handoffs", {
+      token: adminToken,
+      body: {
+        ...base,
+        items: [{ ...base.items[0], totalWeightKg: 6 }],
+      },
+    });
+    expect(replay.status).toBe(409);
   });
 
   it("concurrent create with the same key → one handoff", async () => {

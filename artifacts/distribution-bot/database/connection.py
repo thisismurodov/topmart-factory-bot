@@ -379,6 +379,7 @@ CREATE TABLE IF NOT EXISTS distribution.vehicle_handoffs (
     cancelled_by          INTEGER,
     movement_reference    TEXT,
     operation_key         TEXT,
+    request_fingerprint   TEXT,
     prepared_actor_type   TEXT,
     prepared_actor_ref    TEXT,
     notes                 TEXT,
@@ -386,6 +387,7 @@ CREATE TABLE IF NOT EXISTS distribution.vehicle_handoffs (
     CONSTRAINT vehicle_handoffs_status_check CHECK (status IN ('prepared','labels_printed','handed_over','stock_transferred','cancelled'))
 );
 ALTER TABLE distribution.vehicle_handoffs ADD COLUMN IF NOT EXISTS operation_key       TEXT;
+ALTER TABLE distribution.vehicle_handoffs ADD COLUMN IF NOT EXISTS request_fingerprint TEXT;
 ALTER TABLE distribution.vehicle_handoffs ADD COLUMN IF NOT EXISTS prepared_actor_type TEXT;
 ALTER TABLE distribution.vehicle_handoffs ADD COLUMN IF NOT EXISTS prepared_actor_ref  TEXT;
 CREATE INDEX IF NOT EXISTS idx_vehicle_handoffs_vehicle_date ON distribution.vehicle_handoffs (vehicle_id, handoff_date);

@@ -111,6 +111,42 @@ class VehicleApiClientTest(unittest.TestCase):
             json.loads(captured["body"]), {"operationKey": "recovery-key"}
         )
 
+    def test_create_handoff_uses_strict_vehicle_payload(self):
+        captured, fake = self._capture({"id": 17, "status": "prepared"})
+        with mock.patch("urllib.request.urlopen", fake):
+            ok, data = api_client.create_vehicle_handoff(
+                4, 29, 6, 12.5, "telegram-factory:create:abc", "operator total kg: 12"
+            )
+        self.assertTrue(ok)
+        self.assertEqual(data["id"], 17)
+        self.assertTrue(
+            captured["url"].endswith("/vehicle-distribution/handoffs")
+        )
+        self.assertEqual(json.loads(captured["body"]), {
+            "sourceWarehouseId": 4,
+            "items": [{"mahsulotId": 29, "quantity": 6, "totalWeightKg": 12.5}],
+            "operationKey": "telegram-factory:create:abc",
+            "notes": "operator total kg: 12",
+        })
+
+    def test_lifecycle_helpers_hit_explicit_endpoints(self):
+        urls = []
+
+        def _fake(req, timeout=None):
+            urls.append((req.full_url, json.loads(req.data)))
+            return _FakeResp({"id": 8})
+
+        with mock.patch("urllib.request.urlopen", _fake):
+            api_client.mark_handoff_handed_over(8)
+            api_client.mark_handoff_stock_transferred(8)
+        self.assertTrue(urls[0][0].endswith(
+            "/vehicle-distribution/handoffs/8/handed-over"
+        ))
+        self.assertTrue(urls[1][0].endswith(
+            "/vehicle-distribution/handoffs/8/stock-transferred"
+        ))
+        self.assertEqual([body for _, body in urls], [{}, {}])
+
     def test_confirm_recovery_key_is_idempotent_from_caller_view(self):
         # Reusing the same operationKey yields the same server response; the
         # caller sees a stable (ok, data). We assert the body carries the key

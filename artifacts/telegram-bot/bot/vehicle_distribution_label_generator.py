@@ -48,6 +48,7 @@ def build_vehicle_distribution_label(
     sku: str = "",
     metr: float | None = None,
     in_box: int | None = None,
+    piece_weight: float | None = None,
     barcode_value: str = "",
 ) -> Image.Image:
     """Render one branded Vehicle Distribution label page."""
@@ -88,7 +89,14 @@ def build_vehicle_distribution_label(
     if metr is None or metr <= 0:
         metr = extract_metr(product)
 
-    kg_txt = f"{_num(unit_weight)} KG" if unit_weight > 0 else "—"
+    pieces = in_box if in_box is not None else per_box
+    if piece_weight is None and unit_weight > 0 and pieces > 0:
+        piece_weight = unit_weight / pieces
+    kg_txt = (
+        f"JAMI {_num(unit_weight)} KG · 1 DONA {_num(piece_weight)} KG"
+        if unit_weight > 0 and piece_weight is not None and piece_weight > 0
+        else "—"
+    )
     metr_txt = f"{_num(metr)} METR" if metr is not None else "—"
     dt_txt = f"{ts:%d.%m.%Y}  {ts:%H:%M}"
     rows = [
@@ -169,7 +177,6 @@ def build_vehicle_distribution_label(
 
     extra = f"{batch_code} · {unit_num}/{total_units}"
     if per_box > 1:
-        pieces = in_box if in_box is not None else per_box
         if pieces == per_box:
             extra += f" · 1 quti = {per_box} dona"
         else:

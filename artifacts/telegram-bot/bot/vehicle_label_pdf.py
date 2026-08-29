@@ -123,6 +123,10 @@ def build_batch_session_pdf(payload: dict) -> io.BytesIO:
             sku=str(row["product_sku"]),
             metr=row["length_m"],
             in_box=int(row["pieces_in_label"]),
+            piece_weight=(
+                float(row["weight_kg"]) / int(row["pieces_in_label"])
+                if int(row["pieces_in_label"]) > 0 else None
+            ),
             barcode_value=str(row["barcode_value"]),
         )
         for row in passport_rows

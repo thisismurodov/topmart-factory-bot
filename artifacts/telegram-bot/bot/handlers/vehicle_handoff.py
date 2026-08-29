@@ -1,4 +1,11 @@
-"""Admin-only Telegram flow for the frozen DM-001 vehicle handoff pilot."""
+"""Admin-only Telegram flow for the frozen DM-001 vehicle handoff pilot.
+
+Multi-item cart flow: the operator picks a source warehouse once, then adds
+product+quantity+weight lines one by one ("Yana tovar qo‘shish"), and only
+"Tugatish" creates ONE handoff carrying the whole cart. The review screen and
+the success message show per-line and total sums priced with the savdo bot
+catalog (distribution.mahsulotlar.narx).
+"""
 import hashlib
 import re
 
@@ -13,13 +20,15 @@ from ..api_client import (
     mark_handoff_stock_transferred, prepare_handoff_labels,
 )
 from ..database import (
-    get_user_role, get_vehicle_handoff_products, get_vehicle_handoff_source_warehouses,
+    get_mahsulot_prices, get_user_role, get_vehicle_handoff_hidden_products,
+    get_vehicle_handoff_products, get_vehicle_handoff_source_warehouses,
 )
 from ..keyboards import admin_reply_keyboard
 from ..vehicle_label_pdf import build_batch_session_pdf
 
-(MENU, SOURCE, PRODUCT, QUANTITY, WEIGHT, REVIEW, EXISTING, WARNING) = range(8)
+(MENU, SOURCE, PRODUCT, QUANTITY, WEIGHT, CART, REVIEW, EXISTING, WARNING) = range(9)
 ENTRY_TEXT = "🚚 Mashinani to‘ldirish"
+MAX_REASON_NAMES = 8
 
 
 def _admin(user_id: int) -> bool:
@@ -41,6 +50,85 @@ def _buttons(rows):
     return InlineKeyboardMarkup(rows)
 
 
+def _money(value: float) -> str:
+    return f"{value:,.0f}".replace(",", " ") + " so‘m"
+
+
+def _hidden_lines(title: str, rows: list[dict], key: str) -> str:
+    """Compact grouped 'reason: name, name…' block for hidden entries."""
+    if not rows:
+        return ""
+    groups: dict[str, list[str]] = {}
+    for r in rows:
+        groups.setdefault(r["reason"], []).append(r[key])
+    lines = [f"\n\n🚫 {title}:"]
+    for reason, names in groups.items():
+        shown = ", ".join(names[:MAX_REASON_NAMES])
+        extra = f" …(+{len(names) - MAX_REASON_NAMES})" if len(names) > MAX_REASON_NAMES else ""
+        lines.append(f"• {reason}: {shown}{extra}")
+    return "\n".join(lines)
+
+
+def _cart_totals(cart: list[dict], prices: dict | None) -> tuple[int, float, float, list[str]]:
+    total_qty = sum(int(it["quantity"]) for it in cart)
+    total_kg = sum(float(it["weight"]) for it in cart)
+    total_sum = 0.0
+    missing: list[str] = []
+    for it in cart:
+        narx = (prices or {}).get(int(it["mahsulot_id"]))
+        if narx is None or narx <= 0:
+            missing.append(it["name"])
+        else:
+            total_sum += float(narx) * int(it["quantity"])
+    return total_qty, total_kg, total_sum, missing
+
+
+def _cart_view(state: dict) -> tuple[str, InlineKeyboardMarkup]:
+    cart = state.get("cart") or []
+    w = state.get("warehouse") or {}
+    lines = [f"🧺 *Savat — DM-001* · 🏬 {w.get('name', '?')}", ""]
+    for i, it in enumerate(cart, 1):
+        lines.append(f"{i}. {it['name']} — *{int(it['quantity'])} dona* / {float(it['weight']):g} kg")
+    total_qty, total_kg, _, _ = _cart_totals(cart, None)
+    lines += ["", f"📦 Jami: *{len(cart)} tovar* · {total_qty} dona · ⚖️ {total_kg:g} kg"]
+    token = state["token"]
+    rows = [
+        [InlineKeyboardButton("➕ Yana tovar qo‘shish", callback_data=f"vh:{token}:more")],
+        [InlineKeyboardButton("✅ Tugatish", callback_data=f"vh:{token}:finish")],
+    ]
+    if cart:
+        rows.append([InlineKeyboardButton("🗑 Oxirgi tovarni o‘chirish", callback_data=f"vh:{token}:drop")])
+    rows.append([InlineKeyboardButton("❌ Bekor qilish", callback_data=f"vh:{token}:cancel")])
+    return "\n".join(lines), _buttons(rows)
+
+
+def _review_view(state: dict) -> tuple[str, InlineKeyboardMarkup]:
+    cart = state.get("cart") or []
+    prices = state.get("prices") or {}
+    w = state.get("warehouse") or {}
+    lines = ["🔎 *Tekshiring — DM-001*", f"🏬 Manba: *{w.get('name', '?')}*", ""]
+    for i, it in enumerate(cart, 1):
+        qty = int(it["quantity"])
+        narx = prices.get(int(it["mahsulot_id"]))
+        if narx is None or narx <= 0:
+            price_part = "narxi yo‘q"
+        else:
+            price_part = f"{_money(float(narx))} × {qty} = *{_money(float(narx) * qty)}*"
+        lines.append(f"{i}. {it['name']} — {qty} dona / {float(it['weight']):g} kg · {price_part}")
+    total_qty, total_kg, total_sum, missing = _cart_totals(cart, prices)
+    lines += ["", f"📦 Jami: {len(cart)} tovar · {total_qty} dona · ⚖️ {total_kg:g} kg",
+              f"💰 *Jami summa (savdo narxlari): {_money(total_sum)}*"]
+    if missing:
+        lines.append(f"⚠️ Narxi yo‘q (jamiga kirmadi): {', '.join(missing)}")
+    lines += ["", "Tasdiqlaysizmi?"]
+    token = state["token"]
+    return "\n".join(lines), _buttons([
+        [InlineKeyboardButton("✅ Tayyorlash", callback_data=f"vh:{token}:create")],
+        [InlineKeyboardButton("⬅️ Savatga qaytish", callback_data=f"vh:{token}:back")],
+        [InlineKeyboardButton("❌ Bekor qilish", callback_data=f"vh:{token}:cancel")],
+    ])
+
+
 async def _reject(query, text="❌ Ruxsat yo‘q yoki tugma eskirgan."):
     await query.answer(text, show_alert=True)
 
@@ -50,7 +138,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         await update.message.reply_text("❌ Bu amal faqat admin uchun.")
         return ConversationHandler.END
     token = _token(update)
-    context.user_data["vh"] = {"token": token, "done": set()}
+    context.user_data["vh"] = {"token": token, "done": set(), "cart": []}
     await update.message.reply_text(
         "🚚 *DM-001 mashinasi*\n\nAmalni tanlang:",
         parse_mode="Markdown",
@@ -90,16 +178,61 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         await _reject(q)
         return MENU
     warehouses = get_vehicle_handoff_source_warehouses()
-    if not warehouses:
-        await q.edit_message_text("❌ Yuklash mumkin bo‘lgan, qoldiqli manba ombor yo‘q.")
+    eligible = [w for w in warehouses if w["eligible"]]
+    hidden = [w for w in warehouses if not w["eligible"]]
+    hidden_note = _hidden_lines("Tanlab bo‘lmaydiganlar", hidden, "name")
+    if not eligible:
+        await q.edit_message_text(
+            "❌ Yuklash mumkin bo‘lgan, qoldiqli manba ombor yo‘q." + hidden_note
+        )
         return ConversationHandler.END
-    state["warehouses"] = {str(w["id"]): w for w in warehouses}
+    state["warehouses"] = {str(w["id"]): w for w in eligible}
+    state["cart"] = []
     rows = [[InlineKeyboardButton(w["name"], callback_data=f"vh:{state['token']}:src:{w['id']}")]
-            for w in warehouses]
+            for w in eligible]
     rows.append([InlineKeyboardButton("❌ Bekor qilish", callback_data=f"vh:{state['token']}:cancel")])
-    await q.edit_message_text("🏬 *Manba omborni tanlang:*", parse_mode="Markdown",
-                              reply_markup=_buttons(rows))
+    await q.edit_message_text(
+        "🏬 *Manba omborni tanlang:*" + hidden_note,
+        parse_mode="Markdown", reply_markup=_buttons(rows),
+    )
     return SOURCE
+
+
+async def _show_products(q, state) -> int:
+    """(Re)render the product selector for the chosen warehouse, excluding
+    products already in the cart and listing hidden products with reasons."""
+    warehouse = state["warehouse"]
+    products = get_vehicle_handoff_products(int(warehouse["id"]))
+    in_cart = {int(it["mahsulot_id"]) for it in state.get("cart") or []}
+    available = [p for p in products if int(p["mahsulot_id"]) not in in_cart]
+    hidden_note = _hidden_lines(
+        "Ko‘rinmaydigan tovarlar", get_vehicle_handoff_hidden_products(int(warehouse["id"])), "name"
+    )
+    if not available:
+        if state.get("cart"):
+            text, markup = _cart_view(state)
+            await q.edit_message_text(
+                text + "\n\n⚠️ Qo‘shish uchun boshqa mos tovar qolmadi.",
+                parse_mode="Markdown", reply_markup=markup,
+            )
+            return CART
+        await q.edit_message_text(
+            "❌ Bu omborda faol, moslangan va qoldiqli mahsulot yo‘q." + hidden_note
+        )
+        return ConversationHandler.END
+    state["products"] = {str(i): p for i, p in enumerate(available)}
+    rows = [[InlineKeyboardButton(
+        f"{p['name']} — {float(p['available_quantity']):g} dona",
+        callback_data=f"vh:{state['token']}:prod:{i}",
+    )] for i, p in enumerate(available)]
+    rows.append([InlineKeyboardButton("❌ Bekor qilish", callback_data=f"vh:{state['token']}:cancel")])
+    cart_line = f"\n🧺 Savatda: {len(in_cart)} tovar" if in_cart else ""
+    await q.edit_message_text(
+        f"🏬 *{warehouse['name']}*{cart_line}\n\n📦 Faol, moslangan mahsulotni tanlang:"
+        + hidden_note,
+        parse_mode="Markdown", reply_markup=_buttons(rows),
+    )
+    return PRODUCT
 
 
 async def choose_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -109,22 +242,9 @@ async def choose_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         await _reject(q)
         return SOURCE
     await q.answer()
-    warehouse = state["warehouses"][data[3]]
-    products = get_vehicle_handoff_products(int(data[3]))
-    if not products:
-        await q.edit_message_text("❌ Bu omborda faol, moslangan va qoldiqli mahsulot yo‘q.")
-        return ConversationHandler.END
-    state["warehouse"] = warehouse
-    state["products"] = {str(i): p for i, p in enumerate(products)}
-    rows = [[InlineKeyboardButton(
-        f"{p['name']} — {float(p['available_quantity']):g} dona",
-        callback_data=f"vh:{state['token']}:prod:{i}",
-    )] for i, p in enumerate(products)]
-    await q.edit_message_text(
-        f"🏬 *{warehouse['name']}*\n\n📦 Faol, moslangan mahsulotni tanlang:",
-        parse_mode="Markdown", reply_markup=_buttons(rows),
-    )
-    return PRODUCT
+    state["warehouse"] = state["warehouses"][data[3]]
+    state["cart"] = []
+    return await _show_products(q, state)
 
 
 async def choose_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -134,8 +254,8 @@ async def choose_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await _reject(q)
         return PRODUCT
     await q.answer()
-    state["product"] = state["products"][data[3]]
-    p = state["product"]
+    state["pending_product"] = state["products"][data[3]]
+    p = state["pending_product"]
     await q.edit_message_text(
         f"📦 *{p['name']}*\nQoldiq: *{float(p['available_quantity']):g} dona*\n\n"
         "Musbat butun miqdorni kiriting:", parse_mode="Markdown",
@@ -152,10 +272,10 @@ async def enter_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not text.isdigit() or int(text) <= 0:
         await update.message.reply_text("⚠️ Musbat butun son kiriting:")
         return QUANTITY
-    if int(text) > int(float(state["product"]["available_quantity"])):
+    if int(text) > int(float(state["pending_product"]["available_quantity"])):
         await update.message.reply_text("⚠️ Miqdor mavjud qoldiqdan oshmasligi kerak:")
         return QUANTITY
-    state["quantity"] = int(text)
+    state["pending_qty"] = int(text)
     await update.message.reply_text("⚖️ Jami musbat og‘irlikni kg da kiriting (masalan, 25.5):")
     return WEIGHT
 
@@ -175,28 +295,63 @@ async def enter_weight(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         await update.message.reply_text("⚠️ Musbat kg kiriting:")
         return WEIGHT
     state = context.user_data["vh"]
-    state["weight"] = weight
-    p, w = state["product"], state["warehouse"]
+    p = state["pending_product"]
+    qty = int(state["pending_qty"])
     unit_weight = float(p.get("unit_weight_kg") or 0)
-    expected = unit_weight * state["quantity"] if unit_weight > 0 else None
-    state["expected_weight"] = expected
+    expected = unit_weight * qty if unit_weight > 0 else None
     profile_line = (
         f"🏷️ Profil bo‘yicha jami: *{expected:g} kg*\n"
         if expected is not None else
         "🏷️ Profil og‘irligi belgilanmagan — kiritilgan jami kg ishlatiladi.\n"
     )
+    state.setdefault("cart", []).append({
+        "mahsulot_id": int(p["mahsulot_id"]),
+        "name": p["name"],
+        "quantity": qty,
+        "weight": weight,
+    })
+    state.pop("pending_product", None)
+    state.pop("pending_qty", None)
+    text, markup = _cart_view(state)
     await update.message.reply_text(
-        "🔎 *Tekshiring*\n\n"
-        f"🚚 Mashina: *DM-001*\n🏬 Manba: *{w['name']}*\n"
-        f"📦 Mahsulot: *{p['name']}*\n🔢 Miqdor: *{state['quantity']} dona*\n"
-        f"⚖️ Kiritilgan jami: *{weight:g} kg*\n"
-        + profile_line + "\n"
-        "Tasdiqlaysizmi?", parse_mode="Markdown",
-        reply_markup=_buttons([
-            [InlineKeyboardButton("✅ Tayyorlash", callback_data=f"vh:{state['token']}:create")],
-            [InlineKeyboardButton("❌ Bekor qilish", callback_data=f"vh:{state['token']}:cancel")],
-        ]),
+        f"➕ Qo‘shildi: *{p['name']}* — {qty} dona / {weight:g} kg\n"
+        + profile_line + "\n" + text,
+        parse_mode="Markdown", reply_markup=markup,
     )
+    return CART
+
+
+async def cart_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    q = update.callback_query
+    state, data = _valid(q, context)
+    if not state or data[2] not in ("more", "finish", "drop", "back"):
+        await _reject(q)
+        return CART
+    await q.answer()
+    cart = state.get("cart") or []
+    if data[2] == "more":
+        return await _show_products(q, state)
+    if data[2] == "drop":
+        if cart:
+            cart.pop()
+        if not cart:
+            return await _show_products(q, state)
+        text, markup = _cart_view(state)
+        await q.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        return CART
+    if data[2] == "back":
+        if not cart:
+            return await _show_products(q, state)
+        text, markup = _cart_view(state)
+        await q.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        return CART
+    # finish → priced review
+    if not cart:
+        await _reject(q, "Savat bo‘sh — avval tovar qo‘shing.")
+        return CART
+    state["prices"] = get_mahsulot_prices([it["mahsulot_id"] for it in cart])
+    text, markup = _review_view(state)
+    await q.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
     return REVIEW
 
 
@@ -209,12 +364,18 @@ async def confirm_create(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if "create" in state["done"]:
         await _reject(q, "Bu so‘rov allaqachon bajarilgan.")
         return REVIEW
+    cart = state.get("cart") or []
+    if not cart:
+        await _reject(q, "Savat bo‘sh.")
+        return REVIEW
     await q.answer()
     state["done"].add("create")
-    p = state["product"]
-    notes = f"Telegram factory bot; operator total kg: {state['weight']:g}"
+    total_qty, total_kg, total_sum, missing = _cart_totals(cart, state.get("prices"))
+    notes = f"Telegram factory bot; {len(cart)} ta tovar; operator jami kg: {total_kg:g}"
     ok, result = create_vehicle_handoff(
-        state["warehouse"]["id"], p["mahsulot_id"], state["quantity"], state["weight"],
+        state["warehouse"]["id"],
+        [{"mahsulot_id": it["mahsulot_id"], "quantity": it["quantity"],
+          "weight": it["weight"]} for it in cart],
         _operation("create", None, state["token"]), notes,
     )
     if not ok:
@@ -234,8 +395,13 @@ async def confirm_create(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await q.edit_message_text(f"⚠️ Topshirish #{handoff_id} yaratildi, etiketka olinmadi: {labels}")
         return ConversationHandler.END
     pdf = build_batch_session_pdf(labels)
+    sum_line = f"💰 Jami (savdo narxlari): *{_money(total_sum)}*\n"
+    if missing:
+        sum_line += f"⚠️ Narxi yo‘q: {', '.join(missing)}\n"
     await q.edit_message_text(
         f"✅ Topshirish *#{handoff_id}* tayyorlandi.\n"
+        f"📦 {len(cart)} tovar · {total_qty} dona · ⚖️ {total_kg:g} kg\n"
+        + sum_line +
         "⚠️ PDF yuborildi, lekin “chop etildi” hali tasdiqlanmadi.",
         parse_mode="Markdown",
     )
@@ -408,8 +574,14 @@ def build_vehicle_handoff_handler() -> ConversationHandler:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, enter_weight),
                 CallbackQueryHandler(stale_callback, pattern=r"^vh:"),
             ],
+            CART: [
+                CallbackQueryHandler(cart_callback, pattern=r"^vh:[^:]+:(?:more|finish|drop|back)$"),
+                CallbackQueryHandler(menu_callback, pattern=r"^vh:[^:]+:cancel$"),
+                CallbackQueryHandler(stale_callback, pattern=r"^vh:"),
+            ],
             REVIEW: [
                 CallbackQueryHandler(confirm_create, pattern=r"^vh:[^:]+:create$"),
+                CallbackQueryHandler(cart_callback, pattern=r"^vh:[^:]+:back$"),
                 CallbackQueryHandler(menu_callback, pattern=r"^vh:[^:]+:cancel$"),
             ],
             EXISTING: [

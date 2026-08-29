@@ -115,7 +115,13 @@ class VehicleApiClientTest(unittest.TestCase):
         captured, fake = self._capture({"id": 17, "status": "prepared"})
         with mock.patch("urllib.request.urlopen", fake):
             ok, data = api_client.create_vehicle_handoff(
-                4, 29, 6, 12.5, "telegram-factory:create:abc", "operator total kg: 12"
+                4,
+                [
+                    {"mahsulot_id": 29, "quantity": 6, "weight": 12.5},
+                    {"mahsulot_id": 31, "quantity": 2, "weight": 3.0},
+                ],
+                "telegram-factory:create:abc",
+                "operator jami kg: 15.5",
             )
         self.assertTrue(ok)
         self.assertEqual(data["id"], 17)
@@ -124,9 +130,12 @@ class VehicleApiClientTest(unittest.TestCase):
         )
         self.assertEqual(json.loads(captured["body"]), {
             "sourceWarehouseId": 4,
-            "items": [{"mahsulotId": 29, "quantity": 6, "totalWeightKg": 12.5}],
+            "items": [
+                {"mahsulotId": 29, "quantity": 6, "totalWeightKg": 12.5},
+                {"mahsulotId": 31, "quantity": 2, "totalWeightKg": 3.0},
+            ],
             "operationKey": "telegram-factory:create:abc",
-            "notes": "operator total kg: 12",
+            "notes": "operator jami kg: 15.5",
         })
 
     def test_lifecycle_helpers_hit_explicit_endpoints(self):

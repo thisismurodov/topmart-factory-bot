@@ -80,20 +80,21 @@ def get_vehicle_handoff(handoff_id: int) -> tuple[bool, object]:
 
 def create_vehicle_handoff(
     source_warehouse_id: int,
-    mahsulot_id: int,
-    quantity: int,
-    total_weight_kg: float,
+    items: list[dict],
     operation_key: str,
     notes: str | None = None,
 ) -> tuple[bool, object]:
-    """Create one idempotent prepared handoff for the frozen pilot vehicle."""
+    """Create ONE idempotent prepared handoff carrying the whole cart.
+
+    `items` rows use bot-side keys: {mahsulot_id, quantity, weight} — mapped
+    here to the API contract {mahsulotId, quantity, totalWeightKg}."""
     payload = {
         "sourceWarehouseId": int(source_warehouse_id),
         "items": [{
-            "mahsulotId": int(mahsulot_id),
-            "quantity": int(quantity),
-            "totalWeightKg": float(total_weight_kg),
-        }],
+            "mahsulotId": int(it["mahsulot_id"]),
+            "quantity": int(it["quantity"]),
+            "totalWeightKg": float(it["weight"]),
+        } for it in items],
         "operationKey": operation_key,
     }
     if notes:

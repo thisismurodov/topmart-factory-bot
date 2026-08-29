@@ -80,7 +80,15 @@ async function transaction<T>(
 export function createVehicleReplenishmentRouter(pool: Pool): IRouter {
   const router: IRouter = Router();
   const base = "/vehicle-distribution/pilot";
-  router.use(base, makeHandoffAuth(pool), vehicleDistributionGate);
+  // Wall ONLY the routes this router actually serves. A bare `base` prefix
+  // would also intercept sibling /pilot/* routes mounted later in the stack
+  // (/pilot, /pilot/stock, /pilot/movements, /pilot/reconciliations…) and
+  // subject them to this router's auth semantics. See task: router-stack test.
+  router.use(
+    [`${base}/stock-targets`, `${base}/replenishment-requests`],
+    makeHandoffAuth(pool),
+    vehicleDistributionGate,
+  );
 
   router.get(`${base}/stock-targets`, async (req, res) => {
     const client = await pool.connect();

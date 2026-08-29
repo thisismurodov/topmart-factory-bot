@@ -2433,29 +2433,51 @@ def get_warehouses() -> list[dict]:
 
 
 def get_vehicle_handoff_source_warehouses() -> list[dict]:
-    """Active finished-goods sources accepted by the vehicle handoff API."""
+    """ALL active non-vehicle warehouses, flagged for handoff eligibility.
+
+    Eligible = purpose 'finished' AND at least one piece-stock product whose
+    SKU maps 1:1 to an active savdo-bot mahsulot (the exact acceptance rule of
+    the handoff API). Ineligible rows carry an operator-readable `reason` so
+    the selector can SHOW them instead of silently hiding them.
+    Returns [{id, name, eligible, reason}] ordered by name."""
     with get_conn() as (conn, cur):
         cur.execute(
-            """SELECT w.id, w.name
+            """SELECT w.id, w.name, COALESCE(w.purpose, '') AS purpose,
+                      EXISTS (
+                        SELECT 1 FROM inventory i
+                         WHERE i.warehouse_id=w.id AND i.quantity>0
+                      ) AS has_piece_stock,
+                      EXISTS (
+                        SELECT 1
+                          FROM inventory i
+                          JOIN products p ON p.name=i.product AND p.active=TRUE
+                         WHERE i.warehouse_id=w.id AND i.quantity>0
+                           AND COALESCE(p.sku, '') <> ''
+                           AND (SELECT COUNT(*) FROM distribution.mahsulotlar d
+                                 WHERE d.sku=p.sku AND d.faol=1
+                                   AND COALESCE(d.sku, '') <> '')=1
+                           AND (SELECT COUNT(*) FROM products px
+                                 WHERE px.sku=p.sku AND px.active=TRUE)=1
+                      ) AS has_eligible
                  FROM warehouses w
                 WHERE w.active=TRUE
                   AND COALESCE(w.location_type, 'general') <> 'vehicle'
-                  AND w.purpose='finished'
-                  AND EXISTS (
-                    SELECT 1
-                      FROM inventory i
-                      JOIN products p ON p.name=i.product AND p.active=TRUE
-                     WHERE i.warehouse_id=w.id AND i.quantity>0
-                       AND COALESCE(p.sku, '') <> ''
-                       AND (SELECT COUNT(*) FROM distribution.mahsulotlar d
-                             WHERE d.sku=p.sku AND d.faol=1
-                               AND COALESCE(d.sku, '') <> '')=1
-                       AND (SELECT COUNT(*) FROM products px
-                             WHERE px.sku=p.sku AND px.active=TRUE)=1
-                  )
                 ORDER BY w.name"""
         )
-        return cur.fetchall()
+        rows = cur.fetchall()
+    out = []
+    for r in rows:
+        if r["purpose"] != "finished":
+            reason = "tayyor mahsulot ombori emas"
+        elif not r["has_piece_stock"]:
+            reason = "dona qoldiq yo‘q"
+        elif not r["has_eligible"]:
+            reason = "savdo bot SKU mosligi yo‘q"
+        else:
+            reason = None
+        out.append({"id": r["id"], "name": r["name"],
+                    "eligible": reason is None, "reason": reason})
+    return out
 
 
 def get_vehicle_handoff_products(warehouse_id: int) -> list[dict]:
@@ -2480,6 +2502,63 @@ def get_vehicle_handoff_products(warehouse_id: int) -> list[dict]:
             (warehouse_id,),
         )
         return cur.fetchall()
+
+
+def get_vehicle_handoff_hidden_products(warehouse_id: int) -> list[dict]:
+    """Piece-stock rows at the source that the product selector will NOT offer,
+    each with an operator-readable reason (SKU mapping diagnostics).
+    Returns [{name, reason}] ordered by product name."""
+    with get_conn() as (conn, cur):
+        cur.execute(
+            """SELECT i.product AS name,
+                      (p.id IS NULL) AS inactive_product,
+                      COALESCE(p.sku, '') AS sku,
+                      COALESCE((SELECT COUNT(*) FROM distribution.mahsulotlar d
+                                 WHERE d.sku=p.sku AND d.faol=1
+                                   AND COALESCE(d.sku, '') <> ''), 0) AS dist_matches,
+                      COALESCE((SELECT COUNT(*) FROM products px
+                                 WHERE px.sku=p.sku AND px.active=TRUE), 0) AS erp_matches
+                 FROM inventory i
+                 LEFT JOIN products p ON p.name=i.product AND p.active=TRUE
+                WHERE i.warehouse_id=%s AND i.quantity>0
+                ORDER BY i.product""",
+            (warehouse_id,),
+        )
+        rows = cur.fetchall()
+    hidden = []
+    for r in rows:
+        if r["inactive_product"]:
+            reason = "ERP mahsuloti faol emas yoki topilmadi"
+        elif not r["sku"]:
+            reason = "SKU belgilanmagan"
+        elif int(r["dist_matches"]) == 0:
+            reason = "savdo botda bunday faol SKU yo‘q"
+        elif int(r["dist_matches"]) > 1:
+            reason = "savdo botda SKU dublikat"
+        elif int(r["erp_matches"]) > 1:
+            reason = "ERPda SKU dublikat"
+        else:
+            continue  # eligible — selector already shows it
+        hidden.append({"name": r["name"], "reason": reason})
+    return hidden
+
+
+def get_mahsulot_prices(mahsulot_ids: list[int]) -> dict[int, float | None]:
+    """Savdo bot narxlari (distribution.mahsulotlar.narx, UZS) by mahsulot id.
+    Missing ids are simply absent from the dict; NULL narx maps to None."""
+    ids = [int(x) for x in mahsulot_ids]
+    if not ids:
+        return {}
+    with get_conn() as (conn, cur):
+        cur.execute(
+            "SELECT id, narx FROM distribution.mahsulotlar WHERE id = ANY(%s)",
+            (ids,),
+        )
+        rows = cur.fetchall()
+    return {
+        int(r["id"]): (float(r["narx"]) if r["narx"] is not None else None)
+        for r in rows
+    }
 
 
 def get_containers() -> list[dict]:

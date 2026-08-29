@@ -83,8 +83,16 @@ export function createVehicleReturnRouter(pool: Pool): IRouter {
   const router: IRouter = Router();
   const base = "/vehicle-distribution/pilot";
   // Deliberately authenticate using the shared wall, then explicitly reject its
-  // warehouse-bot actor for every F9 route.
-  router.use(base, makeHandoffAuth(pool), requireAdmin, vehicleDistributionGate, productionLabelsGate);
+  // warehouse-bot actor for every F9 route. Wall ONLY this router's own routes:
+  // a bare `base` prefix would swallow sibling /pilot/* routes (stock, movements,
+  // reconciliations, weekly-summary) behind admin+labels gates they must not have.
+  router.use(
+    [`${base}/returnable-labels`, `${base}/returns`],
+    makeHandoffAuth(pool),
+    requireAdmin,
+    vehicleDistributionGate,
+    productionLabelsGate,
+  );
 
   router.get(`${base}/returnable-labels`, async (req, res) => {
     const c = await pool.connect();

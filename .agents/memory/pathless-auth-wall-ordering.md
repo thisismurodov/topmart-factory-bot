@@ -7,8 +7,11 @@ Rule: in api-server `routes/index.ts`, `requireAuthOrInternalKey` is mounted PAT
 
 **Why:** The vehicle handoff routers were mounted after the ai/ombor/suggestions walls; bot requests carry neither Bearer nor `x-internal-key`, so the first pathless wall 401'd them before they ever reached their own auth. This burned hours chasing "secret mismatch" across Replit production secrets, deployment secret sync, and Railway variables — while dev+prod hash-identical keys kept failing.
 
+Corollary (path-SCOPED walls): a wall mounted on a shared prefix (e.g. `router.use("/vehicle-distribution/pilot", auth, requireAdmin, gates)`) swallows every SIBLING route under that prefix mounted later (`/pilot/stock`, `/pilot/movements`, ...), imposing admin/labels gates those routes must not have. Walls must enumerate their exact route families (`router.use(["/x/stock-targets", "/x/replenishment-requests"], ...)`) — Express path arrays match on segment boundaries, so this stays safe for subpaths of the listed families.
+
 **How to apply / recognize:**
 - Instant (~2ms) `401 {"error":"Not authenticated"}` with a KNOWN-good key, identical in dev and prod, means middleware ordering — reproduce against the dev server FIRST before touching secrets or deployments.
 - Each vehicle router applies its own fail-closed wall to every route it registers (`makeHandoffAuth`, `botAuth`, `makeWeeklySummaryAdminAuth`), so mounting them early leaks nothing.
 - In dev, a valid bot key yields 404 from `vehicleDistributionGate` because `VEHICLE_DISTRIBUTION_ENABLED` is unset there (production-only flag). 404-with-key in dev = gate, not routing.
-- Composition bugs like this are invisible to router-level unit tests; only tests importing `routes/index.ts` (e.g. distribution-fresh-db/analytics) exercise mount order.
+- Composition bugs like this are invisible to router-level unit tests; only tests importing `routes/index.ts` exercise mount order. `test/vehicle-router-stack.test.ts` now pins this class DB-free: valid bot key must hit the vehicle gate (503 marker), never an upstream 401; sibling `/pilot/*` reads must NOT come back 403 from a sibling wall.
+- Symptom split: non-admin dashboard user 403 "Admin role required" (or labels-gate 503) on a route whose own router allows that role = a sibling path-scoped wall captured it.

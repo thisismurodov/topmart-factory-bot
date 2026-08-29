@@ -9,7 +9,7 @@ from .users import get_user, get_admin_telegram_ids
 from .customers import get_balans, update_balans_delta, apply_balans_delta, update_dokon_repeat
 from .sales import (
     create_sale, create_vehicle_pilot_sale, VehiclePilotSaleError,
-    VehiclePilotIdempotencyConflict,
+    VehiclePilotIdempotencyConflict, is_vehicle_pilot_seller,
 )
 from .payments import record_pul_olish, pay_nasiya_fifo
 from .replenishment_delivery import (
@@ -27,7 +27,7 @@ __all__ = [
     "get_balans",
     "update_balans_delta",
     "apply_balans_delta", "create_vehicle_pilot_sale", "VehiclePilotSaleError",
-    "VehiclePilotIdempotencyConflict",
+    "VehiclePilotIdempotencyConflict", "is_vehicle_pilot_seller",
     "update_dokon_repeat",
     "create_sale",
     "record_pul_olish",

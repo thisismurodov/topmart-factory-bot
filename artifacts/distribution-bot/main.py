@@ -82,7 +82,7 @@ def clear_state(uid): user_state.pop(uid,None)
 from database import (
     get_user, get_balans, update_balans_delta, apply_balans_delta,
     update_dokon_repeat, create_sale, record_pul_olish, pay_nasiya_fifo,
-    create_vehicle_pilot_sale, VehiclePilotSaleError,
+    create_vehicle_pilot_sale, VehiclePilotSaleError, is_vehicle_pilot_seller,
     get_admin_telegram_ids,
     acknowledge, deliver_retryable,
 )
@@ -2436,6 +2436,7 @@ def tovar_berish(msg):
         if status=="sunday":
             bot.send_message(uid,"😴 Bugun Juma — dam olish kuni. Marshrut yo'q."); return
         set_state(uid,"savdo_dokon",{"mahsulotlar":mahsulotlar,"tanlangan":{},
+                                      "vehicle_pilot":_is_vehicle_distribution_pilot_user(user),
                                       "operation_key":str(uuid.uuid4())})
         if n==0:
             bot.send_message(uid,
@@ -2455,6 +2456,7 @@ def tovar_berish(msg):
     kb,total,shown,page=_bosh_dokon_kb(uid)
     if total==0: bot.send_message(uid,"❗ Faol dokon yo'q."); return
     set_state(uid,"savdo_dokon",{"mahsulotlar":mahsulotlar,"tanlangan":{},
+                                  "vehicle_pilot":_is_vehicle_distribution_pilot_user(user),
                                   "dokon_page":page,"operation_key":str(uuid.uuid4())})
     bot.send_message(uid,_dokon_page_text(total,shown,page),reply_markup=kb)
 
@@ -2590,11 +2592,28 @@ def s_savdo_pick_mah(msg):
             return
 
 def _is_vehicle_distribution_pilot_user(user):
+    # Yo'naltirish identiteti — users.name imlosi EMAS (prodda "Navro'zbek"
+    # apostrof bilan, delivery_agents da "Navruzbek"): telegram_id ni faol
+    # NAVRUZBEK + faol DM-001/DAMAS biriktiruv zanjiriga solishtiramiz —
+    # sales.py dagi tranzaksion guard bilan bitta identitet manbai.
     return bool(
         os.environ.get("VEHICLE_DISTRIBUTION_ENABLED") == "1"
         and user
-        and str(user[2] or "").strip().upper()=="NAVRUZBEK"
+        and is_vehicle_pilot_seller(user[1])
     )
+
+def _flow_pilot(uid,data):
+    # Pilot qarori savdo oqimi DAVOMIDA barqaror bo'lishi shart: oqim
+    # boshida pinlanadi. Aks holda biriktiruv oqim o'rtasida o'zgarsa,
+    # balansni tashqarida yechish/yechmaslik qarori bilan yakuniy writer
+    # tanlovi ajralib ketadi (ikki marta yechish yoki asossiz qarz
+    # kamayishi). Deploy oldidan boshlangan eski oqimlar uchun fallback —
+    # bir marta baholab shu yerda pinlaymiz.
+    pinned=data.get("vehicle_pilot")
+    if pinned is None:
+        pinned=_is_vehicle_distribution_pilot_user(get_user(uid))
+        data["vehicle_pilot"]=pinned
+    return pinned
 
 @bot.message_handler(func=lambda m:get_state(m.from_user.id)["state"]=="savdo_miqdor")
 def s_savdo_miqdor(msg):
@@ -2604,8 +2623,7 @@ def s_savdo_miqdor(msg):
         if miqdor<=0: raise ValueError
     except:
         bot.send_message(uid,"❗ Iltimos, musbat son kiriting (masalan: 1.5):"); return
-    user=get_user(uid)
-    if _is_vehicle_distribution_pilot_user(user) and not miqdor.is_integer():
+    if _flow_pilot(uid,data) and not miqdor.is_integer():
         bot.send_message(uid,"❗ Mashina savdosida miqdor faqat musbat butun dona bo'lishi kerak."); return
     mid=data["cur_mid"]; nomi=data["cur_nomi"]
     narx=data["cur_narx"]; birlik=data["cur_birlik"]
@@ -2723,8 +2741,7 @@ def _check_balans_before_save(uid,data):
     # aks holda rad etilgan savdo baribir mijoz balansini kamaytirib qo'yadi
     if not _dokon_ruxsat_guard(uid,did): return
     balans=get_balans(did)
-    user=get_user(uid)
-    pilot=_is_vehicle_distribution_pilot_user(user)
+    pilot=_flow_pilot(uid,data)
     if balans>0 and tolov=="nasiya":
         jami=sum(m[2]*data["tanlangan"].get(m[0],0) for m in data["mahsulotlar"])
         deducted=min(balans,jami); yangi_balans=balans-deducted
@@ -2760,8 +2777,7 @@ def s_savdo_balans_confirm(msg):
     if msg.text=="✅ Ha, ayirish":
         jami=sum(m[2]*data["tanlangan"].get(m[0],0) for m in data["mahsulotlar"])
         deducted=min(balans,jami); yangi_balans=balans-deducted
-        user=get_user(uid)
-        if not _is_vehicle_distribution_pilot_user(user):
+        if not _flow_pilot(uid,data):
             apply_balans_delta(data["dokon_id"],-deducted)
         data["balans_ishlatildi"]=deducted; data["yangi_balans"]=yangi_balans
         _save_savdo(uid,data)
@@ -2784,7 +2800,25 @@ def _save_savdo(uid,data):
     # MUHIM: bu nuqtaga kelguncha balans allaqachon yechilgan bo'lishi mumkin
     # (_check_balans_before_save / savdo_balans_confirm). Ruxsat rad etilsa,
     # yechilgan balans qaytariladi — aks holda mijoz savdo yozuvisiz pul yo'qotadi.
-    pilot=_is_vehicle_distribution_pilot_user(user)
+    pilot=_flow_pilot(uid,data)
+    # Yozishdan oldin yangidan tekshiramiz: biriktiruv savdo DAVOMIDA
+    # o'zgargan bo'lsa, writerni almashtirish TAQIQ — pinned=False yo'lda
+    # balans allaqachon tashqarida yechilgan (pilot writer ikkinchi marta
+    # yechardi), pinned=True yo'lda esa yechilmagan (oddiy writer qarzni
+    # asossiz kamaytirardi). Mos kelmasa: pulni qaytarib, aniq xato bilan
+    # bekor qilamiz — jim noto'g'ri yo'ldan yozish yo'q.
+    fresh=_is_vehicle_distribution_pilot_user(user)
+    if fresh!=pilot:
+        deducted=data.get("balans_ishlatildi",0)
+        if deducted>0 and not pilot:
+            apply_balans_delta(data["dokon_id"],deducted)
+            data["balans_ishlatildi"]=0
+        clear_state(uid)
+        bot.send_message(uid,
+            "❗ Savdo saqlanmadi: mashina biriktiruvi savdo davomida o'zgardi.\n"
+            "Iltimos, savdoni boshidan qaytadan kiriting.",
+            reply_markup=main_kb(user[3] if user else None))
+        return
     if not _dokon_ruxsat_guard(uid,data["dokon_id"],user):
         deducted=data.get("balans_ishlatildi",0)
         if deducted>0 and not pilot:

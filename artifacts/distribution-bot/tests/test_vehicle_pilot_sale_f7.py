@@ -41,6 +41,7 @@ from database.sales import (  # noqa: E402
     VehiclePilotSaleError,
     create_sale,
     create_vehicle_pilot_sale,
+    is_vehicle_pilot_seller,
 )
 from database.replenishment_delivery import (  # noqa: E402
     acknowledge,
@@ -102,6 +103,22 @@ class VehiclePilotSaleF7(unittest.TestCase):
         init_db()
         with _db() as conn, conn.cursor() as cur:
             cur.execute(PUBLIC_DDL)
+
+    def test_is_vehicle_pilot_seller_ignores_users_name_spelling(self):
+        # Prod holat: users.name="Navro'zbek" (apostrof), delivery_agents
+        # "Navruzbek" — dispatch users.name ga emas, telegram_id + faol
+        # biriktiruv zanjiriga qarashi shart.
+        with _db() as conn, conn.cursor() as c:
+            c.execute("UPDATE distribution.users SET name=%s WHERE telegram_id=700",
+                      ("Navro'zbek",))
+        self.assertTrue(is_vehicle_pilot_seller(700))
+        self.assertFalse(is_vehicle_pilot_seller(701))
+        self.assertFalse(is_vehicle_pilot_seller(None))
+
+    def test_is_vehicle_pilot_seller_requires_active_assignment(self):
+        with _db() as conn, conn.cursor() as c:
+            c.execute("UPDATE distribution.vehicle_assignments SET status='ended'")
+        self.assertFalse(is_vehicle_pilot_seller(700))
 
     @classmethod
     def tearDownClass(cls):

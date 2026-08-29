@@ -90,6 +90,7 @@ class VehiclePilotBotF7(unittest.TestCase):
         main.set_state(700, "savdo_foto", data)
         with patch.dict(os.environ, {"VEHICLE_DISTRIBUTION_ENABLED": "1"}), \
              patch.object(main, "get_user", return_value=USER_PILOT), \
+             patch.object(main, "is_vehicle_pilot_seller", return_value=True), \
              patch.object(main, "_dokon_ruxsat_guard", return_value=True), \
              patch.object(main, "create_vehicle_pilot_sale", side_effect=pilot), \
              patch.object(main, "create_sale") as legacy, \
@@ -110,6 +111,7 @@ class VehiclePilotBotF7(unittest.TestCase):
         with patch.object(main, "_dokon_ruxsat_guard", return_value=True), \
              patch.object(main, "all_admin_ids", return_value=[]), \
              patch.object(main, "main_kb", return_value=None), \
+             patch.object(main, "is_vehicle_pilot_seller", return_value=True), \
              patch.object(main, "create_vehicle_pilot_sale", return_value=(1, None, 0)) as pilot, \
              patch.object(main, "create_sale", return_value=(2, None, 0)) as legacy:
             for flag in (None, "0"):
@@ -137,6 +139,7 @@ class VehiclePilotBotF7(unittest.TestCase):
         data["balans_ishlatildi"] = 0
         with patch.dict(os.environ, {"VEHICLE_DISTRIBUTION_ENABLED": "1"}), \
              patch.object(main, "get_user", return_value=USER_LEGACY), \
+             patch.object(main, "is_vehicle_pilot_seller", return_value=False), \
              patch.object(main, "_dokon_ruxsat_guard", return_value=True), \
              patch.object(main, "all_admin_ids", return_value=[]), \
              patch.object(main, "main_kb", return_value=None), \
@@ -213,6 +216,7 @@ class VehiclePilotBotF7(unittest.TestCase):
         with patch.dict(os.environ, {"VEHICLE_DISTRIBUTION_ENABLED": "1"}), \
              patch.object(main, "_dokon_ruxsat_guard", return_value=True), \
              patch.object(main, "get_user", return_value=USER_PILOT), \
+             patch.object(main, "is_vehicle_pilot_seller", return_value=True), \
              patch.object(main, "get_balans", return_value=80), \
              patch.object(main, "apply_balans_delta") as external, \
              patch.object(main, "_save_savdo") as save:
@@ -220,6 +224,88 @@ class VehiclePilotBotF7(unittest.TestCase):
         external.assert_not_called()
         save.assert_called_once_with(700, data)
         self.assertEqual(data["balans_ishlatildi"], 80)
+
+    @patch.object(main.bot, "send_message")
+    def test_prod_apostrophe_users_name_still_routes_to_pilot(self, _send):
+        # Prod holat: users.name="Navro'zbek" (apostrof), delivery_agents
+        # esa "Navruzbek" — yo'naltirish ism imlosiga emas, telegram_id +
+        # biriktiruv zanjiriga qarashi shart.
+        prod_user = (1, 700, "Navro'zbek", "agent", "Namangan", None)
+        with patch.dict(os.environ, {"VEHICLE_DISTRIBUTION_ENABLED": "1"}), \
+             patch.object(main, "get_user", return_value=prod_user), \
+             patch.object(main, "is_vehicle_pilot_seller", return_value=True) as chain, \
+             patch.object(main, "_dokon_ruxsat_guard", return_value=True), \
+             patch.object(main, "all_admin_ids", return_value=[]), \
+             patch.object(main, "main_kb", return_value=None), \
+             patch.object(main, "create_vehicle_pilot_sale", return_value=(1, None, 0)) as pilot, \
+             patch.object(main, "create_sale", return_value=(2, None, 0)) as legacy:
+            main._save_savdo(700, sale_data())
+        pilot.assert_called_once()
+        legacy.assert_not_called()
+        chain.assert_called_with(700)
+
+    @patch.object(main.bot, "send_message")
+    def test_assignment_ended_mid_flow_aborts_instead_of_ordinary_writer(self, send):
+        # Precheck pilot=True (balans tashqarida YECHILMAGAN, lekin
+        # balans_ishlatildi saqlangan) → saqlashda fresh=False: oddiy
+        # writerga jim o'tish asossiz qarz kamayishi bo'lardi — savdo aniq
+        # xato bilan bekor, refund YO'Q (tashqi yechish bo'lmagan).
+        data = sale_data()
+        data["vehicle_pilot"] = True
+        with patch.dict(os.environ, {"VEHICLE_DISTRIBUTION_ENABLED": "1"}), \
+             patch.object(main, "get_user", return_value=USER_PILOT), \
+             patch.object(main, "is_vehicle_pilot_seller", return_value=False), \
+             patch.object(main, "apply_balans_delta") as external, \
+             patch.object(main, "main_kb", return_value=None), \
+             patch.object(main, "create_vehicle_pilot_sale") as pilot, \
+             patch.object(main, "create_sale") as legacy:
+            main.set_state(700, "savdo_next", data)
+            main._save_savdo(700, data)
+        pilot.assert_not_called()
+        legacy.assert_not_called()
+        external.assert_not_called()
+        self.assertIsNone(main.get_state(700)["state"])
+
+    @patch.object(main.bot, "send_message")
+    def test_assignment_activated_mid_flow_refunds_and_aborts(self, send):
+        # Precheck pilot=False (balans TASHQARIDA yechilgan) → saqlashda
+        # fresh=True: pilot writer o'sha balansni IKKINCHI marta yechardi —
+        # refund + aniq xato, hech qaysi writer chaqirilmaydi.
+        data = sale_data()
+        data["vehicle_pilot"] = False
+        with patch.dict(os.environ, {"VEHICLE_DISTRIBUTION_ENABLED": "1"}), \
+             patch.object(main, "get_user", return_value=USER_PILOT), \
+             patch.object(main, "is_vehicle_pilot_seller", return_value=True), \
+             patch.object(main, "apply_balans_delta") as external, \
+             patch.object(main, "main_kb", return_value=None), \
+             patch.object(main, "create_vehicle_pilot_sale") as pilot, \
+             patch.object(main, "create_sale") as legacy:
+            main._save_savdo(700, data)
+        pilot.assert_not_called()
+        legacy.assert_not_called()
+        external.assert_called_once_with(10, 80)
+        self.assertEqual(data["balans_ishlatildi"], 0)
+
+    @patch.object(main.bot, "send_message")
+    def test_pinned_decision_stable_at_balance_precheck(self, _send):
+        # Balans bosqichi pinlangan qarordan foydalanadi — DB holati bu
+        # nuqtada yo'nalishni o'zgartira olmaydi (writer tanlovi bilan
+        # balans qarori hech qachon ajralmasin).
+        data = sale_data()
+        data.pop("balans_ishlatildi")
+        data.pop("yangi_balans")
+        data["vehicle_pilot"] = True
+        with patch.dict(os.environ, {"VEHICLE_DISTRIBUTION_ENABLED": "1"}), \
+             patch.object(main, "_dokon_ruxsat_guard", return_value=True), \
+             patch.object(main, "get_user", return_value=USER_PILOT), \
+             patch.object(main, "is_vehicle_pilot_seller", return_value=False) as helper, \
+             patch.object(main, "get_balans", return_value=80), \
+             patch.object(main, "apply_balans_delta") as external, \
+             patch.object(main, "_save_savdo") as save:
+            main._check_balans_before_save(700, data)
+        external.assert_not_called()
+        save.assert_called_once_with(700, data)
+        helper.assert_not_called()
 
 
 if __name__ == "__main__":

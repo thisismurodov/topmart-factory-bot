@@ -85,6 +85,35 @@ def _insert_sale_core(c, dokon_id, agent_id, items, jami, tolov, foto, nasiya_su
     return sid, owner_tg, c.fetchone()[0], details
 
 
+def is_vehicle_pilot_seller(telegram_id):
+    """Yo'naltirish (dispatch) identiteti: True faqat shu telegram_id faol
+    NAVRUZBEK delivery-agentiga tegishli bo'lib, unga faol DM-001/DAMAS
+    biriktirilgan bo'lsa.
+
+    MUHIM: yo'naltirish hech qachon distribution.users.name imlosiga
+    tayanmaydi — prodda users jadvalida "Navro'zbek" (apostrof bilan),
+    delivery_agents da esa "Navruzbek" yozilgan; ism solishtirish haqiqiy
+    pilot savdosini jimgina oddiy yo'lga o'tkazib yuborar edi. Identitet
+    manbai _create_vehicle_pilot_once ichidagi tranzaksion guard bilan bir
+    xil zanjir. Takrorlangan konfiguratsiyada ham True — ichki guard aniq
+    xato bilan to'xtatadi (jim chetlab o'tish yo'q).
+    """
+    if telegram_id is None:
+        return False
+    with transaction() as c:
+        c.execute(
+            """SELECT da.telegram_id
+                 FROM distribution.delivery_agents da
+                 JOIN distribution.vehicle_assignments va
+                   ON va.delivery_agent_id=da.id AND va.status='active'
+                 JOIN distribution.vehicles v ON v.id=va.vehicle_id
+                WHERE da.faol=1 AND upper(btrim(da.name))='NAVRUZBEK'
+                  AND v.plate_number='DM-001' AND v.vehicle_type='DAMAS'
+                  AND v.status='active'""")
+        rows = c.fetchall()
+    return any(r[0] == telegram_id for r in rows)
+
+
 def create_sale(dokon_id, agent_id, items, jami, tolov, foto, nasiya_summa):
     """Save a sale with its detail lines, repeat stats, revisit schedule and
     optional nasiya record — atomically. Returns (sale_id, owner_tg, jami_nasiya_qoldiq).

@@ -456,9 +456,12 @@ export async function approveRequestInTx(
       actor,
     );
   } catch (error) {
-    if (error instanceof HandoffConflictError || error instanceof HandoffValidationError) {
+    if (error instanceof HandoffConflictError) {
       throw new ReplenishmentConflictError(error.message);
     }
+    // HandoffValidationError (jumladan yuklash limiti/me'yor rad etishi) 400
+    // bo'lib o'tishi shart: dashboard 409 body'sini generik xabar bilan
+    // almashtiradi, 400 esa operatorga to'liq izohni ko'rsatadi.
     throw error;
   }
   await client.query(

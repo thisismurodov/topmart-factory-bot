@@ -16,7 +16,7 @@ import {
 } from "@workspace/api-zod";
 import { makeHandoffAuth } from "./handoff-router";
 import { vehicleDistributionGate } from "./index";
-import type { HandoffActor } from "./handoff-service";
+import { HandoffValidationError, type HandoffActor } from "./handoff-service";
 import {
   approveRequestInTx,
   cancelRequestInTx,
@@ -50,6 +50,10 @@ function sendError(req: Request, res: Response, error: unknown, label: string): 
   if (error instanceof ReplenishmentNotFoundError) {
     res.status(404).json({ error: error.message });
   } else if (error instanceof ReplenishmentValidationError) {
+    res.status(400).json({ error: error.message });
+  } else if (error instanceof HandoffValidationError) {
+    // Yuklash limiti (me'yor) rad etilishi izohli 400 bo'lib qolsin —
+    // 409 body dashboardda ataylab generik xabarga almashtiriladi.
     res.status(400).json({ error: error.message });
   } else if (error instanceof ReplenishmentConflictError) {
     res.status(409).json({ error: error.message });

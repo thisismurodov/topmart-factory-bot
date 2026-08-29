@@ -619,6 +619,78 @@ function replayMatches(
 }
 
 /**
+ * F11 load cap: an effective stock target is ALSO the vehicle's load limit.
+ * Planned stock = current vehicle inventory + undelivered pipeline (prepared /
+ * labels_printed / handed_over handoff items) + this request, and it must not
+ * exceed target_quantity. Products with no effective target stay uncapped
+ * (pilot-compatible default). The vehicle warehouse row is locked FOR UPDATE
+ * first so two concurrent creates serialize instead of both passing the
+ * read-then-insert check. Idempotent replays return before this check, so an
+ * existing handoff is always replayable even after the cap tightened.
+ */
+async function enforceStockTargetLoadCap(
+  client: PoolClient,
+  pilot: { vehicleId: number; vehicleWarehouseId: number },
+  items: ResolvedItem[],
+): Promise<void> {
+  // Lock FIRST, then read targets: replaceStockTargetInTx locks this same
+  // vehicle-warehouse row (lockParents), so reading the effective target only
+  // AFTER the lock closes the stale-cap race (a concurrent replacement can't
+  // land between our target read and our insert). The single-row lock also
+  // serializes concurrent creates without touching the {min,max} multi-row
+  // order used by stock transfer.
+  await client.query(`SELECT id FROM warehouses WHERE id=$1 FOR UPDATE`, [
+    pilot.vehicleWarehouseId,
+  ]);
+  // distribution.mahsulotlar does not enforce SKU uniqueness — two distinct
+  // mahsulot ids can resolve to the same canonical SKU, so the cap must see
+  // the SUM of requested quantities per SKU, never each line in isolation.
+  const requestedBySku = new Map<
+    string,
+    { quantity: number; productName: string }
+  >();
+  for (const item of items) {
+    const prev = requestedBySku.get(item.sku);
+    requestedBySku.set(item.sku, {
+      quantity: (prev?.quantity ?? 0) + item.quantity,
+      productName: prev?.productName ?? item.productName,
+    });
+  }
+  for (const [sku, requested] of requestedBySku) {
+    const t = await client.query(
+      `SELECT target_quantity FROM distribution.vehicle_stock_targets
+        WHERE vehicle_id=$1 AND sku=$2 AND effective_from<=CURRENT_DATE
+          AND (effective_to IS NULL OR effective_to>=CURRENT_DATE)
+        ORDER BY effective_from DESC, id DESC LIMIT 1`,
+      [pilot.vehicleId, sku],
+    );
+    if (!t.rows.length) continue; // me'yor yo'q → limit yo'q
+    const target = Number(t.rows[0].target_quantity);
+    const cur = await client.query(
+      `SELECT COALESCE(SUM(quantity),0) AS qty FROM inventory
+        WHERE warehouse_id=$1 AND product=$2`,
+      [pilot.vehicleWarehouseId, requested.productName],
+    );
+    const inFlight = await client.query(
+      `SELECT COALESCE(SUM(hi.quantity_dispatched),0) AS qty
+         FROM distribution.vehicle_handoff_items hi
+         JOIN distribution.vehicle_handoffs h ON h.id=hi.handoff_id
+        WHERE h.vehicle_id=$1 AND hi.sku=$2
+          AND h.status IN ('prepared','labels_printed','handed_over')`,
+      [pilot.vehicleId, sku],
+    );
+    const current = Number(cur.rows[0].qty);
+    const pipeline = Number(inFlight.rows[0].qty);
+    if (current + pipeline + requested.quantity > target) {
+      const allowed = Math.max(0, target - current - pipeline);
+      throw new HandoffValidationError(
+        `${requested.productName}: me’yor (limit) ${target} dona — mashinada ${current} dona, yo‘lda ${pipeline} dona. Yana ko‘pi bilan ${allowed} dona yuklash mumkin.`,
+      );
+    }
+  }
+}
+
+/**
  * Create a prepared handoff idempotently on operationKey.
  *
  * Caller must have opened a transaction. This function takes an advisory lock
@@ -714,6 +786,8 @@ export async function createHandoffInTx(
   for (const item of input.items) {
     resolvedItems.push(await resolveItem(client, item));
   }
+
+  await enforceStockTargetLoadCap(client, pilot, resolvedItems);
 
   const ins = await client.query(
     `INSERT INTO distribution.vehicle_handoffs

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { authFetch } from "@/App";
 import {
   getGetVehicleDistributionPilotStockQueryKey,
   getGetMeQueryKey,
@@ -15,7 +16,7 @@ import {
   type VehicleReplenishmentRequest,
   type VehicleStockTarget,
 } from "@workspace/api-client-react";
-import { AlertCircle, CheckCircle2, Clock3, PackagePlus, Pencil, RefreshCw, XCircle } from "lucide-react";
+import { AlertCircle, CheckCircle2, Clock3, PackagePlus, Pencil, Plus, RefreshCw, XCircle } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,6 +24,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
@@ -62,11 +64,15 @@ function RequestStatus({ status }: { status: string }) {
   return <Badge variant="outline" className={color}>{labels[status] || status}</Badge>;
 }
 
-function TargetDialog({ target, open, onOpenChange }: {
-  target: VehicleStockTarget | null;
+type AddProductOption = { id: number; nomi: string; sku: string };
+
+function TargetDialog({ target, addOptions, open, onOpenChange }: {
+  target: VehicleStockTarget | null; // null → yangi me'yor qo'shish rejimi
+  addOptions: AddProductOption[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const [productId, setProductId] = useState("");
   const [min, setMin] = useState("");
   const [max, setMax] = useState("");
   const key = useRef("");
@@ -75,9 +81,10 @@ function TargetDialog({ target, open, onOpenChange }: {
   const mutation = useReplaceVehicleStockTarget();
 
   useEffect(() => {
-    if (!open || !target) return;
-    setMin(String(target.minQuantity));
-    setMax(String(target.targetQuantity));
+    if (!open) return;
+    setProductId(target ? String(target.mahsulotId) : "");
+    setMin(target ? String(target.minQuantity) : "");
+    setMax(target ? String(target.targetQuantity) : "");
     if (!key.current) key.current = operationKey("stock-target");
   }, [open, target]);
 
@@ -85,15 +92,19 @@ function TargetDialog({ target, open, onOpenChange }: {
     if (!next) key.current = "";
     onOpenChange(next);
   };
+  const selected = target ? null : addOptions.find((p) => String(p.id) === productId) ?? null;
+  const mahsulotId = target ? target.mahsulotId : selected?.id ?? null;
+  const productName = target ? target.productName : selected?.nomi ?? "";
   const minNumber = Number(min);
   const maxNumber = Number(max);
-  const valid = min !== "" && max !== "" && Number.isInteger(minNumber) && Number.isInteger(maxNumber)
+  const numbersValid = min !== "" && max !== "" && Number.isInteger(minNumber) && Number.isInteger(maxNumber)
     && minNumber >= 0 && maxNumber > 0 && minNumber <= maxNumber;
+  const valid = numbersValid && mahsulotId !== null;
 
   const save = () => {
-    if (!target || !valid) return;
+    if (!valid || mahsulotId === null) return;
     mutation.mutate({ data: {
-      mahsulotId: target.mahsulotId,
+      mahsulotId,
       minQuantity: minNumber,
       targetQuantity: maxNumber,
       operationKey: key.current,
@@ -101,9 +112,9 @@ function TargetDialog({ target, open, onOpenChange }: {
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: getListVehicleStockTargetsQueryKey() });
         queryClient.invalidateQueries({ queryKey: getListVehicleReplenishmentRequestsQueryKey() });
-        toast({ title: "Me’yor saqlandi", description: `${target.productName} uchun yangi me’yor kuchga kirdi.` });
+        toast({ title: "Me’yor saqlandi", description: `${productName} uchun yangi me’yor kuchga kirdi.` });
         key.current = "";
-        onOpenChange(false);
+        changeOpen(false);
       },
       onError: (error) => toast({ title: "Saqlanmadi", description: failureMessage(error), variant: "destructive" }),
     });
@@ -113,12 +124,33 @@ function TargetDialog({ target, open, onOpenChange }: {
     <Dialog open={open} onOpenChange={changeOpen}>
       <DialogContent className="w-[calc(100%-2rem)] sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>To‘ldirish me’yorini o‘zgartirish</DialogTitle>
+          <DialogTitle>{target ? "To‘ldirish me’yorini o‘zgartirish" : "Yangi to‘ldirish me’yori"}</DialogTitle>
           <DialogDescription>
-            {target?.productName}. Maqsad — zaxira to‘ldiriladigan yakuniy daraja, buyurtma miqdori emas.
+            {target ? `${target.productName}. ` : ""}Maqsad — zaxira to‘ldiriladigan daraja va ayni paytda yuklash limiti: mashinadagi + yo‘ldagi + yangi yuklash undan oshmaydi.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 py-2">
+          {!target && (
+            <div className="grid gap-2">
+              <Label htmlFor="replenishment-product">Mahsulot</Label>
+              {addOptions.length ? (
+                <Select value={productId} onValueChange={setProductId}>
+                  <SelectTrigger id="replenishment-product" className="min-h-11">
+                    <SelectValue placeholder="Mahsulotni tanlang" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {addOptions.map((p) => (
+                      <SelectItem key={p.id} value={String(p.id)}>{p.nomi} · {p.sku}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <p className="text-sm text-slate-500">
+                  Mos mahsulot qolmadi: savdo katalogidagi SKU orqali ERP bilan bog‘langan barcha mahsulotlar uchun me’yor allaqachon o‘rnatilgan.
+                </p>
+              )}
+            </div>
+          )}
           <div className="grid gap-2">
             <Label htmlFor="replenishment-min">Minimum (dona)</Label>
             <Input id="replenishment-min" inputMode="numeric" type="number" min={0} step={1} value={min} onChange={(e) => setMin(e.target.value)} className="min-h-11" />
@@ -127,12 +159,12 @@ function TargetDialog({ target, open, onOpenChange }: {
             <Label htmlFor="replenishment-target">Maqsad / maksimum (dona)</Label>
             <Input id="replenishment-target" inputMode="numeric" type="number" min={1} step={1} value={max} onChange={(e) => setMax(e.target.value)} className="min-h-11" />
           </div>
-          {!valid && (min !== "" || max !== "") && (
+          {!numbersValid && (min !== "" || max !== "") && (
             <p role="alert" className="text-sm text-red-600">Butun son kiriting: minimum 0 yoki katta, maqsad 1 yoki katta va minimumdan kam bo‘lmasin.</p>
           )}
         </div>
         <DialogFooter>
-          <Button variant="outline" className="min-h-11" onClick={() => onOpenChange(false)}>Yopish</Button>
+          <Button variant="outline" className="min-h-11" onClick={() => changeOpen(false)}>Yopish</Button>
           <Button className="min-h-11" disabled={!valid || mutation.isPending} onClick={save}>
             {mutation.isPending ? "Saqlanmoqda…" : "Me’yorni saqlash"}
           </Button>
@@ -229,7 +261,19 @@ export function VehicleReplenishment({ active }: { active: boolean }) {
   const create = useCreateVehicleReplenishmentRequest();
   const requestKeys = useRef<Record<number, string>>({});
   const [editing, setEditing] = useState<VehicleStockTarget | null>(null);
+  const [adding, setAdding] = useState(false);
   const isAdmin = me?.role === "admin";
+  // Savdo katalogi (distribution.mahsulotlar) — yangi me'yor uchun mahsulot
+  // tanlash. SalesBotProductsSection bilan bir xil query kalit: kesh umumiy.
+  const products = useQuery<{ id: number; nomi: string; sku: string; faol: boolean; erpBor: boolean }[]>({
+    queryKey: ["savdo-bot-products"],
+    queryFn: async () => {
+      const res = await authFetch("/api/distribution/products");
+      if (!res.ok) throw new Error("Savdo katalogi yuklanmadi");
+      return res.json();
+    },
+    enabled: active && isAdmin,
+  });
 
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: getListVehicleStockTargetsQueryKey() });
@@ -240,6 +284,12 @@ export function VehicleReplenishment({ active }: { active: boolean }) {
     .filter((request) => request.status === "pending" || request.status === "approved")
     .map((request) => request.mahsulotId));
   const currentTargets = (targets.data?.targets || []).filter((target) => target.effectiveTo === null);
+  const targetProductIds = new Set(currentTargets.map((target) => target.mahsulotId));
+  // Server PUT'da mappingni qat'iy tekshiradi — bu filtr faqat qulay tanlov uchun.
+  const addOptions = (products.data || [])
+    .filter((p) => p.faol && p.sku && p.erpBor && !targetProductIds.has(p.id))
+    .map((p) => ({ id: p.id, nomi: p.nomi, sku: p.sku }))
+    .sort((a, b) => a.nomi.localeCompare(b.nomi, "uz"));
 
   const requestRefill = (target: VehicleStockTarget) => {
     requestKeys.current[target.mahsulotId] ||= operationKey("replenishment");
@@ -265,11 +315,18 @@ export function VehicleReplenishment({ active }: { active: boolean }) {
       <div className="flex flex-col gap-3 border-b bg-white p-4 sm:flex-row sm:items-start sm:justify-between sm:p-5">
         <div>
           <h3 className="flex items-center gap-2 font-semibold text-slate-800"><PackagePlus className="h-5 w-5 text-indigo-600" /> Avto zaxirani to‘ldirish</h3>
-          <p className="mt-1 max-w-2xl text-sm text-slate-500">Minimum past zaxirani bildiradi. Maqsad (maksimum) — mahsulot yetkazilgach zaxira to‘ldiriladigan daraja.</p>
+          <p className="mt-1 max-w-2xl text-sm text-slate-500">Minimum past zaxirani bildiradi. Maqsad (maksimum) — to‘ldiriladigan daraja va ayni paytda yuklash limiti: me’yorli mahsulot mashinaga maqsaddan ortiq yuklanmaydi.</p>
         </div>
-        <Button variant="outline" className="min-h-11 shrink-0 self-start" onClick={refresh} disabled={targets.isFetching || requests.isFetching}>
-          <RefreshCw className={`mr-2 h-4 w-4 ${targets.isFetching || requests.isFetching ? "animate-spin" : ""}`} /> Yangilash
-        </Button>
+        <div className="flex shrink-0 flex-wrap gap-2 self-start">
+          {isAdmin && (
+            <Button className="min-h-11" onClick={() => setAdding(true)}>
+              <Plus className="mr-2 h-4 w-4" /> Yangi me’yor
+            </Button>
+          )}
+          <Button variant="outline" className="min-h-11" onClick={refresh} disabled={targets.isFetching || requests.isFetching}>
+            <RefreshCw className={`mr-2 h-4 w-4 ${targets.isFetching || requests.isFetching ? "animate-spin" : ""}`} /> Yangilash
+          </Button>
+        </div>
       </div>
 
       {loading ? (
@@ -286,7 +343,16 @@ export function VehicleReplenishment({ active }: { active: boolean }) {
           <section aria-labelledby="targets-title">
             <h4 id="targets-title" className="mb-3 font-semibold text-slate-700">Joriy me’yorlar</h4>
             {!currentTargets.length ? (
-              <div className="rounded-md border border-dashed p-8 text-center text-sm text-slate-500">To‘ldirish me’yorlari hali o‘rnatilmagan.</div>
+              <div className="rounded-md border border-dashed p-8 text-center text-sm text-slate-500">
+                To‘ldirish me’yorlari hali o‘rnatilmagan.
+                {isAdmin && (
+                  <div className="mt-3">
+                    <Button variant="outline" className="min-h-11" onClick={() => setAdding(true)}>
+                      <Plus className="mr-2 h-4 w-4" /> Birinchi me’yorni qo‘shish
+                    </Button>
+                  </div>
+                )}
+              </div>
             ) : (
               <>
                 <div className="grid gap-3 md:hidden">
@@ -347,7 +413,17 @@ export function VehicleReplenishment({ active }: { active: boolean }) {
           </section>
         </div>
       )}
-      <TargetDialog target={editing} open={editing !== null} onOpenChange={(open) => !open && setEditing(null)} />
+      <TargetDialog
+        target={editing}
+        addOptions={addOptions}
+        open={editing !== null || adding}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEditing(null);
+            setAdding(false);
+          }
+        }}
+      />
     </div>
   );
 }

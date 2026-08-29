@@ -1971,6 +1971,163 @@ describe("F8 stock targets", () => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// F11 load cap — an effective stock target is ALSO the vehicle's load limit
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function createHandoff(
+  mahsulotId: number,
+  quantity: number,
+): Promise<Resp> {
+  return call("POST", "/vehicle-distribution/handoffs", {
+    token: adminToken,
+    body: {
+      sourceWarehouseId: erpWarehouseId,
+      items: [{ mahsulotId, quantity }],
+      operationKey: opKey(),
+    },
+  });
+}
+
+describe("F11 load cap (me’yor = yuklash limiti)", () => {
+  it("target quantity caps a new handoff; at-limit passes, over-limit → 400", async () => {
+    expect((await putTarget()).status).toBe(200); // min 3, target 10
+    const over = await createHandoff(prodA.mahsulotId, 11);
+    expect(over.status).toBe(400);
+    expect(String(over.body.error)).toContain("me’yor (limit) 10");
+    const ok = await createHandoff(prodA.mahsulotId, 10);
+    expect(ok.status).toBe(200);
+  });
+
+  it("counts current vehicle stock + in-flight handoffs toward the cap", async () => {
+    expect((await putTarget()).status).toBe(200); // target 10
+    await setStock(vehicleWarehouseId, prodA.name, 4, 10);
+    await makePrepared(3); // in-flight pipeline
+    const over = await createHandoff(prodA.mahsulotId, 4); // 4+3+4=11 > 10
+    expect(over.status).toBe(400);
+    expect(String(over.body.error)).toContain("mashinada 4 dona");
+    expect(String(over.body.error)).toContain("yo‘lda 3 dona");
+    expect(String(over.body.error)).toContain("ko‘pi bilan 3 dona");
+    const ok = await createHandoff(prodA.mahsulotId, 3); // 4+3+3=10 → OK
+    expect(ok.status).toBe(200);
+  });
+
+  it("cancelled handoffs free the cap; products without a target stay uncapped", async () => {
+    expect((await putTarget()).status).toBe(200); // prodA target 10
+    const { handoffId } = await makePrepared(10);
+    expect(
+      (
+        await call(
+          "POST",
+          `/vehicle-distribution/handoffs/${handoffId}/cancel`,
+          { token: adminToken },
+        )
+      ).status,
+    ).toBe(200);
+    const ok = await createHandoff(prodA.mahsulotId, 10);
+    expect(ok.status).toBe(200);
+    // prodB has no target → not capped.
+    const noCap = await createHandoff(prodB.mahsulotId, 50);
+    expect(noCap.status).toBe(200);
+  });
+
+  it("full replenishment approval stays within the cap (target-current fits)", async () => {
+    expect((await putTarget()).status).toBe(200); // min 3, target 10
+    await setStock(vehicleWarehouseId, prodA.name, 2, 5);
+    const req = await manualRequest(); // requested = 10-2 = 8
+    expect(req.status).toBe(200);
+    const approve = await call(
+      "POST",
+      `/vehicle-distribution/pilot/replenishment-requests/${req.body.id}/approve`,
+      { token: adminToken },
+    );
+    expect(approve.status).toBe(200); // 2 + 0 + 8 = 10 ≤ 10
+    expect(approve.body.handoffId).toBeTruthy();
+  });
+
+  it("multi-item handoff: one capped line over the limit rejects atomically", async () => {
+    expect((await putTarget()).status).toBe(200); // prodA target 10
+    const over = await call("POST", "/vehicle-distribution/handoffs", {
+      token: adminToken,
+      body: {
+        sourceWarehouseId: erpWarehouseId,
+        items: [
+          { mahsulotId: prodA.mahsulotId, quantity: 11 },
+          { mahsulotId: prodB.mahsulotId, quantity: 5 },
+        ],
+        operationKey: opKey(),
+      },
+    });
+    expect(over.status).toBe(400);
+    expect(String(over.body.error)).toContain("me’yor (limit) 10");
+    // Rad atomik bo'lgan: muvaffaqiyatsiz urinish pipeline'da iz qoldirmaydi,
+    // shuning uchun xuddi shu juftlik limit ichida bemalol o'tadi.
+    const ok = await call("POST", "/vehicle-distribution/handoffs", {
+      token: adminToken,
+      body: {
+        sourceWarehouseId: erpWarehouseId,
+        items: [
+          { mahsulotId: prodA.mahsulotId, quantity: 10 },
+          { mahsulotId: prodB.mahsulotId, quantity: 5 },
+        ],
+        operationKey: opKey(),
+      },
+    });
+    expect(ok.status).toBe(200);
+  });
+
+  it("idempotent replay stays 200 after the target is tightened below in-flight", async () => {
+    expect((await putTarget()).status).toBe(200); // target 10
+    const operationKey = opKey();
+    const body = {
+      sourceWarehouseId: erpWarehouseId,
+      items: [{ mahsulotId: prodA.mahsulotId, quantity: 6 }],
+      operationKey,
+    };
+    const first = await call("POST", "/vehicle-distribution/handoffs", {
+      token: adminToken,
+      body,
+    });
+    expect(first.status).toBe(200);
+    // Me'yorni yo'ldagi 6 donadan pastga tushiramiz.
+    expect(
+      (await putTarget(prodA, { minQuantity: 0, targetQuantity: 5 })).status,
+    ).toBe(200);
+    const replay = await call("POST", "/vehicle-distribution/handoffs", {
+      token: adminToken,
+      body,
+    });
+    expect(replay.status).toBe(200); // replay avval qaytadi — cap qayta tekshirilmaydi
+    expect(replay.body.id).toBe(first.body.id);
+    // Yangi yuklashga esa endi joy yo'q.
+    const blocked = await createHandoff(prodA.mahsulotId, 1);
+    expect(blocked.status).toBe(400);
+    expect(String(blocked.body.error)).toContain("ko‘pi bilan 0 dona");
+  });
+
+  it("approve rejection by the cap is a 400 with the me’yor text; request stays pending", async () => {
+    expect((await putTarget()).status).toBe(200); // min 3, target 10; stock 0
+    const req = await manualRequest(); // requested = 10 - 0 = 10
+    expect(req.status).toBe(200);
+    // Cap'ning katta qismini alohida handoff egallab turadi.
+    expect((await createHandoff(prodA.mahsulotId, 6)).status).toBe(200);
+    const approve = await call(
+      "POST",
+      `/vehicle-distribution/pilot/replenishment-requests/${req.body.id}/approve`,
+      { token: adminToken },
+    );
+    expect(approve.status).toBe(400); // 0 + 6 + 10 > 10 — 409 EMAS, izoh ko'rinadi
+    expect(String(approve.body.error)).toContain("me’yor (limit) 10");
+    const detail = await call(
+      "GET",
+      `/vehicle-distribution/pilot/replenishment-requests/${req.body.id}`,
+      { token: adminToken },
+    );
+    expect(detail.status).toBe(200);
+    expect(detail.body.status).toBe("pending"); // rollback — keyin bekor qilsa bo'ladi
+  });
+});
+
 describe("F8 manual request", () => {
   it("computes target-current server-side, supports bot/admin reads and idempotency", async () => {
     await putTarget();

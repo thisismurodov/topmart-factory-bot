@@ -126,24 +126,42 @@ def create_sale(dokon_id, agent_id, items, jami, tolov, foto, nasiya_summa):
     return sid, owner_tg, qoldiq
 
 
-def _integer(value):
+def _positive_quantity(value):
+    """Musbat, chekli, ko'pi bilan 3 xona kasrli miqdor (Decimal).
+
+    Dona/kg farqini bilmaydi: butunlik talabi birlik ma'lum bo'lgan joyda
+    (_create_vehicle_pilot_once) qo'yiladi — kg mahsulotlar kasr sotiladi
+    (masalan 5.7 kg), dona mahsulotlar esa faqat butun son.
+    """
     try:
         d = Decimal(str(value))
     except (InvalidOperation, ValueError):
-        raise VehiclePilotSaleError("Miqdor musbat butun son bo'lishi kerak.")
-    if not d.is_finite() or d <= 0 or d != d.to_integral_value():
-        raise VehiclePilotSaleError("Miqdor musbat butun son bo'lishi kerak.")
-    return int(d)
+        raise VehiclePilotSaleError("Miqdor musbat son bo'lishi kerak.")
+    if not d.is_finite() or d <= 0:
+        raise VehiclePilotSaleError("Miqdor musbat son bo'lishi kerak.")
+    try:
+        if d != d.quantize(Decimal("0.001")):
+            raise VehiclePilotSaleError(
+                "Miqdor ko'pi bilan 3 xona kasr bo'lishi mumkin.")
+    except InvalidOperation:
+        raise VehiclePilotSaleError("Miqdor juda katta.")
+    return d
 
 
 def _fingerprint(dokon_id, agent_id, items, jami, tolov, foto, nasiya_summa,
                  balance_deduction, payment_values):
+    def _qty_key(value):
+        d = _positive_quantity(value)
+        # Butun miqdor eski (int) ko'rinishda qoladi — mavjud dona
+        # savdolarining fingerprintlari o'zgarmasligi shart.
+        return int(d) if d == d.to_integral_value() else str(d.normalize())
+
     lines = sorted(
-        [{"product_id": int(mid), "quantity": _integer(qty),
+        [{"product_id": int(mid), "quantity": _qty_key(qty),
           "price": str(Decimal(str(price)).normalize()),
-          "sum": str((Decimal(str(price)) * _integer(qty)).normalize())}
+          "sum": str((Decimal(str(price)) * _positive_quantity(qty)).normalize())}
          for mid, qty, price in items],
-        key=lambda x: (x["product_id"], x["price"], x["quantity"]),
+        key=lambda x: (x["product_id"], x["price"], str(x["quantity"])),
     )
     payload = {
         "agent_id": int(agent_id), "customer_id": int(dokon_id), "lines": lines,
@@ -326,11 +344,25 @@ def _create_vehicle_pilot_once(dokon_id, agent_id, items, jami, tolov, foto,
 
         mapped = []
         for mid, qty_raw, price in items:
-            qty = _integer(qty_raw)
-            c.execute("SELECT nomi,btrim(COALESCE(sku,'')) FROM distribution.mahsulotlar "
-                      "WHERE id=%s AND faol=1", (mid,))
+            qty = _positive_quantity(qty_raw)
+            c.execute("SELECT nomi,btrim(COALESCE(sku,'')),"
+                      "lower(btrim(COALESCE(NULLIF(birlik,''),'dona'))) "
+                      "FROM distribution.mahsulotlar WHERE id=%s AND faol=1", (mid,))
             dist = c.fetchone()
-            if not dist or not dist[1]:
+            if not dist:
+                raise VehiclePilotSaleError("Mahsulot SKU bo'sh, faol emas yoki topilmadi.")
+            if dist[2] != "dona":
+                # kg (yoki boshqa o'lchov) mahsulot mashinaga yuklanmaydi:
+                # yuklash (F6) faqat dona-etiketka orqali bo'ladi. Bunday qator
+                # mashina zaxirasi/etiketka intizomiga tegmasdan oddiy savdo
+                # sifatida yoziladi (savdo_tafsilotda qoladi, stock_movements,
+                # allokatsiya va replenishment ochilmaydi).
+                continue
+            if qty != qty.to_integral_value():
+                raise VehiclePilotSaleError(
+                    "Dona mahsulot miqdori musbat butun son bo'lishi kerak.")
+            qty = int(qty)
+            if not dist[1]:
                 raise VehiclePilotSaleError("Mahsulot SKU bo'sh, faol emas yoki topilmadi.")
             sku = dist[1]
             c.execute(
@@ -477,7 +509,7 @@ def create_vehicle_pilot_sale(dokon_id, agent_id, items, jami, tolov, foto,
     order = []
     for mid, qty, price in raw_items:
         mid = int(mid)
-        qty = _integer(qty)
+        qty = _positive_quantity(qty)
         try:
             price = Decimal(str(price))
         except (InvalidOperation, ValueError):
@@ -501,9 +533,19 @@ def create_vehicle_pilot_sale(dokon_id, agent_id, items, jami, tolov, foto,
         prepayment = Decimal(str(balance_deduction))
     except (InvalidOperation, ValueError):
         raise VehiclePilotSaleError("Savdo to'lov summasi noto'g'ri.")
-    if (not declared_total.is_finite() or declared_total != expected_total or
-            not debt.is_finite() or debt < 0 or not prepayment.is_finite() or
-            prepayment < 0):
+    if (not declared_total.is_finite() or not debt.is_finite() or debt < 0 or
+            not prepayment.is_finite() or prepayment < 0):
+        raise VehiclePilotSaleError("Savdo jami yoki to'lov summasi qatorlarga mos emas.")
+    # Deklaratsiya qilingan jami 0.001 to'rida YOTISHI va qatorlar yig'indisiga
+    # AYNAN teng bo'lishi shart. Ikkala tomonni kvantlab solishtirish mumkin
+    # emas: u ±0.0005 gacha boshqa jami (masalan 1.4996 vs 1.500) o'tkazib,
+    # BIGINT yumaloqlashida sarlavha/qator summalarini ajratib yuborar edi.
+    # Bot jami'ni round(...,3) bilan yuboradi — halol payload doim to'rda.
+    try:
+        on_grid = declared_total == declared_total.quantize(Decimal("0.001"))
+    except InvalidOperation:
+        on_grid = False
+    if not on_grid or declared_total != expected_total:
         raise VehiclePilotSaleError("Savdo jami yoki to'lov summasi qatorlarga mos emas.")
     fingerprint = _fingerprint(
         dokon_id, agent_id, items, jami, tolov, foto, nasiya_summa,

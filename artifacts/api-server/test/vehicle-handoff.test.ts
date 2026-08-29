@@ -2089,6 +2089,15 @@ describe("F11 load cap (me’yor = yuklash limiti)", () => {
       body,
     });
     expect(first.status).toBe(200);
+    // F8 tarixi kunlik granulyar: xuddi shu kunga ikkinchi PUT ataylab 409
+    // (overlap) qaytaradi. Toraytirish real hayotda keyingi kunlarda bo'ladi —
+    // amaldagi me'yorni kechadan beri amal qilayotgandek backdate qilamiz.
+    await client.query(
+      `UPDATE distribution.vehicle_stock_targets
+          SET effective_from=CURRENT_DATE-1
+        WHERE effective_to IS NULL AND sku=$1`,
+      [prodA.sku],
+    );
     // Me'yorni yo'ldagi 6 donadan pastga tushiramiz.
     expect(
       (await putTarget(prodA, { minQuantity: 0, targetQuantity: 5 })).status,

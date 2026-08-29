@@ -239,6 +239,114 @@ class VehiclePilotSaleF7(unittest.TestCase):
             c.execute(sql, args)
             return c.fetchone()[0]
 
+    def _yangi_mahsulot(self, nomi, narx, sku, birlik):
+        with _db() as conn, conn.cursor() as c:
+            c.execute(
+                "INSERT INTO distribution.mahsulotlar(nomi,narx,faol,sku,birlik) "
+                "VALUES(%s,%s,1,%s,%s) RETURNING id", (nomi, narx, sku, birlik))
+            return c.fetchone()[0]
+
+    # F9: kg (o'lchovli) mahsulotlar pilot savdosida kasr miqdor bilan,
+    # mashina zaxirasi/etiketka intizomiga tegmasdan sotiladi.
+
+    def test_f9_kg_item_sells_fractional_without_vehicle_stock(self):
+        kg_mid = self._yangi_mahsulot("Gilam tros kurtka tros", 24000, "", "kg")
+        jami = 24000 * 5.7  # bot jami'ni xuddi shunday float bilan yig'adi
+        sid, _, _ = create_vehicle_pilot_sale(
+            self.shop, 700, [(kg_mid, 5.7, 24000)], jami, "naqd", None, 0,
+            str(uuid.uuid4()), 0, {"naqd": jami, "karta": 0, "nasiya": 0})
+        self.assertAlmostEqual(float(self.scalar(
+            "SELECT miqdor FROM distribution.savdo_tafsilot WHERE savdo_id=%s",
+            (sid,))), 5.7)
+        self.assertEqual(self.scalar(
+            "SELECT COUNT(*) FROM public.stock_movements"), 0)
+        self.assertEqual(self.scalar(
+            "SELECT COUNT(*) FROM distribution.vehicle_sale_allocations"), 0)
+        self.assertEqual(self.scalar(
+            "SELECT COUNT(*) FROM distribution.vehicle_unit_events "
+            "WHERE event_type='sale'"), 0)
+        self.assertEqual(float(self.scalar(
+            "SELECT quantity FROM public.inventory WHERE warehouse_id=%s",
+            (self.warehouse,))), 5.0)
+        self.assertEqual(self.scalar(
+            "SELECT COUNT(*) FROM distribution.vehicle_replenishment_requests"), 0)
+
+    def test_f9_mixed_dona_kg_sale_only_dona_touches_stock(self):
+        # kg mahsulotda SKU bo'lsa ham (public mos yozuvsiz) qator oddiy savdo
+        # bo'lib qoladi — birlik hal qiladi, SKU emas.
+        kg_mid = self._yangi_mahsulot("Arqon kg", 24000, "KG-SKU", "kg")
+        jami = 2 * 100 + 24000 * 2.5
+        sid, _, _ = create_vehicle_pilot_sale(
+            self.shop, 700, [(self.mid, 2, 100), (kg_mid, 2.5, 24000)], jami,
+            "naqd", None, 0, str(uuid.uuid4()), 0,
+            {"naqd": jami, "karta": 0, "nasiya": 0})
+        self.assertEqual(self.scalar(
+            "SELECT COUNT(*) FROM distribution.savdo_tafsilot WHERE savdo_id=%s",
+            (sid,)), 2)
+        self.assertEqual(float(self.scalar(
+            "SELECT quantity FROM public.inventory WHERE warehouse_id=%s",
+            (self.warehouse,))), 3.0)
+        self.assertEqual(self.scalar(
+            "SELECT COUNT(*) FROM public.stock_movements WHERE movement_type='OUT'"), 1)
+        self.assertEqual(float(self.scalar(
+            "SELECT COALESCE(SUM(allocated_quantity),0) "
+            "FROM distribution.vehicle_sale_allocations")), 2.0)
+        self.assertEqual(self.scalar(
+            "SELECT COUNT(*) FROM distribution.vehicle_sale_allocations "
+            "WHERE mahsulot_id=%s", (kg_mid,)), 0)
+        self.assertEqual(self.scalar(
+            "SELECT COUNT(*) FROM distribution.vehicle_replenishment_requests "
+            "WHERE mahsulot_id=%s", (kg_mid,)), 0)
+
+    def test_f9_dona_fractional_still_rejected_atomically(self):
+        with self.assertRaises(VehiclePilotSaleError) as ctx:
+            create_vehicle_pilot_sale(
+                self.shop, 700, [(self.mid, 2.5, 100)], 250, "naqd", None, 0,
+                str(uuid.uuid4()), 0, {"naqd": 250, "karta": 0, "nasiya": 0})
+        self.assertIn("butun son", str(ctx.exception))
+        self.assertEqual(self.scalar(
+            "SELECT COUNT(*) FROM distribution.savdolar"), 0)
+
+    def test_f9_quantity_more_than_3_decimals_rejected(self):
+        kg_mid = self._yangi_mahsulot("Arqon kg", 24000, "", "kg")
+        with self.assertRaises(VehiclePilotSaleError):
+            create_vehicle_pilot_sale(
+                self.shop, 700, [(kg_mid, 0.0001, 24000)], 2.4, "naqd", None, 0,
+                str(uuid.uuid4()), 0, {"naqd": 2.4, "karta": 0, "nasiya": 0})
+        self.assertEqual(self.scalar(
+            "SELECT COUNT(*) FROM distribution.savdolar"), 0)
+
+    def test_f9_total_must_sit_on_grid_and_match_exactly(self):
+        # Kvantlash-tolerans ekspluatatsiyasi yopiq: 1.4996 ham (to'rdan
+        # tashqari), 1.499 ham (to'rda, lekin noto'g'ri) o'tmasligi shart —
+        # aks holda BIGINT yumaloqlashda sarlavha va qator summalari ajraladi.
+        kg_mid = self._yangi_mahsulot("Arzon tros", 1, "", "kg")
+        for yolgon_jami in (1.4996, 1.499):
+            with self.assertRaises(VehiclePilotSaleError):
+                create_vehicle_pilot_sale(
+                    self.shop, 700, [(kg_mid, 1.5, 1)], yolgon_jami, "naqd",
+                    None, 0, str(uuid.uuid4()), 0,
+                    {"naqd": yolgon_jami, "karta": 0, "nasiya": 0})
+        self.assertEqual(self.scalar(
+            "SELECT COUNT(*) FROM distribution.savdolar"), 0)
+        sid, _, _ = create_vehicle_pilot_sale(
+            self.shop, 700, [(kg_mid, 1.5, 1)], 1.5, "naqd", None, 0,
+            str(uuid.uuid4()), 0, {"naqd": 1.5, "karta": 0, "nasiya": 0})
+        self.assertEqual(self.scalar(
+            "SELECT COUNT(*) FROM distribution.savdolar WHERE id=%s", (sid,)), 1)
+
+    def test_f9_kg_sale_replays_idempotently(self):
+        kg_mid = self._yangi_mahsulot("Arqon kg", 24000, "", "kg")
+        key = str(uuid.uuid4())
+        jami = 24000 * 5.7
+        args = (self.shop, 700, [(kg_mid, 5.7, 24000)], jami, "naqd", None, 0,
+                key, 0, {"naqd": jami, "karta": 0, "nasiya": 0})
+        sid1, _, _ = create_vehicle_pilot_sale(*args)
+        sid2, _, _ = create_vehicle_pilot_sale(*args)
+        self.assertEqual(sid1, sid2)
+        self.assertEqual(self.scalar(
+            "SELECT COUNT(*) FROM distribution.savdolar"), 1)
+
     def snapshot(self):
         tables = [
             "savdolar", "savdo_tafsilot", "nasiya", "revisitlar",

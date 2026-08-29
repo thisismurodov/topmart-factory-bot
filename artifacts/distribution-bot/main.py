@@ -2620,15 +2620,28 @@ def s_savdo_miqdor(msg):
     uid=msg.from_user.id; data=get_state(uid)["data"]
     try:
         miqdor=float(msg.text.strip().replace(",","."))
-        if miqdor<=0: raise ValueError
+        # nan (miqdor!=miqdor) va inf ham float() dan o'tadi — ikkalasi rad:
+        # aks holda quyidagi round(miqdor,3) OverflowError bilan yiqiladi.
+        if miqdor!=miqdor or miqdor==float("inf") or miqdor<=0: raise ValueError
     except:
         bot.send_message(uid,"❗ Iltimos, musbat son kiriting (masalan: 1.5):"); return
-    if _flow_pilot(uid,data) and not miqdor.is_integer():
-        bot.send_message(uid,"❗ Mashina savdosida miqdor faqat musbat butun dona bo'lishi kerak."); return
+    if _flow_pilot(uid,data):
+        # Dona mahsulot — butun son (etiketkali zaxira donada yechiladi);
+        # kg mahsulot — kasr mumkin (masalan 5.7), lekin ko'pi bilan 3 xona:
+        # DB qatlami (F7) ham xuddi shu chegarani qo'yadi.
+        if str(data.get("cur_birlik") or "").strip().lower()=="dona":
+            if not miqdor.is_integer():
+                bot.send_message(uid,"❗ Dona mahsulotda miqdor faqat musbat butun son bo'lishi kerak (masalan: 3)."); return
+        elif round(miqdor,3)!=miqdor:
+            bot.send_message(uid,"❗ Miqdor ko'pi bilan 3 xona kasr bo'lishi mumkin (masalan: 5.775)."); return
     mid=data["cur_mid"]; nomi=data["cur_nomi"]
     narx=data["cur_narx"]; birlik=data["cur_birlik"]
     prev=data["tanlangan"].get(mid,0)
     yangi=prev+miqdor
+    if _flow_pilot(uid,data):
+        # float yig'indisi kasrlarda mikro-xato beradi (5.7+2.4=8.100000000000001)
+        # — F7 dagi 3-xona chegarasidan o'tishi uchun shu yerda tozalaymiz.
+        yangi=round(yangi,3)
     data["tanlangan"][mid]=yangi
     total_line=fmt(narx*yangi)
     set_state(uid,"savdo_next",data)
@@ -2698,7 +2711,7 @@ def s_aralash_nasiya_h(msg):
     uid=msg.from_user.id; data=get_state(uid)["data"]
     try: data["nasiya_qism"]=int(msg.text.replace(" ","").replace(",",""))
     except: bot.send_message(uid,"❗ Raqam kiriting:"); return
-    jami=sum(m[2]*data["tanlangan"].get(m[0],0) for m in data["mahsulotlar"])
+    jami=round(sum(m[2]*data["tanlangan"].get(m[0],0) for m in data["mahsulotlar"]),3)
     n=data["naqd"]; k=data["karta"]; nas=data["nasiya_qism"]
     total=n+k+nas; diff=jami-total
     warn=""
@@ -2743,7 +2756,7 @@ def _check_balans_before_save(uid,data):
     balans=get_balans(did)
     pilot=_flow_pilot(uid,data)
     if balans>0 and tolov=="nasiya":
-        jami=sum(m[2]*data["tanlangan"].get(m[0],0) for m in data["mahsulotlar"])
+        jami=round(sum(m[2]*data["tanlangan"].get(m[0],0) for m in data["mahsulotlar"]),3)
         deducted=min(balans,jami); yangi_balans=balans-deducted
         if not pilot: apply_balans_delta(did,-deducted)
         data["balans_ishlatildi"]=deducted; data["yangi_balans"]=yangi_balans
@@ -2775,7 +2788,7 @@ def s_savdo_balans_confirm(msg):
     # orasida dokon o'chirilishi/qayta biriktirilishi mumkin)
     if not _dokon_ruxsat_guard(uid,data["dokon_id"]): return
     if msg.text=="✅ Ha, ayirish":
-        jami=sum(m[2]*data["tanlangan"].get(m[0],0) for m in data["mahsulotlar"])
+        jami=round(sum(m[2]*data["tanlangan"].get(m[0],0) for m in data["mahsulotlar"]),3)
         deducted=min(balans,jami); yangi_balans=balans-deducted
         if not _flow_pilot(uid,data):
             apply_balans_delta(data["dokon_id"],-deducted)
@@ -2824,7 +2837,7 @@ def _save_savdo(uid,data):
         if deducted>0 and not pilot:
             apply_balans_delta(data["dokon_id"],deducted)
         return
-    jami=sum(m[2]*data["tanlangan"].get(m[0],0) for m in data["mahsulotlar"])
+    jami=round(sum(m[2]*data["tanlangan"].get(m[0],0) for m in data["mahsulotlar"]),3)
     tolov=data["tolov"]
     items=[]; lines=[]
     for m in data["mahsulotlar"]:

@@ -173,6 +173,73 @@ class VehiclePilotBotF7(unittest.TestCase):
                 self.assertEqual(state["data"]["tanlangan"][5], 3.5)
 
     @patch.object(main.bot, "send_message")
+    def test_pilot_kg_item_accepts_fractional_quantity(self, _send):
+        # F9: kg mahsulotda kasr miqdor (5.7) pilot oqimida qabul qilinadi.
+        with patch.object(main, "_next_kb", return_value=None):
+            data = sale_data()
+            data.update({"cur_mid": 8, "cur_nomi": "Gilam tros",
+                         "cur_narx": 24000, "cur_birlik": "kg",
+                         "vehicle_pilot": True})
+            main.set_state(700, "savdo_miqdor", data)
+            main.s_savdo_miqdor(message("5.7"))
+            state = main.get_state(700)
+            self.assertEqual(state["state"], "savdo_next")
+            self.assertEqual(state["data"]["tanlangan"][8], 5.7)
+
+    @patch.object(main.bot, "send_message")
+    def test_pilot_kg_accumulation_stays_within_3_decimals(self, _send):
+        # 5.7 + 2.4 float'da 8.100000000000001 bo'ladi — pilot oqimida
+        # 3 xonaga tozalanishi shart (F7 chegarasi bilan mos).
+        with patch.object(main, "_next_kb", return_value=None):
+            data = sale_data()
+            data.update({"cur_mid": 8, "cur_nomi": "Gilam tros",
+                         "cur_narx": 24000, "cur_birlik": "kg",
+                         "vehicle_pilot": True})
+            data["tanlangan"][8] = 5.7
+            main.set_state(700, "savdo_miqdor", data)
+            main.s_savdo_miqdor(message("2.4"))
+            state = main.get_state(700)
+            self.assertEqual(state["data"]["tanlangan"][8], 8.1)
+
+    @patch.object(main.bot, "send_message")
+    def test_pilot_kg_item_rejects_more_than_3_decimals(self, _send):
+        data = sale_data()
+        data.update({"cur_mid": 8, "cur_nomi": "Gilam tros",
+                     "cur_narx": 24000, "cur_birlik": "kg",
+                     "vehicle_pilot": True})
+        main.set_state(700, "savdo_miqdor", data)
+        main.s_savdo_miqdor(message("5.6789"))
+        state = main.get_state(700)
+        self.assertEqual(state["state"], "savdo_miqdor")
+        self.assertNotIn(8, state["data"]["tanlangan"])
+
+    @patch.object(main.bot, "send_message")
+    def test_pilot_kg_item_rejects_non_finite_input(self, _send):
+        # inf round(...,3) da OverflowError bilan yiqilmasin; nan ham rad.
+        for raw in ("inf", "nan", "-inf"):
+            data = sale_data()
+            data.update({"cur_mid": 8, "cur_nomi": "Gilam tros",
+                         "cur_narx": 24000, "cur_birlik": "kg",
+                         "vehicle_pilot": True})
+            main.set_state(700, "savdo_miqdor", data)
+            main.s_savdo_miqdor(message(raw))
+            state = main.get_state(700)
+            self.assertEqual(state["state"], "savdo_miqdor")
+            self.assertNotIn(8, state["data"]["tanlangan"])
+
+    @patch.object(main.bot, "send_message")
+    def test_pilot_dona_item_still_requires_integer(self, _send):
+        data = sale_data()
+        data.update({"cur_mid": 5, "cur_nomi": "Rope", "cur_narx": 100,
+                     "cur_birlik": "dona", "vehicle_pilot": True})
+        data["tanlangan"] = {}
+        main.set_state(700, "savdo_miqdor", data)
+        main.s_savdo_miqdor(message("2.5"))
+        state = main.get_state(700)
+        self.assertEqual(state["state"], "savdo_miqdor")
+        self.assertNotIn(5, state["data"]["tanlangan"])
+
+    @patch.object(main.bot, "send_message")
     def test_disabled_navruzbek_uses_normal_balance_deduction_boundaries(self, _send):
         for flag in (None, "0"):
             with self.subTest(boundary="precheck", flag=flag), \

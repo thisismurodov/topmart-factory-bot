@@ -96,3 +96,10 @@ uri = "file://attached_assets/label-passport-samples/topmart-label-passport-sing
 type = "image"
 title = "TopMart 100×80 label namunasi"
 description = "799×639 px, 203 DPI termal label preview. Mahsulot, SKU, kg, metr, ishlab chiqaruvchi, sana/soat va persisted Code128 barcode ko‘rsatilgan."
+
+[[outputs]]
+id = "ByT6PHQAmQ8KoD8e0dtlJ"
+uri = "file://exports/topmart-print-agent-windows.zip"
+type = "unspecified"
+title = "TopMart Print Agent — Windows"
+description = "Windows uchun tayyor print-agent paketi: install/run BAT fayllari, 100×80 label renderer, shriftlar va o‘zbekcha bosqichma-bosqich SETUP-UZ.md qo‘llanmasi. Secretlar kiritilmagan."

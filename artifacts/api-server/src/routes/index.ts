@@ -47,6 +47,19 @@ router.use(authRouter);
 // qo'llanadi.
 router.use(fieldRouter);
 
+// ── Vehicle handoff (F3) — dedicated auth wall (admin Bearer OR bot key) ──────
+// Each router applies its OWN fail-closed auth (makeHandoffAuth / botAuth /
+// makeWeeklySummaryAdminAuth) to every route it registers. The warehouse bot
+// sends ONLY x-vehicle-distribution-bot-key (no Bearer, no x-internal-key), so
+// these MUST be mounted BEFORE the pathless requireAuthOrInternalKey walls
+// below (ai/ombor/suggestions) and the global requireAuth wall — a pathless
+// wall would otherwise 401 the bot request before it ever reaches these routers.
+router.use(vehicleHandoffRouter);
+router.use(vehicleReplenishmentRouter);
+router.use(vehicleReturnRouter);
+router.use(vehicleWeeklySummaryRouter);
+router.use(printAgentHealthRouter);
+
 // ── AI routes — Bearer session (dashboard) OR x-internal-key (bot) ────────────
 router.use(requireAuthOrInternalKey, aiRouter);
 
@@ -57,16 +70,6 @@ router.use(requireAuthOrInternalKey, omborRouter);
 // ── Savdo tavsiyalari — Bearer session (dashboard) OR x-internal-key (savdo bot)
 // Savdo bot agentlarga kun boshida AI tavsiyalarni ko'rsatadi (?ai=1&agentId=...).
 router.use(requireAuthOrInternalKey, distributionSuggestionsRouter);
-
-// ── Vehicle handoff (F3) — dedicated auth wall (admin Bearer OR bot key) ──────
-// Mounted BEFORE the global requireAuth wall behind its own middleware so the
-// warehouse bot can drive the handoff lifecycle with x-vehicle-distribution-bot-key
-// while admins use a Bearer session. The actor is always assigned server-side.
-router.use(vehicleHandoffRouter);
-router.use(vehicleReplenishmentRouter);
-router.use(vehicleReturnRouter);
-router.use(vehicleWeeklySummaryRouter);
-router.use(printAgentHealthRouter);
 
 // ── Auth wall: everything below requires a valid session ──────────────────────
 router.use(requireAuth);

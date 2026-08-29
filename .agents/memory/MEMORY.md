@@ -58,3 +58,4 @@
 - [Vehicle label printer safety](vehicle-label-printer-safety.md) — exact 100×80 named-printer spool receipt gates lifecycle; crash recovery is explicit and reprints reuse deterministic PDF identity.
 - [Vehicle package-label quantities](vehicle-package-label-quantities.md) — stock/sales stay in pieces; one claim is one box with a mutable remaining-piece balance and load-time FIFO allocation.
 - [DM-001 pilot scope freeze](dm001-pilot-scope-freeze.md) — first pilot is one Distribution Bot loop only; Field sales, damaged returns, and stock adjustments are explicitly excluded.
+- [Pathless auth-wall ordering](pathless-auth-wall-ordering.md) — bot-key routers must mount before ALL pathless walls; instant 401 with valid key in dev+prod = mount order, not secrets.

@@ -16,7 +16,7 @@ import {
   type VehicleReplenishmentRequest,
   type VehicleStockTarget,
 } from "@workspace/api-client-react";
-import { AlertCircle, CheckCircle2, Clock3, PackagePlus, Pencil, Plus, RefreshCw, XCircle } from "lucide-react";
+import { AlertCircle, Check, CheckCircle2, ChevronsUpDown, Clock3, PackagePlus, Pencil, Plus, RefreshCw, XCircle } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,7 +24,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
@@ -52,6 +53,11 @@ function formatDate(value: string | null) {
   return value.slice(0, 16).replace("T", " ");
 }
 
+// Qidiruv uchun normalizatsiya: kichik harf + o'zbek apostrof variantlarini tenglashtirish.
+function searchNorm(value: string) {
+  return value.toLowerCase().replace(/[ʼ‘’`´]/g, "'");
+}
+
 function RequestStatus({ status }: { status: string }) {
   const labels: Record<string, string> = {
     pending: "Kutilmoqda", approved: "Tasdiqlangan", fulfilled: "Bajarilgan",
@@ -73,6 +79,7 @@ function TargetDialog({ target, addOptions, open, onOpenChange }: {
   onOpenChange: (open: boolean) => void;
 }) {
   const [productId, setProductId] = useState("");
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [min, setMin] = useState("");
   const [max, setMax] = useState("");
   const key = useRef("");
@@ -89,7 +96,10 @@ function TargetDialog({ target, addOptions, open, onOpenChange }: {
   }, [open, target]);
 
   const changeOpen = (next: boolean) => {
-    if (!next) key.current = "";
+    if (!next) {
+      key.current = "";
+      setPickerOpen(false);
+    }
     onOpenChange(next);
   };
   const selected = target ? null : addOptions.find((p) => String(p.id) === productId) ?? null;
@@ -134,16 +144,49 @@ function TargetDialog({ target, addOptions, open, onOpenChange }: {
             <div className="grid gap-2">
               <Label htmlFor="replenishment-product">Mahsulot</Label>
               {addOptions.length ? (
-                <Select value={productId} onValueChange={setProductId}>
-                  <SelectTrigger id="replenishment-product" className="min-h-11">
-                    <SelectValue placeholder="Mahsulotni tanlang" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {addOptions.map((p) => (
-                      <SelectItem key={p.id} value={String(p.id)}>{p.nomi} · {p.sku}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Popover modal open={pickerOpen} onOpenChange={setPickerOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      id="replenishment-product"
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={pickerOpen}
+                      className="min-h-11 w-full justify-between font-normal"
+                    >
+                      <span className="truncate">
+                        {selected ? `${selected.nomi} · ${selected.sku}` : "Mahsulotni tanlang"}
+                      </span>
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                    <Command filter={(value, search) => (searchNorm(value).includes(searchNorm(search)) ? 1 : 0)}>
+                      {/* 16px shrift — iOS/iPad fokusda zoom qilmasligi uchun. */}
+                      <CommandInput placeholder="Nomi yoki SKU bo‘yicha qidiring…" className="text-base" />
+                      {/* Radix Select ro‘yxati iPad’da barmoq bilan surilmasdi — cmdk
+                          ro‘yxati oddiy overflow scroll, touch-pan-y bilan suriladi. */}
+                      <CommandList className="max-h-[45vh] overflow-y-auto overscroll-contain touch-pan-y">
+                        <CommandEmpty>Hech narsa topilmadi.</CommandEmpty>
+                        <CommandGroup>
+                          {addOptions.map((p) => (
+                            <CommandItem
+                              key={p.id}
+                              value={`${p.nomi} ${p.sku}`}
+                              className="min-h-11"
+                              onSelect={() => {
+                                setProductId(String(p.id));
+                                setPickerOpen(false);
+                              }}
+                            >
+                              <Check className={`mr-2 h-4 w-4 shrink-0 ${String(p.id) === productId ? "opacity-100" : "opacity-0"}`} />
+                              <span className="truncate">{p.nomi} · {p.sku}</span>
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
               ) : (
                 <p className="text-sm text-slate-500">
                   Mos mahsulot qolmadi: savdo katalogidagi SKU orqali ERP bilan bog‘langan barcha mahsulotlar uchun me’yor allaqachon o‘rnatilgan.

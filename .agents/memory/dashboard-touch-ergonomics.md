@@ -19,3 +19,8 @@ the gate must turn touch ergonomics ON for iPad in both modes and OFF for MacBoo
 **How to apply:** keep new touch-only CSS inside this `any-pointer: coarse` block;
 the 16px font rule is required because the shared Input uses `md:text-sm` (14px),
 which otherwise triggers Safari auto-zoom on focus.
+
+## Uzun ro'yxatli tanlagichlar (2026-08-29)
+Radix Select (shadcn) uzun ro'yxatni iPad'da barmoq bilan surib BO'LMAYDI — scroll up/down tugmalari hover/pressga mo'ljallangan, touch-drag ishlamaydi (ma'lum radix muammosi). Yechim: Popover (modal) + cmdk Command combobox: CommandList'ga max-h + overflow-y-auto + overscroll-contain + touch-pan-y; CommandInput'ga text-base (16px — iOS fokus zoomining oldini oladi); Dialog ICHIDA Popover'ga modal atributi shart (aks holda fokus tuzog'i qidiruv inputini bloklaydi). Qidiruv filtri o'zbek apostrof variantlarini (ʼ ' ' ` ´) normalize qilishi kerak, aks holda "o'q" qidiruvi curly-apostrofli nomni topmaydi.
+**Why:** me'yor dialogidagi mahsulot Select'i iPad'da surilmay foydalanuvchini blokladi.
+**How to apply:** dashboardda 20+ elementli HAR QANDAY tanlagich uchun default = qidiruvli combobox, Radix Select emas.

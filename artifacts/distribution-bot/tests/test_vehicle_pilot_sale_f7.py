@@ -335,14 +335,14 @@ class VehiclePilotSaleF7(unittest.TestCase):
         self.assertIn("so'raldi 6", msg)
         self.assertEqual(self.scalar("SELECT COUNT(*) FROM distribution.savdolar"), 0)
 
-    def test_f9_prepared_status_trace_already_forces_strict_path(self):
-        # Birinchi etiketkalar TAYYORLANGAN zahoti (hali mashinaga yuklanmagan,
-        # status='prepared') mahsulot qat'iy yo'lga o'tadi: mashina omborida
-        # qoldiq yozuvi yo'q → savdo aniq nomlangan xato bilan to'xtaydi.
+    def test_f9_prepared_only_trace_still_sells_as_plain_row(self):
+        # Etiketkalar faqat TAYYORLANGAN (status='prepared') — qutilar hali
+        # omborda, mashinaga F6 topshiruv bo'lmagan (bekor qilingan handoff ham
+        # aynan shu holatda claims qoldiradi). Bunday iz mashinadagi pilotgacha
+        # bo'lgan molni sotishni bloklamasligi kerak: qator oddiy savdo bo'lib
+        # yoziladi, claims/zaxira/replenishment o'zgarmaydi.
         new_mid = self._yangi_mahsulot("Yangi arqon", 500, "SKU-NEW", "dona")
         with _db() as conn, conn.cursor() as c:
-            c.execute("INSERT INTO public.products(name,sku,active,in_sales) "
-                      "VALUES('Yangi arqon ERP','SKU-NEW',TRUE,TRUE)")
             c.execute(
                 """INSERT INTO distribution.vehicle_label_claims
                    (vehicle_id,handoff_id,handoff_item_id,production_label_id,
@@ -350,13 +350,21 @@ class VehiclePilotSaleF7(unittest.TestCase):
                     remaining_quantity,status)
                    VALUES(%s,%s,%s,99,'BC-99',%s,'SKU-NEW',1,5,5,'prepared')""",
                 (self.vehicle, self.handoff, self.handoff_item, new_mid))
-        with self.assertRaises(VehiclePilotSaleError) as ctx:
-            create_vehicle_pilot_sale(
-                self.shop, 700, [(new_mid, 1, 500)], 500, "naqd", None, 0,
-                str(uuid.uuid4()), 0, {"naqd": 500, "karta": 0, "nasiya": 0})
-        self.assertIn("qoldig'i topilmadi", str(ctx.exception))
-        self.assertIn("Yangi arqon ERP", str(ctx.exception))
-        self.assertEqual(self.scalar("SELECT COUNT(*) FROM distribution.savdolar"), 0)
+        sid, _, _ = create_vehicle_pilot_sale(
+            self.shop, 700, [(new_mid, 3, 500)], 1500, "naqd", None, 0,
+            str(uuid.uuid4()), 0, {"naqd": 1500, "karta": 0, "nasiya": 0})
+        self.assertEqual(self.scalar(
+            "SELECT COUNT(*) FROM distribution.savdo_tafsilot WHERE savdo_id=%s",
+            (sid,)), 1)
+        self.assertEqual(self.scalar(
+            "SELECT remaining_quantity FROM distribution.vehicle_label_claims "
+            "WHERE barcode='BC-99'"), 5)
+        self.assertEqual(self.scalar(
+            "SELECT COUNT(*) FROM distribution.vehicle_sale_allocations "
+            "WHERE mahsulot_id=%s", (new_mid,)), 0)
+        self.assertEqual(self.scalar(
+            "SELECT COUNT(*) FROM distribution.vehicle_replenishment_requests "
+            "WHERE mahsulot_id=%s", (new_mid,)), 0)
 
     def test_f9_sold_out_tracked_product_stays_blocked(self):
         # Iz BOR (bir paytlar yuklangan) mahsulot qoldig'i tugagach ham oddiy

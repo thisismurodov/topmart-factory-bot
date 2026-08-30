@@ -364,15 +364,20 @@ def _create_vehicle_pilot_once(dokon_id, agent_id, items, jami, tolov, foto,
             qty = int(qty)
             # DM-001 qat'iy intizomi faqat mashinaga TIZIM orqali yuklangan
             # mahsulotlarga tegishli. Yuklanish izi = shu mashina uchun
-            # vehicle_label_claims yozuvi (istalgan statusda). Iz yo'q bo'lsa,
-            # mahsulot pilot aylanishiga hech qachon kirmagan (mashina fizik
-            # jihatdan pilotdan oldingi mollarni ham tashiydi) — bunday qator
-            # pilotgacha bo'lgan tartibda oddiy savdo sifatida yoziladi.
-            # Iz BOR mahsulot esa qat'iy yo'lda qoladi: qoldiq tugagan bo'lsa
-            # ham etiketkasiz dona sotib bo'lmaydi.
+            # status<>'prepared' bo'lgan vehicle_label_claims yozuvi (loaded/
+            # sold/returned — etiketkali mol mashinaga chiqqanini bildiradi).
+            # 'prepared' hisobga OLINMAYDI: bunday qutilar hali omborda turadi
+            # (F6 topshiruv bo'lmagan), bekor qilingan handofflar ham 'prepared'
+            # claims qoldiradi — bular mashinadagi pilotgacha bo'lgan molni
+            # sotishni to'sib qo'ymasligi kerak. Poyga xavfsiz: 'loaded' faqat
+            # F6 transferStock orqali paydo bo'ladi va u ham, savdo ham bir xil
+            # mashina-ombor parent qulfini oladi. Iz yo'q bo'lsa qator oddiy
+            # savdo sifatida yoziladi; iz BOR mahsulot qat'iy yo'lda qoladi:
+            # qoldiq tugagan bo'lsa ham etiketkasiz dona sotib bo'lmaydi.
             c.execute(
                 """SELECT 1 FROM distribution.vehicle_label_claims
-                   WHERE vehicle_id=%s AND mahsulot_id=%s LIMIT 1""",
+                   WHERE vehicle_id=%s AND mahsulot_id=%s
+                     AND status <> 'prepared' LIMIT 1""",
                 (vehicle_id, mid))
             if c.fetchone() is None:
                 continue

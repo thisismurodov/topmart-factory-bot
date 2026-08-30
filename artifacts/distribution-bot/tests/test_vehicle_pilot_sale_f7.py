@@ -298,6 +298,77 @@ class VehiclePilotSaleF7(unittest.TestCase):
             "SELECT COUNT(*) FROM distribution.vehicle_replenishment_requests "
             "WHERE mahsulot_id=%s", (kg_mid,)), 0)
 
+    def test_f9_dona_without_load_trace_sells_as_plain_row(self):
+        # Mashina fizik jihatdan pilotdan oldingi mollarni ham tashiydi:
+        # tizim orqali HECH QACHON yuklanmagan dona mahsulot (claims izi yo'q)
+        # butun savdoni bloklamaydi — oddiy savdo qatori bo'lib yoziladi,
+        # mashina zaxirasi/etiketka/replenishmentga tegmaydi.
+        plain_mid = self._yangi_mahsulot(
+            "Reja ip Sapojniy 50 gramm", 3000, "REJA-50", "dona")
+        jami = 2 * 100 + 50 * 3000
+        sid, _, _ = create_vehicle_pilot_sale(
+            self.shop, 700, [(self.mid, 2, 100), (plain_mid, 50, 3000)], jami,
+            "naqd", None, 0, str(uuid.uuid4()), 0,
+            {"naqd": jami, "karta": 0, "nasiya": 0})
+        self.assertEqual(self.scalar(
+            "SELECT COUNT(*) FROM distribution.savdo_tafsilot WHERE savdo_id=%s",
+            (sid,)), 2)
+        self.assertEqual(float(self.scalar(
+            "SELECT quantity FROM public.inventory WHERE warehouse_id=%s",
+            (self.warehouse,))), 3.0)
+        self.assertEqual(self.scalar(
+            "SELECT COUNT(*) FROM public.stock_movements WHERE movement_type='OUT'"), 1)
+        self.assertEqual(self.scalar(
+            "SELECT COUNT(*) FROM distribution.vehicle_sale_allocations "
+            "WHERE mahsulot_id=%s", (plain_mid,)), 0)
+        self.assertEqual(self.scalar(
+            "SELECT COUNT(*) FROM distribution.vehicle_replenishment_requests "
+            "WHERE mahsulot_id=%s", (plain_mid,)), 0)
+
+    def test_f9_shortage_error_names_product_and_available(self):
+        with self.assertRaises(VehiclePilotSaleError) as ctx:
+            self.sale(qty=6, total=600, debt=0, prepayment=0)
+        msg = str(ctx.exception)
+        self.assertIn("Yuklangan etiketkali dona yetarli emas", msg)
+        self.assertIn("ERP rope", msg)
+        self.assertIn("mashinada 5 dona", msg)
+        self.assertIn("so'raldi 6", msg)
+        self.assertEqual(self.scalar("SELECT COUNT(*) FROM distribution.savdolar"), 0)
+
+    def test_f9_prepared_status_trace_already_forces_strict_path(self):
+        # Birinchi etiketkalar TAYYORLANGAN zahoti (hali mashinaga yuklanmagan,
+        # status='prepared') mahsulot qat'iy yo'lga o'tadi: mashina omborida
+        # qoldiq yozuvi yo'q → savdo aniq nomlangan xato bilan to'xtaydi.
+        new_mid = self._yangi_mahsulot("Yangi arqon", 500, "SKU-NEW", "dona")
+        with _db() as conn, conn.cursor() as c:
+            c.execute("INSERT INTO public.products(name,sku,active,in_sales) "
+                      "VALUES('Yangi arqon ERP','SKU-NEW',TRUE,TRUE)")
+            c.execute(
+                """INSERT INTO distribution.vehicle_label_claims
+                   (vehicle_id,handoff_id,handoff_item_id,production_label_id,
+                    barcode,mahsulot_id,sku,unit_weight_kg,pieces_in_label,
+                    remaining_quantity,status)
+                   VALUES(%s,%s,%s,99,'BC-99',%s,'SKU-NEW',1,5,5,'prepared')""",
+                (self.vehicle, self.handoff, self.handoff_item, new_mid))
+        with self.assertRaises(VehiclePilotSaleError) as ctx:
+            create_vehicle_pilot_sale(
+                self.shop, 700, [(new_mid, 1, 500)], 500, "naqd", None, 0,
+                str(uuid.uuid4()), 0, {"naqd": 500, "karta": 0, "nasiya": 0})
+        self.assertIn("qoldig'i topilmadi", str(ctx.exception))
+        self.assertIn("Yangi arqon ERP", str(ctx.exception))
+        self.assertEqual(self.scalar("SELECT COUNT(*) FROM distribution.savdolar"), 0)
+
+    def test_f9_sold_out_tracked_product_stays_blocked(self):
+        # Iz BOR (bir paytlar yuklangan) mahsulot qoldig'i tugagach ham oddiy
+        # yo'lga TUSHMAYDI — etiketkasiz dona sotish taqiqlanganicha qoladi.
+        self._exec(
+            "UPDATE distribution.vehicle_label_claims "
+            "SET status='sold',remaining_quantity=0")
+        with self.assertRaises(VehiclePilotSaleError) as ctx:
+            self.sale(qty=1, total=100, debt=0, prepayment=0)
+        self.assertIn("yetarli emas", str(ctx.exception))
+        self.assertEqual(self.scalar("SELECT COUNT(*) FROM distribution.savdolar"), 0)
+
     def test_f9_dona_fractional_still_rejected_atomically(self):
         with self.assertRaises(VehiclePilotSaleError) as ctx:
             create_vehicle_pilot_sale(

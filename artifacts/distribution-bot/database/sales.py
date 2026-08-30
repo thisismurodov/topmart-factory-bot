@@ -362,6 +362,20 @@ def _create_vehicle_pilot_once(dokon_id, agent_id, items, jami, tolov, foto,
                 raise VehiclePilotSaleError(
                     "Dona mahsulot miqdori musbat butun son bo'lishi kerak.")
             qty = int(qty)
+            # DM-001 qat'iy intizomi faqat mashinaga TIZIM orqali yuklangan
+            # mahsulotlarga tegishli. Yuklanish izi = shu mashina uchun
+            # vehicle_label_claims yozuvi (istalgan statusda). Iz yo'q bo'lsa,
+            # mahsulot pilot aylanishiga hech qachon kirmagan (mashina fizik
+            # jihatdan pilotdan oldingi mollarni ham tashiydi) — bunday qator
+            # pilotgacha bo'lgan tartibda oddiy savdo sifatida yoziladi.
+            # Iz BOR mahsulot esa qat'iy yo'lda qoladi: qoldiq tugagan bo'lsa
+            # ham etiketkasiz dona sotib bo'lmaydi.
+            c.execute(
+                """SELECT 1 FROM distribution.vehicle_label_claims
+                   WHERE vehicle_id=%s AND mahsulot_id=%s LIMIT 1""",
+                (vehicle_id, mid))
+            if c.fetchone() is None:
+                continue
             if not dist[1]:
                 raise VehiclePilotSaleError("Mahsulot SKU bo'sh, faol emas yoki topilmadi.")
             sku = dist[1]
@@ -383,7 +397,8 @@ def _create_vehicle_pilot_once(dokon_id, agent_id, items, jami, tolov, foto,
                    FOR UPDATE""", (warehouse_id, product_name))
             inv = c.fetchone()
             if not inv:
-                raise VehiclePilotSaleError("Mashina omborida mahsulot qoldig'i topilmadi.")
+                raise VehiclePilotSaleError(
+                    "Mashina omborida mahsulot qoldig'i topilmadi: %s." % product_name)
             c.execute(
                 """SELECT cl.id,cl.handoff_id,cl.handoff_item_id,cl.production_label_id,
                            cl.barcode,cl.unit_weight_kg,cl.pieces_in_label,
@@ -413,7 +428,10 @@ def _create_vehicle_pilot_once(dokon_id, agent_id, items, jami, tolov, foto,
                 if remaining_to_allocate == 0:
                     break
             if remaining_to_allocate != 0:
-                raise VehiclePilotSaleError("Yuklangan etiketkali dona yetarli emas.")
+                available = int(Decimal(qty) - remaining_to_allocate)
+                raise VehiclePilotSaleError(
+                    "Yuklangan etiketkali dona yetarli emas: %s (mashinada %s dona, "
+                    "so'raldi %s)." % (product_name, available, qty))
             total_weight = sum((allocation[2] for allocation in selected), Decimal("0"))
             c.execute(
                 """UPDATE public.inventory
@@ -421,7 +439,8 @@ def _create_vehicle_pilot_once(dokon_id, agent_id, items, jami, tolov, foto,
                    WHERE id=%s AND quantity>=%s AND weight_kg>=%s""",
                 (qty, total_weight, inv[0], qty, total_weight))
             if c.rowcount != 1:
-                raise VehiclePilotSaleError("Mashina qoldig'i yoki og'irligi yetarli emas.")
+                raise VehiclePilotSaleError(
+                    "Mashina qoldig'i yoki og'irligi yetarli emas: %s." % product_name)
             post_sale_quantity = Decimal(str(inv[1])) - Decimal(qty)
             line += (selected, total_weight, post_sale_quantity)
             mapped[mapped.index(line[:6])] = line

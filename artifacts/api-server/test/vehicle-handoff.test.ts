@@ -655,6 +655,61 @@ describe("F4 prepare labels", () => {
     expect(r.status).toBe(400);
   });
 
+  it("prepare waits for the vehicle-warehouse parent lock (F7 sale-gate serialization)", async () => {
+    // The savdo-bot F7 sale txn holds the vehicle-warehouse parent row lock
+    // while probing vehicle_label_claims to decide plain-vs-strict. Creating
+    // the FIRST claims must serialize behind that same lock, otherwise a sale
+    // can probe "no trace" and commit as plain while claims appear.
+    const { handoffId } = await makePrepared(2);
+    const holder = await testPool.connect();
+    let pending: Promise<Resp> | null = null;
+    try {
+      await holder.query("BEGIN");
+      await holder.query(`SELECT id FROM public.warehouses WHERE id=$1 FOR UPDATE`, [
+        vehicleWarehouseId,
+      ]);
+
+      let settled = false;
+      pending = prepareLabels(handoffId).then((r) => {
+        settled = true;
+        return r;
+      });
+
+      // Deterministic: wait until the prepare backend is actually blocked on
+      // the warehouses row lock (visible in pg_stat_activity), not a fixed sleep.
+      let sawWaiter = false;
+      for (let i = 0; i < 200; i++) {
+        const w = await client.query(
+          `SELECT COUNT(*)::int AS n FROM pg_stat_activity
+            WHERE wait_event_type='Lock' AND state='active'
+              AND query ILIKE '%public.warehouses WHERE id = $1 FOR UPDATE%'
+              AND pid <> pg_backend_pid()`,
+        );
+        if (Number(w.rows[0].n) > 0) {
+          sawWaiter = true;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      expect(sawWaiter).toBe(true);
+      expect(settled).toBe(false); // still blocked while the sale txn holds the lock
+
+      await holder.query("ROLLBACK");
+      const r = await pending;
+      expect(r.status).toBe(200);
+      const cl = await client.query(
+        `SELECT COUNT(*)::int AS n FROM distribution.vehicle_label_claims
+          WHERE handoff_id=$1 AND status='prepared'`,
+        [handoffId],
+      );
+      expect(Number(cl.rows[0].n)).toBeGreaterThan(0);
+    } finally {
+      await holder.query("ROLLBACK").catch(() => {});
+      holder.release();
+      if (pending) await pending.catch(() => {});
+    }
+  });
+
   it("legacy pieces_per_box=1: exact per-piece passports, claims, and events", async () => {
     const r = await call("POST", "/vehicle-distribution/handoffs", {
       token: adminToken,

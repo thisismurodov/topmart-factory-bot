@@ -333,6 +333,26 @@ export async function prepareLabelsInTx(
   operationKey: string,
   actor: HandoffActor,
 ): Promise<LabelsPayload> {
+  // F7 sale-gate serialization: the savdo-bot sale path decides plain-vs-strict
+  // per dona product by probing distribution.vehicle_label_claims while holding
+  // the vehicle-warehouse parent row lock. Creating the FIRST claims for a
+  // product must therefore take that same parent lock, and in the same global
+  // order as F6 stock transfer (warehouse row BEFORE the per-handoff advisory
+  // lock) so prepare/transfer cannot deadlock. Without this, a concurrent sale
+  // could probe "no trace", the first claims could commit, and the sale would
+  // still commit as a plain row. vehicle_warehouse_id is immutable on the
+  // handoff row, so reading it before the advisory lock is safe.
+  const lockTarget = await client.query(
+    `SELECT vehicle_warehouse_id FROM distribution.vehicle_handoffs
+      WHERE id = $1`,
+    [handoffId],
+  );
+  if (lockTarget.rows.length) {
+    await client.query(
+      `SELECT id FROM public.warehouses WHERE id = $1 FOR UPDATE`,
+      [Number(lockTarget.rows[0].vehicle_warehouse_id)],
+    );
+  }
   // Per-handoff advisory lock so concurrent prepares serialize.
   await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
     handoffLockKey(handoffId),

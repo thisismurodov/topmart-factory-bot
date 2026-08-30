@@ -1,0 +1,143 @@
+Replit uchun vazifa: Vehicle Pilotni Telegram-first qilish
+Hozirgi Vehicle Distribution tizimini imkon qadar soddalashtiramiz.
+Asosiy maqsad: agent ham, omborchi ham Telegram bot orqali ishlaydi. ERP/dashboard faqat nazorat va ko‘rish uchun qoladi.
+1. Mashinani boshlang‘ich to‘ldirish
+Bu jarayon birinchi marta qilinadi.
+Agentning mashinasiga kerakli boshlang‘ich tovarlar yuklanadi.
+Keyingi safarlarda esa mashinani boshidan qayta to‘ldirmaymiz — faqat kamaygan tovarlar qayta to‘ldiriladi.
+2. Telegram'da “🚚 Mashinani to‘ldirish” tugmasi
+Agent yoki vakolatli foydalanuvchi:
+🚚 Mashinani to‘ldirish
+tugmasini bosadi.
+3. Omborlarni ko‘rsatish
+Bot barcha mavjud omborlarni ko‘rsatadi.
+Masalan:
+🏭 Asosiy ombor
+📦 Toshkent ombori
+📦 Andijon ombori
+va hokazo
+Foydalanuvchi qaysi ombordan tovar olishini tanlaydi.
+4. Mahsulot tanlash
+Ombor tanlangandan keyin shu ombordagi mahsulotlar chiqadi.
+Masalan:
+Qop ip 100 talik
+Bot mahsulot profilidan mavjud qoldiqni bilishi kerak.
+Masalan:
+📦 Qop ip 100 talik
+Omborda: 2 400 dona
+Agar foydalanuvchi mavjudidan ko‘p so‘rasa:
+⚠️ Omborda faqat 2 400 dona mavjud.
+Siz 3 000 dona kiritdingiz.
+va davom ettirmasligi kerak.
+5. Miqdorni kiritish
+Mahsulot profilidan uning birlik turi va qadoqlanishini avtomatik bilish kerak.
+Masalan:
+Qop ip 100 talik
+birlik: dona
+1 quti = 100 dona
+Foydalanuvchi:
+100 dona
+tanlaydi/kiritadi.
+Bot mahsulot profilidan avtomatik hisoblaydi:
+100 dona = 1 quti
+va 1 ta stiker yaratadi.
+Agar 200 dona bo‘lsa:
+200 dona = 2 quti
+→ 2 ta stiker
+Muhim: foydalanuvchi quti hisobini qo‘lda hisoblamaydi. Bot avtomatik hisoblaydi.
+6. Keyingi amal
+Mahsulot qo‘shilgandan keyin bot:
+➕ Yana tovar qo‘shish
+✅ Yakunlash
+tugmalarini ko‘rsatadi.
+7. Yana tovar qo‘shish
+Agar:
+➕ Yana tovar qo‘shish
+bosilsa, jarayon takrorlanadi:
+Ombor → mahsulot → miqdor (dona/kg) → avtomatik qadoq hisoblash → stiker
+Masalan:
+Qop ip 100 talik — 100 dona → 1 stiker
+Ikki qavat arqon 5 kg — 24 dona → 24 stiker
+Boshqa mahsulot — X kg → X stiker
+Foydalanuvchi xohlagancha mahsulot qo‘sha oladi.
+8. “Yakunlash”
+Foydalanuvchi:
+✅ Yakunlash
+bosganda bot:
+Kiritilgan barcha mahsulotlarni jamlaydi.
+Har bir mahsulot uchun kerakli stikerlarni yaratadi.
+Tanlangan omborlardan tegishli miqdorni avtomatik ayiradi.
+Sotuv botidan/mahsulot profilidan sotuv narxini oladi.
+Jami yuklangan tovarning summasini hisoblaydi.
+Mashinadagi mavjud stock ustiga yangi yuklangan stockni qo‘shadi.
+Natijani Telegram'da ko‘rsatadi.
+Masalan:
+🚚 MASHINA TO‘LDIRILDI
+Qop ip 100 talik — 100 dona
+📦 1 quti
+💰 500 000 so‘m
+Ikki qavat arqon 5 kg — 24 dona
+📦 24 quti
+💰 2 400 000 so‘m
+━━━━━━━━━
+Jami: 2 900 000 so‘m
+Stikerlar: 25 dona
+Ombordan chiqarildi: 224 dona
+9. Agent marshrut bo‘yicha savdo qiladi
+Keyin agent odatdagidek o‘z marshruti bo‘yicha do‘konlarga boradi.
+U mashinasidagi mahsulotlarni sotadi.
+Bu jarayonda agentdan:
+ombor tanlash,
+stock hisoblash,
+quti hisoblash,
+stiker hisoblash
+kabi ortiqcha ishlarni talab qilmaslik kerak.
+Bot bularni avtomatik boshqaradi.
+10. Oxirgi marshrutdan keyin avtomatik replenishment
+Agent oxirgi marshrutdagi do‘konlardan ham o'tib bo‘lgach, bot avtomatik hisoblaydi:
+Mashina boshida qancha edi → qancha sotildi → qancha qoldi → qancha qayta to‘ldirish kerak
+Masalan:
+🚚 NAVRUZBEK MASHINA HISOBOTI
+Qop ip 100 talik
+Boshlang‘ich: 100 dona
+Sotildi: 70 dona
+Qoldi: 30 dona
+🔴 Qayta to‘ldirish: 70 dona
+Ikki qavat arqon 5 kg
+Boshlang‘ich: 30 dona
+Sotildi: 18 dona
+Qoldi: 12 dona
+🔴 Qayta to‘ldirish: 18 dona
+Bot avtomatik ravishda omborchiga topshiriq yaratadi:
+📦 YANGI MASHINA TO‘LDIRISH TOPSHIRIG‘I
+Qop ip 100 talik — 70 dona
+Ikki qavat arqon 5 kg — 18 dona
+Jami: 2 ta mahsulot
+🚚 Mashina: NAVRUZBEK
+11. Omborchi o‘z Telegram botidan ishlaydi
+Omborchi topshiriqni ko‘radi:
+📦 Mashinani to‘ldirish
+bosadi.
+Bot unga kerakli mahsulotlarni ko‘rsatadi.
+Omborchi mahsulotlarni yig‘adi va bot orqali:
+✅ Mashinani to‘ldirish
+ni tasdiqlaydi.
+Shunda:
+ombordan mahsulot avtomatik kamayadi;
+mashina stock'iga qo‘shiladi;
+kerakli yangi stikerlar yaratiladi;
+topshiriq Bajarildi holatiga o'tadi.
+Muhim: bu yangi stockni mashinadagi oldingi stockning ustiga qo‘shadi. Eski stock o‘chirilmaydi.
+Eng muhim UX prinsipi
+Butun tizim quyidagi juda oddiy siklga tushishi kerak:
+📦 OMBOR → 🚚 MASHINA → 🏪 DO‘KON → 📊 SOTUV → 📦 QAYTA TO‘LDIRISH → 🚚 MASHINA
+Va foydalanuvchi uchun:
+Agent:
+Mashinamni to‘ldirish → mahsulot tanlash → miqdor → yana qo‘shish/yakunlash
+Omborchi:
+Topshiriqni ochish → mahsulotlarni yig‘ish → mashinani to‘ldirish → tayyor
+Qolgan hisob-kitoblarni bot avtomatik qiladi.
+Muhim texnik talab
+Bu funksiyani qo‘shishda mavjud Vehicle Distribution, Sales, Telegram, Label va DM-001 logikasini buzmaslik kerak.
+Avval mavjud kodni o‘rganib, yuqoridagi UX'ni hozirgi arxitekturaga eng kichik va xavfsiz o‘zgarishlar bilan moslashtir.
+Production DB'ga tegma. Avval local/test environmentda implement qil va test qil.

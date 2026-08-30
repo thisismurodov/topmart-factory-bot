@@ -20,7 +20,7 @@ Jami tekshiruvi: deklaratsiya qilingan jami 0.001 to'rida YOTISHI va qatorlar yi
 **Why:** kg mahsulot mashinaga yuklanmaydi — usiz pilot sotuvchi kg mahsulotni umuman sota olmas edi.
 **How to apply:** kg qatorda "stock yechilmadi" — bug EMAS, dizayn. Fingerprint (_qty_key) butun miqdorlarni JSON int saqlaydi — eski dona imzolar buzilmaydi; kasrlar normalized string.
 
-## Trace-gate: dona qat'iyligi faqat yuklangan mahsulotlarga — 2026-08-30
-Dona qator qat'iy stock/etiketka yo'liga FAQAT mashinada shu mahsulot uchun vehicle_label_claims izi bo'lsa (ISTALGAN status: prepared/loaded/sold/returned) tushadi; iz yo'q → kg kabi oddiy savdo qatori.
-**Why:** mashina fizik jihatdan pilotdan oldingi mollarni ham tashiydi; "har dona qator mashina omborida bo'lsin" talabi butun aralash savdoni bloklab, dala agentini to'xtatib qo'ydi (real hodisa).
-**How to apply:** iz BOR mahsulot qoldiq tugasa ham oddiy yo'lga TUSHMAYDI (etiketkasiz dona taqiq). Race himoyasi: prepareLabelsInTx birinchi claims yozishdan OLDIN mashina-ombor parent qatorini FOR UPDATE oladi — advisory lockdan AVVAL, F6 bilan bir xil global tartib (aks holda deadlock yoki plain-sale sirg'alish). Xatolar mahsulot nomi + mavjud/so'ralgan miqdorni aytadi.
+## Trace-gate: dona qat'iyligi faqat YUKLANGAN mahsulotlarga — 2026-08-30
+Dona qator qat'iy stock/etiketka yo'liga FAQAT mashinada shu mahsulot uchun status<>'prepared' claims izi bo'lsa (loaded/sold/returned) tushadi; iz yo'q yoki faqat 'prepared' → kg kabi oddiy savdo qatori.
+**Why:** mashina fizik jihatdan pilotdan oldingi mollarni ham tashiydi; "har dona qator mashina omborida bo'lsin" talabi butun aralash savdoni bloklab, dala agentini to'xtatdi (real hodisa). 'prepared' iz hisoblanmaydi: qutilar hali omborda (F6 topshiruv yo'q), BEKOR QILINGAN handofflar ham 'prepared' claims qoldiradi (prod fakt: handoff 6/7) — bular sotuvni to'smasin.
+**How to apply:** loaded-iz BOR mahsulot qoldiq tugasa ham oddiy yo'lga TUSHMAYDI (etiketkasiz dona taqiq). Race: 'loaded' faqat F6 transferStock'da paydo bo'ladi va F6 ham, savdo ham bir xil mashina-ombor parent qulfini oladi → probe seriyalashgan. prepareLabelsInTx ham parent qulfni advisory'dan AVVAL oladi (F6 bilan bir global tartib) — defense in depth. Xatolar mahsulot nomi + mavjud/so'ralgan miqdorni aytadi.

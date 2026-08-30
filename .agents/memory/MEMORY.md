@@ -51,7 +51,7 @@
 - [Production label passports live](production-label-passports-live.md) — migration applied 2026-08-19; no backfill; one 100×80 label per PDF page; only barcode identity changes.
 - [Dashboard TSX unit tests](dashboard-tsx-unit-tests.md) — pure Vitest runs skip Vite aliases/JSX plugins; isolate TSX under test with relative imports and explicit React.
 - [Vehicle test DB isolation](vehicle-pilot-live-schema-boundary.md) — vehicle init/drift tests must require an explicit loopback admin URL and strip inherited runtime database URLs.
-- [Vehicle pilot sale atomicity](vehicle-pilot-sale-atomicity.md) — strict dona path ONLY for claims-traced products (no trace → plain row); sale+stock+labels one txn; total exactly on 0.001 grid.
+- [Vehicle pilot sale atomicity](vehicle-pilot-sale-atomicity.md) — strict dona path ONLY for loaded-traced products (prepared/no trace → plain row); sale+stock+labels one txn; total on 0.001 grid.
 - [Vehicle replenishment lifecycle](vehicle-replenishment-lifecycle.md) — low stock opens one request; full approval creates F3 handoff; only final transfer fulfills and changes stock.
 - [Vehicle return label lifecycle](vehicle-return-label-lifecycle.md) — returns reserve loaded labels, transfer them to original sources, and make returned identities terminal for the pilot.
 - [Vehicle weekly readiness semantics](vehicle-weekly-readiness.md) — weekly cockpit is read-only diagnostics; handed-back returns make physical balance indeterminate, never approved.

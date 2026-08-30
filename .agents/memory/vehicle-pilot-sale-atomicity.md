@@ -19,3 +19,8 @@ Pilot savdosida birlik!='dona' qatorlar ODDIY savdo qatori: savdo_tafsilot'ga yo
 Jami tekshiruvi: deklaratsiya qilingan jami 0.001 to'rida YOTISHI va qatorlar yig'indisiga AYNAN teng bo'lishi shart. Ikkala tomonni kvantlash mumkin emas — +-0.0005 boshqa jami o'tkazib, BIGINT yumaloqlashda sarlavha/qator summalarini ajratadi (arxitektor ko'rigi topdi). Bot jami'ni round(...,3) bilan yuboradi. Bot gate: dona=butun son, kg<=3 kasr xona, nan/inf parse bosqichida rad (round(inf,3) OverflowError berar edi).
 **Why:** kg mahsulot mashinaga yuklanmaydi — usiz pilot sotuvchi kg mahsulotni umuman sota olmas edi.
 **How to apply:** kg qatorda "stock yechilmadi" — bug EMAS, dizayn. Fingerprint (_qty_key) butun miqdorlarni JSON int saqlaydi — eski dona imzolar buzilmaydi; kasrlar normalized string.
+
+## Trace-gate: dona qat'iyligi faqat yuklangan mahsulotlarga — 2026-08-30
+Dona qator qat'iy stock/etiketka yo'liga FAQAT mashinada shu mahsulot uchun vehicle_label_claims izi bo'lsa (ISTALGAN status: prepared/loaded/sold/returned) tushadi; iz yo'q → kg kabi oddiy savdo qatori.
+**Why:** mashina fizik jihatdan pilotdan oldingi mollarni ham tashiydi; "har dona qator mashina omborida bo'lsin" talabi butun aralash savdoni bloklab, dala agentini to'xtatib qo'ydi (real hodisa).
+**How to apply:** iz BOR mahsulot qoldiq tugasa ham oddiy yo'lga TUSHMAYDI (etiketkasiz dona taqiq). Race himoyasi: prepareLabelsInTx birinchi claims yozishdan OLDIN mashina-ombor parent qatorini FOR UPDATE oladi — advisory lockdan AVVAL, F6 bilan bir xil global tartib (aks holda deadlock yoki plain-sale sirg'alish). Xatolar mahsulot nomi + mavjud/so'ralgan miqdorni aytadi.

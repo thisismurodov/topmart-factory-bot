@@ -16,9 +16,11 @@ from telegram.ext import (
 )
 
 from ..api_client import (
-    confirm_handoff_labels_printed, create_vehicle_handoff, get_handoff_labels,
-    get_vehicle_handoff, list_vehicle_handoffs, mark_handoff_handed_over,
-    mark_handoff_stock_transferred, prepare_handoff_labels,
+    approve_vehicle_replenishment_request, confirm_handoff_labels_printed,
+    create_vehicle_handoff, get_handoff_labels, get_vehicle_handoff,
+    list_vehicle_handoffs, list_vehicle_replenishment_requests,
+    mark_handoff_handed_over, mark_handoff_stock_transferred,
+    prepare_handoff_labels,
 )
 from ..database import (
     get_mahsulot_prices, get_user_role, get_vehicle_handoff_hidden_products,
@@ -152,6 +154,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         reply_markup=_buttons([
             [InlineKeyboardButton("➕ Yangi yuklash", callback_data=f"vh:{token}:new")],
             [InlineKeyboardButton("📋 Mavjud topshirishlar", callback_data=f"vh:{token}:list")],
+            [InlineKeyboardButton("📥 To‘ldirish so‘rovlari", callback_data=f"vh:{token}:repl")],
             [InlineKeyboardButton("❌ Bekor qilish", callback_data=f"vh:{token}:cancel")],
         ]),
     )
@@ -181,6 +184,12 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         return ConversationHandler.END
     if data[2] == "list":
         return await _show_handoffs(q, context)
+    if data[2] == "repl":
+        return await _show_replenishment_requests(q, context)
+    if data[2] == "rp":
+        return await _show_replenishment_detail(q, context, data)
+    if data[2] == "rok":
+        return await _approve_replenishment(q, context, data)
     if data[2] != "new":
         await _reject(q)
         return MENU
@@ -437,6 +446,108 @@ async def _show_handoffs(q, context) -> int:
     await q.edit_message_text("📋 *DM-001 topshirishlari:*", parse_mode="Markdown",
                               reply_markup=_buttons(rows))
     return EXISTING
+
+
+def _fmt_qty_int(value) -> str:
+    try:
+        return str(int(float(value)))
+    except Exception:
+        return str(value)
+
+
+async def _show_replenishment_requests(q, context) -> int:
+    """F11: ochiq (pending) avto to'ldirish so'rovlari ro'yxati."""
+    state = context.user_data["vh"]
+    ok, payload = list_vehicle_replenishment_requests()
+    if not ok:
+        await q.edit_message_text(f"❌ So‘rovlar olinmadi: {payload}")
+        return ConversationHandler.END
+    requests = payload.get("requests", payload if isinstance(payload, list) else [])
+    pending = [r for r in requests if r.get("status") == "pending"]
+    state["repl"] = {str(r["id"]): r for r in pending}
+    if not pending:
+        await q.edit_message_text("📭 Ochiq to‘ldirish so‘rovlari yo‘q.")
+        return ConversationHandler.END
+    rows = [[InlineKeyboardButton(
+        f"#{r['id']} · {r.get('productName', '?')} — {_fmt_qty_int(r.get('requestedQuantity'))} dona",
+        callback_data=f"vh:{state['token']}:rp:{r['id']}",
+    )] for r in pending[:30]]
+    rows.append([InlineKeyboardButton("❌ Bekor qilish",
+                                      callback_data=f"vh:{state['token']}:cancel")])
+    await q.edit_message_text(
+        "📥 *Ochiq to‘ldirish so‘rovlari*\n\n"
+        "Mashina zaxirasi kamaygan mahsulotlar. Tasdiqlasangiz, yuklash "
+        "topshirig‘i avtomatik ochiladi (zaxira faqat odatdagi qadamlar "
+        "bilan ko‘chadi).",
+        parse_mode="Markdown", reply_markup=_buttons(rows))
+    return MENU
+
+
+async def _show_replenishment_detail(q, context, data) -> int:
+    state = context.user_data["vh"]
+    r = (state.get("repl") or {}).get(data[3]) if len(data) > 3 else None
+    if not r:
+        await _reject(q)
+        return MENU
+    lines = [f"📥 *To‘ldirish so‘rovi #{r['id']}*", ""]
+    lines.append(f"📦 {r.get('productName', '?')}")
+    lines.append(f"📊 So‘ralgan: *{_fmt_qty_int(r.get('requestedQuantity'))} dona*")
+    if (r.get("currentQuantitySnapshot") is not None
+            and r.get("targetQuantitySnapshot") is not None):
+        lines.append(
+            f"🚚 Mashinada: {_fmt_qty_int(r['currentQuantitySnapshot'])} dona · "
+            f"maqsad: {_fmt_qty_int(r['targetQuantitySnapshot'])} dona")
+    if r.get("sourceWarehouseName"):
+        lines.append(f"🏬 Manba ombor: {r['sourceWarehouseName']}")
+    if r.get("requestedAt"):
+        lines.append(f"🕐 So‘ralgan: {str(r['requestedAt'])[:16].replace('T', ' ')}")
+    lines += ["", "Tasdiqlaysizmi? Topshiriq ochilgach «📋 Mavjud topshirishlar» "
+                  "orqali PDF stiker chop etiladi."]
+    rows = [
+        [InlineKeyboardButton("✅ Tasdiqlash — topshiriq ochish",
+                              callback_data=f"vh:{state['token']}:rok:{r['id']}")],
+        [InlineKeyboardButton("⬅️ Ro‘yxatga qaytish",
+                              callback_data=f"vh:{state['token']}:repl")],
+    ]
+    await q.edit_message_text("\n".join(lines), parse_mode="Markdown",
+                              reply_markup=_buttons(rows))
+    return MENU
+
+
+async def _approve_replenishment(q, context, data) -> int:
+    """F11: so'rovni tasdiqlash — server approved + handoff'ni o'zi yaratadi."""
+    state = context.user_data["vh"]
+    rid = data[3] if len(data) > 3 else ""
+    if rid not in (state.get("repl") or {}):
+        await _reject(q)
+        return MENU
+    ok, payload = approve_vehicle_replenishment_request(int(rid))
+    if not ok:
+        await q.edit_message_text(
+            f"❌ Tasdiqlanmadi: {payload}\n\n"
+            "So‘rov holati o‘zgargan bo‘lishi mumkin — «📥 To‘ldirish "
+            "so‘rovlari»ni qayta oching.")
+        return ConversationHandler.END
+    state.get("repl", {}).pop(rid, None)
+    handoff_id = None
+    if isinstance(payload, dict):
+        handoff_id = payload.get("handoffId")
+        if handoff_id is None and isinstance(payload.get("request"), dict):
+            handoff_id = payload["request"].get("handoffId")
+    suffix = f" (№{handoff_id})" if handoff_id else ""
+    rows = [
+        [InlineKeyboardButton("📋 Mavjud topshirishlar",
+                              callback_data=f"vh:{state['token']}:list")],
+        [InlineKeyboardButton("📥 So‘rovlar ro‘yxati",
+                              callback_data=f"vh:{state['token']}:repl")],
+    ]
+    await q.edit_message_text(
+        f"✅ Topshiriq yaratildi{suffix}.\n\n"
+        "Endi «📋 Mavjud topshirishlar» orqali PDF stikerni chop etib, "
+        "odatdagi qadamlar bilan mashinaga topshiring — zaxira faqat "
+        "«Zaxirani o‘tkazish» bosqichida ko‘chadi.",
+        reply_markup=_buttons(rows))
+    return MENU
 
 
 async def _send_actions(message, state, handoff_id: int, status: str):

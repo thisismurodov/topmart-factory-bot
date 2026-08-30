@@ -46,6 +46,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 log = logging.getLogger("distribution.bot")
 
 from database import get_db, init_db, transaction, DatabaseUnavailable
+from database import vehicle_fill as vfill
+import vehicle_api
+import json
+from decimal import Decimal
 
 # --- Global DB error handling -------------------------------------------
 # PostgreSQL vaqtincha ulanmasa: foydalanuvchiga tushunarli xabar, log yoziladi,
@@ -520,7 +524,7 @@ def dlv_back(msg):
     uid=msg.from_user.id; user=get_user(uid)
     if not user: return
     set_state(uid,None,{})
-    bot.send_message(uid,"🏠 Asosiy menyu",reply_markup=main_kb(user[3]))
+    bot.send_message(uid,"🏠 Asosiy menyu",reply_markup=main_kb(user[3],uid))
     if user[3] in("delivery","agent","supervisor"): send_field_btn(uid)
 
 @bot.message_handler(func=lambda m:m.text=="📋 Delivery agentlar ro'yxati")
@@ -1199,7 +1203,7 @@ def s_plan_agent_select(msg):
     if not msg.text.startswith("🎯 "):
         if msg.text=="❌ Bekor qilish":
             clear_state(uid); user=get_user(uid)
-            bot.send_message(uid,"Bekor qilindi",reply_markup=main_kb(user[3]))
+            bot.send_message(uid,"Bekor qilindi",reply_markup=main_kb(user[3],uid))
         return
     try:
         rest=msg.text[2:].strip()
@@ -1219,7 +1223,7 @@ def s_plan_savdo_input(msg):
     uid=msg.from_user.id
     if msg.text=="❌ Bekor qilish":
         clear_state(uid); user=get_user(uid)
-        bot.send_message(uid,"Bekor qilindi",reply_markup=main_kb(user[3])); return
+        bot.send_message(uid,"Bekor qilindi",reply_markup=main_kb(user[3],uid)); return
     try:
         savdo=int(msg.text.replace(" ","").replace(",",""))
         if savdo<0: raise ValueError
@@ -1234,7 +1238,7 @@ def s_plan_dokon_input(msg):
     uid=msg.from_user.id
     if msg.text=="❌ Bekor qilish":
         clear_state(uid); user=get_user(uid)
-        bot.send_message(uid,"Bekor qilindi",reply_markup=main_kb(user[3])); return
+        bot.send_message(uid,"Bekor qilindi",reply_markup=main_kb(user[3],uid)); return
     try:
         dokon=int(msg.text.replace(" ",""))
         if dokon<0: raise ValueError
@@ -1253,7 +1257,7 @@ def s_plan_dokon_input(msg):
               (tid,oy,final_sp,final_dp,datetime.now().isoformat(),final_sp,final_dp))
     conn.commit(); conn.close()
     clear_state(uid); user=get_user(uid)
-    bot.send_message(uid,f"✅ {name} uchun {oy} rejasi saqlandi:\n💰 {fmt(final_sp)} savdo\n🏪 {final_dp} dokon",reply_markup=main_kb(user[3]))
+    bot.send_message(uid,f"✅ {name} uchun {oy} rejasi saqlandi:\n💰 {fmt(final_sp)} savdo\n🏪 {final_dp} dokon",reply_markup=main_kb(user[3],uid))
     # Notify agent
     try: bot.send_message(tid,f"🎯 Admin sizga {oy} oyiga reja qo'ydi:\n💰 Savdo: {fmt(final_sp)}\n🏪 Yangi dokon: {final_dp}\n\nKo'rish: 🎯 Mening rejam")
     except: pass
@@ -1278,7 +1282,19 @@ def fmt_miq(q):
         return str(int(f)) if f==int(f) else f"{f:g}"
     except: return str(q)
 
-def main_kb(role):
+_PILOT_KB_CACHE={}
+def _pilot_kb_flag(uid):
+    """F11: delivery menyusida 🚚 tugmasini ko'rsatish tekshiruvi (60s TTL kesh).
+    Kesh faqat menyu render tezligi uchun — wizard kirishi HAR DOIM yangidan
+    tekshiradi, ya'ni kesh huquq chegarasi emas."""
+    now=time.time(); hit=_PILOT_KB_CACHE.get(uid)
+    if hit and now-hit[0]<60: return hit[1]
+    try: flag=_is_vehicle_distribution_pilot_user(get_user(uid))
+    except Exception: flag=False
+    _PILOT_KB_CACHE[uid]=(now,flag)
+    return flag
+
+def main_kb(role,uid=None):
     kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=2)
     if role=="delivery":
         # T009: toza menyu — asosiy ish Mini App'da, bot zaxira/tezkor amallar
@@ -1291,6 +1307,8 @@ def main_kb(role):
         kb.add("❌ Tovar olmadi","📋 Qaytib kirish kerak")
         kb.add("📊 Statistikam","👤 Profil")
         kb.add("🗺 Mening marshrutim")
+        if uid is not None and _pilot_kb_flag(uid):
+            kb.add("🚚 Mashinani to'ldirish")
         return kb
     if role in("agent","supervisor") and FIELD_APP_URL:
         # Mini App agent/supervisorlar uchun ham (delivery'dan tashqari).
@@ -1390,7 +1408,7 @@ def _gps_outlier_km(viloyat,lat,lon):
 def cancel_h(msg):
     uid=msg.from_user.id; clear_state(uid); user=get_user(uid)
     if user:
-        bot.send_message(uid,"❌ Bekor qilindi.",reply_markup=main_kb(user[3]))
+        bot.send_message(uid,"❌ Bekor qilindi.",reply_markup=main_kb(user[3],uid))
     else:
         bot.send_message(uid,"❌ Bekor qilindi.",reply_markup=types.ReplyKeyboardRemove())
 
@@ -1432,7 +1450,7 @@ def cmd_start(msg):
         kb.add("🚚 Men delivery agent")
         bot.send_message(uid,"👋 TOP MART botiga xush kelibsiz!\n\nKim sifatida kirasiz?",reply_markup=kb)
         return
-    bot.send_message(uid,f"✅ Xush kelibsiz, {user[2]}!\n🔰 Rol: {user[3].upper()}",reply_markup=main_kb(user[3]))
+    bot.send_message(uid,f"✅ Xush kelibsiz, {user[2]}!\n🔰 Rol: {user[3].upper()}",reply_markup=main_kb(user[3],uid))
     if user[3] in("delivery","agent","supervisor"): send_field_btn(uid)
 
 @bot.message_handler(func=lambda m:m.text=="👤 Men sotuvchi / agent" and not get_user(m.from_user.id))
@@ -1513,7 +1531,7 @@ def dlv_link_phone(msg):
         f"🗺 BOSHLASH — bugungi marshrut (Mini App)\n"
         f"📦 Tovar berish | 💰 Pul olish\n"
         f"📊 Statistikam — kunlik natijalar",
-        reply_markup=main_kb("delivery"))
+        reply_markup=main_kb("delivery",uid))
     send_field_btn(uid)
     # Notify admins
     for aid in all_admin_ids():
@@ -1571,7 +1589,7 @@ def dlv_route_gps(msg):
     uid=msg.from_user.id
     _record_agent_location(uid,msg.location.latitude,msg.location.longitude,"route_start")
     clear_state(uid)
-    bot.send_message(uid,"✅ Joylashuv qabul qilindi — marshrut boshlandi. Yaxshi yo'l! 🚚",reply_markup=main_kb("delivery"))
+    bot.send_message(uid,"✅ Joylashuv qabul qilindi — marshrut boshlandi. Yaxshi yo'l! 🚚",reply_markup=main_kb("delivery",uid))
     send_field_btn(uid)
 
 @bot.message_handler(func=lambda m:m.text=="👤 Profil")
@@ -1670,7 +1688,7 @@ def reg_name(msg):
     existing=get_user(uid)
     if existing:
         clear_state(uid)
-        bot.send_message(uid,f"✅ Xush kelibsiz, {existing[2]}!",reply_markup=main_kb(existing[3])); return
+        bot.send_message(uid,f"✅ Xush kelibsiz, {existing[2]}!",reply_markup=main_kb(existing[3],uid)); return
     set_state(uid,"reg_viloyat",{"name":msg.text.strip()})
     bot.send_message(uid,"📍 Viloyatingizni tanlang:",reply_markup=viloyat_kb())
 
@@ -1680,7 +1698,7 @@ def reg_viloyat(msg):
     existing=get_user(uid)
     if existing:
         clear_state(uid)
-        bot.send_message(uid,f"✅ Xush kelibsiz, {existing[2]}!",reply_markup=main_kb(existing[3])); return
+        bot.send_message(uid,f"✅ Xush kelibsiz, {existing[2]}!",reply_markup=main_kb(existing[3],uid)); return
     viloyatlar=["Namangan","Farg'ona","Andijon"]
     if msg.text not in viloyatlar:
         bot.send_message(uid,"❗ Iltimos ro'yxatdan viloyat tanlang:",reply_markup=viloyat_kb()); return
@@ -2137,7 +2155,7 @@ def _save_dokon(uid,data):
                     route_note=f"\n⚠️ Marshrutga qo'shilmadi: {_e}"
     conn.commit();conn.close();clear_state(uid)
     owner_note=f"\n📱 Egasi TG: {data['owner_telegram_id']}" if data.get("owner_telegram_id") else ""
-    bot.send_message(uid,f"✅ Dokon saqlandi!\n🏪 {data['nomi']}\n👤 {data['egasi']}\n📞 {data['telefon']}{owner_note}{route_note}",reply_markup=main_kb(user[3]))
+    bot.send_message(uid,f"✅ Dokon saqlandi!\n🏪 {data['nomi']}\n👤 {data['egasi']}\n📞 {data['telefon']}{owner_note}{route_note}",reply_markup=main_kb(user[3],uid))
     lat=data.get("lat"); lon=data.get("lon")
     maps_link=f"\n🗺 https://maps.google.com/?q={lat},{lon}" if lat and lon else ""
     notif_text=(f"🏪 Yangi dokon qo'shildi!\n\n"
@@ -2497,7 +2515,7 @@ def _dokon_ruxsat_guard(uid,did,user=None):
     if user is None: user=get_user(uid)
     clear_state(uid)
     bot.send_message(uid,"❗ Saqlanmadi: dokon topilmadi, faol emas yoki sizga biriktirilmagan.",
-                     reply_markup=main_kb(user[3]) if user else types.ReplyKeyboardRemove())
+                     reply_markup=main_kb(user[3],uid) if user else types.ReplyKeyboardRemove())
     return False
 
 def _savdo_send_vil(uid,data,total=None):
@@ -2830,7 +2848,7 @@ def _save_savdo(uid,data):
         bot.send_message(uid,
             "❗ Savdo saqlanmadi: mashina biriktiruvi savdo davomida o'zgardi.\n"
             "Iltimos, savdoni boshidan qaytadan kiriting.",
-            reply_markup=main_kb(user[3] if user else None))
+            reply_markup=main_kb(user[3] if user else None,uid))
         return
     if not _dokon_ruxsat_guard(uid,data["dokon_id"],user):
         deducted=data.get("balans_ishlatildi",0)
@@ -2877,7 +2895,7 @@ def _save_savdo(uid,data):
         balans_line=f"\n💰 Balans ishlatildi: -{fmt(balans_ishlatildi)}"
         if yangi_balans is not None:
             balans_line+=f"\n💳 Qolgan balans: {fmt(yangi_balans)}"
-    bot.send_message(uid,"✅ Savdo saqlandi!\n\n🏪 "+data["dokon_nomi"]+"\n"+"\n".join(lines)+f"\n\n💰 Jami: {fmt(jami)}"+tolov_str+balans_line,reply_markup=main_kb(user[3]))
+    bot.send_message(uid,"✅ Savdo saqlandi!\n\n🏪 "+data["dokon_nomi"]+"\n"+"\n".join(lines)+f"\n\n💰 Jami: {fmt(jami)}"+tolov_str+balans_line,reply_markup=main_kb(user[3],uid))
     # Admin notification — forward photo if present
     admin_text=(f"📦 Yangi savdo!\n\n"
                 f"👤 Agent: {user[2]}\n"
@@ -2911,6 +2929,8 @@ def _save_savdo(uid,data):
         if balans_ishlatildi>0:
             try: bot.send_message(owner_tg,f"✅ {fmt(balans_ishlatildi)} so'm balans ishlatildi.\nQolgan balans: {fmt(yangi_balans or 0)}")
             except: pass
+    # F11: pilot marshruti to'liq yopilgan bo'lsa — avto MASHINA HISOBOTI
+    _vehicle_route_end_check(uid)
 
 @bot.message_handler(func=lambda m:m.text=="💰 Pul olish")
 def pul_olish(msg):
@@ -3016,7 +3036,7 @@ def s_pul_nasiya_summa(msg):
         f"💵 Olingan summa: {fmt(summa)}\n"
         f"💳 Nasiyaga hisoblandi: {fmt(summa)}\n"
         f"{nasiya_status}",
-        reply_markup=main_kb(user[3]))
+        reply_markup=main_kb(user[3],uid))
     for aid in all_admin_ids():
         try: bot.send_message(aid,
             f"💰 Pul olindi (nasiyaga)!\n\n"
@@ -3049,7 +3069,7 @@ def s_pul_nasiya_ortiqcha_confirm(msg):
         f"💳 Nasiyaga hisoblandi: {fmt(nasiya_qoldiq)}\n"
         f"✅ Nasiya to'liq to'landi!\n"
         f"💰 Ortiqcha balansga yozildi: +{fmt(ortiqcha)}",
-        reply_markup=main_kb(user[3]))
+        reply_markup=main_kb(user[3],uid))
     for aid in all_admin_ids():
         try: bot.send_message(aid,
             f"💰 Pul olindi (ortiqcha)!\n\n"
@@ -3071,7 +3091,7 @@ def s_pul_summa(msg):
     if not _dokon_ruxsat_guard(uid,data["dokon_id"],user): return
     record_pul_olish(data["dokon_id"],uid,summa)
     clear_state(uid)
-    bot.send_message(uid,f"✅ Pul olish saqlandi!\n🏪 {data['dokon_nomi']}\n💰 {fmt(summa)}",reply_markup=main_kb(user[3]))
+    bot.send_message(uid,f"✅ Pul olish saqlandi!\n🏪 {data['dokon_nomi']}\n💰 {fmt(summa)}",reply_markup=main_kb(user[3],uid))
     for aid in all_admin_ids():
         try: bot.send_message(aid,
             f"💰 Pul olindi!\n\n"
@@ -3159,10 +3179,10 @@ def nasiya_boshqaruv(msg):
     admin_view=is_admin(uid)
     text,kb,store_rows=_nasiya_summary_kb(uid, admin_view=admin_view)
     if not store_rows:
-        bot.send_message(uid,text+"\n\n✅ Nasiya qarz yo'q!",reply_markup=main_kb(user[3])); return
+        bot.send_message(uid,text+"\n\n✅ Nasiya qarz yo'q!",reply_markup=main_kb(user[3],uid)); return
     if admin_view:
         # Admin faqat ko'radi — to'lov qabul qilish agentniki
-        bot.send_message(uid,text,reply_markup=main_kb(user[3])); return
+        bot.send_message(uid,text,reply_markup=main_kb(user[3],uid)); return
     set_state(uid,"nasiya_store_list",{})
     bot.send_message(uid,text,reply_markup=kb)
 
@@ -3221,7 +3241,7 @@ def s_nasiya_tolov(msg):
         f"🏪 {dnomi}\n"
         f"💵 Qabul qilindi: {fmt(summa)}\n"
         f"{status}",
-        reply_markup=main_kb(user[3]))
+        reply_markup=main_kb(user[3],uid))
     clear_state(uid)
     for aid in all_admin_ids():
         try: bot.send_message(aid,
@@ -3253,7 +3273,7 @@ def s_nasiya_tolov_ortiqcha_confirm(msg):
         f"💵 Qabul qilindi: {fmt(summa)}\n"
         f"✅ Barcha qarz to'liq to'landi!\n"
         f"💰 Ortiqcha balansga yozildi: +{fmt(ortiqcha)}",
-        reply_markup=main_kb(user[3]))
+        reply_markup=main_kb(user[3],uid))
     for aid in all_admin_ids():
         try: bot.send_message(aid,
             f"💳 Nasiya to'lovi (ortiqcha)!\n\n"
@@ -3401,7 +3421,7 @@ def s_olmadi_confirm(msg):
         _save_olmadi(uid,data)
     elif msg.text=="❌ Bekor qilish":
         user=get_user(uid); clear_state(uid)
-        bot.send_message(uid,"❌ Bekor qilindi",reply_markup=main_kb(user[3]))
+        bot.send_message(uid,"❌ Bekor qilindi",reply_markup=main_kb(user[3],uid))
 
 def _save_olmadi(uid,data):
     user=get_user(uid); conn=get_db(); c=conn.cursor()
@@ -3420,7 +3440,7 @@ def _save_olmadi(uid,data):
               (dokon_id,uid,data["sabab"],data["sabab_text"],data.get("lat"),data.get("lon"),data.get("qaytish_sanasi"),data.get("foto"),datetime.now().isoformat()))
     conn.commit();conn.close();clear_state(uid)
     qaytish=f"\n📅 Qaytish: {data.get('qaytish_sanasi','')}" if data.get("qaytish_sanasi") else ""
-    bot.send_message(uid,f"✅ Yozildi!\n🏪 {data['dokon_nomi']}\n❌ {data['sabab_text']}{qaytish}",reply_markup=main_kb(user[3]))
+    bot.send_message(uid,f"✅ Yozildi!\n🏪 {data['dokon_nomi']}\n❌ {data['sabab_text']}{qaytish}",reply_markup=main_kb(user[3],uid))
     lat=data.get("lat"); lon=data.get("lon")
     maps_line=f"\n🗺 Location: https://maps.google.com/?q={lat},{lon}" if lat and lon else ""
     caption=(f"🔔 Tovar olmadi / Qaytib kirish\n\n"
@@ -3438,6 +3458,8 @@ def _save_olmadi(uid,data):
             else:
                 bot.send_message(aid,caption)
         except: pass
+    # F11: pilot marshruti to'liq yopilgan bo'lsa — avto MASHINA HISOBOTI
+    _vehicle_route_end_check(uid)
 
 @bot.message_handler(func=lambda m:m.text=="📋 Qaytib kirish kerak")
 def qaytib_kirish(msg):
@@ -3450,7 +3472,7 @@ def qaytib_kirish(msg):
         WHERE o.agent_id=%s AND o.bajarildi=0 AND o.qaytish_sanasi IS NOT NULL
         ORDER BY o.qaytish_sanasi""",(uid,))
     rows=c.fetchall();conn.close()
-    if not rows: bot.send_message(uid,"✅ Qaytib kirish kerak bo'lgan dokon yo'q!",reply_markup=main_kb(user[3])); return
+    if not rows: bot.send_message(uid,"✅ Qaytib kirish kerak bo'lgan dokon yo'q!",reply_markup=main_kb(user[3],uid)); return
     text="📋 Qaytib kirish kerak:\n\n"
     for r in rows:
         nomi,egasi,telefon,sabab_text,qaytish_sanasi,oid,lat,lon=r
@@ -3463,7 +3485,7 @@ def qaytib_kirish(msg):
                f"❌ {sabab_text}\n"
                f"📅 {qaytish_sanasi}\n"
                f"✅ /bajarildi_{oid}\n\n")
-    bot.send_message(uid,text,reply_markup=main_kb(user[3]))
+    bot.send_message(uid,text,reply_markup=main_kb(user[3],uid))
 
 @bot.message_handler(commands=["bajarildi"])
 def bajarildi(msg):
@@ -3497,7 +3519,7 @@ def qidiruv_query(msg):
     if not q or q=="❌ Bekor qilish":
         user=get_user(uid)
         set_state(uid,None,{})
-        bot.send_message(uid,"Bekor qilindi",reply_markup=main_kb(user[3] if user else "agent")); return
+        bot.send_message(uid,"Bekor qilindi",reply_markup=main_kb(user[3] if user else "agent",uid)); return
     if len(q)<2:
         bot.send_message(uid,"❗ Kamida 2 ta belgi kiriting."); return
     user=get_user(uid); role=user[3]
@@ -3525,7 +3547,7 @@ def qidiruv_query(msg):
             set_state(uid,"admin_dokon_list" if role=="admin" else "agent_dokon_search_list",{})
             bot.send_message(uid,f"❓ '{q}' aniq topilmadi. Balki shulardan birini nazarda tutgandirsiz:",reply_markup=kb)
             return
-        bot.send_message(uid,f"❌ '{q}' bo'yicha hech narsa topilmadi.",reply_markup=main_kb(role)); 
+        bot.send_message(uid,f"❌ '{q}' bo'yicha hech narsa topilmadi.",reply_markup=main_kb(role,uid)); 
         set_state(uid,None,{}); return
     kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=1)
     for d in rows:
@@ -3546,7 +3568,7 @@ def s_agent_dokon_view(msg):
     if not msg.text.startswith("🏪"):
         if msg.text=="❌ Bekor qilish":
             user=get_user(uid); set_state(uid,None,{})
-            bot.send_message(uid,"Bekor qilindi",reply_markup=main_kb(user[3]))
+            bot.send_message(uid,"Bekor qilindi",reply_markup=main_kb(user[3],uid))
         return
     try: did=int(msg.text[1:].split("||")[0])
     except: return
@@ -3582,7 +3604,7 @@ def s_agent_dokon_view(msg):
            f"📅 Oxirgi: "+(last_d[:10] if last_d else "—"))
     set_state(uid,None,{})
     user=get_user(uid)
-    kb=main_kb(user[3])
+    kb=main_kb(user[3],uid)
     if foto:
         try: bot.send_photo(uid,foto,caption=text,reply_markup=kb); return
         except: pass
@@ -3728,7 +3750,7 @@ def dokon_ochir_tasdiq(msg):
     if msg.text!="✅ HA, O'CHIRISH":
         clear_state(uid)
         user=get_user(uid)
-        bot.send_message(uid,"❌ Bekor qilindi",reply_markup=main_kb(user[3])); return
+        bot.send_message(uid,"❌ Bekor qilindi",reply_markup=main_kb(user[3],uid)); return
     did=data["did"]; nomi=data["nomi"]
     conn=get_db();c=conn.cursor()
     try:
@@ -3746,7 +3768,7 @@ def dokon_ochir_tasdiq(msg):
         bot.send_message(uid,f"❗ Xato: {e}"); return
     conn.close(); clear_state(uid)
     user=get_user(uid)
-    bot.send_message(uid,f"✅ '{nomi}' dokoni va barcha tarixi o'chirildi.",reply_markup=main_kb(user[3]))
+    bot.send_message(uid,f"✅ '{nomi}' dokoni va barcha tarixi o'chirildi.",reply_markup=main_kb(user[3],uid))
     # Notify other admins
     for aid in all_admin_ids():
         if aid==uid: continue
@@ -4215,7 +4237,7 @@ def mah_narx_tanla(msg):
     uid=msg.from_user.id; data=get_state(uid)["data"]
     if msg.text=="❌ Bekor qilish":
         user=get_user(uid); clear_state(uid)
-        bot.send_message(uid,"❌ Bekor qilindi",reply_markup=main_kb(user[3])); return
+        bot.send_message(uid,"❌ Bekor qilindi",reply_markup=main_kb(user[3],uid)); return
     if not msg.text.startswith("✏️"): return
     try:
         rest=msg.text.lstrip("✏️").lstrip()
@@ -4259,7 +4281,7 @@ def mah_ochir_tanla(msg):
     uid=msg.from_user.id; data=get_state(uid)["data"]
     if msg.text=="❌ Bekor qilish":
         user=get_user(uid); clear_state(uid)
-        bot.send_message(uid,"❌ Bekor qilindi",reply_markup=main_kb(user[3])); return
+        bot.send_message(uid,"❌ Bekor qilindi",reply_markup=main_kb(user[3],uid)); return
     if not msg.text.startswith("🗑"): return
     try:
         rest=msg.text.lstrip("🗑").lstrip()
@@ -4819,6 +4841,268 @@ def dokonlar_pdf(msg):
     bot.send_document(uid, (fname, buf.read()),
         caption=f"📄 Dokonlar ro'yxati\n🗓 {datetime.now().strftime('%d.%m.%Y %H:%M')}\n📊 Jami: {len(rows)} ta (✓ {faol} faol, ✗ {len(rows)-faol} nofaol)")
 
+# ═══ F11: Telegram-first mashina to'ldirish (agent yuklash ustasi) ═══════════
+VFILL_BTN="🚚 Mashinani to'ldirish"
+
+def _vfill_cancel(uid):
+    user=get_user(uid); clear_state(uid)
+    bot.send_message(uid,"❌ Bekor qilindi",reply_markup=main_kb(user[3] if user else None,uid))
+
+def _vfill_show_warehouses(uid,data,intro=""):
+    whs=vfill.fill_source_warehouses()
+    if not whs:
+        user=get_user(uid); clear_state(uid)
+        bot.send_message(uid,"❌ Yuklash mumkin bo'lgan dona qoldiqli manba ombor topilmadi.",
+                         reply_markup=main_kb(user[3] if user else None,uid)); return
+    kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=1)
+    labels={}
+    for i,w in enumerate(whs,1):
+        lbl=f"{i}) {w['name']}"; labels[lbl]={"id":w["id"],"name":w["name"]}; kb.add(lbl)
+    kb.add("❌ Bekor qilish")
+    data["wh_labels"]=labels
+    set_state(uid,"vfill_wh",data)
+    bot.send_message(uid,(intro or "")+"🏬 Manba omborni tanlang:",reply_markup=kb)
+
+@bot.message_handler(func=lambda m:m.text==VFILL_BTN)
+def vfill_start(msg):
+    uid=msg.from_user.id; user=get_user(uid)
+    if not user or user[3]!="delivery": return
+    # Kirishda HAR DOIM yangi tekshiruv (menyu keshi huquq chegarasi emas)
+    if not _is_vehicle_distribution_pilot_user(user):
+        bot.send_message(uid,"❗ Bu bo'lim faqat mashina pilot agentiga ochiq."); return
+    chain=vfill.pilot_chain(uid)
+    if not chain:
+        bot.send_message(uid,"❗ Faol mashina biriktiruvi topilmadi. Admin bilan bog'laning."); return
+    data={"cart":[],"chain":chain,"opkeys":{}}
+    _vfill_show_warehouses(uid,data,intro=f"🚚 Mashinani to'ldirish — {chain['plate_number']}\n\n")
+
+@bot.message_handler(func=lambda m:get_state(m.from_user.id)["state"]=="vfill_wh")
+def vfill_wh(msg):
+    uid=msg.from_user.id; data=get_state(uid)["data"]
+    sel=(data.get("wh_labels") or {}).get(msg.text)
+    if sel is None:
+        bot.send_message(uid,"❗ Ro'yxatdagi tugmalardan tanlang."); return
+    prods=vfill.fill_products(sel["id"])
+    if not prods:
+        bot.send_message(uid,"❌ Bu omborda yaroqli dona qoldiq yo'q. Boshqa ombor tanlang."); return
+    data["wh_id"]=sel["id"]; data["wh_name"]=sel["name"]; data["prods"]=prods
+    kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=1)
+    labels={}
+    for i,p in enumerate(prods,1):
+        lbl=f"{i}) {p['name']} — {p['available_quantity']} dona"
+        labels[lbl]=i-1; kb.add(lbl)
+    kb.add("⬅️ Orqaga"); kb.add("❌ Bekor qilish")
+    data["prod_labels"]=labels
+    set_state(uid,"vfill_prod",data)
+    bot.send_message(uid,f"🏬 {sel['name']}\n\n📦 Mahsulotni tanlang:",reply_markup=kb)
+
+def _vfill_prod_kb(data):
+    kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=1)
+    for lbl in (data.get("prod_labels") or {}): kb.add(lbl)
+    kb.add("⬅️ Orqaga"); kb.add("❌ Bekor qilish")
+    return kb
+
+@bot.message_handler(func=lambda m:get_state(m.from_user.id)["state"]=="vfill_prod")
+def vfill_prod(msg):
+    uid=msg.from_user.id; data=get_state(uid)["data"]
+    if msg.text=="⬅️ Orqaga": _vfill_show_warehouses(uid,data); return
+    idx=(data.get("prod_labels") or {}).get(msg.text)
+    if idx is None:
+        bot.send_message(uid,"❗ Ro'yxatdagi tugmalardan tanlang."); return
+    p=data["prods"][idx]
+    data["cur"]=p
+    set_state(uid,"vfill_qty",data)
+    kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=1)
+    kb.add("⬅️ Orqaga"); kb.add("❌ Bekor qilish")
+    bot.send_message(uid,
+        f"📦 {p['name']}\n"
+        f"📊 Mavjud: {p['available_quantity']} dona\n"
+        f"🧮 1 quti = {p['pieces_per_box']} dona\n\n"
+        f"Nechta DONA yuklaysiz?",reply_markup=kb)
+
+def _vfill_cart_totals(cart):
+    tq=sum(l["quantity"] for l in cart)
+    tb=sum(-(-l["quantity"]//l["pieces_per_box"]) for l in cart)
+    return tq,tb
+
+@bot.message_handler(func=lambda m:get_state(m.from_user.id)["state"]=="vfill_qty")
+def vfill_qty(msg):
+    uid=msg.from_user.id; data=get_state(uid)["data"]
+    if msg.text=="⬅️ Orqaga":
+        data.pop("cur",None); set_state(uid,"vfill_prod",data)
+        bot.send_message(uid,"📦 Mahsulotni tanlang:",reply_markup=_vfill_prod_kb(data)); return
+    try: q=int((msg.text or "").strip())
+    except Exception:
+        bot.send_message(uid,"❗ Butun son kiriting (masalan: 60)."); return
+    if q<=0:
+        bot.send_message(uid,"❗ Musbat son kiriting."); return
+    p=data.get("cur") or {}
+    cart=data.setdefault("cart",[])
+    line=None
+    for l in cart:
+        if l["wh_id"]==data["wh_id"] and l["mahsulot_id"]==p["mahsulot_id"]:
+            line=l; break
+    new_total=q+(line["quantity"] if line else 0)
+    if new_total>p["available_quantity"]:
+        extra=f" (savatda allaqachon {line['quantity']} dona)" if line else ""
+        bot.send_message(uid,f"⚠️ Omborda faqat {p['available_quantity']} dona bor{extra}. Kamroq kiriting."); return
+    if line: line["quantity"]=new_total
+    else:
+        cart.append({"wh_id":data["wh_id"],"wh_name":data["wh_name"],
+                     "mahsulot_id":p["mahsulot_id"],"name":p["name"],
+                     "quantity":q,"pieces_per_box":p["pieces_per_box"],
+                     "narx":str(p["narx"]) if p.get("narx") is not None else None})
+    boxes=-(-new_total//p["pieces_per_box"])
+    tq,tb=_vfill_cart_totals(cart)
+    set_state(uid,"vfill_next",data)
+    kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=1)
+    kb.add("➕ Yana tovar qo'shish"); kb.add("✅ Yakunlash"); kb.add("❌ Bekor qilish")
+    bot.send_message(uid,
+        f"✅ Savatga qo'shildi:\n"
+        f"📦 {p['name']} — {new_total} dona = {boxes} quti ({boxes} stiker)\n\n"
+        f"🧺 Savat: {len(cart)} xil tovar · {tq} dona · {tb} quti",reply_markup=kb)
+
+@bot.message_handler(func=lambda m:get_state(m.from_user.id)["state"]=="vfill_next")
+def vfill_next(msg):
+    uid=msg.from_user.id; data=get_state(uid)["data"]
+    if msg.text=="➕ Yana tovar qo'shish": _vfill_show_warehouses(uid,data); return
+    if msg.text=="✅ Yakunlash": _vfill_finalize(uid,data); return
+    bot.send_message(uid,"❗ Tugmalardan foydalaning.")
+
+def _vfill_notify_omborchi(hid,wh_name,chain,lines_txt,total_qty,total_boxes):
+    """Yangi topshiriq haqida omborchilarga xabar (VEHICLE_REPLENISHMENT_TELEGRAM_CHAT_IDS)."""
+    try: recipients=vfill.configured_recipient_ids()
+    except ValueError as exc:
+        log.error("VEHICLE_REPLENISHMENT_TELEGRAM_CHAT_IDS xato: %s",exc); return
+    text=(f"📦 YANGI YUKLASH TOPSHIRIG'I (№{hid})\n"
+          f"🚚 {chain['plate_number']} — {chain['agent_name']}\n"
+          f"🏬 Manba: {wh_name}\n\n"
+          f"{lines_txt}\n\n"
+          f"Jami: {total_qty} dona · {total_boxes} quti ({total_boxes} stiker)\n\n"
+          f"🖨 Omborchi bot: «🚚 Mashinani to'ldirish» → «📋 Mavjud topshirishlar»")
+    for rid in recipients:
+        try: bot.send_message(rid,text)
+        except Exception as exc: log.warning("Omborchi xabari yuborilmadi %s: %s",rid,exc)
+
+def _vfill_finalize(uid,data):
+    cart=data.get("cart") or []
+    if not cart: _vfill_cancel(uid); return
+    if data.get("finalizing"):
+        bot.send_message(uid,"⏳ Yakunlash davom etmoqda — kuting..."); return
+    data["finalizing"]=True; set_state(uid,"vfill_next",data)
+    chain=data["chain"]
+    groups={}
+    for l in cart: groups.setdefault(l["wh_id"],[]).append(l)
+    opkeys=data.setdefault("opkeys",{})
+    ok_msgs=[]; failed=[]; remaining=[]
+    for wid,lines in groups.items():
+        # Har bir ombor-guruh uchun barqaror kalit: retry'da o'sha topshiriq qayta
+        # ochilmaydi (server idempotent). Savat o'zgargan bo'lsa 409 fingerprint
+        # to'qnashuvi keladi — bir marta yangi kalit bilan urinamiz.
+        key=opkeys.setdefault(str(wid),str(uuid.uuid4()))
+        try:
+            try:
+                h=vehicle_api.create_handoff(wid,lines,key,notes=f"F11 agent yuklash — {chain['agent_name']}")
+            except vehicle_api.VehicleApiError as e1:
+                if e1.status==409:
+                    key=str(uuid.uuid4()); opkeys[str(wid)]=key
+                    h=vehicle_api.create_handoff(wid,lines,key,notes=f"F11 agent yuklash — {chain['agent_name']}")
+                else: raise
+        except vehicle_api.VehicleApiError as e:
+            failed.append((lines[0]["wh_name"],str(e))); remaining.extend(lines); continue
+        hid=h.get("id")
+        label_warn=""
+        try:
+            lk=opkeys.setdefault(f"lbl:{wid}",str(uuid.uuid4()))
+            vehicle_api.prepare_labels(hid,lk)
+        except vehicle_api.VehicleApiError as e:
+            label_warn=f"\n⚠️ Stikerlar rezervlanmadi ({e}). Omborchi botda topshiriqni ochganda qayta uriniladi."
+        txt_lines=[]; total_qty=0; total_boxes=0; total_sum=Decimal(0)
+        for l in lines:
+            b=-(-l["quantity"]//l["pieces_per_box"])
+            total_qty+=l["quantity"]; total_boxes+=b
+            if l.get("narx"): total_sum+=Decimal(l["narx"])*l["quantity"]
+            txt_lines.append(f"  • {l['name']} — {l['quantity']} dona = {b} quti")
+        lines_txt="\n".join(txt_lines)
+        sum_line=f"\n💰 Taxminiy qiymati (savdo narxida): {fmt(total_sum)}" if total_sum>0 else ""
+        ok_msgs.append(f"✅ TOPSHIRIQ YARATILDI (№{hid})\n🏬 Manba: {lines[0]['wh_name']}\n{lines_txt}\n📦 Jami: {total_qty} dona · {total_boxes} quti ({total_boxes} stiker){sum_line}{label_warn}")
+        _vfill_notify_omborchi(hid,lines[0]["wh_name"],chain,lines_txt,total_qty,total_boxes)
+        opkeys.pop(str(wid),None); opkeys.pop(f"lbl:{wid}",None)
+    if failed:
+        data["cart"]=remaining; data["finalizing"]=False; set_state(uid,"vfill_next",data)
+        err="\n".join(f"❌ {n}: {e}" for n,e in failed)
+        kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=1)
+        kb.add("✅ Yakunlash"); kb.add("➕ Yana tovar qo'shish"); kb.add("❌ Bekor qilish")
+        bot.send_message(uid,("\n\n".join(ok_msgs)+"\n\n" if ok_msgs else "")+err+
+                         "\n\n♻️ «✅ Yakunlash» bilan qayta urinib ko'ring yoki «❌ Bekor qilish».",reply_markup=kb)
+        return
+    user=get_user(uid); clear_state(uid)
+    bot.send_message(uid,"\n\n".join(ok_msgs)+
+        "\n\n⏳ Omborchi tovarlarni yig'ib, stiker yopishtirib, mashinaga topshiradi."
+        "\n📲 Yuk mashinangizga o'tkazilgach «✅ MASHINA TO'LDIRILDI» xabari keladi."
+        "\n❗ Zaxira hozircha ombordan YECHILMADI — faqat omborchi tasdiqlaganda ko'chadi.",
+        reply_markup=main_kb(user[3] if user else None,uid))
+
+# ═══ F11: Yo'l yakuni — avto MASHINA HISOBOTI + avto to'ldirish ══════════════
+def _vehicle_route_end_check(uid):
+    """Pilot agentning bugungi marshruti to'liq yopilganda (har bir rejali dokon
+    savdo YOKI 'tovar olmadi' bilan qamralganda) bir martalik MASHINA HISOBOTI
+    yuboriladi va target asosida avto to'ldirish so'rovlari ochiladi.
+    Hech qachon exception tarqatmaydi — savdo oqimini buzishi mumkin emas."""
+    try:
+        if os.environ.get("VEHICLE_DISTRIBUTION_ENABLED")!="1": return
+        user=get_user(uid)
+        if not user or user[3]!="delivery": return
+        if not _is_vehicle_distribution_pilot_user(user): return
+        kun=_today_kun()
+        if kun is None: return
+        chain=vfill.pilot_chain(uid)
+        if not chain: return
+        today=vfill.today_str()
+        planned,covered=vfill.route_end_status(chain["delivery_agent_id"],uid,kun,today)
+        if planned==0 or covered<planned: return
+        rows=vfill.vehicle_day_numbers(chain["vehicle_warehouse_id"],chain["vehicle_id"],today)
+        payload=json.dumps({"planned":planned,"covered":covered,"rows":rows},
+                           ensure_ascii=False,default=str)
+        won,created=vfill.try_route_end_finalize(chain["vehicle_id"],today,
+                                                 chain["delivery_agent_id"],uid,
+                                                 payload,uid,
+                                                 chain["vehicle_warehouse_id"])
+        if not won:
+            return  # bugun allaqachon yuborilgan (yoki parallel yutdi)
+        sold_lines=[f"  • {r['name']} — {r['sold']} dona" for r in rows if r["sold"]>0]
+        left_lines=[f"  • {r['name']} — {r['remaining']} dona" for r in rows if r["remaining"]>0]
+        text=(f"🚚 MASHINA HISOBOTI — {chain['plate_number']} / {chain['agent_name']}\n"
+              f"📅 {today} · Marshrut yakunlandi ({covered}/{planned} dokon)\n\n"
+              f"📦 Bugun sotildi:\n"+("\n".join(sold_lines) if sold_lines else "  —")+"\n\n"
+              f"📊 Mashinada qoldi:\n"+("\n".join(left_lines) if left_lines else "  —"))
+        if created:
+            text+=("\n\n🔴 Avto to'ldirish so'rovi ochildi (omborchiga boradi):\n"+
+                   "\n".join(f"  • {n} — {d} dona" for n,d in created))
+        else:
+            text+="\n\n✅ Zaxira me'yorida — yangi to'ldirish so'rovi ochilmadi."
+        bot.send_message(uid,text)
+    except Exception as exc:
+        log.exception("Route-end check failed: %s",exc)
+
+# ═══ F11: "✅ MASHINA TO'LDIRILDI" agent xabari (poller) ═════════════════════
+def run_vehicle_agent_notify():
+    """Omborchi zaxirani mashinaga o'tkazgach (stock_transferred) agentga xabar.
+    At-least-once: xabar ketmasa belgi qo'yilmaydi, keyingi aylanishda qayta
+    uriniladi. FOR UPDATE SKIP LOCKED — parallel ishlashga chidamli."""
+    while True:
+        try:
+            if os.environ.get("VEHICLE_DISTRIBUTION_ENABLED")=="1":
+                for hid in vfill.pending_agent_notifications():
+                    try:
+                        vfill.notify_agent_transfer(
+                            hid,lambda chat,text: bot.send_message(chat,text))
+                    except Exception as exc:
+                        log.warning("Handoff %s agent xabari keyinga qoldi: %s",hid,exc)
+        except Exception as exc:
+            log.exception("Vehicle agent notify loop failed: %s",exc)
+        time.sleep(15)
+
 # ── Boshqa har qanday joylashuv xabari → agent_locations (jonli GPS oqimi) ─────
 # Diqqat: bu handler ENG OXIRIDA ro'yxatdan o'tadi — state-ga bog'liq location
 # handlerlari (dokon_location, olmadi_location, route_gps) undan ustun turadi.
@@ -4834,5 +5118,6 @@ if __name__=="__main__":
     threading.Thread(target=run_scheduler,daemon=True).start()
     threading.Thread(target=run_health_server,daemon=True).start()
     threading.Thread(target=run_replenishment_delivery,daemon=True).start()
+    threading.Thread(target=run_vehicle_agent_notify,daemon=True).start()
     print("✅ TOP MART bot ishga tushdi!")
     bot.infinity_polling(timeout=30, long_polling_timeout=30)

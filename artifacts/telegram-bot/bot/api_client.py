@@ -108,6 +108,22 @@ def mark_handoff_handed_over(handoff_id: int) -> tuple[bool, object]:
     )
 
 
+def list_vehicle_replenishment_requests() -> tuple[bool, object]:
+    """F11: avto to'ldirish so'rovlari ro'yxati (omborchi tasdig'i uchun)."""
+    return vehicle_get("/vehicle-distribution/pilot/replenishment-requests")
+
+
+def approve_vehicle_replenishment_request(request_id: int) -> tuple[bool, object]:
+    """F11: so'rovni omborchi tomonidan tasdiqlash.
+
+    Server so'rovni approved qiladi va yuklash topshirig'ini (handoff) o'zi
+    yaratadi — keyingi qadam odatdagi '📋 Mavjud topshirishlar' oqimi."""
+    return vehicle_post(
+        f"/vehicle-distribution/pilot/replenishment-requests/{int(request_id)}/approve",
+        {},
+    )
+
+
 def mark_handoff_stock_transferred(handoff_id: int) -> tuple[bool, object]:
     return vehicle_post(
         f"/vehicle-distribution/handoffs/{int(handoff_id)}/stock-transferred", {}

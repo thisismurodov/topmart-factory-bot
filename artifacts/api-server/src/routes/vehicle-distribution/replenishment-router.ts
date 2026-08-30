@@ -41,6 +41,17 @@ function requireAdmin(req: Request, res: Response): boolean {
   return true;
 }
 
+// F11: omborchi Telegram boti (dedicated bot key) to'ldirish so'rovini o'zi
+// tasdiqlay oladi — cancel esa admin huquqida qoladi.
+function requireAdminOrWarehouseBot(req: Request, res: Response): boolean {
+  const type = actorOf(req).type;
+  if (type !== "admin" && type !== "warehouse_bot") {
+    res.status(403).json({ error: "Admin or warehouse bot role required" });
+    return false;
+  }
+  return true;
+}
+
 function requestId(req: Request): number | null {
   const id = Number(req.params.requestId);
   return Number.isInteger(id) && id > 0 ? id : null;
@@ -187,7 +198,7 @@ export function createVehicleReplenishmentRouter(pool: Pool): IRouter {
   router.post(
     `${base}/replenishment-requests/:requestId/approve`,
     async (req, res) => {
-      if (!requireAdmin(req, res)) return;
+      if (!requireAdminOrWarehouseBot(req, res)) return;
       const id = requestId(req);
       if (id == null) {
         res.status(404).json({ error: "Replenishment request not found" });

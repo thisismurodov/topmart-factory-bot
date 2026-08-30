@@ -397,6 +397,24 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_handoffs_operation_key
     ON distribution.vehicle_handoffs (operation_key) WHERE operation_key IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_handoffs_movement_reference
     ON distribution.vehicle_handoffs (movement_reference) WHERE movement_reference IS NOT NULL;
+-- F11: Telegram-first yuklash — agentga "✅ Mashina to'ldirildi" xabari
+-- yuborilgan payt. NULL = poller hali yubormagan (at-least-once).
+ALTER TABLE distribution.vehicle_handoffs ADD COLUMN IF NOT EXISTS agent_notified_at TIMESTAMP WITH TIME ZONE;
+
+-- F11: yo'l yakuni (route-end) MASHINA HISOBOTI — bir mashina/bir kun uchun
+-- BITTA yozuv. Unique juftlik hisobotning ikki marta ketishini to'sadi;
+-- payload keyin tekshirish uchun JSON matn snapshoti.
+CREATE TABLE IF NOT EXISTS distribution.vehicle_route_reports (
+    id                 SERIAL PRIMARY KEY,
+    vehicle_id         INTEGER NOT NULL,
+    route_date         DATE NOT NULL,
+    delivery_agent_id  INTEGER,
+    agent_chat_id      BIGINT,
+    payload            TEXT,
+    created_at         TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_route_reports_vehicle_date
+    ON distribution.vehicle_route_reports (vehicle_id, route_date);
 
 -- Aggregate line items (one row per handoff+product). Deliberately holds NO
 -- single production_label_id/barcode — per-unit label/barcode identity lives on

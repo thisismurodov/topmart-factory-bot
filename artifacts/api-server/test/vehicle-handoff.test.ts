@@ -2527,6 +2527,53 @@ describe("F8 cancellation, gates and exact pilot scope", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// F11: warehouse-bot approval authority (approve = admin OR bot; cancel = admin)
+// ─────────────────────────────────────────────────────────────────────────────
+describe("F11 warehouse-bot approval authority", () => {
+  it("bot key approves a request (handoff created); cancel stays admin-only", async () => {
+    // Fresh product so no earlier suite left an open request/target for it.
+    const prodF = await seedProduct("SKU-F11", "Arqon F11", 1.5, 6);
+    await setStock(erpWarehouseId, prodF.name, 500, 750);
+    await setStock(vehicleWarehouseId, prodF.name, 0, 0);
+    expect((await putTarget(prodF, { operationKey: opKey() })).status).toBe(200);
+    const request = await manualRequest(prodF, { botKey: BOT_KEY });
+    expect(request.status).toBe(200);
+
+    const approvePath =
+      `/vehicle-distribution/pilot/replenishment-requests/${request.body.id}/approve`;
+    // Wrong or absent key = unauthenticated (401): the bot-key check falls
+    // through to the admin wall, which finds no session either.
+    expect(
+      (await call("POST", approvePath, {
+        botKey: "not-the-key-not-the-key-not-the-",
+        body: {},
+      })).status,
+    ).toBe(401);
+    expect((await call("POST", approvePath, { body: {} })).status).toBe(401);
+
+    const approved = await call("POST", approvePath, {
+      botKey: BOT_KEY,
+      body: {},
+    });
+    expect(approved.status).toBe(200);
+    expect(approved.body.status).toBe("approved");
+    expect(approved.body.handoffId).toBeTruthy();
+
+    const cancelPath =
+      `/vehicle-distribution/pilot/replenishment-requests/${request.body.id}/cancel`;
+    expect((await call("POST", cancelPath, { botKey: BOT_KEY, body: {} })).status)
+      .toBe(403);
+    // Leave nothing open behind for later suites.
+    const adminCancel = await call("POST", cancelPath, {
+      token: adminToken,
+      body: {},
+    });
+    expect(adminCancel.status).toBe(200);
+    expect(adminCancel.body.status).toBe("cancelled");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Concurrency
 // ─────────────────────────────────────────────────────────────────────────────
 describe("concurrency", () => {

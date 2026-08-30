@@ -46,6 +46,7 @@ import {
   vehicleReconciliationItemsTable,
   vehicleReturnsTable,
   vehicleReturnItemsTable,
+  vehicleRouteReportsTable,
 } from "@workspace/db";
 
 // Distribution sxemasi UCH joyda ta'riflangan va qo'lda sinxron saqlanadi:
@@ -117,6 +118,7 @@ const TABLES = {
   vehicle_reconciliation_items: vehicleReconciliationItemsTable,
   vehicle_returns: vehicleReturnsTable,
   vehicle_return_items: vehicleReturnItemsTable,
+  vehicle_route_reports: vehicleRouteReportsTable,
 } as const;
 
 type ColSpec = { type: string; notNull: boolean; def: string | null };

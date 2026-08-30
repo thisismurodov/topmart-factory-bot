@@ -391,6 +391,8 @@ export const vehicleHandoffsTable = distribution.table(
     handedOverBy: integer("handed_over_by"),
     stockTransferredAt: timestamp("stock_transferred_at", { withTimezone: true }),
     stockTransferredBy: integer("stock_transferred_by"),
+    /** F11: agentga "mashina to'ldirildi" xabari yuborilgan payt (poller belgisi). */
+    agentNotifiedAt: timestamp("agent_notified_at", { withTimezone: true }),
     cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
     cancelledBy: integer("cancelled_by"),
     /** Opaque ref to the stock-movement record created on stock_transferred. */
@@ -1031,5 +1033,26 @@ export const vehicleReturnItemsTable = distribution.table(
       "vehicle_return_items_identity_check",
       sql`btrim(${t.barcode}) <> '' AND btrim(${t.productName}) <> '' AND btrim(${t.sku}) <> ''`,
     ),
+  ],
+);
+
+/**
+ * F11: yo'l yakuni (route-end) MASHINA HISOBOTI belgisi — bir mashina/bir kun
+ * uchun bitta yozuv (unique juftlik hisobot dublikatini to'sadi). payload —
+ * keyin tekshirish uchun JSON matn snapshoti. Yozadigan tomon savdo-bot.
+ */
+export const vehicleRouteReportsTable = distribution.table(
+  "vehicle_route_reports",
+  {
+    id: serial("id").primaryKey(),
+    vehicleId: integer("vehicle_id").notNull(),
+    routeDate: date("route_date").notNull(),
+    deliveryAgentId: integer("delivery_agent_id"),
+    agentChatId: bigint("agent_chat_id", { mode: "number" }),
+    payload: text("payload"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("uq_vehicle_route_reports_vehicle_date").on(t.vehicleId, t.routeDate),
   ],
 );

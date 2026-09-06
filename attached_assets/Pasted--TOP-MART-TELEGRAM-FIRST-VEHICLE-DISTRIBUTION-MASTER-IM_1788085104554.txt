@@ -1,0 +1,799 @@
+# TOP MART — TELEGRAM-FIRST VEHICLE DISTRIBUTION
+# MASTER IMPLEMENTATION TASK
+# GOAL: COMPLETE THE FIRST PRODUCTION-READY VERSION TODAY
+
+We are now ready to build the next stage of Vehicle Distribution.
+
+IMPORTANT:
+Do not redesign the existing system.
+Do not create a second parallel architecture.
+Reuse the existing Vehicle Distribution, Sales Bot, Factory Bot, label, stock, replenishment and DM-001 logic wherever possible.
+
+The goal is to make the operational workflow Telegram-first and dramatically simpler for field agents and warehouse operators.
+
+==================================================
+1. BUSINESS GOAL
+==================================================
+
+The real-world cycle must become:
+
+WAREHOUSE
+→ VEHICLE
+→ AGENT
+→ SHOP
+→ SALE
+→ VEHICLE REMAINING STOCK
+→ AUTOMATIC REPLENISHMENT REQUEST
+→ WAREHOUSE
+→ VEHICLE
+
+The agent and warehouse operator should perform operational actions through Telegram.
+
+The dashboard remains primarily for:
+- management
+- monitoring
+- reporting
+- auditing
+- corrections when explicitly needed
+
+Do NOT make field workers depend on the dashboard for normal daily operations.
+
+==================================================
+2. IMPORTANT BUSINESS RULE
+==================================================
+
+There are TWO different concepts:
+
+A) REQUEST TO LOAD A VEHICLE
+B) ACTUAL WAREHOUSE HANDOFF / LOADING
+
+They must NOT be treated as the same event.
+
+Agent can request/prepare a vehicle loading list.
+
+Warehouse stock must NOT be deducted merely because the agent pressed "Finish".
+
+Actual warehouse stock movement happens only when the warehouse operator confirms the physical handoff.
+
+This is intentional and must remain auditable.
+
+==================================================
+3. PHASE 1 — TELEGRAM VEHICLE LOADING
+==================================================
+
+Implement a simple Telegram flow.
+
+Agent sees:
+
+🚚 MASHINANI TO‘LDIRISH
+
+When pressed:
+
+Step 1:
+Show all available warehouses that the agent is authorized to use.
+
+Example:
+
+🏭 Asosiy ombor
+📦 Toshkent ombori
+📦 Andijon ombori
+
+Do NOT hard-code warehouse names.
+
+Load them from the existing warehouse data.
+
+--------------------------------------------------
+Step 2 — SELECT WAREHOUSE
+--------------------------------------------------
+
+After selecting a warehouse, show products available in that warehouse.
+
+Each product must come from the existing product master/profile.
+
+Example:
+
+📦 Qop ip 100 talik
+Mavjud: 2 400 dona
+
+The bot MUST show current available quantity.
+
+If the user requests more than available:
+
+⚠️ Omborda faqat 2 400 dona mavjud.
+
+Do not allow the request to continue with an impossible quantity.
+
+--------------------------------------------------
+Step 3 — SELECT PRODUCT
+--------------------------------------------------
+
+After product selection, determine automatically from the product profile:
+
+- unit type
+- piece/kg behavior
+- package type
+- units per package / box
+- label behavior
+
+Do NOT ask the user to manually calculate boxes.
+
+Example:
+
+Product:
+Qop ip 100 talik
+
+Product profile:
+unit = piece
+1 box = 100 pieces
+
+User enters:
+
+100 dona
+
+System automatically calculates:
+
+100 dona = 1 quti
+
+and prepares:
+
+1 label.
+
+If:
+
+200 dona
+
+then:
+
+200 dona = 2 quti
+
+and:
+
+2 labels.
+
+The user should never manually calculate package count.
+
+==================================================
+4. LABEL GENERATION
+==================================================
+
+Vehicle labels must use the already approved Vehicle Distribution branding:
+
+Top Mart — Official Partner of Diyor Mahsulotlari
+
+The existing Production Bot label renderer MUST remain unchanged.
+
+Vehicle Distribution must use its vehicle-only template.
+
+Requirements:
+
+- 100×80 mm
+- Code128 barcode
+- no QR
+- individual labels
+- correct quantity
+- correct product
+- correct package information
+
+Reuse the existing approved implementation.
+
+Do not rebuild the existing label architecture unnecessarily.
+
+==================================================
+5. AFTER EACH PRODUCT
+==================================================
+
+After adding a product, show:
+
+➕ Yana tovar qo‘shish
+✅ Yakunlash
+
+If user selects:
+
+➕ Yana tovar qo‘shish
+
+repeat:
+
+WAREHOUSE
+→ PRODUCT
+→ QUANTITY
+→ PACKAGE AUTO-CALCULATION
+→ LABEL
+
+The agent can add multiple products.
+
+==================================================
+6. FINALIZE LOADING REQUEST
+==================================================
+
+When the user presses:
+
+✅ Yakunlash
+
+the system must:
+
+1. Summarize all requested products.
+2. Calculate package/box quantities automatically.
+3. Prepare the corresponding vehicle labels.
+4. Calculate the total sales value using the existing approved sales/product pricing source.
+5. Create a vehicle loading/request record.
+6. Create the warehouse task.
+7. Show the complete summary to the agent.
+
+Example:
+
+🚚 MASHINA TO‘LDIRISH BUYURTMASI
+
+Qop ip 100 talik
+100 dona
+1 quti
+500 000 so‘m
+
+Ikki qavat arqon 5 kg
+24 dona
+24 quti
+2 400 000 so‘m
+
+━━━━━━━━━━━━
+
+Jami mahsulot: 2
+Jami qadoq: 25
+Jami qiymat: 2 900 000 so‘m
+
+📦 Omborchi topshirig‘i yaratildi.
+
+CRITICAL:
+
+DO NOT deduct warehouse stock yet.
+
+The stock remains unchanged until the warehouse operator physically confirms the handoff.
+
+==================================================
+7. WAREHOUSE OPERATOR TELEGRAM FLOW
+==================================================
+
+Warehouse operator receives a task.
+
+Example:
+
+📦 MASHINA TO‘LDIRISH TOPSHIRIG‘I
+
+🚚 Mashina: NAVRUZBEK / DM-001
+
+Kerak:
+
+Qop ip 100 talik — 100 dona
+Ikki qavat arqon 5 kg — 24 dona
+
+The operator can open the task.
+
+The operator then confirms:
+
+✅ MASHINANI TO‘LDIRISH
+
+Only at this point:
+
+- warehouse stock is deducted
+- vehicle stock is increased
+- warehouse → vehicle stock movement is recorded
+- labels become finalized/available according to existing approved label lifecycle
+- task becomes completed
+- audit information is stored
+- agent receives confirmation
+
+Example agent message:
+
+✅ MASHINA TO‘LDIRILDI
+
+Qop ip 100 talik — 100 dona
+Ikki qavat arqon 5 kg — 24 dona
+
+🚚 NAVRUZBEK / DM-001
+
+The new quantity must be added to existing vehicle stock.
+
+Do NOT replace existing vehicle stock.
+
+==================================================
+8. ATOMICITY / SAFETY
+==================================================
+
+The actual warehouse → vehicle transfer must be transactional.
+
+Either:
+
+ALL of the following succeed:
+
+- warehouse deduction
+- vehicle addition
+- stock movement
+- loading completion
+
+OR none of them succeed.
+
+No partial transfer.
+
+Telegram failure must NOT roll back a successfully committed stock transaction.
+
+Use the existing database transaction patterns.
+
+Prevent:
+- duplicate confirmation
+- double stock deduction
+- duplicate vehicle stock
+- duplicate labels
+- repeated button presses causing duplicate transfer
+
+Use idempotency.
+
+==================================================
+9. VEHICLE STOCK
+==================================================
+
+Vehicle stock is persistent.
+
+Example:
+
+Initial vehicle stock:
+Qop ip = 100
+
+After loading 50:
+
+Vehicle stock = 150
+
+Do NOT replace 100 with 50.
+
+The system must maintain a complete movement history.
+
+==================================================
+10. SALES
+==================================================
+
+Existing Sales Bot behavior remains unchanged for normal agents/sales.
+
+For NAVRUZBEK / DM-001:
+
+Vehicle Distribution is used only when:
+
+VEHICLE_DISTRIBUTION_ENABLED == "1"
+
+This fail-closed gate already exists and MUST remain.
+
+When OFF:
+NAVRUZBEK must follow normal sale flow.
+
+When ON:
+NAVRUZBEK uses Vehicle Distribution sale allocation.
+
+Do NOT introduce another gate.
+
+Do NOT bypass the existing safety gate.
+
+==================================================
+11. ROUTE END / AUTOMATIC VEHICLE REPORT
+==================================================
+
+At the end of the agent's route, the system must calculate:
+
+Opening vehicle stock
+minus
+sales
+equals
+remaining vehicle stock
+
+For each product show:
+
+Starting quantity
+Sold quantity
+Remaining quantity
+Suggested replenishment quantity
+
+Example:
+
+🚚 NAVRUZBEK MASHINA HISOBOTI
+
+Qop ip 100 talik
+Boshlang‘ich: 100
+Sotildi: 70
+Qoldi: 30
+🔴 To‘ldirish: 70
+
+Ikki qavat arqon 5 kg
+Boshlang‘ich: 30
+Sotildi: 18
+Qoldi: 12
+🔴 To‘ldirish: 18
+
+==================================================
+12. AUTOMATIC REPLENISHMENT
+==================================================
+
+After the route is completed, create replenishment requirements automatically.
+
+Do NOT create duplicate replenishment requests for the same vehicle/product/open cycle.
+
+Use the already approved #218 outbox/retry/idempotency implementation.
+
+Warehouse notification must go only to the configured private warehouse recipient.
+
+No admin fallback.
+
+Existing configuration:
+
+VEHICLE_REPLENISHMENT_TELEGRAM_CHAT_IDS
+
+Do not invent another recipient system for this MVP.
+
+==================================================
+13. WAREHOUSE REPLENISHMENT FLOW
+==================================================
+
+Warehouse operator receives:
+
+📦 YANGI MASHINA TO‘LDIRISH TOPSHIRIG‘I
+
+🚚 NAVRUZBEK / DM-001
+
+Qop ip 100 talik — 70 dona
+Ikki qavat arqon 5 kg — 18 dona
+
+Operator collects the physical goods.
+
+Then presses:
+
+🚚 MASHINANI TO‘LDIRISH
+
+The system should show the pending replenishment.
+
+Operator confirms.
+
+Then atomically:
+
+warehouse stock decreases
++
+vehicle stock increases
++
+stock movement recorded
++
+replenishment task completed
+
+The newly loaded quantity is added on top of existing vehicle stock.
+
+==================================================
+14. USER EXPERIENCE PRINCIPLES
+==================================================
+
+Keep Telegram interaction extremely simple.
+
+Do NOT expose technical concepts to the user.
+
+Avoid:
+- IDs
+- database terminology
+- schema terminology
+- technical status names
+- unnecessary confirmations
+- unnecessary forms
+
+Use simple Uzbek language.
+
+Preferred buttons:
+
+🚚 Mashinani to‘ldirish
+➕ Yana tovar qo‘shish
+✅ Yakunlash
+📦 Ombor
+📦 Tovar
+🔢 Miqdor
+✅ Mashinani to‘ldirish
+❌ Bekor qilish
+
+The user should always know:
+- where they are
+- what they are selecting
+- what quantity is available
+- what happens next
+
+==================================================
+15. DASHBOARD
+==================================================
+
+Do NOT remove existing dashboard functionality.
+
+Do NOT redesign the entire dashboard.
+
+Dashboard should remain useful for:
+
+- vehicle status
+- vehicle stock
+- loading history
+- sales
+- route reports
+- replenishment
+- audit
+- management
+
+Telegram is the operational interface.
+
+Dashboard is the management/control interface.
+
+==================================================
+16. DO NOT BREAK EXISTING SYSTEM
+==================================================
+
+Do NOT change:
+
+- existing normal Sales Bot workflows
+- existing Production Bot label renderer
+- existing product master
+- existing pricing source
+- existing agent routing
+- existing admin functionality
+- existing Telegram registrations
+- existing non-vehicle warehouse workflows
+
+Reuse existing code wherever possible.
+
+==================================================
+17. IMPLEMENTATION STRATEGY
+==================================================
+
+First inspect the current repository and identify:
+
+- existing Vehicle Distribution Telegram handlers
+- existing warehouse/product selectors
+- existing vehicle stock functions
+- existing handoff/transfer functions
+- existing #218 replenishment/outbox
+- existing label generator
+- existing Sales Bot flow
+- existing product package metadata
+- existing pricing resolver
+
+Do NOT start coding before mapping these.
+
+Then implement the smallest possible changes.
+
+Do not create duplicate abstractions if existing ones can be extended safely.
+
+==================================================
+18. TEST REQUIREMENTS
+==================================================
+
+Before declaring completion, add/run tests for:
+
+A. Agent opens "Mashina to‘ldirish"
+
+B. Warehouse list appears dynamically.
+
+C. Product list comes from selected warehouse.
+
+D. Available quantity is shown.
+
+E. Request above available stock is rejected.
+
+F. Piece product package count is calculated automatically.
+
+G. KG product behavior follows its product profile.
+
+H. Multiple products can be added.
+
+I. Finalize creates one loading request.
+
+J. Finalize creates correct labels.
+
+K. Finalize does NOT deduct warehouse stock.
+
+L. Warehouse operator sees the task.
+
+M. Warehouse confirmation deducts stock exactly once.
+
+N. Vehicle stock increases exactly once.
+
+O. Warehouse → vehicle transfer is atomic.
+
+P. Duplicate confirmation is idempotent.
+
+Q. Existing vehicle stock is preserved and new stock is added.
+
+R. Agent receives loading confirmation.
+
+S. NAVRUZBEK sale with flag OFF remains normal sale.
+
+T. NAVRUZBEK sale with flag ON uses vehicle sale.
+
+U. Route-end calculation is correct.
+
+V. Replenishment request is created correctly.
+
+W. Duplicate replenishment request is prevented.
+
+X. Telegram notification uses configured private recipient only.
+
+Y. Telegram failure does not roll back committed stock/sale transaction.
+
+Z. Existing Sales Bot regression suite remains green.
+
+==================================================
+19. TEST ENVIRONMENT
+==================================================
+
+All development and DB tests must use isolated/local test infrastructure.
+
+DO NOT use production DB for tests.
+
+DO NOT send real Telegram messages during tests.
+
+Use Telegram mocks/fakes.
+
+DO NOT print real labels during automated tests.
+
+Use PDF/render/scanner validation as appropriate.
+
+==================================================
+20. PRODUCTION SAFETY
+==================================================
+
+During implementation:
+
+- do NOT enable new production flags
+- do NOT modify Railway variables
+- do NOT bootstrap DM-001
+- do NOT create production stock
+- do NOT create production sales
+- do NOT send real Telegram messages
+- do NOT print physical labels
+- do NOT restart production services
+
+Production remains untouched until explicit deployment approval.
+
+==================================================
+21. SCOPE CONTROL
+==================================================
+
+This is NOT a general rewrite.
+
+If you discover unrelated bugs:
+- document them
+- do not fix them unless required for this feature
+
+Do not touch:
+- unrelated Sales Bot functionality
+- unrelated Production Bot functionality
+- unrelated dependencies
+- unrelated architecture
+- unrelated UI redesign
+
+Keep the diff focused on Telegram-first Vehicle Distribution.
+
+==================================================
+22. TODAY'S DELIVERY TARGET
+==================================================
+
+We want this completed TODAY.
+
+Therefore:
+
+Do NOT spend the day over-engineering.
+
+Priority order:
+
+P0:
+Agent Telegram loading flow
+
+P0:
+Warehouse Telegram confirmation flow
+
+P0:
+Atomic warehouse → vehicle stock transfer
+
+P0:
+Automatic package/label calculation
+
+P0:
+Existing vehicle sales compatibility
+
+P0:
+Automatic replenishment task
+
+P1:
+Route-end report
+
+P1:
+UX polish
+
+Do not block the whole delivery on non-essential cosmetic improvements.
+
+==================================================
+23. ACCEPTANCE CRITERIA
+==================================================
+
+We are DONE only when this complete flow works in isolated testing:
+
+AGENT
+
+🚚 Mashinani to‘ldirish
+↓
+Ombor
+↓
+Tovar
+↓
+Miqdor
+↓
+Avtomatik quti/stiker
+↓
+➕ Yana tovar / ✅ Yakunlash
+↓
+Warehouse task
+
+WAREHOUSE OPERATOR
+
+📦 Task
+↓
+Tovarlarni yig‘adi
+↓
+🚚 Mashinani to‘ldirish
+↓
+✅ Confirmation
+↓
+Warehouse stock -
+Vehicle stock +
+Stock movement recorded
+↓
+Agent confirmation
+
+AGENT
+
+Route
+↓
+Sales
+↓
+Vehicle stock decreases
+
+ROUTE END
+
+Automatic report
+↓
+Sold / remaining
+↓
+Automatic replenishment request
+
+WAREHOUSE
+
+Replenishment task
+↓
+Collect goods
+↓
+🚚 Mashinani to‘ldirish
+↓
+Warehouse stock -
+Vehicle stock +
+↓
+Cycle repeats
+
+==================================================
+24. FINAL REPORT
+==================================================
+
+At the end report:
+
+1. Exact changed files.
+2. Exact commit SHA.
+3. Tests added.
+4. Tests passed.
+5. Existing regressions passed.
+6. Any known blockers.
+7. Confirmation that production DB was untouched.
+8. Confirmation that no real Telegram message was sent.
+9. Confirmation that no physical print was performed.
+10. Confirmation that no Railway production variables were changed.
+11. Short demo walkthrough of the final Telegram flow.
+
+If everything passes, state:
+
+TELEGRAM-FIRST VEHICLE DISTRIBUTION MVP — READY FOR CONTROLLED PILOT
+
+If anything required for the acceptance criteria fails:
+
+STOP and clearly state the blocker.
+
+Do not claim completion if any P0 acceptance criterion is missing.

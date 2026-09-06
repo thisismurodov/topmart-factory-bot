@@ -22,6 +22,7 @@ import AnalyticsTab from "@/components/distribution/AnalyticsTab";
 import VehicleStockTab from "@/components/distribution/VehicleStockTab";
 import BadCoordPanel from "@/components/distribution/BadCoordPanel";
 import ShopLocationEditor from "@/components/distribution/ShopLocationEditor";
+import TopMartOverviewTab from "@/components/distribution/TopMartOverviewTab";
 import { downloadCsv, toCsv } from "@/lib/csv";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────────
@@ -281,7 +282,8 @@ function KpiCards({ f, update }: { f: Filters; update: (p: Partial<Filters>) => 
               onClick={() => update({ tab: "shops" })}
               title="Do'konlar tabida ko'rish"
             >
-              ⚠️ {s.label}: <b>{s.value} ta</b>
+              <AlertCircle className="w-3.5 h-3.5" />
+              {s.label}: <b>{s.value} ta</b>
             </button>
           ))}
         </div>
@@ -537,7 +539,7 @@ function ShopDrawer({ shopId, onClose }: { shopId: number | null; onClose: () =>
             {/* Holat + asosiy ma'lumot */}
             <div className="flex items-center gap-2">
               {data.holat === "faol"
-                ? <Badge className="bg-green-100 text-green-700 border-green-200 h-6 px-2.5">✓ Faol do'kon</Badge>
+                ? <Badge className="bg-green-100 text-green-700 border-green-200 h-6 px-2.5 gap-1"><CheckCircle2 className="w-3 h-3" /> Faol do'kon</Badge>
                 : <Badge variant="outline" className="h-6 px-2.5">{data.holat || "Holat noma'lum"}</Badge>}
               {data.outstanding > 0 && <Badge className="bg-red-100 text-red-700 border-red-200 h-6 px-2.5">Nasiya bor</Badge>}
             </div>
@@ -963,12 +965,12 @@ type DailyAgent = {
 type DailyVisits = { date: string; kun: number; agents: DailyAgent[] };
 
 const SABAB_LABELS: Record<string, string> = {
-  yopiq: "🔒 Do'kon yopiq",
-  budjet_yoq: "💸 Budjet yo'q",
-  tovar_yetarli: "📦 Tovar yetarli",
-  boshqa: "❓ Boshqa sabab",
-  qaytib_kelaman: "🔁 Qaytib kelaman",
-  rad_etdi: "🚫 Rad etdi",
+  yopiq: "Do'kon yopiq",
+  budjet_yoq: "Budjet yo'q",
+  tovar_yetarli: "Tovar yetarli",
+  boshqa: "Boshqa sabab",
+  qaytib_kelaman: "Qaytib kelaman",
+  rad_etdi: "Rad etdi",
 };
 function dailySababLabel(sabab: string | null, text: string | null): string {
   if (!sabab) return text || "Sabab ko'rsatilmadi";
@@ -994,9 +996,9 @@ function DailyAgentCard({ agent, onShop, open, onToggle }: { agent: DailyAgent; 
     payment: "bg-blue-50 border-blue-200 text-blue-700",
   };
   const outcomeLabel: Record<DailyStop["outcome"], string> = {
-    sold: "✅ Savdo",
-    nosale: "❌ Olmadi",
-    payment: "💳 To'lov",
+    sold: "Savdo",
+    nosale: "Olmadi",
+    payment: "To'lov",
   };
 
   return (
@@ -1400,19 +1402,21 @@ function RoutesTab({ f, update, active, onShop }: { f: Filters; update: (p: Part
                             }
                           }}
                           title="Bu kunning marshrutida hal qilinmagan kesishishlar bor — bosing"
-                          className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300 px-1.5 py-0.5 text-[10px] font-semibold cursor-pointer"
+                          className="inline-flex items-center gap-1 rounded-full bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 text-[10px] font-semibold cursor-pointer"
                         >
-                          ⚠️ {g.crossCount}
+                          <AlertCircle className="w-3 h-3" />
+                          {g.crossCount}
                         </span>
                       )}
                       {/* Audit belgisi: marshrut kesishish ogohlantirishiga qaramay majburiy saqlangan */}
                       {g.stops.some((s) => s.forceSaved) && (
                         <Badge
                           variant="outline"
-                          className="h-5 text-[10px] border-amber-500 text-amber-700 dark:text-amber-400"
+                          className="h-5 text-[10px] border-amber-500 text-amber-700 dark:text-amber-400 gap-1 flex items-center"
                           title="Bu marshrut kesishish ogohlantirishiga qaramay majburiy (force) saqlangan"
                         >
-                          ⚠️ Majburiy saqlangan
+                          <AlertCircle className="w-3 h-3" />
+                          Majburiy saqlangan
                         </Badge>
                       )}
                       <Badge variant="secondary" className="h-5 text-[10px]">
@@ -1481,7 +1485,8 @@ export default function Distribution() {
         <CardContent className="pt-4">
           <Tabs value={f.tab} onValueChange={(t) => update({ tab: t })}>
             <TabsList className="flex-wrap h-auto">
-              <TabsTrigger value="visits">🟢 Tashriflar</TabsTrigger>
+              <TabsTrigger value="overview">Umumiy holat</TabsTrigger>
+              <TabsTrigger value="visits">Tashriflar</TabsTrigger>
               <TabsTrigger value="sales">Savdolar</TabsTrigger>
               <TabsTrigger value="agents">Agentlar</TabsTrigger>
               <TabsTrigger value="shops">Do'konlar</TabsTrigger>
@@ -1491,6 +1496,9 @@ export default function Distribution() {
               <TabsTrigger value="analytics">Tahlil</TabsTrigger>
               <TabsTrigger value="vehicle-stock">Avto zaxira</TabsTrigger>
             </TabsList>
+            <TabsContent value="overview" className="border rounded-md mt-4">
+              <TopMartOverviewTab active={f.tab === "overview"} />
+            </TabsContent>
             <TabsContent value="visits" className="border rounded-md mt-4">
               <DailyVisitsTab f={f} active={f.tab === "visits"} onShop={setShopId} />
             </TabsContent>

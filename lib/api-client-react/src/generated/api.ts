@@ -22,6 +22,7 @@ import type {
 import type {
   AdminUser,
   BatchList,
+  ClaimExistingVehicleHandoffLabelsInput,
   CreateVehicleHandoffInput,
   CreateVehicleReconciliationInput,
   CreateVehicleReplenishmentRequestInput,
@@ -59,6 +60,7 @@ import type {
   ProductionLineInput,
   ProductionLineWorker,
   ProductionLineWorkerInput,
+  RegisterTopmartLabelReceiptInput,
   ReplaceVehicleStockTargetInput,
   SalaryPayInput,
   SalaryRow,
@@ -66,6 +68,7 @@ import type {
   SaleInput,
   SaleList,
   SaleStatusInput,
+  TopmartLabelReceipt,
   VehicleDistributionBootstrapInput,
   VehicleDistributionPilot,
   VehicleDistributionPilotMovements,
@@ -3932,6 +3935,151 @@ export function useGetVehicleHandoffLabels<TData = Awaited<ReturnType<typeof get
 
 
 
+
+export const getRegisterTopmartLabelReceiptUrl = () => {
+
+
+
+
+  return `/api/vehicle-distribution/topmart-label-receipts`
+}
+
+/**
+ * Admin-only. Registers already-printed batch labels physically received into the C-3 destination immutably captured on one credited Top Mart sale (independent of later configuration). Requires exact authoritative SKU mapping and dona piece/weight coverage from that sale's immutable topmart-sale credit IN movements (not mutable catalog weight). The same sale and barcode set replays safely; a different set conflicts. Never mutates production_labels.
+ * @summary Register immutable C-3 receipt provenance for sale labels
+ */
+export const registerTopmartLabelReceipt = async (registerTopmartLabelReceiptInput: RegisterTopmartLabelReceiptInput, options?: RequestInit): Promise<TopmartLabelReceipt> => {
+
+  return customFetch<TopmartLabelReceipt>(getRegisterTopmartLabelReceiptUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      registerTopmartLabelReceiptInput,)
+  }
+);}
+
+
+
+
+export const getRegisterTopmartLabelReceiptMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof registerTopmartLabelReceipt>>, TError,{data: BodyType<RegisterTopmartLabelReceiptInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof registerTopmartLabelReceipt>>, TError,{data: BodyType<RegisterTopmartLabelReceiptInput>}, TContext> => {
+
+const mutationKey = ['registerTopmartLabelReceipt'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof registerTopmartLabelReceipt>>, {data: BodyType<RegisterTopmartLabelReceiptInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  registerTopmartLabelReceipt(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RegisterTopmartLabelReceiptMutationResult = NonNullable<Awaited<ReturnType<typeof registerTopmartLabelReceipt>>>
+    export type RegisterTopmartLabelReceiptMutationBody = BodyType<RegisterTopmartLabelReceiptInput>
+    export type RegisterTopmartLabelReceiptMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Register immutable C-3 receipt provenance for sale labels
+ */
+export const useRegisterTopmartLabelReceipt = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof registerTopmartLabelReceipt>>, TError,{data: BodyType<RegisterTopmartLabelReceiptInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof registerTopmartLabelReceipt>>,
+        TError,
+        {data: BodyType<RegisterTopmartLabelReceiptInput>},
+        TContext
+      > => {
+      return useMutation(getRegisterTopmartLabelReceiptMutationOptions(options));
+    }
+
+export const getClaimExistingVehicleHandoffLabelsUrl = (handoffId: number,) => {
+
+
+
+
+  return `/api/vehicle-distribution/handoffs/${handoffId}/labels/claim-existing`
+}
+
+/**
+ * Claims existing, non-void printed batch labels without inserting or updating production_labels. The ordered barcode list must have exact SKU and piece coverage for every handoff item. Exact retries are idempotent; operation-key or payload conflicts return 409. On success claims and events are persisted and the handoff advances directly to labels_printed.
+ * @summary Claim already-printed production labels for a prepared C-3 handoff
+ */
+export const claimExistingVehicleHandoffLabels = async (handoffId: number,
+    claimExistingVehicleHandoffLabelsInput: ClaimExistingVehicleHandoffLabelsInput, options?: RequestInit): Promise<VehicleHandoffLabelsPayload> => {
+
+  return customFetch<VehicleHandoffLabelsPayload>(getClaimExistingVehicleHandoffLabelsUrl(handoffId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      claimExistingVehicleHandoffLabelsInput,)
+  }
+);}
+
+
+
+
+export const getClaimExistingVehicleHandoffLabelsMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof claimExistingVehicleHandoffLabels>>, TError,{handoffId: number;data: BodyType<ClaimExistingVehicleHandoffLabelsInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof claimExistingVehicleHandoffLabels>>, TError,{handoffId: number;data: BodyType<ClaimExistingVehicleHandoffLabelsInput>}, TContext> => {
+
+const mutationKey = ['claimExistingVehicleHandoffLabels'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof claimExistingVehicleHandoffLabels>>, {handoffId: number;data: BodyType<ClaimExistingVehicleHandoffLabelsInput>}> = (props) => {
+          const {handoffId,data} = props ?? {};
+
+          return  claimExistingVehicleHandoffLabels(handoffId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ClaimExistingVehicleHandoffLabelsMutationResult = NonNullable<Awaited<ReturnType<typeof claimExistingVehicleHandoffLabels>>>
+    export type ClaimExistingVehicleHandoffLabelsMutationBody = BodyType<ClaimExistingVehicleHandoffLabelsInput>
+    export type ClaimExistingVehicleHandoffLabelsMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Claim already-printed production labels for a prepared C-3 handoff
+ */
+export const useClaimExistingVehicleHandoffLabels = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof claimExistingVehicleHandoffLabels>>, TError,{handoffId: number;data: BodyType<ClaimExistingVehicleHandoffLabelsInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof claimExistingVehicleHandoffLabels>>,
+        TError,
+        {handoffId: number;data: BodyType<ClaimExistingVehicleHandoffLabelsInput>},
+        TContext
+      > => {
+      return useMutation(getClaimExistingVehicleHandoffLabelsMutationOptions(options));
+    }
 
 export const getConfirmVehicleHandoffLabelsPrintedUrl = (handoffId: number,) => {
 

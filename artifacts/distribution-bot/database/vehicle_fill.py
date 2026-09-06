@@ -76,16 +76,20 @@ def pilot_chain(telegram_id):
 
 
 def fill_source_warehouses():
-    """Yuklash mumkin bo'lgan manba omborlar: [{id, name}] (nomi bo'yicha).
+    """Sozlangan Top Mart C-3 markaziy ombori, yoki bo'sh ro'yxat.
 
-    Omborchi botdagi eligibility bilan bir xil: faol, mashina emas,
-    purpose='finished', kamida bitta mos dona qoldiqli mahsulot bor.
+    F11 yuklashi faqat ``distribution.topmart_config.central_warehouse_id``
+    ga ruxsat beradi. Konfiguratsiya bo'lmasa yoki shu ombor faol bo'lmasa,
+    mashina ombori bo'lsa, ``purpose='finished'`` bo'lmasa yoxud unda mos
+    dona qoldiq bo'lmasa, ro'yxat bo'sh qaytadi.
     """
     with transaction() as c:
         c.execute(
             """SELECT w.id, w.name
-                 FROM warehouses w
-                WHERE w.active = TRUE
+                 FROM distribution.topmart_config cfg
+                 JOIN warehouses w ON w.id = cfg.central_warehouse_id
+                 WHERE cfg.id = 1
+                   AND w.active = TRUE
                   AND COALESCE(w.location_type, 'general') <> 'vehicle'
                   AND COALESCE(w.purpose, '') = 'finished'
                   AND EXISTS (
@@ -101,8 +105,7 @@ def fill_source_warehouses():
                                AND COALESCE(dx.sku, '') <> '') = 1
                        AND (SELECT COUNT(*) FROM products px
                              WHERE px.sku = p.sku AND px.active = TRUE) = 1
-                  )
-                ORDER BY w.name""",
+                   )""",
         )
         rows = c.fetchall()
     return [{"id": int(r[0]), "name": r[1]} for r in rows]

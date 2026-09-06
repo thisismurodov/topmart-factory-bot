@@ -86,6 +86,7 @@ export type HandoffDetail = {
   movementReference: string | null;
   preparedActorType: string | null;
   preparedActorRef: string | null;
+  labelMode: "generated" | "existing";
   notes: string | null;
   labelsPrintedAt: string | null;
   handedOverAt: string | null;
@@ -119,6 +120,42 @@ export class HandoffValidationError extends Error {
     super(message);
     this.name = "HandoffValidationError";
   }
+}
+
+/**
+ * Resolve the only warehouse permitted to source NEW vehicle handoffs.
+ *
+ * Existing handoff rows deliberately do not use this helper when they are read,
+ * replayed, cancelled, or transferred: changing policy must not invalidate
+ * historical handoffs. Callers creating a new row must use the returned id
+ * rather than trusting a request field or searching warehouse inventory.
+ */
+export async function resolveConfiguredCentralWarehouse(
+  client: PoolClient,
+): Promise<number> {
+  const { rows } = await client.query(
+    `SELECT c.central_warehouse_id, w.active,
+            COALESCE(w.location_type,'general') AS location_type, w.purpose
+       FROM distribution.topmart_config c
+       LEFT JOIN public.warehouses w ON w.id=c.central_warehouse_id
+      WHERE c.id=1`,
+  );
+  if (rows.length !== 1 || rows[0].central_warehouse_id == null) {
+    throw new HandoffValidationError(
+      "Central warehouse is not configured in distribution.topmart_config",
+    );
+  }
+  const row = rows[0];
+  if (
+    row.active !== true ||
+    String(row.location_type) === "vehicle" ||
+    String(row.purpose) !== "finished"
+  ) {
+    throw new HandoffValidationError(
+      "Configured central warehouse must exist, be active, non-vehicle and purpose=finished",
+    );
+  }
+  return Number(row.central_warehouse_id);
 }
 
 /** Stable advisory-lock namespace, one key per handoff id. */
@@ -271,6 +308,10 @@ function mapHandoffRow(row: Record<string, unknown>): Omit<HandoffDetail, "items
     movementReference: (row.movement_reference as string | null) ?? null,
     preparedActorType: (row.prepared_actor_type as string | null) ?? null,
     preparedActorRef: (row.prepared_actor_ref as string | null) ?? null,
+    labelMode:
+      String(row.label_mode ?? "generated") === "existing"
+        ? "existing"
+        : "generated",
     notes: (row.notes as string | null) ?? null,
     labelsPrintedAt: iso(row.labels_printed_at as Date | string | null),
     handedOverAt: iso(row.handed_over_at as Date | string | null),
@@ -283,6 +324,7 @@ function mapHandoffRow(row: Record<string, unknown>): Omit<HandoffDetail, "items
 const HANDOFF_COLUMNS = `id, vehicle_id, delivery_agent_id, source_warehouse_id,
   vehicle_warehouse_id, handoff_date, status, operation_key, movement_reference,
   prepared_actor_type, prepared_actor_ref, notes, labels_printed_at,
+  label_mode,
   handed_over_at, stock_transferred_at, cancelled_at, created_at,
   (SELECT w.name FROM public.warehouses w WHERE w.id = source_warehouse_id) AS source_warehouse_name`;
 
@@ -693,6 +735,77 @@ async function enforceStockTargetLoadCap(
   }
 }
 
+async function lockHandoffWarehouseParents(
+  client: PoolClient,
+  warehouseIds: number[],
+): Promise<void> {
+  const ids = [...new Set(warehouseIds)].sort((a, b) => a - b);
+  const { rows } = await client.query(
+    `SELECT id FROM public.warehouses
+      WHERE id=ANY($1::int[]) ORDER BY id FOR UPDATE`,
+    [ids],
+  );
+  if (rows.length !== ids.length) {
+    throw new HandoffConflictError("Handoff warehouse parent is missing");
+  }
+}
+
+async function lockAndAssertCentralWarehouseConfig(
+  client: PoolClient,
+  expectedWarehouseId: number,
+): Promise<void> {
+  // Warehouse parents are locked first, matching the Top Mart configuration
+  // writer's lock order. The config row lock then keeps the authoritative
+  // source stable through handoff insertion without creating a lock inversion.
+  const { rows } = await client.query(
+    `SELECT central_warehouse_id
+       FROM distribution.topmart_config
+      WHERE id=1 FOR SHARE`,
+  );
+  if (
+    rows.length !== 1 ||
+    Number(rows[0].central_warehouse_id) !== expectedWarehouseId
+  ) {
+    throw new HandoffValidationError(
+      "Central warehouse configuration changed while creating the handoff; retry",
+    );
+  }
+}
+
+/**
+ * Creation does not reserve or move inventory, but a new fill must still fail
+ * closed when C-3 cannot satisfy the requested quantity. Existing-label weight
+ * is not authoritative until immutable received labels are scanned. Transfer
+ * confirmation remains the sole stock mutation and rechecks frozen amounts.
+ */
+async function assertSourceStockAvailable(
+  client: PoolClient,
+  sourceWarehouseId: number,
+  items: ResolvedItem[],
+): Promise<void> {
+  const required = new Map<string, number>();
+  for (const item of items) {
+    required.set(
+      item.productName,
+      (required.get(item.productName) ?? 0) + item.quantity,
+    );
+  }
+  for (const product of [...required.keys()].sort()) {
+    const needQuantity = required.get(product)!;
+    const { rows } = await client.query(
+      `SELECT quantity, weight_kg FROM public.inventory
+        WHERE warehouse_id=$1 AND product=$2 FOR UPDATE`,
+      [sourceWarehouseId, product],
+    );
+    const haveQuantity = rows.length ? Number(rows[0].quantity) : 0;
+    if (haveQuantity < needQuantity) {
+      throw new HandoffConflictError(
+        `Configured central warehouse has insufficient quantity for ${product}: need ${needQuantity}, have ${haveQuantity}`,
+      );
+    }
+  }
+}
+
 /**
  * Create a prepared handoff idempotently on operationKey.
  *
@@ -753,24 +866,12 @@ export async function createHandoffInTx(
   }
 
   const pilot = await resolveActivePilot(client);
-
-  // Source warehouse must be active, non-vehicle, purpose='finished'.
-  const srcRes = await client.query(
-    `SELECT id, active, COALESCE(location_type,'general') AS location_type, purpose
-       FROM warehouses WHERE id = $1`,
-    [input.sourceWarehouseId],
-  );
-  if (!srcRes.rows.length) {
-    throw new HandoffValidationError("Source warehouse not found");
-  }
-  const src = srcRes.rows[0];
-  if (
-    src.active !== true ||
-    src.location_type === "vehicle" ||
-    src.purpose !== "finished"
-  ) {
+  const sourceWarehouseId = await resolveConfiguredCentralWarehouse(client);
+  // Keep the request property as a compatibility assertion while resolving the
+  // authoritative source server-side.
+  if (input.sourceWarehouseId !== sourceWarehouseId) {
     throw new HandoffValidationError(
-      "Source warehouse must be active, non-vehicle and purpose=finished",
+      `sourceWarehouseId must equal the configured central warehouse (${sourceWarehouseId})`,
     );
   }
 
@@ -790,18 +891,24 @@ export async function createHandoffInTx(
     resolvedItems.push(await resolveItem(client, item));
   }
 
+  await lockHandoffWarehouseParents(client, [
+    sourceWarehouseId,
+    pilot.vehicleWarehouseId,
+  ]);
+  await lockAndAssertCentralWarehouseConfig(client, sourceWarehouseId);
+  await assertSourceStockAvailable(client, sourceWarehouseId, resolvedItems);
   await enforceStockTargetLoadCap(client, pilot, resolvedItems);
 
   const ins = await client.query(
     `INSERT INTO distribution.vehicle_handoffs
        (vehicle_id, delivery_agent_id, source_warehouse_id, vehicle_warehouse_id,
-         handoff_date, status, operation_key, request_fingerprint, prepared_actor_type, prepared_actor_ref, notes)
-     VALUES ($1, $2, $3, $4, CURRENT_DATE, 'prepared', $5, $6, $7, $8, $9)
+         handoff_date, status, operation_key, request_fingerprint, prepared_actor_type, prepared_actor_ref, label_mode, notes)
+     VALUES ($1, $2, $3, $4, CURRENT_DATE, 'prepared', $5, $6, $7, $8, 'existing', $9)
      RETURNING ${HANDOFF_COLUMNS}`,
     [
       pilot.vehicleId,
       pilot.deliveryAgentId,
-      input.sourceWarehouseId,
+      sourceWarehouseId,
       pilot.vehicleWarehouseId,
       input.operationKey,
       requestFingerprint,

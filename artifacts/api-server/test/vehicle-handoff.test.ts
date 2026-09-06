@@ -142,6 +142,24 @@ async function createPublicTables(c: pg.Client): Promise<void> {
       token   TEXT PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE
     )`);
+  await c.query(`
+    CREATE TABLE IF NOT EXISTS sales (
+      id                   SERIAL PRIMARY KEY,
+      customer_id          INTEGER NOT NULL,
+      customer_name        TEXT NOT NULL DEFAULT '',
+      topmart_warehouse_id INTEGER
+    )`);
+  await c.query(`
+    CREATE TABLE IF NOT EXISTS sale_items (
+      id           SERIAL PRIMARY KEY,
+      sale_id      INTEGER NOT NULL REFERENCES sales(id) ON DELETE CASCADE,
+      product_name TEXT NOT NULL,
+      sale_type    TEXT NOT NULL DEFAULT 'dona',
+      quantity     NUMERIC(12,3) NOT NULL,
+      unit_price   NUMERIC(12,2) NOT NULL DEFAULT 0,
+      currency     TEXT NOT NULL DEFAULT 'UZS',
+      line_total   NUMERIC(14,2) NOT NULL DEFAULT 0
+    )`);
 }
 
 // F4: materialise public.production_labels exactly as the API initDb does
@@ -378,6 +396,7 @@ async function cleanHandoffs(): Promise<void> {
   await client.query(`DELETE FROM distribution.vehicle_label_claims`);
   await client.query(`DELETE FROM distribution.vehicle_handoff_items`);
   await client.query(`DELETE FROM distribution.vehicle_handoffs`);
+  await client.query(`TRUNCATE distribution.topmart_label_receipts`);
   await client.query(`DELETE FROM stock_movements`);
   // Immutable trigger blocks UPDATE not DELETE — safe to clear VH passports.
   await client.query(`DELETE FROM production_labels WHERE batch_code LIKE 'VH-%'`);
@@ -386,12 +405,25 @@ async function cleanHandoffs(): Promise<void> {
 // F4: drive the real prepare endpoint to materialise passports/claims/events.
 async function prepareLabels(
   handoffId: number,
-  opts: { token?: string; botKey?: string } = { token: adminToken },
+  opts: {
+    token?: string;
+    botKey?: string;
+    labelMode?: "generated" | "existing";
+  } = { token: adminToken },
 ): Promise<Resp> {
+  const { labelMode = "generated", ...auth } = opts;
+  // Existing F4 scenarios are historical fixtures. New C-3 scenarios pass
+  // labelMode=existing and assert that this route is rejected.
+  if (labelMode === "generated") {
+    await client.query(
+      `UPDATE distribution.vehicle_handoffs SET label_mode='generated' WHERE id=$1`,
+      [handoffId],
+    );
+  }
   return call(
     "POST",
     `/vehicle-distribution/handoffs/${handoffId}/labels/prepare`,
-    { ...opts, body: { operationKey: opKey() } },
+    { ...auth, body: { operationKey: opKey() } },
   );
 }
 
@@ -453,6 +485,14 @@ beforeAll(async () => {
      VALUES ('ERP Manba', TRUE, 'general', 'finished') RETURNING id`,
   );
   erpWarehouseId = Number(erp.rows[0].id);
+  await client.query(
+    `INSERT INTO distribution.topmart_config
+       (id,customer_id,central_warehouse_id)
+     VALUES (1,1,$1)
+     ON CONFLICT (id) DO UPDATE
+       SET central_warehouse_id=EXCLUDED.central_warehouse_id`,
+    [erpWarehouseId],
+  );
 
   prodA = await seedProduct("SKU-A", "Arqon A", 2.5);
   prodB = await seedProduct("SKU-B", "Arqon B", 1.0);
@@ -476,6 +516,10 @@ beforeEach(async () => {
   process.env.VEHICLE_DISTRIBUTION_BOT_KEY = BOT_KEY;
   process.env.PRODUCTION_LABELS_SCHEMA_APPROVED = "1";
   await cleanHandoffs();
+  await client.query(
+    `UPDATE distribution.topmart_config SET central_warehouse_id=$1 WHERE id=1`,
+    [erpWarehouseId],
+  );
   // Package snapshots are taken when creating a handoff. Restore the explicit
   // legacy unit-package defaults after package-aware scenarios mutate them.
   await client.query(
@@ -858,6 +902,7 @@ describe("F4 prepare labels", () => {
       `UPDATE products SET pieces_per_box=100 WHERE name=$1`,
       [prodA.name],
     );
+    await setStock(erpWarehouseId, prodA.name, 150, 375);
     const created = await call("POST", "/vehicle-distribution/handoffs", {
       token: adminToken,
       body: {
@@ -926,6 +971,7 @@ describe("F4 prepare labels", () => {
       `UPDATE products SET pieces_per_box=101 WHERE name=$1`,
       [prodA.name],
     );
+    await setStock(erpWarehouseId, prodA.name, 101, 252.5);
     const { handoffId, itemId } = await makePrepared(101);
     // Simulate a corrupt/legacy snapshot that would otherwise drive an
     // unbounded passport insertion loop.
@@ -1147,6 +1193,74 @@ describe("create prepared handoff", () => {
       },
     });
     expect(r.status).toBe(400);
+  });
+
+  it("rejects a non-configured source even when it has stock", async () => {
+    const other = await client.query(
+      `INSERT INTO warehouses(name,active,location_type,purpose)
+       VALUES($1,TRUE,'general','finished') RETURNING id`,
+      [`Wrong handoff source ${Date.now()}`],
+    );
+    const otherId = Number(other.rows[0].id);
+    await setStock(otherId, prodA.name, 100, 250);
+    const key = opKey();
+    const r = await call("POST", "/vehicle-distribution/handoffs", {
+      token: adminToken,
+      body: {
+        sourceWarehouseId: otherId,
+        items: [{ mahsulotId: prodA.mahsulotId, quantity: 1 }],
+        operationKey: key,
+      },
+    });
+    expect(r.status).toBe(400);
+    expect(String(r.body.error)).toContain("configured central warehouse");
+    const persisted = await client.query(
+      `SELECT COUNT(*)::int AS n FROM distribution.vehicle_handoffs
+        WHERE operation_key=$1`,
+      [key],
+    );
+    expect(Number(persisted.rows[0].n)).toBe(0);
+  });
+
+  it("fails explicitly when central warehouse configuration is absent", async () => {
+    await client.query(`DELETE FROM distribution.topmart_config WHERE id=1`);
+    const r = await call("POST", "/vehicle-distribution/handoffs", {
+      token: adminToken,
+      body: {
+        sourceWarehouseId: erpWarehouseId,
+        items: [{ mahsulotId: prodA.mahsulotId, quantity: 1 }],
+        operationKey: opKey(),
+      },
+    });
+    expect(r.status).toBe(400);
+    expect(String(r.body.error)).toContain("not configured");
+    await client.query(
+      `INSERT INTO distribution.topmart_config
+         (id,customer_id,central_warehouse_id) VALUES(1,1,$1)`,
+      [erpWarehouseId],
+    );
+  });
+
+  it("rejects insufficient C-3 stock even when another warehouse can fill it", async () => {
+    const other = await client.query(
+      `INSERT INTO warehouses(name,active,location_type,purpose)
+       VALUES($1,TRUE,'general','finished') RETURNING id`,
+      [`Stocked alternate source ${Date.now()}`],
+    );
+    await setStock(Number(other.rows[0].id), prodA.name, 100, 250);
+    await setStock(erpWarehouseId, prodA.name, 0, 0);
+    const r = await call("POST", "/vehicle-distribution/handoffs", {
+      token: adminToken,
+      body: {
+        sourceWarehouseId: erpWarehouseId,
+        items: [{ mahsulotId: prodA.mahsulotId, quantity: 1 }],
+        operationKey: opKey(),
+      },
+    });
+    expect(r.status).toBe(409);
+    expect(String(r.body.error)).toContain(
+      "Configured central warehouse has insufficient quantity",
+    );
   });
 
   it("rejects duplicate product ids (400)", async () => {
@@ -1591,6 +1705,7 @@ describe("create prepared handoff", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 async function makePrepared(
   qtyA: number,
+  labelMode: "generated" | "existing" = "generated",
 ): Promise<{ handoffId: number; itemId: number }> {
   const r = await call("POST", "/vehicle-distribution/handoffs", {
     token: adminToken,
@@ -1603,6 +1718,15 @@ async function makePrepared(
   expect(r.status).toBe(200);
   const handoffId = r.body.id as number;
   const itemId = r.body.items[0].id as number;
+  // The API correctly stamps every newly created configured-C-3 handoff as
+  // existing. Most pre-existing F3/F4 tests model rows created before that
+  // policy existed, whose additive-DDL default is generated.
+  if (labelMode === "generated") {
+    await client.query(
+      `UPDATE distribution.vehicle_handoffs SET label_mode='generated' WHERE id=$1`,
+      [handoffId],
+    );
+  }
   return { handoffId, itemId };
 }
 
@@ -1616,6 +1740,453 @@ async function makePreparedWithLabels(
   expect(p.status).toBe(200);
   return base;
 }
+
+let existingLabelCounter = 0;
+async function seedPrintedProductionLabel(
+  sku: string,
+  pieces: number,
+  weightKg: number,
+): Promise<string> {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  const suffix = alphabet[existingLabelCounter++ % alphabet.length];
+  const barcode = `TM${"A".repeat(15)}${suffix}`;
+  const batch = await client.query(
+    `INSERT INTO batches DEFAULT VALUES RETURNING id`,
+  );
+  await client.query(
+    `INSERT INTO production_labels
+       (barcode_value,batch_id,batch_code,label_type,label_number,total_labels,
+        pieces_in_label,pieces_per_box,quantity_total,weight_kg,product_name,
+        product_sku,worker_name,produced_at,warehouse_id,warehouse_name,status,
+        print_count,last_printed_at)
+     VALUES($1,$2,$3,'box',1,1,$4,$4,$4,$5,'Existing production',$6,
+            'Producer','2026-01-01T09:00:00Z',$7,'ERP Manba','printed',1,
+            '2026-01-01T10:00:00Z')`,
+    [
+      barcode,
+      batch.rows[0].id,
+      `BATCH-${existingLabelCounter}`,
+      pieces,
+      weightKg,
+      sku,
+      erpWarehouseId,
+    ],
+  );
+  return barcode;
+}
+
+async function createCreditedSaleAndReceive(
+  productName: string,
+  quantity: number,
+  barcodes: string[],
+  creditedWeightKg?: number,
+): Promise<{ saleId: number; receipt: Resp }> {
+  const sale = await client.query(
+    `INSERT INTO sales
+       (customer_id, customer_name, topmart_warehouse_id)
+     VALUES (1,'Top Mart receipt fixture',$1) RETURNING id`,
+    [erpWarehouseId],
+  );
+  const saleId = Number(sale.rows[0].id);
+  await client.query(
+    `INSERT INTO sale_items
+       (sale_id,product_name,sale_type,quantity,unit_price,currency,line_total)
+     VALUES ($1,$2,'dona',$3,0,'UZS',0)`,
+    [saleId, productName, quantity],
+  );
+  const labelWeight =
+    creditedWeightKg
+    ?? Number(
+      (
+        await client.query(
+          `SELECT SUM(weight_kg)::float8 AS weight
+             FROM production_labels WHERE barcode_value=ANY($1::text[])`,
+          [barcodes],
+        )
+      ).rows[0].weight,
+    );
+  await client.query(
+    `INSERT INTO stock_movements
+       (product,quantity,movement_type,to_warehouse_id,weight_kg,reference)
+     VALUES ($1,$2,'IN',$3,$4,$5)`,
+    [
+      productName,
+      quantity,
+      erpWarehouseId,
+      labelWeight,
+      `topmart-sale:${saleId}:1:in`,
+    ],
+  );
+  const receipt = await call(
+    "POST",
+    "/vehicle-distribution/topmart-label-receipts",
+    { token: adminToken, body: { saleId, barcodes } },
+  );
+  return { saleId, receipt };
+}
+
+describe("C-3 existing production-label claims", () => {
+  it("claims without writing production_labels and exact retry is idempotent", async () => {
+    const { handoffId } = await makePrepared(2, "existing");
+    const mode = await client.query(
+      `SELECT label_mode FROM distribution.vehicle_handoffs WHERE id=$1`,
+      [handoffId],
+    );
+    expect(mode.rows[0].label_mode).toBe("existing");
+    const barcode = await seedPrintedProductionLabel(prodA.sku, 1, 2);
+    const barcode2 = await seedPrintedProductionLabel(prodA.sku, 1, 3);
+    const { saleId, receipt } = await createCreditedSaleAndReceive(
+      prodA.name,
+      2,
+      [barcode, barcode2],
+    );
+    expect(receipt.status).toBe(200);
+    expect(receipt.body.replayed).toBe(false);
+    await expect(
+      client.query(
+        `UPDATE distribution.topmart_label_receipts
+            SET central_warehouse_id=$2 WHERE sale_id=$1`,
+        [saleId, vehicleWarehouseId],
+      ),
+    ).rejects.toMatchObject({ code: "55000" });
+    const receiptReplay = await call(
+      "POST",
+      "/vehicle-distribution/topmart-label-receipts",
+      { token: adminToken, body: { saleId, barcodes: [barcode2, barcode] } },
+    );
+    expect(receiptReplay.status).toBe(200);
+    expect(receiptReplay.body.replayed).toBe(true);
+    const receiptConflict = await call(
+      "POST",
+      "/vehicle-distribution/topmart-label-receipts",
+      { token: adminToken, body: { saleId, barcodes: [barcode] } },
+    );
+    expect(receiptConflict.status).toBe(409);
+    const before = await client.query(
+      `SELECT COUNT(*)::int AS count,
+              jsonb_agg(to_jsonb(pl) ORDER BY id) AS snapshot
+         FROM production_labels pl`,
+    );
+    const key = opKey();
+    const pathname =
+      `/vehicle-distribution/handoffs/${handoffId}/labels/claim-existing`;
+    const first = await call("POST", pathname, {
+      token: adminToken,
+      body: { operationKey: key, barcodes: [barcode, barcode2] },
+    });
+    expect(first.status).toBe(200);
+    expect(first.body.labels).toHaveLength(2);
+    expect(first.body.labels[0].barcodeValue).toBe(barcode);
+    const retry = await call("POST", pathname, {
+      token: adminToken,
+      body: { operationKey: key, barcodes: [barcode, barcode2] },
+    });
+    expect(retry.status).toBe(200);
+    const forbiddenReprint = await confirmPrinted(handoffId);
+    expect(forbiddenReprint.status).toBe(409);
+
+    const after = await client.query(
+      `SELECT COUNT(*)::int AS count,
+              jsonb_agg(to_jsonb(pl) ORDER BY id) AS snapshot
+         FROM production_labels pl`,
+    );
+    expect(after.rows[0]).toEqual(before.rows[0]);
+    const state = await client.query(
+      `SELECT h.status,
+              (SELECT COUNT(*)::int FROM distribution.vehicle_label_claims
+                WHERE handoff_id=h.id) AS claims,
+              (SELECT COUNT(*)::int FROM distribution.vehicle_unit_events
+                WHERE handoff_id=h.id) AS events,
+              (SELECT COUNT(*)::int
+                 FROM distribution.vehicle_label_prepare_sessions
+                WHERE handoff_id=h.id) AS sessions
+         FROM distribution.vehicle_handoffs h WHERE h.id=$1`,
+      [handoffId],
+    );
+    expect(state.rows[0]).toMatchObject({
+      status: "labels_printed",
+      claims: 2,
+      events: 4,
+      sessions: 1,
+    });
+    const units = await client.query(
+      `SELECT barcode,unit_weight_kg::float8 AS unit_weight_kg
+         FROM distribution.vehicle_label_claims
+        WHERE handoff_id=$1 ORDER BY id`,
+      [handoffId],
+    );
+    expect(units.rows).toEqual([
+      { barcode, unit_weight_kg: 2 },
+      { barcode: barcode2, unit_weight_kg: 3 },
+    ]);
+  });
+
+  it("rejects a valid but unreceived/foreign label", async () => {
+    const { handoffId } = await makePrepared(1, "existing");
+    const barcode = await seedPrintedProductionLabel(prodA.sku, 1, 2.5);
+    const unreceived = await call(
+      "POST",
+      `/vehicle-distribution/handoffs/${handoffId}/labels/claim-existing`,
+      {
+        token: adminToken,
+        body: { operationKey: opKey(), barcodes: [barcode] },
+      },
+    );
+    expect(unreceived.status).toBe(409);
+    expect(String(unreceived.body.error)).toContain("receipt provenance");
+
+    const foreignBarcode = await seedPrintedProductionLabel(prodA.sku, 1, 2.5);
+    await client.query(
+      `INSERT INTO distribution.topmart_label_receipts
+         (production_label_id,barcode,sale_id,central_warehouse_id,product_sku,
+          pieces_in_label,weight_kg,receipt_fingerprint,received_by)
+       SELECT id,barcode_value,999999,$2,product_sku,pieces_in_label,weight_kg,
+              'foreign-fixture',1
+         FROM production_labels WHERE barcode_value=$1`,
+      [foreignBarcode, vehicleWarehouseId],
+    );
+    const foreign = await call(
+      "POST",
+      `/vehicle-distribution/handoffs/${handoffId}/labels/claim-existing`,
+      {
+        token: adminToken,
+        body: { operationKey: opKey(), barcodes: [foreignBarcode] },
+      },
+    );
+    expect(foreign.status).toBe(409);
+    expect(String(foreign.body.error)).toContain("receipt provenance");
+  });
+
+  it("rejects inexact piece coverage and exact SKU mismatch", async () => {
+    const short = await makePrepared(3, "existing");
+    const shortBarcode = await seedPrintedProductionLabel(prodA.sku, 2, 5);
+    expect(
+      (await createCreditedSaleAndReceive(prodA.name, 2, [shortBarcode])).receipt
+        .status,
+    ).toBe(200);
+    const shortResult = await call(
+      "POST",
+      `/vehicle-distribution/handoffs/${short.handoffId}/labels/claim-existing`,
+      {
+        token: adminToken,
+        body: { operationKey: opKey(), barcodes: [shortBarcode] },
+      },
+    );
+    expect(shortResult.status).toBe(409);
+
+    const mismatch = await makePrepared(1, "existing");
+    const wrongSku = await seedPrintedProductionLabel(prodB.sku, 1, 1);
+    expect(
+      (await createCreditedSaleAndReceive(prodB.name, 1, [wrongSku])).receipt
+        .status,
+    ).toBe(200);
+    const mismatchResult = await call(
+      "POST",
+      `/vehicle-distribution/handoffs/${mismatch.handoffId}/labels/claim-existing`,
+      {
+        token: adminToken,
+        body: { operationKey: opKey(), barcodes: [wrongSku] },
+      },
+    );
+    expect(mismatchResult.status).toBe(409);
+    const claims = await client.query(
+      `SELECT COUNT(*)::int AS n FROM distribution.vehicle_label_claims
+        WHERE handoff_id=ANY($1::int[])`,
+      [[short.handoffId, mismatch.handoffId]],
+    );
+    expect(claims.rows[0].n).toBe(0);
+  });
+
+  it("rejects label weight that mismatches immutable credited movement weight", async () => {
+    const barcode = await seedPrintedProductionLabel(prodA.sku, 1, 2.498);
+    const { receipt } = await createCreditedSaleAndReceive(
+      prodA.name,
+      1,
+      [barcode],
+      2.5,
+    );
+    expect(receipt.status).toBe(409);
+    expect(String(receipt.body.error)).toContain("pieces and weight");
+  });
+
+  it("freezes credited label weight despite mutable catalog drift and transfers it exactly", async () => {
+    await client.query(`UPDATE products SET weight=99 WHERE name=$1`, [prodA.name]);
+    await setStock(erpWarehouseId, prodA.name, 1, 7);
+    const { handoffId } = await makePrepared(1, "existing");
+    const barcode = await seedPrintedProductionLabel(prodA.sku, 1, 7);
+    expect(
+      (
+        await createCreditedSaleAndReceive(
+          prodA.name,
+          1,
+          [barcode],
+          7,
+        )
+      ).receipt.status,
+    ).toBe(200);
+    const claimed = await call(
+      "POST",
+      `/vehicle-distribution/handoffs/${handoffId}/labels/claim-existing`,
+      {
+        token: adminToken,
+        body: { operationKey: opKey(), barcodes: [barcode] },
+      },
+    );
+    expect(claimed.status).toBe(200);
+    const frozen = await client.query(
+      `SELECT unit_weight_kg::float8 AS unit_weight_kg,
+              total_weight_kg::float8 AS total_weight_kg
+         FROM distribution.vehicle_handoff_items WHERE handoff_id=$1`,
+      [handoffId],
+    );
+    expect(frozen.rows[0]).toEqual({ unit_weight_kg: 7, total_weight_kg: 7 });
+    const beforeTransfer = await client.query(
+      `SELECT quantity::float8 AS quantity,weight_kg::float8 AS weight_kg
+         FROM inventory WHERE warehouse_id=$1 AND product=$2`,
+      [erpWarehouseId, prodA.name],
+    );
+    expect(beforeTransfer.rows[0]).toEqual({ quantity: 1, weight_kg: 7 });
+
+    expect(
+      (
+        await call(
+          "POST",
+          `/vehicle-distribution/handoffs/${handoffId}/handed-over`,
+          { token: adminToken },
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await call(
+          "POST",
+          `/vehicle-distribution/handoffs/${handoffId}/stock-transferred`,
+          { token: adminToken },
+        )
+      ).status,
+    ).toBe(200);
+    const source = await client.query(
+      `SELECT quantity::float8 AS quantity,weight_kg::float8 AS weight_kg
+         FROM inventory WHERE warehouse_id=$1 AND product=$2`,
+      [erpWarehouseId, prodA.name],
+    );
+    const vehicle = await client.query(
+      `SELECT quantity::float8 AS quantity,weight_kg::float8 AS weight_kg
+         FROM inventory WHERE warehouse_id=$1 AND product=$2`,
+      [vehicleWarehouseId, prodA.name],
+    );
+    expect(source.rows[0]).toEqual({ quantity: 0, weight_kg: 0 });
+    expect(vehicle.rows[0]).toEqual({ quantity: 1, weight_kg: 7 });
+  });
+
+  it("uses the sale's historical warehouse after Top Mart is reconfigured", async () => {
+    const historical = await makePrepared(1, "existing");
+    const barcode = await seedPrintedProductionLabel(prodA.sku, 1, 2.5);
+    const sale = await client.query(
+      `INSERT INTO sales
+         (customer_id,customer_name,topmart_warehouse_id)
+       VALUES (1,'Historical Top Mart',$1) RETURNING id`,
+      [erpWarehouseId],
+    );
+    const saleId = Number(sale.rows[0].id);
+    await client.query(
+      `INSERT INTO sale_items
+         (sale_id,product_name,sale_type,quantity,unit_price,currency,line_total)
+       VALUES ($1,$2,'dona',1,0,'UZS',0)`,
+      [saleId, prodA.name],
+    );
+    await client.query(
+      `INSERT INTO stock_movements
+         (product,quantity,movement_type,to_warehouse_id,weight_kg,reference)
+       VALUES ($1,1,'IN',$2,2.5,$3)`,
+      [prodA.name, erpWarehouseId, `topmart-sale:${saleId}:1:in`],
+    );
+
+    const warehouseB = await client.query(
+      `INSERT INTO warehouses(name,active,location_type)
+       VALUES ($1,TRUE,'general') RETURNING id`,
+      [`Top Mart B ${Date.now()}`],
+    );
+    const warehouseBId = Number(warehouseB.rows[0].id);
+    await setStock(warehouseBId, prodA.name, 10, 25);
+    await client.query(
+      `UPDATE distribution.topmart_config
+          SET central_warehouse_id=$1 WHERE id=1`,
+      [warehouseBId],
+    );
+
+    const receipt = await call(
+      "POST",
+      "/vehicle-distribution/topmart-label-receipts",
+      { token: adminToken, body: { saleId, barcodes: [barcode] } },
+    );
+    expect(receipt.status).toBe(200);
+    expect(receipt.body.centralWarehouseId).toBe(erpWarehouseId);
+    const claim = await call(
+      "POST",
+      `/vehicle-distribution/handoffs/${historical.handoffId}/labels/claim-existing`,
+      {
+        token: adminToken,
+        body: { operationKey: opKey(), barcodes: [barcode] },
+      },
+    );
+    expect(claim.status).toBe(200);
+
+    const current = await call("POST", "/vehicle-distribution/handoffs", {
+      token: adminToken,
+      body: {
+        sourceWarehouseId: warehouseBId,
+        items: [{ mahsulotId: prodA.mahsulotId, quantity: 1 }],
+        operationKey: opKey(),
+      },
+    });
+    expect(current.status).toBe(200);
+    expect(current.body.sourceWarehouseId).toBe(warehouseBId);
+    expect(current.body.labelMode).toBe("existing");
+  });
+
+  it("rejects same operation key with a different barcode payload", async () => {
+    const { handoffId } = await makePrepared(1, "existing");
+    const firstBarcode = await seedPrintedProductionLabel(prodA.sku, 1, 2.5);
+    const otherBarcode = await seedPrintedProductionLabel(prodA.sku, 1, 2.5);
+    const received = await createCreditedSaleAndReceive(
+      prodA.name,
+      1,
+      [firstBarcode],
+    );
+    expect(received.receipt.status).toBe(200);
+    const key = opKey();
+    const pathname =
+      `/vehicle-distribution/handoffs/${handoffId}/labels/claim-existing`;
+    expect(
+      (
+        await call("POST", pathname, {
+          token: adminToken,
+          body: { operationKey: key, barcodes: [firstBarcode] },
+        })
+      ).status,
+    ).toBe(200);
+    const conflict = await call("POST", pathname, {
+      token: adminToken,
+      body: { operationKey: key, barcodes: [otherBarcode] },
+    });
+    expect(conflict.status).toBe(409);
+    expect(String(conflict.body.error)).toContain("different barcode payload");
+  });
+
+  it("blocks legacy prepare and confirm/reprint for configured C-3", async () => {
+    const { handoffId } = await makePrepared(1, "existing");
+    expect(
+      (
+        await prepareLabels(handoffId, {
+          token: adminToken,
+          labelMode: "existing",
+        })
+      ).status,
+    ).toBe(409);
+    expect((await confirmPrinted(handoffId)).status).toBe(409);
+  });
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Transition matrix + claim invariants
@@ -1789,7 +2360,6 @@ describe("lifecycle transitions", () => {
   });
 
   it("insufficient source quantity → full rollback (409, no partial stock)", async () => {
-    await setStock(erpWarehouseId, prodA.name, 1, 2.5); // only 1 unit
     const r = await call("POST", "/vehicle-distribution/handoffs", {
       token: adminToken,
       body: {
@@ -1802,6 +2372,9 @@ describe("lifecycle transitions", () => {
     await prepareLabels(handoffId);
     await confirmPrinted(handoffId);
     await call(`POST`, `/vehicle-distribution/handoffs/${handoffId}/handed-over`, { token: adminToken });
+    // Creation only verifies availability; it does not reserve or move stock.
+    // Simulate C-3 stock being consumed before omborchi confirms transfer.
+    await setStock(erpWarehouseId, prodA.name, 1, 2.5);
     const s = await call(`POST`, `/vehicle-distribution/handoffs/${handoffId}/stock-transferred`, { token: adminToken });
     expect(s.status).toBe(409);
     const src = await client.query(
@@ -2323,6 +2896,38 @@ describe("F8 approval and linked F3 lifecycle", () => {
       [request.body.id],
     );
     expect(row.rows[0]).toMatchObject({ status: "pending", handoff_id: null });
+  });
+
+  it("does not fall back when C-3 is short but another warehouse has stock", async () => {
+    const alternate = await client.query(
+      `INSERT INTO warehouses(name,active,location_type,purpose)
+       VALUES($1,TRUE,'general','finished') RETURNING id`,
+      [`Replenishment alternate ${Date.now()}`],
+    );
+    await setStock(Number(alternate.rows[0].id), prodA.name, 100, 250);
+    await setStock(erpWarehouseId, prodA.name, 0, 0);
+    await putTarget();
+    await setStock(vehicleWarehouseId, prodA.name, 0, 0);
+    const request = await manualRequest();
+    const approval = await call(
+      "POST",
+      `/vehicle-distribution/pilot/replenishment-requests/${request.body.id}/approve`,
+      { token: adminToken, body: {} },
+    );
+    expect(approval.status).toBe(409);
+    expect(String(approval.body.error)).toContain(
+      "Configured central warehouse does not have enough stock",
+    );
+    const state = await client.query(
+      `SELECT status,handoff_id,source_warehouse_id
+         FROM distribution.vehicle_replenishment_requests WHERE id=$1`,
+      [request.body.id],
+    );
+    expect(state.rows[0]).toMatchObject({
+      status: "pending",
+      handoff_id: null,
+      source_warehouse_id: null,
+    });
   });
 
   it("F4 prepare/print and F3 transfer atomically fulfill the linked request", async () => {

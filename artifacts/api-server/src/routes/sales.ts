@@ -6,6 +6,8 @@ import {
 } from "@workspace/api-zod";
 import { resolveProductPrice } from "../lib/pricing";
 import { guardGenericInventoryWarehouses } from "../lib/genericInventoryWarehouseGuard";
+import { creditTopmartSale } from "../lib/topmartSaleCredit";
+import { createHash } from "node:crypto";
 
 const router: IRouter = Router();
 
@@ -15,6 +17,13 @@ async function ensureSalesSchema() {
     await pool.query(`ALTER TABLE sales ADD COLUMN IF NOT EXISTS payment_type TEXT NOT NULL DEFAULT 'naqd'`);
     await pool.query(`ALTER TABLE sales ADD COLUMN IF NOT EXISTS paid_amount  NUMERIC(12,2) NOT NULL DEFAULT 0`);
     await pool.query(`ALTER TABLE sales ADD COLUMN IF NOT EXISTS debt_amount  NUMERIC(12,2) NOT NULL DEFAULT 0`);
+    await pool.query(`ALTER TABLE sales ADD COLUMN IF NOT EXISTS topmart_warehouse_id INTEGER`);
+    await pool.query(`ALTER TABLE sales ADD COLUMN IF NOT EXISTS operation_key TEXT`);
+    await pool.query(`ALTER TABLE sales ADD COLUMN IF NOT EXISTS request_fingerprint TEXT`);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_sales_operation_key
+        ON sales(operation_key) WHERE operation_key IS NOT NULL
+    `);
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS sale_payments (
@@ -95,7 +104,7 @@ router.get("/sales", async (req, res): Promise<void> => {
     pool.query(
       `SELECT s.id, s.customer_id, s.customer_name, s.status, s.note,
               s.total_amount, s.paid_amount, s.debt_amount, s.payment_type,
-              s.currency, s.created_at
+               s.currency, s.topmart_warehouse_id, s.operation_key, s.created_at
        FROM sales s ${where}
        ORDER BY s.id DESC LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
       params,
@@ -141,6 +150,8 @@ router.get("/sales", async (req, res): Promise<void> => {
       debtAmount:   Number(s.debt_amount ?? 0),
       paymentType:  s.payment_type ?? "naqd",
       currency:     s.currency ?? "USD",
+      topmartWarehouseId: s.topmart_warehouse_id ?? null,
+      operationKey: s.operation_key ?? null,
       createdAt:    s.created_at instanceof Date ? s.created_at.toISOString() : String(s.created_at),
       saleItems:    itemsBySale[s.id] ?? [],
     })),
@@ -156,6 +167,7 @@ router.post("/sales", async (req, res): Promise<void> => {
     items,
     paymentType = "naqd",
     paidAmount: rawPaid,
+    operationKey,
   } = req.body ?? {};
 
   // ── Validation ──
@@ -213,6 +225,16 @@ router.post("/sales", async (req, res): Promise<void> => {
 
   const allCurrencies      = resolvedItems.map(it => it.currency);
   const distinctCurrencies = [...new Set(allCurrencies)];
+  const fractionalPieceItem = resolvedItems.find(
+    (it) => String(it.saleType).toLowerCase() !== "kg"
+      && !Number.isSafeInteger(it.quantity),
+  );
+  if (fractionalPieceItem) {
+    res.status(400).json({
+      error: `Dona mahsulot miqdori butun son bo'lishi kerak: ${fractionalPieceItem.productName}`,
+    });
+    return;
+  }
   // Sotuv darajasidagi jami/qarz bitta valyutada saqlanadi. Aralash valyuta
   // (UZS + USD) jami/qarzni buzadi, shuning uchun bunday sotuvni rad etamiz.
   if (distinctCurrencies.length > 1) {
@@ -223,6 +245,16 @@ router.post("/sales", async (req, res): Promise<void> => {
   }
   const primaryCurrency = distinctCurrencies[0] ?? "UZS";
   const totalAmount     = resolvedItems.reduce((sum, it) => sum + it.lineTotal, 0);
+  const requestFingerprint = createHash("sha256").update(JSON.stringify({
+    customerId,
+    note: String(note).slice(0, 500),
+    paymentType,
+    paidAmount: paymentType === "aralash" ? Number(rawPaid) : null,
+    items: items.map((it: any) => ({
+      productName: String(it.productName).slice(0, 120),
+      quantity: Number(it.quantity),
+    })),
+  })).digest("hex");
 
   // ── Payment amounts (server-side, not trusted from client) ──
   let paidAmt: number;
@@ -252,15 +284,104 @@ router.post("/sales", async (req, res): Promise<void> => {
   try {
     await client.query("BEGIN");
 
+    // An operation key is a global sale identity, not an identity scoped to the
+    // current Top Mart configuration. Configuration may change after a commit,
+    // so always serialize and resolve a supplied key before classifying this
+    // request against today's configured customer/warehouse.
+    if (typeof operationKey === "string") {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+        `topmart-sale:${operationKey}`,
+      ]);
+      const replay = await client.query(
+        `SELECT id, request_fingerprint, topmart_warehouse_id
+           FROM sales WHERE operation_key=$1`,
+        [operationKey],
+      );
+      if (replay.rows.length) {
+        if (String(replay.rows[0].request_fingerprint) !== requestFingerprint) {
+          await client.query("ROLLBACK");
+          res.status(409).json({ error: "operationKey replay has a different request fingerprint" });
+          return;
+        }
+        const replayWarehouseId = replay.rows[0].topmart_warehouse_id == null
+          ? null
+          : Number(replay.rows[0].topmart_warehouse_id);
+        await client.query("COMMIT");
+        res.status(200).json({
+          id: Number(replay.rows[0].id),
+          ok: true,
+          replayed: true,
+          topmartCredited: replayWarehouseId != null,
+          topmartWarehouseId: replayWarehouseId,
+        });
+        return;
+      }
+    }
+
+    // Lock the singleton selection so a concurrent admin reconfiguration cannot
+    // split a sale between two destinations. Absence is safe: ordinary factory
+    // sale behavior remains unchanged and no warehouse receives stock.
+    const topmartConfigRes = await client.query(
+      `SELECT customer_id, central_warehouse_id
+         FROM distribution.topmart_config
+        WHERE id=1
+        FOR SHARE`,
+    );
+    const topmartConfig = topmartConfigRes.rows[0] as
+      | { customer_id: number; central_warehouse_id: number }
+      | undefined;
+    const isTopmartSale = Number(topmartConfig?.customer_id) === customerId;
+    let topmartWarehouseId: number | null = null;
+    if (isTopmartSale) {
+      if (
+        typeof operationKey !== "string"
+        || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(operationKey)
+      ) {
+        await client.query("ROLLBACK");
+        res.status(400).json({ error: "A valid operationKey is required for Top Mart sales" });
+        return;
+      }
+      const warehouse = await client.query(
+        `SELECT id FROM warehouses
+          WHERE id=$1 AND active=TRUE
+            AND COALESCE(location_type,'general') <> 'vehicle'
+            AND purpose='finished'
+          FOR SHARE`,
+        [topmartConfig!.central_warehouse_id],
+      );
+      if (!warehouse.rows.length) {
+        throw new Error("Configured Top Mart central warehouse is unavailable");
+      }
+      topmartWarehouseId = Number(warehouse.rows[0].id);
+    }
+
     const saleRes = await client.query(
       `INSERT INTO sales (customer_id, customer_name, status, note, total_amount, currency,
-                          payment_type, paid_amount, debt_amount)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+                          payment_type, paid_amount, debt_amount, topmart_warehouse_id,
+                          operation_key, request_fingerprint)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
       [customerId, customerName, finalStatus,
        String(note).slice(0, 500), totalAmount, primaryCurrency,
-       paymentType, paidAmt, debtAmt],
+       paymentType, paidAmt, debtAmt, topmartWarehouseId,
+       isTopmartSale ? operationKey : null,
+       isTopmartSale ? requestFingerprint : null],
     );
     const saleId = saleRes.rows[0].id;
+    const removedItems = resolvedItems.map((it) => ({
+      productName: it.productName,
+      removedQuantity: 0,
+      removedWeightKg: 0,
+    }));
+    const authoritativeWeights = new Map<string, number>();
+    if (isTopmartSale) {
+      const weights = await client.query(
+        `SELECT name, weight FROM products WHERE name = ANY($1::text[])`,
+        [[...new Set(resolvedItems.map((it) => it.productName))]],
+      );
+      for (const row of weights.rows) {
+        authoritativeWeights.set(String(row.name), Number(row.weight) || 0);
+      }
+    }
 
     for (const it of resolvedItems) {
       await client.query(
@@ -283,7 +404,9 @@ router.post("/sales", async (req, res): Promise<void> => {
     // Mahsulot zaxirasi qaysi omborda bo'lsa, o'sha yerdan kamaytiramiz
     // (partiya mahsulotni konteynerga kiritadi — har doim 1-ombor emas).
     try {
-      for (const it of resolvedItems) {
+      for (let itemIndex = 0; itemIndex < resolvedItems.length; itemIndex += 1) {
+        const it = resolvedItems[itemIndex]!;
+        const removed = removedItems[itemIndex]!;
         const isKgSale = String(it.saleType || "").toLowerCase() === "kg";
 
         if (isKgSale) {
@@ -299,8 +422,9 @@ router.post("/sales", async (req, res): Promise<void> => {
               WHERE i.product = $1
                 AND COALESCE(i.weight_kg, 0) > 0
                 AND COALESCE(w.location_type,'general') != 'vehicle'
+                 AND ($2::int IS NULL OR i.warehouse_id <> $2)
               ORDER BY i.warehouse_id`,
-            [it.productName],
+            [it.productName, topmartWarehouseId],
           );
           const kgWarehouseIds = await guardGenericInventoryWarehouses(
             client,
@@ -316,9 +440,10 @@ router.post("/sales", async (req, res): Promise<void> => {
                 AND COALESCE(i.weight_kg, 0) > 0
                 AND COALESCE(w.location_type,'general') != 'vehicle'
                 AND i.warehouse_id = ANY($2::int[])
+                 AND ($3::int IS NULL OR i.warehouse_id <> $3)
               ORDER BY weight_kg DESC
               FOR UPDATE OF i`,
-            [it.productName, kgWarehouseIds],
+            [it.productName, kgWarehouseIds, topmartWarehouseId],
           );
           for (const row of kgRows) {
             if (remainingKg <= 0) break;
@@ -334,6 +459,7 @@ router.post("/sales", async (req, res): Promise<void> => {
                   )`,
               [takeKg, it.productName, row.warehouse_id],
             );
+            removed.removedWeightKg += takeKg;
             await client.query(
               `INSERT INTO stock_movements
                  (product, quantity, movement_type, from_warehouse_id, note, created_by, product_type, weight_kg)
@@ -350,7 +476,9 @@ router.post("/sales", async (req, res): Promise<void> => {
               `SELECT id FROM warehouses
                 WHERE active=TRUE
                   AND COALESCE(location_type,'general') != 'vehicle'
+                 AND ($1::int IS NULL OR id <> $1)
                 ORDER BY id LIMIT 1 FOR UPDATE`,
+              [topmartWarehouseId],
             );
             const whId = whRows[0]?.id ?? null;
             if (whId) {
@@ -367,6 +495,9 @@ router.post("/sales", async (req, res): Promise<void> => {
                  VALUES ($1,0,'OUT',$2,$3,'system','finished',$4)`,
                 [it.productName, whId, `Savdo #${saleId}: ${remainingKg.toFixed(2)} kg (zaxira yetmadi)`, remainingKg],
               );
+              removed.removedWeightKg += remainingKg;
+            } else if (isTopmartSale) {
+              throw new Error("No source warehouse is available for Top Mart kg deduction");
             }
           }
           continue;
@@ -382,8 +513,9 @@ router.post("/sales", async (req, res): Promise<void> => {
              JOIN warehouses w ON w.id = i.warehouse_id
             WHERE i.product = $1 AND i.quantity > 0
               AND COALESCE(w.location_type,'general') != 'vehicle'
+               AND ($2::int IS NULL OR i.warehouse_id <> $2)
             ORDER BY i.warehouse_id`,
-          [it.productName],
+          [it.productName, topmartWarehouseId],
         );
         const stockWarehouseIds = await guardGenericInventoryWarehouses(
           client,
@@ -398,19 +530,22 @@ router.post("/sales", async (req, res): Promise<void> => {
             WHERE i.product = $1 AND i.quantity > 0
               AND COALESCE(w.location_type,'general') != 'vehicle'
               AND i.warehouse_id = ANY($2::int[])
+               AND ($3::int IS NULL OR i.warehouse_id <> $3)
             ORDER BY quantity DESC
             FOR UPDATE OF i`,
-          [it.productName, stockWarehouseIds],
+          [it.productName, stockWarehouseIds, topmartWarehouseId],
         );
         for (const row of stockRows) {
           if (remaining <= 0) break;
           const take = Math.min(Number(row.quantity), remaining);
           const rowW = Number(row.weight_kg) || 0;
           // Og'irlikni dona ulushiga proporsional kamaytiramiz (transfer bilan bir xil qoida).
-          const takeW = rowW > 0 ? Math.min(rowW, (rowW * take) / Number(row.quantity)) : 0;
+          const takeW = rowW > 0
+            ? (rowW * take) / Number(row.quantity)
+            : (isTopmartSale ? (authoritativeWeights.get(it.productName) ?? 0) * take : 0);
           await client.query(
             `UPDATE inventory i SET quantity = i.quantity - $1,
-                    weight_kg = GREATEST(0, COALESCE(i.weight_kg,0) - $2), updated_at = NOW()
+                    weight_kg = COALESCE(i.weight_kg,0) - $2, updated_at = NOW()
               WHERE i.product = $3 AND i.warehouse_id = $4
                 AND EXISTS (
                   SELECT 1 FROM warehouses w
@@ -419,6 +554,8 @@ router.post("/sales", async (req, res): Promise<void> => {
                 )`,
             [take, takeW, it.productName, row.warehouse_id],
           );
+          removed.removedQuantity += take;
+          removed.removedWeightKg += takeW;
           await client.query(
             `INSERT INTO stock_movements
                (product, quantity, movement_type, from_warehouse_id, note, created_by, product_type, weight_kg)
@@ -435,23 +572,34 @@ router.post("/sales", async (req, res): Promise<void> => {
             `SELECT id FROM warehouses
               WHERE active=TRUE
                 AND COALESCE(location_type,'general') != 'vehicle'
+               AND ($1::int IS NULL OR id <> $1)
               ORDER BY id LIMIT 1 FOR UPDATE`,
+            [topmartWarehouseId],
           );
           const whId = whRows[0]?.id ?? null;
           if (whId) {
+            const shortageWeight = isTopmartSale
+              ? (authoritativeWeights.get(it.productName) ?? 0) * remaining
+              : 0;
             await client.query(
-              `INSERT INTO inventory (warehouse_id, product, quantity, product_type, updated_at)
-               VALUES ($1,$2,$3,'finished',NOW())
+              `INSERT INTO inventory (warehouse_id, product, quantity, weight_kg, product_type, updated_at)
+               VALUES ($1,$2,$3,$5,'finished',NOW())
                ON CONFLICT (warehouse_id, product)
-               DO UPDATE SET quantity = inventory.quantity - $4, updated_at = NOW()`,
-              [whId, it.productName, -remaining, remaining],
+               DO UPDATE SET quantity = inventory.quantity - $4,
+                             weight_kg = COALESCE(inventory.weight_kg,0) - $6,
+                             updated_at = NOW()`,
+              [whId, it.productName, -remaining, remaining, -shortageWeight, shortageWeight],
             );
             await client.query(
               `INSERT INTO stock_movements
-                 (product, quantity, movement_type, from_warehouse_id, note, created_by, product_type)
-               VALUES ($1,$2,'OUT',$3,$4,'system','finished')`,
-              [it.productName, remaining, whId, `Savdo #${saleId}`],
+                  (product, quantity, movement_type, from_warehouse_id, note, created_by, product_type, weight_kg)
+                VALUES ($1,$2,'OUT',$3,$4,'system','finished',$5)`,
+              [it.productName, remaining, whId, `Savdo #${saleId}`, shortageWeight || null],
             );
+            removed.removedQuantity += remaining;
+            removed.removedWeightKg += shortageWeight;
+          } else if (isTopmartSale) {
+            throw new Error("No source warehouse is available for Top Mart quantity deduction");
           }
         }
       }
@@ -460,6 +608,21 @@ router.post("/sales", async (req, res): Promise<void> => {
       // xatolik bo'lsa, butun savdoni bekor qilamiz (tashqi catch ROLLBACK qiladi).
       req.log?.error?.({ err: e, saleId }, "sale inventory deduction failed");
       throw e;
+    }
+
+    // Factory sale OUT movements above remain untouched. Only the configured
+    // Top Mart customer receives a corresponding C-3 credit. This deliberately
+    // does not create, update, print, or replace production-label rows: physical
+    // barcode identities remain exactly as issued.
+    if (topmartWarehouseId != null) {
+      try {
+        // TRANSFER captures business attribution and IN captures destination
+        // receipt; the helper mutates inventory once and never touches labels.
+        await creditTopmartSale(client, saleId, topmartWarehouseId, removedItems);
+      } catch (e: any) {
+        req.log?.error?.({ err: e, saleId, topmartWarehouseId }, "topmart sale credit failed");
+        throw e;
+      }
     }
 
     await client.query("COMMIT");
@@ -472,7 +635,12 @@ router.post("/sales", async (req, res): Promise<void> => {
       req.userId, totalAmount, primaryCurrency,
     );
 
-    res.status(201).json({ id: saleId, ok: true });
+    res.status(201).json({
+      id: saleId,
+      ok: true,
+      topmartCredited: topmartWarehouseId != null,
+      topmartWarehouseId,
+    });
   } catch (e: any) {
     await client.query("ROLLBACK");
     res.status(500).json({ error: e.message });
@@ -484,7 +652,7 @@ router.post("/sales", async (req, res): Promise<void> => {
 // ── POST /sales/:id/payments ──────────────────────────────────────────────────
 router.post("/sales/:id/payments", async (req, res): Promise<void> => {
   const saleId = parseInt(req.params.id, 10);
-  const { amount, currency = "USD", note = "" } = req.body ?? {};
+  const { amount, currency, note = "" } = req.body ?? {};
 
   if (!saleId || isNaN(saleId)) { res.status(400).json({ error: "Invalid sale id" }); return; }
 
@@ -502,16 +670,27 @@ router.post("/sales/:id/payments", async (req, res): Promise<void> => {
       [saleId],
     );
     if (!saleRes.rows.length) {
+      await client.query("ROLLBACK");
       res.status(404).json({ error: "Sale not found" }); return;
     }
 
     const sale = saleRes.rows[0];
+    const saleCurrency = String(sale.currency ?? "").trim().toUpperCase();
+    const normalizedCurrency = currency == null
+      ? saleCurrency
+      : typeof currency === "string" ? currency.trim().toUpperCase() : "";
+    if (!normalizedCurrency || normalizedCurrency !== saleCurrency) {
+      await client.query("ROLLBACK");
+      res.status(400).json({ error: `Payment currency must match sale currency (${saleCurrency})` });
+      return;
+    }
     // Bot-created sales have debt_amount=0 but status='pending'; compute effective debt
     const maxPay = Number(sale.debt_amount) > 0
       ? Number(sale.debt_amount)
       : Math.max(0, Number(sale.total_amount) - Number(sale.paid_amount ?? 0));
 
     if (maxPay <= 0) {
+      await client.query("ROLLBACK");
       res.status(400).json({ error: "Bu savdo allaqachon to'liq to'langan" }); return;
     }
 
@@ -527,15 +706,15 @@ router.post("/sales/:id/payments", async (req, res): Promise<void> => {
     );
     await client.query(
       `INSERT INTO sale_payments (sale_id, amount, currency, note) VALUES ($1,$2,$3,$4)`,
-      [saleId, effectiveAmt, currency, String(note).slice(0, 200)],
+      [saleId, effectiveAmt, normalizedCurrency, String(note).slice(0, 200)],
     );
 
     await client.query("COMMIT");
 
     await logEvent(
       saleId, "payment_added",
-      `+${effectiveAmt.toFixed(2)} ${currency}${note ? ` — ${note}` : ""}`,
-      req.userId, effectiveAmt, currency,
+      `+${effectiveAmt.toFixed(2)} ${normalizedCurrency}${note ? ` — ${note}` : ""}`,
+      req.userId, effectiveAmt, normalizedCurrency,
     );
 
     res.json({ ok: true, paidAmount: newPaid, debtAmount: newDebt, status: newStatus });
@@ -595,13 +774,35 @@ router.delete("/sales/:id", async (req, res): Promise<void> => {
   const parsed = DeleteSaleParams.safeParse({ id: parseInt(raw, 10) });
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
 
-  // Log before delete (ON DELETE SET NULL would wipe sale_id)
-  await logEvent(parsed.data.id, "deleted", "Sale deleted", req.userId);
-
-  const result = await pool.query("DELETE FROM sales WHERE id=$1", [parsed.data.id]);
-  if ((result.rowCount ?? 0) === 0) { res.status(404).json({ error: "Sale not found" }); return; }
-
-  res.json(HealthCheckResponse.parse({ status: "ok" }));
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const sale = await client.query(
+      "SELECT topmart_warehouse_id FROM sales WHERE id=$1 FOR UPDATE",
+      [parsed.data.id],
+    );
+    if (!sale.rows.length) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "Sale not found" }); return;
+    }
+    if (sale.rows[0].topmart_warehouse_id != null) {
+      await client.query("ROLLBACK");
+      res.status(409).json({ error: "Top Mart credited sales cannot be deleted" }); return;
+    }
+    await client.query(
+      `INSERT INTO sale_events (sale_id, event_type, description, user_id)
+       VALUES ($1,'deleted','Sale deleted',$2)`,
+      [parsed.data.id, req.userId ?? null],
+    );
+    await client.query("DELETE FROM sales WHERE id=$1", [parsed.data.id]);
+    await client.query("COMMIT");
+    res.json(HealthCheckResponse.parse({ status: "ok" }));
+  } catch (e: any) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
 });
 
 // ── PATCH /sales/:id/status ───────────────────────────────────────────────────

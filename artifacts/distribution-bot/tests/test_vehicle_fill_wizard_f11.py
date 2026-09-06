@@ -105,6 +105,21 @@ class VehicleFillWizardF11(unittest.TestCase):
             main.vfill_start(message(main.VFILL_BTN, uid=701))
         send.assert_not_called()
 
+    @patch.object(main.bot, "send_message")
+    def test_start_explains_when_central_warehouse_is_unconfigured_or_empty(self, send):
+        with patch.object(main, "get_user", return_value=USER_PILOT), \
+             patch.object(main, "_is_vehicle_distribution_pilot_user",
+                          return_value=True), \
+             patch.object(main.vfill, "pilot_chain", return_value=dict(CHAIN)), \
+             patch.object(main.vfill, "fill_source_warehouses", return_value=[]):
+            main.vfill_start(message(main.VFILL_BTN))
+
+        self.assertIsNone(main.get_state(700)["state"])
+        self.assertTrue(any(
+            "Top Mart C-3 markaziy ombori sozlanmagan" in text
+            for text in sent_texts(send)
+        ))
+
     # ── To'liq happy-path: ombor → mahsulot → dona → savat ──────────────────
     @patch.object(main.bot, "send_message")
     def test_happy_path_states_and_cart_math(self, send):
@@ -204,8 +219,6 @@ class VehicleFillWizardF11(unittest.TestCase):
         with patch.object(main, "get_user", return_value=USER_PILOT), \
              patch.object(main.vehicle_api, "create_handoff",
                           return_value={"id": 501}) as create, \
-             patch.object(main.vehicle_api, "prepare_labels",
-                          return_value={}) as labels, \
              patch.object(main.vfill, "configured_recipient_ids",
                           return_value=(111,)):
             main._vfill_finalize(700, data)
@@ -213,14 +226,13 @@ class VehicleFillWizardF11(unittest.TestCase):
         args = create.call_args.args
         self.assertEqual(args[0], 11)
         self.assertEqual([l["mahsulot_id"] for l in args[1]], [5, 6])
-        labels.assert_called_once()
-        self.assertEqual(labels.call_args.args[0], 501)
         self.assertIsNone(main.get_state(700)["state"])
         texts = sent_texts(send)
         agent_txt = next(t for t in texts if "TOPSHIRIQ YARATILDI" in t)
         self.assertIn("№501", agent_txt)
         self.assertIn("YECHILMADI", agent_txt)          # zaxira hali ko'chmagan
         self.assertIn("Taxminiy qiymati", agent_txt)     # narx bor — summa chiqadi
+        self.assertIn("dashboardida skanerlab", agent_txt)
         omb = [(c.args[0], c.args[1]) for c in send.call_args_list
                if c.args and c.args[0] == 111]
         self.assertTrue(omb and "YANGI YUKLASH TOPSHIRIG'I" in omb[0][1])
@@ -234,7 +246,6 @@ class VehicleFillWizardF11(unittest.TestCase):
         with patch.object(main, "get_user", return_value=USER_PILOT), \
              patch.object(main.vehicle_api, "create_handoff",
                           side_effect=[err, {"id": 502}]) as create, \
-             patch.object(main.vehicle_api, "prepare_labels", return_value={}), \
              patch.object(main.vfill, "configured_recipient_ids",
                           return_value=()):
             main._vfill_finalize(700, data)
@@ -254,7 +265,6 @@ class VehicleFillWizardF11(unittest.TestCase):
         with patch.object(main, "get_user", return_value=USER_PILOT), \
              patch.object(main.vehicle_api, "create_handoff",
                           side_effect=err) as create, \
-             patch.object(main.vehicle_api, "prepare_labels", return_value={}), \
              patch.object(main.vfill, "configured_recipient_ids",
                           return_value=()):
             main._vfill_finalize(700, data)

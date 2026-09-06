@@ -191,7 +191,10 @@ function batchCodeFor(handoffId: number): string {
 
 /** Deterministic SHA256 over the handoff + item snapshot, so a same-key replay
  *  with a mutated payload can be rejected. Order-independent on items. */
-function computeFingerprint(handoff: HandoffDetail): string {
+function computeFingerprint(
+  handoff: HandoffDetail,
+  barcodes?: readonly string[],
+): string {
   const items = [...handoff.items]
     .map((i) => ({
       mahsulotId: i.mahsulotId,
@@ -209,6 +212,7 @@ function computeFingerprint(handoff: HandoffDetail): string {
     sourceWarehouseId: handoff.sourceWarehouseId,
     vehicleWarehouseId: handoff.vehicleWarehouseId,
     items,
+    ...(barcodes ? { barcodes } : {}),
   });
   return createHash("sha256").update(canonical).digest("hex");
 }
@@ -232,7 +236,7 @@ async function readLabelsPayloadInTx(
        JOIN distribution.vehicle_label_claims c
          ON c.production_label_id = pl.id
       WHERE c.handoff_id = $1
-      ORDER BY pl.label_number`,
+       ORDER BY c.id`,
     [handoff.id],
   );
   const unavailable = rows.find(
@@ -393,6 +397,12 @@ export async function prepareLabelsInTx(
     }
   }
 
+  if (handoff.labelMode !== "generated") {
+    throw new HandoffConflictError(
+      "Configured Top Mart C-3 handoffs must claim already-printed production labels; creating new labels is forbidden",
+    );
+  }
+
   if (handoff.status !== "prepared") {
     throw new HandoffConflictError(
       `Cannot prepare labels from status '${handoff.status}'`,
@@ -528,6 +538,350 @@ export async function prepareLabelsInTx(
   return readLabelsPayloadInTx(client, handoff);
 }
 
+// ── Claim existing C-3 passports (no production_labels writes) ───────────────
+
+export async function claimExistingLabelsInTx(
+  client: PoolClient,
+  handoffId: number,
+  operationKey: string,
+  scannedBarcodes: string[],
+  actor: HandoffActor,
+): Promise<LabelsPayload> {
+  if (new Set(scannedBarcodes).size !== scannedBarcodes.length) {
+    throw new HandoffConflictError("Scanned barcode list contains duplicates");
+  }
+
+  // Keep the established sale/transfer lock order: vehicle warehouse parent,
+  // handoff advisory lock, then label rows in global production-label id order.
+  const lockTarget = await client.query(
+    `SELECT vehicle_warehouse_id FROM distribution.vehicle_handoffs WHERE id=$1`,
+    [handoffId],
+  );
+  if (lockTarget.rows.length) {
+    await client.query(
+      `SELECT id FROM public.warehouses WHERE id=$1 FOR UPDATE`,
+      [Number(lockTarget.rows[0].vehicle_warehouse_id)],
+    );
+  }
+  await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+    handoffLockKey(handoffId),
+  ]);
+
+  const handoff = await getHandoff(client, handoffId);
+  if (handoff.labelMode !== "existing") {
+    throw new HandoffConflictError(
+      "Existing production labels may only be claimed for an existing-label handoff",
+    );
+  }
+  let fingerprint = computeFingerprint(handoff, scannedBarcodes);
+
+  const sessions = await client.query(
+    `SELECT handoff_id, operation_key, request_fingerprint
+       FROM distribution.vehicle_label_prepare_sessions
+      WHERE handoff_id=$1 OR operation_key=$2
+      FOR UPDATE`,
+    [handoffId, operationKey],
+  );
+  for (const session of sessions.rows) {
+    const sameHandoff = Number(session.handoff_id) === handoffId;
+    const sameKey = String(session.operation_key) === operationKey;
+    if (sameHandoff && sameKey) {
+      if (String(session.request_fingerprint) !== fingerprint) {
+        throw new HandoffConflictError(
+          "operationKey replay with a different barcode payload or handoff fingerprint",
+        );
+      }
+      return readLabelsPayloadInTx(client, handoff);
+    }
+    if (sameHandoff) {
+      throw new HandoffConflictError(
+        "Labels already claimed for this handoff with a different operationKey",
+      );
+    }
+    throw new HandoffConflictError(
+      "operationKey already used by another handoff's label claim",
+    );
+  }
+
+  if (handoff.status !== "prepared") {
+    throw new HandoffConflictError(
+      `Cannot claim labels from status '${handoff.status}'`,
+    );
+  }
+  if (!handoff.items.length || !scannedBarcodes.length) {
+    throw new HandoffConflictError(
+      "Handoff items and scanned barcode list must not be empty",
+    );
+  }
+
+  // Lock by immutable global id, independent of scanner order, to avoid
+  // deadlocks between overlapping concurrent claims.
+  const labelsResult = await client.query(
+    `SELECT id, barcode_value, batch_id, status, print_count,
+            pieces_in_label, weight_kg, product_sku
+       FROM public.production_labels
+      WHERE barcode_value=ANY($1::text[])
+      ORDER BY id
+      FOR UPDATE`,
+    [scannedBarcodes],
+  );
+  if (labelsResult.rows.length !== scannedBarcodes.length) {
+    throw new HandoffConflictError(
+      "Every scanned barcode must identify an existing production label",
+    );
+  }
+  const byBarcode = new Map(
+    labelsResult.rows.map((row) => [String(row.barcode_value), row]),
+  );
+  const labels = scannedBarcodes.map((barcode) => byBarcode.get(barcode)!);
+  for (const label of labels) {
+    if (
+      label.batch_id == null ||
+      String(label.status) !== "printed" ||
+      Number(label.print_count) <= 0
+    ) {
+      throw new HandoffConflictError(
+        `Production label ${label.barcode_value} must be an already-printed, non-void batch label`,
+      );
+    }
+    if (
+      !Number.isSafeInteger(Number(label.pieces_in_label)) ||
+      Number(label.pieces_in_label) <= 0 ||
+      !(Number(label.weight_kg) > 0)
+    ) {
+      throw new HandoffConflictError(
+        `Production label ${label.barcode_value} must have positive package pieces and weight`,
+      );
+    }
+  }
+
+  const received = await client.query(
+    `SELECT production_label_id, barcode, product_sku, pieces_in_label, weight_kg
+       FROM distribution.topmart_label_receipts
+      WHERE production_label_id=ANY($1::int[])
+        AND central_warehouse_id=$2
+      ORDER BY production_label_id
+      FOR SHARE`,
+    [labels.map((label) => Number(label.id)), handoff.sourceWarehouseId],
+  );
+  if (received.rows.length !== labels.length) {
+    throw new HandoffConflictError(
+      "Every claimed label must have immutable receipt provenance at the handoff source warehouse",
+    );
+  }
+  const receiptByLabelId = new Map(
+    received.rows.map((receipt) => [Number(receipt.production_label_id), receipt]),
+  );
+  for (const label of labels) {
+    const receipt = receiptByLabelId.get(Number(label.id));
+    if (
+      !receipt
+      || String(receipt.barcode) !== String(label.barcode_value)
+      || String(receipt.product_sku) !== String(label.product_sku)
+      || Number(receipt.pieces_in_label) !== Number(label.pieces_in_label)
+      || Math.abs(Number(receipt.weight_kg) - Number(label.weight_kg)) > 0.001
+    ) {
+      throw new HandoffConflictError(
+        `Immutable receipt provenance does not match production label ${label.barcode_value}`,
+      );
+    }
+  }
+
+  const claimed = await client.query(
+    `SELECT production_label_id, barcode
+       FROM distribution.vehicle_label_claims
+      WHERE production_label_id=ANY($1::int[]) OR barcode=ANY($2::text[])
+      ORDER BY production_label_id
+      FOR UPDATE`,
+    [labels.map((label) => Number(label.id)), scannedBarcodes],
+  );
+  if (claimed.rows.length) {
+    throw new HandoffConflictError(
+      `Production label ${claimed.rows[0].barcode} is already vehicle-claimed`,
+    );
+  }
+
+  // Match by exact SKU, while assigning same-SKU packages in scanner order to
+  // same-SKU handoff items in immutable item order. A package is never split.
+  const labelsBySku = new Map<string, Array<Record<string, unknown>>>();
+  for (const label of labels) {
+    const sku = String(label.product_sku);
+    const skuLabels = labelsBySku.get(sku) ?? [];
+    skuLabels.push(label);
+    labelsBySku.set(sku, skuLabels);
+  }
+  const assignments: Array<{
+    item: HandoffDetail["items"][number];
+    label: Record<string, unknown>;
+  }> = [];
+  for (const item of handoff.items) {
+    const skuLabels = labelsBySku.get(item.sku) ?? [];
+    let covered = 0;
+    let coveredWeightKg = 0;
+    while (covered < item.quantity && skuLabels.length) {
+      const label = skuLabels.shift()!;
+      covered += Number(label.pieces_in_label);
+      coveredWeightKg += Number(label.weight_kg);
+      if (covered > item.quantity) {
+        throw new HandoffConflictError(
+          `Barcode ${label.barcode_value} exceeds exact piece coverage for handoff item ${item.id}`,
+        );
+      }
+      assignments.push({ item, label });
+    }
+    labelsBySku.set(item.sku, skuLabels);
+    if (covered !== item.quantity) {
+      throw new HandoffConflictError(
+        `Scanned labels with exact SKU ${item.sku} do not exactly cover handoff item ${item.id}`,
+      );
+    }
+  }
+  const extraLabel = [...labelsBySku.values()].find(
+    (skuLabels) => skuLabels.length > 0,
+  )?.[0];
+  if (extraLabel) {
+    throw new HandoffConflictError(
+      `Barcode ${extraLabel.barcode_value} has no exact SKU/piece coverage in the handoff`,
+    );
+  }
+
+  // Label packages (already tied to an immutable C-3 receipt) are the weight
+  // authority. Lock inventory and check the complete selected quantity/weight
+  // before freezing each item snapshot. Stock itself is not mutated here.
+  const requiredByProduct = new Map<
+    string,
+    { quantity: number; weightKg: number }
+  >();
+  const authorityByItem = new Map<number, number>();
+  for (const { item, label } of assignments) {
+    const packageWeight = Number(label.weight_kg);
+    authorityByItem.set(
+      item.id,
+      (authorityByItem.get(item.id) ?? 0) + packageWeight,
+    );
+  }
+  for (const item of handoff.items) {
+    const totalWeightKg = authorityByItem.get(item.id) ?? 0;
+    const productName = item.productName!;
+    const current = requiredByProduct.get(productName) ?? {
+      quantity: 0,
+      weightKg: 0,
+    };
+    current.quantity += item.quantity;
+    current.weightKg += totalWeightKg;
+    requiredByProduct.set(productName, current);
+  }
+  for (const productName of [...requiredByProduct.keys()].sort()) {
+    const need = requiredByProduct.get(productName)!;
+    const inventory = await client.query(
+      `SELECT quantity, weight_kg
+         FROM public.inventory
+        WHERE warehouse_id=$1 AND product=$2
+        FOR UPDATE`,
+      [handoff.sourceWarehouseId, productName],
+    );
+    const haveQuantity = inventory.rows.length
+      ? Number(inventory.rows[0].quantity)
+      : 0;
+    const haveWeightKg = inventory.rows.length
+      ? Number(inventory.rows[0].weight_kg)
+      : 0;
+    if (
+      haveQuantity < need.quantity
+      || haveWeightKg + 1e-9 < need.weightKg
+    ) {
+      throw new HandoffConflictError(
+        `C-3 inventory cannot cover selected ${productName}: need ${need.quantity} pieces / ${need.weightKg.toFixed(3)} kg, have ${haveQuantity} / ${haveWeightKg.toFixed(3)} kg`,
+      );
+    }
+  }
+  for (const item of handoff.items) {
+    const totalWeightKg = authorityByItem.get(item.id)!;
+    await client.query(
+      `UPDATE distribution.vehicle_handoff_items
+          SET total_weight_kg=$2, unit_weight_kg=$3
+        WHERE id=$1`,
+      [item.id, totalWeightKg, totalWeightKg / item.quantity],
+    );
+    item.totalWeightKg = totalWeightKg;
+    item.unitWeightKg = totalWeightKg / item.quantity;
+  }
+  fingerprint = computeFingerprint(handoff, scannedBarcodes);
+
+  for (const { item, label } of assignments) {
+    const productionLabelId = Number(label.id);
+    const barcode = String(label.barcode_value);
+    const pieces = Number(label.pieces_in_label);
+    const insertedClaim = await client.query(
+      `INSERT INTO distribution.vehicle_label_claims
+         (vehicle_id, handoff_id, handoff_item_id, production_label_id, barcode,
+          mahsulot_id, sku, unit_weight_kg, pieces_in_label,
+          remaining_quantity, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,'printed')
+       RETURNING id`,
+      [
+        handoff.vehicleId,
+        handoffId,
+        item.id,
+        productionLabelId,
+        barcode,
+        item.mahsulotId,
+        item.sku,
+        Number(label.weight_kg) / pieces,
+        pieces,
+      ],
+    );
+    const claimId = Number(insertedClaim.rows[0].id);
+    for (const eventType of ["label_prepared", "label_printed"] as const) {
+      await client.query(
+        `INSERT INTO distribution.vehicle_unit_events
+           (vehicle_id, handoff_id, handoff_item_id, mahsulot_id, sku,
+            event_type, quantity, actor_id, production_label_id, barcode,
+            label_claim_id, operation_key)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+         ON CONFLICT (operation_key) WHERE operation_key IS NOT NULL DO NOTHING`,
+        [
+          handoff.vehicleId,
+          handoffId,
+          item.id,
+          item.mahsulotId,
+          item.sku,
+          eventType,
+          pieces,
+          actor.actorId,
+          productionLabelId,
+          barcode,
+          claimId,
+          `${eventType}:${handoffId}:${productionLabelId}`,
+        ],
+      );
+    }
+  }
+
+  await client.query(
+    `INSERT INTO distribution.vehicle_label_prepare_sessions
+       (handoff_id, operation_key, request_fingerprint, label_count,
+        actor_type, actor_ref)
+     VALUES ($1,$2,$3,$4,$5,$6)`,
+    [
+      handoffId,
+      operationKey,
+      fingerprint,
+      assignments.length,
+      actor.type,
+      actor.ref,
+    ],
+  );
+  await client.query(
+    `UPDATE distribution.vehicle_handoffs
+        SET status='labels_printed', labels_printed_at=NOW(),
+            labels_printed_by=$2
+      WHERE id=$1`,
+    [handoffId, actor.actorId],
+  );
+  return readLabelsPayloadInTx(client, await getHandoff(client, handoffId));
+}
+
 // ── Confirm: first print + reprint, print-session owned ──────────────────────
 
 // Terminal-ish states in which a reprint (but not a first print) is allowed.
@@ -557,6 +911,11 @@ export async function confirmLabelsPrintedInTx(
 
   const handoff = await getHandoff(client, handoffId); // scopes to pilot
   const status = handoff.status;
+  if (handoff.labelMode !== "generated") {
+    throw new HandoffConflictError(
+      "Top Mart C-3 handoffs use existing production labels and cannot be confirmed or reprinted",
+    );
+  }
 
   // A prepare session MUST exist before any confirm.
   const prep = await client.query(

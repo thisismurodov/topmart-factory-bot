@@ -262,6 +262,14 @@ export async function initDb(): Promise<void> {
   await pool.query(`ALTER TABLE IF EXISTS sales ADD COLUMN IF NOT EXISTS payment_type TEXT NOT NULL DEFAULT 'naqd'`);
   await pool.query(`ALTER TABLE IF EXISTS sales ADD COLUMN IF NOT EXISTS paid_amount NUMERIC(12,2) NOT NULL DEFAULT 0`);
   await pool.query(`ALTER TABLE IF EXISTS sales ADD COLUMN IF NOT EXISTS debt_amount NUMERIC(12,2) NOT NULL DEFAULT 0`);
+  // Destination attribution is nullable: ordinary customer sales never have it.
+  await pool.query(`ALTER TABLE IF EXISTS sales ADD COLUMN IF NOT EXISTS topmart_warehouse_id INTEGER`);
+  await pool.query(`ALTER TABLE IF EXISTS sales ADD COLUMN IF NOT EXISTS operation_key TEXT`);
+  await pool.query(`ALTER TABLE IF EXISTS sales ADD COLUMN IF NOT EXISTS request_fingerprint TEXT`);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_sales_operation_key
+      ON sales(operation_key) WHERE operation_key IS NOT NULL
+  `);
   await pool.query(`ALTER TABLE IF EXISTS sales ALTER COLUMN product DROP NOT NULL`);
 
   // customers.deleted_at — yumshoq o'chirish (routes deleted_at IS NULL filtrlaydi)
@@ -379,6 +387,76 @@ export async function initDb(): Promise<void> {
       reason            TEXT
     )
   `);
+
+  // Central Top Mart is selected explicitly by an admin. Never seed or infer
+  // either side: existing public customer/warehouse rows are validated on PUT.
+  await pool.query(`CREATE SCHEMA IF NOT EXISTS distribution`);
+  // Existing rows predate C-3 label reuse and therefore retain generated mode;
+  // all new API-created C-3 handoffs explicitly persist existing mode.
+  await pool.query(`
+    ALTER TABLE IF EXISTS distribution.vehicle_handoffs
+      ADD COLUMN IF NOT EXISTS label_mode TEXT NOT NULL DEFAULT 'generated'
+  `);
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF to_regclass('distribution.vehicle_handoffs') IS NOT NULL THEN
+        ALTER TABLE distribution.vehicle_handoffs
+          DROP CONSTRAINT IF EXISTS vehicle_handoffs_label_mode_check;
+        ALTER TABLE distribution.vehicle_handoffs
+          ADD CONSTRAINT vehicle_handoffs_label_mode_check
+          CHECK (label_mode IN ('generated','existing'));
+      END IF;
+    END;
+    $$
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS distribution.topmart_config (
+      id                   INTEGER PRIMARY KEY DEFAULT 1,
+      customer_id          INTEGER NOT NULL,
+      central_warehouse_id INTEGER NOT NULL,
+      updated_by           INTEGER,
+      updated_at           TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+      CONSTRAINT topmart_config_singleton_check CHECK (id = 1)
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS distribution.topmart_label_receipts (
+      id                    SERIAL PRIMARY KEY,
+      production_label_id   INTEGER NOT NULL,
+      barcode               TEXT NOT NULL,
+      sale_id               INTEGER NOT NULL,
+      central_warehouse_id  INTEGER NOT NULL,
+      product_sku           TEXT NOT NULL,
+      pieces_in_label       INTEGER NOT NULL,
+      weight_kg             NUMERIC(12,3) NOT NULL,
+      receipt_fingerprint   TEXT NOT NULL,
+      received_by           INTEGER NOT NULL,
+      received_at           TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+      CONSTRAINT topmart_label_receipts_pieces_check CHECK (pieces_in_label > 0),
+      CONSTRAINT topmart_label_receipts_weight_check CHECK (weight_kg > 0)
+    )
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_topmart_label_receipts_production_label ON distribution.topmart_label_receipts(production_label_id)`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_topmart_label_receipts_barcode ON distribution.topmart_label_receipts(barcode)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_topmart_label_receipts_sale ON distribution.topmart_label_receipts(sale_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_topmart_label_receipts_warehouse ON distribution.topmart_label_receipts(central_warehouse_id)`);
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION distribution.enforce_topmart_label_receipt_immutable()
+    RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      RAISE EXCEPTION 'Top Mart label receipt provenance is immutable' USING ERRCODE='55000';
+    END;
+    $$
+  `);
+  await pool.query(`DROP TRIGGER IF EXISTS topmart_label_receipts_immutable ON distribution.topmart_label_receipts`);
+  await pool.query(`
+    CREATE TRIGGER topmart_label_receipts_immutable
+    BEFORE UPDATE OR DELETE ON distribution.topmart_label_receipts
+    FOR EACH ROW EXECUTE FUNCTION distribution.enforce_topmart_label_receipt_immutable()
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_topmart_config_customer ON distribution.topmart_config(customer_id)`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_topmart_config_warehouse ON distribution.topmart_config(central_warehouse_id)`);
 
   // Production schema o'zgarishi oddiy restartda tasodifan qo'llanmaydi.
   // Faqat foydalanuvchi aniq DDL modelini tasdiqlagan migration jarayoni yoki

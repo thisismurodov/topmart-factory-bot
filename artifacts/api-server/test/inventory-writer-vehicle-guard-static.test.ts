@@ -96,6 +96,7 @@ describe("static vehicle guard for every public.inventory writer", () => {
       "routes/ombor.ts",
       "routes/inventory-v2.ts",
       "routes/sales.ts",
+      "lib/topmartSaleCredit.ts",
       "routes/vehicle-distribution/handoff-service.ts",
       "routes/vehicle-distribution/return-service.ts",
     ];
@@ -106,6 +107,9 @@ describe("static vehicle guard for every public.inventory writer", () => {
 
     const handoff = read("routes/vehicle-distribution/handoff-service.ts");
     expect(handoff).toContain("lockVehicleWarehouseStockMutation");
+    const topmartSaleCredit = read("lib/topmartSaleCredit.ts");
+    expect(topmartSaleCredit).toContain("INSERT INTO inventory");
+    expect(topmartSaleCredit).toContain("ON CONFLICT (warehouse_id, product)");
     const vehicleReturn = read("routes/vehicle-distribution/return-service.ts");
     expect(vehicleReturn).toContain("async function lockParents");
     expect(vehicleReturn).toContain("await lockParents(client,");

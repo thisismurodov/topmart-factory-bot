@@ -5,6 +5,7 @@
  * TopMart ERP API
  * OpenAPI spec version: 0.1.0
  */
+import type { VehicleHandoffDetailLabelMode } from './vehicleHandoffDetailLabelMode';
 import type { VehicleHandoffItem } from './vehicleHandoffItem';
 
 export interface VehicleHandoffDetail {
@@ -25,6 +26,7 @@ export interface VehicleHandoffDetail {
   preparedActorType: string | null;
   /** @nullable */
   preparedActorRef: string | null;
+  labelMode: VehicleHandoffDetailLabelMode;
   /** @nullable */
   notes: string | null;
   /** @nullable */

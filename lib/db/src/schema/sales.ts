@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, numeric, timestamp, check } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, numeric, timestamp, check, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
@@ -18,10 +18,16 @@ export const salesTable = pgTable("sales", {
   debtAmount: numeric("debt_amount", { precision: 12, scale: 2 }).notNull().default("0"),
   status: text("status").notNull().default("pending"),
   note: text("note").notNull().default(""),
+  topmartWarehouseId: integer("topmart_warehouse_id"),
+  operationKey: text("operation_key"),
+  requestFingerprint: text("request_fingerprint"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   // Runtime DDL (API initDb) bilan bir xil CHECK
   check("chk_sales_total", sql`total_amount >= 0`),
+  uniqueIndex("uq_sales_operation_key")
+    .on(t.operationKey)
+    .where(sql`${t.operationKey} IS NOT NULL`),
 ]);
 
 export const insertSaleSchema = createInsertSchema(salesTable).omit({ id: true, createdAt: true });

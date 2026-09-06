@@ -18,6 +18,19 @@ const VEHICLE_APPROVED = process.env["VEHICLE_DISTRIBUTION_SCHEMA_APPROVED"] ===
 const DDL = `
 CREATE SCHEMA IF NOT EXISTS distribution;
 
+CREATE TABLE IF NOT EXISTS distribution.topmart_config (
+  id INTEGER PRIMARY KEY DEFAULT 1,
+  customer_id INTEGER NOT NULL,
+  central_warehouse_id INTEGER NOT NULL,
+  updated_by INTEGER,
+  updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  CONSTRAINT topmart_config_singleton_check CHECK (id = 1)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_topmart_config_customer
+  ON distribution.topmart_config (customer_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_topmart_config_warehouse
+  ON distribution.topmart_config (central_warehouse_id);
+
 CREATE TABLE IF NOT EXISTS distribution.users (
   id SERIAL PRIMARY KEY,
   telegram_id BIGINT UNIQUE,
@@ -321,14 +334,19 @@ CREATE TABLE IF NOT EXISTS distribution.vehicle_handoffs (
   request_fingerprint   TEXT,
   prepared_actor_type   TEXT,
   prepared_actor_ref    TEXT,
+  label_mode            TEXT NOT NULL DEFAULT 'generated',
   notes                 TEXT,
   created_at            TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-  CONSTRAINT vehicle_handoffs_status_check CHECK (status IN ('prepared','labels_printed','handed_over','stock_transferred','cancelled'))
+  CONSTRAINT vehicle_handoffs_status_check CHECK (status IN ('prepared','labels_printed','handed_over','stock_transferred','cancelled')),
+  CONSTRAINT vehicle_handoffs_label_mode_check CHECK (label_mode IN ('generated','existing'))
 );
 ALTER TABLE distribution.vehicle_handoffs ADD COLUMN IF NOT EXISTS operation_key       TEXT;
 ALTER TABLE distribution.vehicle_handoffs ADD COLUMN IF NOT EXISTS request_fingerprint TEXT;
 ALTER TABLE distribution.vehicle_handoffs ADD COLUMN IF NOT EXISTS prepared_actor_type TEXT;
 ALTER TABLE distribution.vehicle_handoffs ADD COLUMN IF NOT EXISTS prepared_actor_ref  TEXT;
+ALTER TABLE distribution.vehicle_handoffs ADD COLUMN IF NOT EXISTS label_mode TEXT NOT NULL DEFAULT 'generated';
+ALTER TABLE distribution.vehicle_handoffs DROP CONSTRAINT IF EXISTS vehicle_handoffs_label_mode_check;
+ALTER TABLE distribution.vehicle_handoffs ADD CONSTRAINT vehicle_handoffs_label_mode_check CHECK (label_mode IN ('generated','existing'));
 CREATE INDEX IF NOT EXISTS idx_vehicle_handoffs_vehicle_date ON distribution.vehicle_handoffs (vehicle_id, handoff_date);
 CREATE INDEX IF NOT EXISTS idx_vehicle_handoffs_status       ON distribution.vehicle_handoffs (status, handoff_date);
 -- F3: partial unique on non-null idempotency operation_key and movement_reference.
@@ -437,6 +455,36 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_unit_events_operation_key
   ON distribution.vehicle_unit_events (operation_key)
   WHERE operation_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_vehicle_unit_events_label_claim ON distribution.vehicle_unit_events (label_claim_id);
+
+CREATE TABLE IF NOT EXISTS distribution.topmart_label_receipts (
+  id                    SERIAL PRIMARY KEY,
+  production_label_id   INTEGER NOT NULL,
+  barcode               TEXT NOT NULL,
+  sale_id               INTEGER NOT NULL,
+  central_warehouse_id  INTEGER NOT NULL,
+  product_sku           TEXT NOT NULL,
+  pieces_in_label       INTEGER NOT NULL,
+  weight_kg             NUMERIC(12,3) NOT NULL,
+  receipt_fingerprint   TEXT NOT NULL,
+  received_by           INTEGER NOT NULL,
+  received_at           TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  CONSTRAINT topmart_label_receipts_pieces_check CHECK (pieces_in_label > 0),
+  CONSTRAINT topmart_label_receipts_weight_check CHECK (weight_kg > 0)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_topmart_label_receipts_production_label ON distribution.topmart_label_receipts(production_label_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_topmart_label_receipts_barcode ON distribution.topmart_label_receipts(barcode);
+CREATE INDEX IF NOT EXISTS idx_topmart_label_receipts_sale ON distribution.topmart_label_receipts(sale_id);
+CREATE INDEX IF NOT EXISTS idx_topmart_label_receipts_warehouse ON distribution.topmart_label_receipts(central_warehouse_id);
+CREATE OR REPLACE FUNCTION distribution.enforce_topmart_label_receipt_immutable()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'Top Mart label receipt provenance is immutable' USING ERRCODE='55000';
+END;
+$$;
+DROP TRIGGER IF EXISTS topmart_label_receipts_immutable ON distribution.topmart_label_receipts;
+CREATE TRIGGER topmart_label_receipts_immutable
+BEFORE UPDATE OR DELETE ON distribution.topmart_label_receipts
+FOR EACH ROW EXECUTE FUNCTION distribution.enforce_topmart_label_receipt_immutable();
 
 -- F3: cross-handoff physical-unit label claim. One row per physical unit
 -- (production_label_id), globally unique across ALL handoffs.

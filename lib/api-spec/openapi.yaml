@@ -1223,6 +1223,84 @@ paths:
           description: Enabled but schema (vehicle or production labels) not approved
           content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
 
+  /vehicle-distribution/topmart-label-receipts:
+    post:
+      operationId: registerTopmartLabelReceipt
+      tags: [vehicle-distribution]
+      summary: Register immutable C-3 receipt provenance for sale labels
+      description: >-
+        Admin-only. Registers already-printed batch labels physically received
+        into the C-3 destination immutably captured on one credited Top Mart
+        sale (independent of later configuration). Requires exact authoritative SKU mapping and dona piece/weight
+        coverage from that sale's immutable topmart-sale credit IN movements
+        (not mutable catalog weight). The same sale and barcode set replays
+        safely; a different set conflicts. Never mutates production_labels.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterTopmartLabelReceiptInput"
+      responses:
+        "200":
+          description: Registered or idempotently replayed
+          content: { application/json: { schema: { $ref: "#/components/schemas/TopmartLabelReceipt" } } }
+        "400":
+          description: Invalid body
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "403":
+          description: Admin role required
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "404":
+          description: Credited sale not found
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "409":
+          description: Invalid labels, coverage, warehouse, or immutable-set conflict
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+
+  /vehicle-distribution/handoffs/{handoffId}/labels/claim-existing:
+    post:
+      operationId: claimExistingVehicleHandoffLabels
+      tags: [vehicle-distribution]
+      summary: Claim already-printed production labels for a prepared C-3 handoff
+      description: >-
+        Claims existing, non-void printed batch labels without inserting or
+        updating production_labels. The ordered barcode list must have exact SKU
+        and piece coverage for every handoff item. Exact retries are idempotent;
+        operation-key or payload conflicts return 409. On success claims and
+        events are persisted and the handoff advances directly to labels_printed.
+      parameters:
+        - name: handoffId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClaimExistingVehicleHandoffLabelsInput"
+      responses:
+        "200":
+          description: Existing labels claimed
+          content: { application/json: { schema: { $ref: "#/components/schemas/VehicleHandoffLabelsPayload" } } }
+        "400":
+          description: Invalid body
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "401":
+          description: Unauthorized
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "404":
+          description: Feature disabled, handoff or label not found
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "409":
+          description: Wrong state, invalid label, coverage, or idempotency conflict
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "503":
+          description: Enabled but schema not approved
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+
   /vehicle-distribution/handoffs/{handoffId}/confirm-labels-printed:
     post:
       operationId: confirmVehicleHandoffLabelsPrinted
@@ -2384,6 +2462,9 @@ components:
           type: ["string", "null"]
         preparedActorRef:
           type: ["string", "null"]
+        labelMode:
+          type: string
+          enum: [generated, existing]
         notes:
           type: ["string", "null"]
         labelsPrintedAt:
@@ -2413,6 +2494,7 @@ components:
         - movementReference
         - preparedActorType
         - preparedActorRef
+        - labelMode
         - notes
         - labelsPrintedAt
         - handedOverAt
@@ -2444,6 +2526,51 @@ components:
           minLength: 1
       required: [operationKey]
       additionalProperties: false
+
+    ClaimExistingVehicleHandoffLabelsInput:
+      type: object
+      description: Ordered scans and idempotency key for claiming existing labels.
+      properties:
+        operationKey:
+          type: string
+          minLength: 1
+        barcodes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            pattern: "^TM[A-Z2-7]{16}$"
+      required: [operationKey, barcodes]
+      additionalProperties: false
+
+    RegisterTopmartLabelReceiptInput:
+      type: object
+      properties:
+        saleId:
+          type: integer
+          minimum: 1
+        barcodes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            pattern: "^TM[A-Z2-7]{16}$"
+      required: [saleId, barcodes]
+      additionalProperties: false
+
+    TopmartLabelReceipt:
+      type: object
+      properties:
+        saleId: { type: integer }
+        centralWarehouseId: { type: integer }
+        barcodes:
+          type: array
+          items: { type: string }
+        receivedAt: { type: string, format: date-time }
+        replayed: { type: boolean }
+      required: [saleId, centralWarehouseId, barcodes, receivedAt, replayed]
 
     VehicleHandoffLabelPassport:
       type: object

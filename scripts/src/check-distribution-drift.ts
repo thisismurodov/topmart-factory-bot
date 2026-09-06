@@ -47,6 +47,8 @@ import {
   vehicleReturnsTable,
   vehicleReturnItemsTable,
   vehicleRouteReportsTable,
+  topmartConfigTable,
+  topmartLabelReceiptsTable,
 } from "@workspace/db";
 
 // Distribution sxemasi UCH joyda ta'riflangan va qo'lda sinxron saqlanadi:
@@ -83,6 +85,8 @@ const TS_DB = `dist_drift_ts_${RUN_ID}`;
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 
 const TABLES = {
+  topmart_config: topmartConfigTable,
+  topmart_label_receipts: topmartLabelReceiptsTable,
   agent_locations: agentLocationsTable,
   ai_suggest_cache: aiSuggestCacheTable,
   agent_plans: agentPlansTable,
@@ -455,7 +459,7 @@ async function readActualChecks(pool: pg.Pool): Promise<Map<string, CheckSpec>> 
     JOIN pg_namespace n   ON n.oid = c.relnamespace
     WHERE n.nspname = 'distribution'
       AND con.contype = 'c'
-      AND c.relname LIKE 'vehicle%'
+      AND (c.relname LIKE 'vehicle%' OR c.relname = 'topmart_label_receipts')
     ORDER BY c.relname, con.conname
   `);
   const out = new Map<string, CheckSpec>();
@@ -508,6 +512,9 @@ const EXPECTED_CHECKS: CheckSpec[] = [
   { table: "vehicles", name: "vehicles_capacity_check", expr: normalizeExpr("capacity_kg >= 0") },
   { table: "vehicle_assignments", name: "vehicle_assignments_status_check", expr: normalizeExpr("status IN ('active','ended')") },
   { table: "vehicle_handoffs", name: "vehicle_handoffs_status_check", expr: normalizeExpr("status IN ('prepared','labels_printed','handed_over','stock_transferred','cancelled')") },
+  { table: "vehicle_handoffs", name: "vehicle_handoffs_label_mode_check", expr: normalizeExpr("label_mode IN ('generated','existing')") },
+  { table: "topmart_label_receipts", name: "topmart_label_receipts_pieces_check", expr: normalizeExpr("pieces_in_label > 0") },
+  { table: "topmart_label_receipts", name: "topmart_label_receipts_weight_check", expr: normalizeExpr("weight_kg > 0") },
   { table: "vehicle_handoff_items", name: "vehicle_handoff_items_qty_check",  expr: normalizeExpr("quantity_dispatched > 0") },
   { table: "vehicle_handoff_items", name: "vehicle_handoff_items_cost_check", expr: normalizeExpr("unit_cost >= 0") },
   { table: "vehicle_handoff_items", name: "vehicle_handoff_items_pieces_per_box_check", expr: normalizeExpr("pieces_per_box > 0") },

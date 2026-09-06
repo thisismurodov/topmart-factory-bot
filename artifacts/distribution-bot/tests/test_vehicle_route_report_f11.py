@@ -108,7 +108,8 @@ class VehicleRouteReportF11(unittest.TestCase):
         self.today = vfill.today_str()
         with _db() as conn, conn.cursor() as c:
             c.execute("""
-              TRUNCATE distribution.vehicle_route_reports,
+              TRUNCATE distribution.topmart_config,
+                distribution.vehicle_route_reports,
                 distribution.vehicle_sale_allocations,
                 distribution.vehicle_replenishment_outbox,
                 distribution.vehicle_replenishment_requests,
@@ -351,21 +352,66 @@ class VehicleRouteReportF11(unittest.TestCase):
             self.assertEqual(c.fetchone()[0], 0)
 
     # ── wizard manba ro'yxatlari (real DB, SKU-yagonalik sharti) ────────────
-    def test_fill_sources_and_products_respect_sku_guard(self):
+    def test_fill_sources_uses_only_configured_central_warehouse(self):
         with _db() as conn, conn.cursor() as c:
             self._stock(c, self.swh, "Arqon 10m", 40)
+            c.execute(
+                "INSERT INTO distribution.topmart_config"
+                "(id,customer_id,central_warehouse_id) VALUES(1,700,%s)",
+                (self.swh,),
+            )
+            # Bu ham yuklashga yaroqli, ammo konfiguratsiyada emas — F11
+            # hech qachon ixtiyoriy omborlar ro'yxatini qaytarmaydi.
+            c.execute("INSERT INTO public.warehouses(name,active,location_type,purpose) "
+                      "VALUES('Boshqa tayyor ombor',TRUE,'general','finished') "
+                      "RETURNING id")
+            other_wh = c.fetchone()[0]
+            self._stock(c, other_wh, "Arqon 10m", 40)
             # SKU dublikat: ikkinchi faol mahsulotlar yozuvi — guard yiqitadi.
             c.execute("INSERT INTO distribution.mahsulotlar(nomi,narx,faol,sku) "
                       "VALUES('Ip 5mm (dubl)',5100,1,'SKU-B')")
             self._stock(c, self.swh, "Ip 5mm", 15)
         whs = vfill.fill_source_warehouses()
-        self.assertEqual([w["id"] for w in whs], [self.swh])  # mashina ombori chiqmaydi
+        self.assertEqual([w["id"] for w in whs], [self.swh])
         prods = vfill.fill_products(self.swh)
         self.assertEqual([p["mahsulot_id"] for p in prods], [self.mA])
         p = prods[0]
         self.assertEqual(p["available_quantity"], 40)
         self.assertEqual(p["pieces_per_box"], 24)
         self.assertEqual(str(p["narx"]), "12000")
+
+    def test_fill_sources_requires_configured_central_warehouse_eligibility(self):
+        # Konfiguratsiya yo'q: boshqa yaroqli ombor bo'lsa ham bo'sh.
+        with _db() as conn, conn.cursor() as c:
+            self._stock(c, self.swh, "Arqon 10m", 40)
+        self.assertEqual(vfill.fill_source_warehouses(), [])
+
+        with _db() as conn, conn.cursor() as c:
+            c.execute(
+                "INSERT INTO distribution.topmart_config"
+                "(id,customer_id,central_warehouse_id) VALUES(1,700,%s)",
+                (self.swh,),
+            )
+        self.assertEqual([w["id"] for w in vfill.fill_source_warehouses()],
+                         [self.swh])
+
+        # Markaziy omborning har qanday eligibility sharti buzilsa bo'sh.
+        for column, value in (("active", "FALSE"), ("location_type", "'vehicle'"),
+                              ("purpose", "'raw'")):
+            with _db() as conn, conn.cursor() as c:
+                c.execute("UPDATE public.warehouses SET %s=%s WHERE id=%%s"
+                          % (column, value), (self.swh,))
+            self.assertEqual(vfill.fill_source_warehouses(), [])
+            with _db() as conn, conn.cursor() as c:
+                c.execute("UPDATE public.warehouses SET %s=%s WHERE id=%%s"
+                          % (column, "TRUE" if column == "active"
+                             else "'general'" if column == "location_type"
+                             else "'finished'"), (self.swh,))
+
+        with _db() as conn, conn.cursor() as c:
+            c.execute("UPDATE public.inventory SET quantity=0 WHERE warehouse_id=%s",
+                      (self.swh,))
+        self.assertEqual(vfill.fill_source_warehouses(), [])
 
     def test_pilot_chain_resolves_active_assignment_only(self):
         chain = vfill.pilot_chain(700)

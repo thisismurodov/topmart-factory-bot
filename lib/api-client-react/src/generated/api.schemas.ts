@@ -280,6 +280,14 @@ export interface VehicleHandoffItem {
   totalWeightKg: number | null;
 }
 
+export type VehicleHandoffDetailLabelMode = typeof VehicleHandoffDetailLabelMode[keyof typeof VehicleHandoffDetailLabelMode];
+
+
+export const VehicleHandoffDetailLabelMode = {
+  generated: 'generated',
+  existing: 'existing',
+} as const;
+
 export interface VehicleHandoffDetail {
   id: number;
   vehicleId: number;
@@ -298,6 +306,7 @@ export interface VehicleHandoffDetail {
   preparedActorType: string | null;
   /** @nullable */
   preparedActorRef: string | null;
+  labelMode: VehicleHandoffDetailLabelMode;
   /** @nullable */
   notes: string | null;
   /** @nullable */
@@ -323,6 +332,31 @@ export interface VehicleHandoffList {
 export interface VehicleHandoffOperationInput {
   /** @minLength 1 */
   operationKey: string;
+}
+
+/**
+ * Ordered scans and idempotency key for claiming existing labels.
+ */
+export interface ClaimExistingVehicleHandoffLabelsInput {
+  /** @minLength 1 */
+  operationKey: string;
+  /** @minItems 1 */
+  barcodes: string[];
+}
+
+export interface RegisterTopmartLabelReceiptInput {
+  /** @minimum 1 */
+  saleId: number;
+  /** @minItems 1 */
+  barcodes: string[];
+}
+
+export interface TopmartLabelReceipt {
+  saleId: number;
+  centralWarehouseId: number;
+  barcodes: string[];
+  receivedAt: string;
+  replayed: boolean;
 }
 
 /**

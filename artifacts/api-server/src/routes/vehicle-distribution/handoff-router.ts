@@ -32,6 +32,10 @@ import {
   ListVehicleHandoffsResponse,
   PrepareVehicleHandoffLabelsBody,
   PrepareVehicleHandoffLabelsResponse,
+  ClaimExistingVehicleHandoffLabelsBody,
+  ClaimExistingVehicleHandoffLabelsResponse,
+  RegisterTopmartLabelReceiptBody,
+  RegisterTopmartLabelReceiptResponse,
   GetVehicleHandoffLabelsResponse,
   ConfirmVehicleHandoffLabelsPrintedBody,
   ConfirmVehicleHandoffLabelsPrintedResponse,
@@ -56,7 +60,9 @@ import {
   prepareLabelsInTx,
   getLabelsPayload,
   confirmLabelsPrintedInTx,
+  claimExistingLabelsInTx,
 } from "./label-service";
+import { registerTopmartLabelReceiptInTx } from "./topmart-label-receipt-service";
 
 const BOT_ACTOR_TYPE = "warehouse_bot";
 const BOT_ACTOR_REF = "vehicle-distribution-bot";
@@ -193,6 +199,42 @@ export function createVehicleHandoffRouter(pool: Pool): IRouter {
   // Own auth wall, then the shared fail-closed feature gate.
   router.use("/vehicle-distribution/handoffs", makeHandoffAuth(pool));
   router.use("/vehicle-distribution/handoffs", vehicleDistributionGate);
+  router.use("/vehicle-distribution/topmart-label-receipts", makeHandoffAuth(pool));
+  router.use("/vehicle-distribution/topmart-label-receipts", vehicleDistributionGate);
+
+  router.post(
+    "/vehicle-distribution/topmart-label-receipts",
+    productionLabelsGate,
+    async (req, res): Promise<void> => {
+      const actor = actorOf(req);
+      if (actor.type !== "admin") {
+        res.status(403).json({ error: "Admin role required" });
+        return;
+      }
+      const parsed = RegisterTopmartLabelReceiptBody.strict().safeParse(req.body ?? {});
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.message });
+        return;
+      }
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const out = await registerTopmartLabelReceiptInTx(
+          client,
+          parsed.data.saleId,
+          parsed.data.barcodes,
+          actor,
+        );
+        await client.query("COMMIT");
+        res.json(RegisterTopmartLabelReceiptResponse.parse(out));
+      } catch (e) {
+        await client.query("ROLLBACK");
+        sendError(req, res, e, "Register Top Mart label receipt");
+      } finally {
+        client.release();
+      }
+    },
+  );
 
   // ── GET list ───────────────────────────────────────────────────────────────
   router.get(
@@ -204,6 +246,44 @@ export function createVehicleHandoffRouter(pool: Pool): IRouter {
         res.json(ListVehicleHandoffsResponse.parse(out));
       } catch (e) {
         sendError(req, res, e, "List handoffs");
+      } finally {
+        client.release();
+      }
+    },
+  );
+
+  router.post(
+    "/vehicle-distribution/handoffs/:handoffId/labels/claim-existing",
+    productionLabelsGate,
+    async (req, res): Promise<void> => {
+      const handoffId = parseHandoffId(req);
+      if (handoffId == null) {
+        res.status(404).json({ error: "Handoff not found" });
+        return;
+      }
+      const parsed = ClaimExistingVehicleHandoffLabelsBody.strict().safeParse(
+        req.body ?? {},
+      );
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.message });
+        return;
+      }
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const payload = await claimExistingLabelsInTx(
+          client,
+          handoffId,
+          parsed.data.operationKey,
+          parsed.data.barcodes,
+          actorOf(req),
+        );
+        const out = ClaimExistingVehicleHandoffLabelsResponse.parse(payload);
+        await client.query("COMMIT");
+        res.json(out);
+      } catch (e) {
+        await client.query("ROLLBACK").catch(() => {});
+        sendError(req, res, e, "Claim existing labels");
       } finally {
         client.release();
       }

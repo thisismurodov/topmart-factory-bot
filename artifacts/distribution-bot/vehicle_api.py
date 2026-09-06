@@ -81,12 +81,3 @@ def create_handoff(source_warehouse_id, items, operation_key, notes=None):
     if notes:
         payload["notes"] = str(notes)[:500]
     return _request("POST", "/vehicle-distribution/handoffs", payload)
-
-
-def prepare_labels(handoff_id, operation_key):
-    """POST /handoffs/:id/labels/prepare — stiker rezervlash (bir quti = bir stiker)."""
-    return _request(
-        "POST",
-        "/vehicle-distribution/handoffs/%d/labels/prepare" % int(handoff_id),
-        {"operationKey": str(operation_key)},
-    )

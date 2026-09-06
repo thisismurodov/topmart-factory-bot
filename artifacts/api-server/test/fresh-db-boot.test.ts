@@ -188,6 +188,7 @@ const REQUIRED: Record<string, string[]> = {
     "id", "customer_id", "customer_name", "product", "quantity", "weight_kg",
     "unit_price", "total_amount", "status", "note", "created_at",
     "currency", "payment_type", "paid_amount", "debt_amount",
+    "topmart_warehouse_id", "operation_key", "request_fingerprint",
   ],
   sale_items: ["id", "sale_id", "product_name", "sale_type", "quantity", "unit_price", "currency", "line_total"],
   sale_payments: ["id", "sale_id", "amount", "currency", "note", "created_at"],

@@ -4852,7 +4852,7 @@ def _vfill_show_warehouses(uid,data,intro=""):
     whs=vfill.fill_source_warehouses()
     if not whs:
         user=get_user(uid); clear_state(uid)
-        bot.send_message(uid,"❌ Yuklash mumkin bo'lgan dona qoldiqli manba ombor topilmadi.",
+        bot.send_message(uid,"❌ Top Mart C-3 markaziy ombori sozlanmagan yoki unda yaroqli dona qoldiq yo'q.",
                          reply_markup=main_kb(user[3] if user else None,uid)); return
     kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=1)
     labels={}
@@ -5011,12 +5011,6 @@ def _vfill_finalize(uid,data):
         except vehicle_api.VehicleApiError as e:
             failed.append((lines[0]["wh_name"],str(e))); remaining.extend(lines); continue
         hid=h.get("id")
-        label_warn=""
-        try:
-            lk=opkeys.setdefault(f"lbl:{wid}",str(uuid.uuid4()))
-            vehicle_api.prepare_labels(hid,lk)
-        except vehicle_api.VehicleApiError as e:
-            label_warn=f"\n⚠️ Stikerlar rezervlanmadi ({e}). Omborchi botda topshiriqni ochganda qayta uriniladi."
         txt_lines=[]; total_qty=0; total_boxes=0; total_sum=Decimal(0)
         for l in lines:
             b=-(-l["quantity"]//l["pieces_per_box"])
@@ -5025,9 +5019,9 @@ def _vfill_finalize(uid,data):
             txt_lines.append(f"  • {l['name']} — {l['quantity']} dona = {b} quti")
         lines_txt="\n".join(txt_lines)
         sum_line=f"\n💰 Taxminiy qiymati (savdo narxida): {fmt(total_sum)}" if total_sum>0 else ""
-        ok_msgs.append(f"✅ TOPSHIRIQ YARATILDI (№{hid})\n🏬 Manba: {lines[0]['wh_name']}\n{lines_txt}\n📦 Jami: {total_qty} dona · {total_boxes} quti ({total_boxes} stiker){sum_line}{label_warn}")
+        ok_msgs.append(f"✅ TOPSHIRIQ YARATILDI (№{hid})\n🏬 Manba: {lines[0]['wh_name']}\n{lines_txt}\n📦 Jami: {total_qty} dona · {total_boxes} quti ({total_boxes} mavjud stiker){sum_line}\n🔎 Mavjud ishlab chiqarish stikerlarini Top Mart dashboardida skanerlab yakunlang.")
         _vfill_notify_omborchi(hid,lines[0]["wh_name"],chain,lines_txt,total_qty,total_boxes)
-        opkeys.pop(str(wid),None); opkeys.pop(f"lbl:{wid}",None)
+        opkeys.pop(str(wid),None)
     if failed:
         data["cart"]=remaining; data["finalizing"]=False; set_state(uid,"vfill_next",data)
         err="\n".join(f"❌ {n}: {e}" for n,e in failed)
@@ -5038,7 +5032,7 @@ def _vfill_finalize(uid,data):
         return
     user=get_user(uid); clear_state(uid)
     bot.send_message(uid,"\n\n".join(ok_msgs)+
-        "\n\n⏳ Omborchi tovarlarni yig'ib, stiker yopishtirib, mashinaga topshiradi."
+        "\n\n⏳ Omborchi mavjud ishlab chiqarish stikerlarini Top Mart dashboardida skanerlab, mashinaga topshiradi."
         "\n📲 Yuk mashinangizga o'tkazilgach «✅ MASHINA TO'LDIRILDI» xabari keladi."
         "\n❗ Zaxira hozircha ombordan YECHILMADI — faqat omborchi tasdiqlaganda ko'chadi.",
         reply_markup=main_kb(user[3] if user else None,uid))

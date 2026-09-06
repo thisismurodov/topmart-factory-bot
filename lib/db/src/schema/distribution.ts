@@ -7,6 +7,52 @@ import { z } from "zod/v4";
 // (dokonlar, savdolar, ...) never collide with the public ERP tables.
 export const distribution = pgSchema("distribution");
 
+// Singleton factory → Top Mart mapping. customer_id and central_warehouse_id are
+// logical references to public customers/warehouses; the admin API validates
+// both existing rows before writing the one permitted row.
+export const topmartConfigTable = distribution.table(
+  "topmart_config",
+  {
+    id: integer("id").primaryKey().notNull().default(1),
+    customerId: integer("customer_id").notNull(),
+    centralWarehouseId: integer("central_warehouse_id").notNull(),
+    updatedBy: integer("updated_by"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check("topmart_config_singleton_check", sql`${t.id} = 1`),
+    uniqueIndex("uq_topmart_config_customer").on(t.customerId),
+    uniqueIndex("uq_topmart_config_warehouse").on(t.centralWarehouseId),
+  ],
+);
+
+/** Immutable proof that an already-issued batch label physically entered C-3
+ * against one credited Top Mart sale. This is provenance, not a custody ledger. */
+export const topmartLabelReceiptsTable = distribution.table(
+  "topmart_label_receipts",
+  {
+    id: serial("id").primaryKey(),
+    productionLabelId: integer("production_label_id").notNull(),
+    barcode: text("barcode").notNull(),
+    saleId: integer("sale_id").notNull(),
+    centralWarehouseId: integer("central_warehouse_id").notNull(),
+    productSku: text("product_sku").notNull(),
+    piecesInLabel: integer("pieces_in_label").notNull(),
+    weightKg: numeric("weight_kg", { precision: 12, scale: 3 }).notNull(),
+    receiptFingerprint: text("receipt_fingerprint").notNull(),
+    receivedBy: integer("received_by").notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("uq_topmart_label_receipts_production_label").on(t.productionLabelId),
+    uniqueIndex("uq_topmart_label_receipts_barcode").on(t.barcode),
+    index("idx_topmart_label_receipts_sale").on(t.saleId),
+    index("idx_topmart_label_receipts_warehouse").on(t.centralWarehouseId),
+    check("topmart_label_receipts_pieces_check", sql`${t.piecesInLabel} > 0`),
+    check("topmart_label_receipts_weight_check", sql`${t.weightKg} > 0`),
+  ],
+);
+
 // Sotuv agentlari (sales agents / users)
 export const distUsersTable = distribution.table("users", {
   id: serial("id").primaryKey(),
@@ -406,6 +452,8 @@ export const vehicleHandoffsTable = distribution.table(
     preparedActorType: text("prepared_actor_type"),
     /** F3: server-assigned actor ref (admin username or bot name). */
     preparedActorRef: text("prepared_actor_ref"),
+    /** Immutable creation policy: legacy generated passports or existing batch labels. */
+    labelMode: text("label_mode").notNull().default("generated"),
     notes: text("notes"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -415,6 +463,10 @@ export const vehicleHandoffsTable = distribution.table(
     check(
       "vehicle_handoffs_status_check",
       sql`${t.status} IN ('prepared','labels_printed','handed_over','stock_transferred','cancelled')`,
+    ),
+    check(
+      "vehicle_handoffs_label_mode_check",
+      sql`${t.labelMode} IN ('generated','existing')`,
     ),
   ],
 );

@@ -473,6 +473,7 @@ function NewSaleDialog({
   const [editKey, setEditKey]     = useState<string | null>(null);
   const [saving, setSaving]       = useState(false);
   const [itemError, setItemError] = useState("");
+  const operationKeyRef = useRef(crypto.randomUUID());
 
   // Payment type state
   const [paymentType, setPaymentType] = useState<PaymentType>("naqd");
@@ -558,7 +559,9 @@ function NewSaleDialog({
         items: draftItems,
         paymentType,
         paidAmount: paidAmt,
+        operationKey: operationKeyRef.current,
       });
+      operationKeyRef.current = crypto.randomUUID();
       setOpen(false);
       setDraftItems([]); mainForm.reset(); itemForm.reset();
       setPaymentType("naqd"); setPaidInput("");
@@ -568,7 +571,10 @@ function NewSaleDialog({
   }
 
   function handleClose(v: boolean) {
-    if (!v) { setDraftItems([]); mainForm.reset(); itemForm.reset(); setEditKey(null); setPaymentType("naqd"); setPaidInput(""); }
+    if (!v) {
+      setDraftItems([]); mainForm.reset(); itemForm.reset(); setEditKey(null); setPaymentType("naqd"); setPaidInput("");
+      operationKeyRef.current = crypto.randomUUID();
+    }
     setOpen(v);
   }
 

@@ -971,6 +971,7 @@ export const ListVehicleHandoffsResponse = zod.object({
   "movementReference": zod.string().nullable(),
   "preparedActorType": zod.string().nullable(),
   "preparedActorRef": zod.string().nullable(),
+  "labelMode": zod.enum(['generated', 'existing']),
   "notes": zod.string().nullable(),
   "labelsPrintedAt": zod.string().nullable(),
   "handedOverAt": zod.string().nullable(),
@@ -1032,6 +1033,7 @@ export const CreateVehicleHandoffResponse = zod.object({
   "movementReference": zod.string().nullable(),
   "preparedActorType": zod.string().nullable(),
   "preparedActorRef": zod.string().nullable(),
+  "labelMode": zod.enum(['generated', 'existing']),
   "notes": zod.string().nullable(),
   "labelsPrintedAt": zod.string().nullable(),
   "handedOverAt": zod.string().nullable(),
@@ -1074,6 +1076,7 @@ export const GetVehicleHandoffResponse = zod.object({
   "movementReference": zod.string().nullable(),
   "preparedActorType": zod.string().nullable(),
   "preparedActorRef": zod.string().nullable(),
+  "labelMode": zod.enum(['generated', 'existing']),
   "notes": zod.string().nullable(),
   "labelsPrintedAt": zod.string().nullable(),
   "handedOverAt": zod.string().nullable(),
@@ -1207,6 +1210,92 @@ export const GetVehicleHandoffLabelsResponse = zod.object({
 
 
 /**
+ * Admin-only. Registers already-printed batch labels physically received into the C-3 destination immutably captured on one credited Top Mart sale (independent of later configuration). Requires exact authoritative SKU mapping and dona piece/weight coverage from that sale's immutable topmart-sale credit IN movements (not mutable catalog weight). The same sale and barcode set replays safely; a different set conflicts. Never mutates production_labels.
+ * @summary Register immutable C-3 receipt provenance for sale labels
+ */
+
+export const registerTopmartLabelReceiptBodyBarcodesItemRegExp = new RegExp('^TM[A-Z2-7]{16}$');
+
+
+
+export const RegisterTopmartLabelReceiptBody = zod.object({
+  "saleId": zod.number().min(1),
+  "barcodes": zod.array(zod.string().regex(registerTopmartLabelReceiptBodyBarcodesItemRegExp)).min(1)
+})
+
+export const RegisterTopmartLabelReceiptResponse = zod.object({
+  "saleId": zod.number(),
+  "centralWarehouseId": zod.number(),
+  "barcodes": zod.array(zod.string()),
+  "receivedAt": zod.coerce.date(),
+  "replayed": zod.boolean()
+})
+
+
+/**
+ * Claims existing, non-void printed batch labels without inserting or updating production_labels. The ordered barcode list must have exact SKU and piece coverage for every handoff item. Exact retries are idempotent; operation-key or payload conflicts return 409. On success claims and events are persisted and the handoff advances directly to labels_printed.
+ * @summary Claim already-printed production labels for a prepared C-3 handoff
+ */
+export const ClaimExistingVehicleHandoffLabelsParams = zod.object({
+  "handoffId": zod.coerce.number()
+})
+
+
+export const claimExistingVehicleHandoffLabelsBodyBarcodesItemRegExp = new RegExp('^TM[A-Z2-7]{16}$');
+
+
+
+export const ClaimExistingVehicleHandoffLabelsBody = zod.object({
+  "operationKey": zod.string().min(1),
+  "barcodes": zod.array(zod.string().regex(claimExistingVehicleHandoffLabelsBodyBarcodesItemRegExp)).min(1)
+}).describe('Ordered scans and idempotency key for claiming existing labels.')
+
+export const claimExistingVehicleHandoffLabelsResponseTotalPiecesMin = 0;
+
+export const claimExistingVehicleHandoffLabelsResponseRemainingPiecesMin = 0;
+
+export const claimExistingVehicleHandoffLabelsResponseLabelsItemRemainingQuantityMin = 0;
+
+
+
+export const ClaimExistingVehicleHandoffLabelsResponse = zod.object({
+  "handoffId": zod.number(),
+  "vehicleId": zod.number(),
+  "batchCode": zod.string(),
+  "totalLabels": zod.number(),
+  "totalPieces": zod.number().min(claimExistingVehicleHandoffLabelsResponseTotalPiecesMin),
+  "remainingPieces": zod.number().min(claimExistingVehicleHandoffLabelsResponseRemainingPiecesMin),
+  "preparedActorType": zod.string().nullable(),
+  "preparedActorRef": zod.string().nullable(),
+  "labels": zod.array(zod.object({
+  "productionLabelId": zod.number(),
+  "handoffItemId": zod.number(),
+  "mahsulotId": zod.number(),
+  "barcodeValue": zod.string(),
+  "batchCode": zod.string(),
+  "labelType": zod.string(),
+  "labelNumber": zod.number(),
+  "totalLabels": zod.number(),
+  "piecesInLabel": zod.number(),
+  "piecesPerBox": zod.number(),
+  "quantityTotal": zod.number(),
+  "remainingQuantity": zod.number().min(claimExistingVehicleHandoffLabelsResponseLabelsItemRemainingQuantityMin),
+  "weightKg": zod.number(),
+  "lengthM": zod.number().nullable(),
+  "productName": zod.string(),
+  "productSku": zod.string(),
+  "workerName": zod.string(),
+  "producedAt": zod.string(),
+  "warehouseId": zod.number().nullable(),
+  "warehouseName": zod.string(),
+  "status": zod.string(),
+  "printCount": zod.number(),
+  "lastPrintedAt": zod.string().nullable()
+}).describe('One immutable production-label passport row for a single physical unit, carrying every field the PDF generator needs plus print metadata.'))
+}).describe('Deterministic, ordered printable label payload for a handoff. labels are globally ordered by label_number (1..totalLabels).')
+
+
+/**
  * Owns the full print-session contract. Requires PRODUCTION_LABELS_SCHEMA_APPROVED at request time (503 otherwise). Strict {operationKey} body. If a print session already exists for this operationKey on this handoff, returns the current payload with no increment. A first successful confirm on a 'prepared' handoff inserts a print session, marks each production_label printed (print_count +1, last_printed_at), advances claims prepared→printed, records idempotent label_printed events, and advances the handoff to labels_printed. A reprint confirm (allowed in labels_printed / handed_over / stock_transferred) inserts a reprint session and increments each passport once per NEW session, leaving handoff and loaded/sold claim states untouched. Reports isReprint and atLeastOnce (never claims exactly-once physical print). Cancelled/void/missing/mismatch yield 409.
  * @summary Confirm labels printed (first print or reprint) for a handoff
  */
@@ -1244,6 +1333,7 @@ export const ConfirmVehicleHandoffLabelsPrintedResponse = zod.object({
   "movementReference": zod.string().nullable(),
   "preparedActorType": zod.string().nullable(),
   "preparedActorRef": zod.string().nullable(),
+  "labelMode": zod.enum(['generated', 'existing']),
   "notes": zod.string().nullable(),
   "labelsPrintedAt": zod.string().nullable(),
   "handedOverAt": zod.string().nullable(),
@@ -1329,6 +1419,7 @@ export const MarkVehicleHandoffHandedOverResponse = zod.object({
   "movementReference": zod.string().nullable(),
   "preparedActorType": zod.string().nullable(),
   "preparedActorRef": zod.string().nullable(),
+  "labelMode": zod.enum(['generated', 'existing']),
   "notes": zod.string().nullable(),
   "labelsPrintedAt": zod.string().nullable(),
   "handedOverAt": zod.string().nullable(),
@@ -1376,6 +1467,7 @@ export const MarkVehicleHandoffStockTransferredResponse = zod.object({
   "movementReference": zod.string().nullable(),
   "preparedActorType": zod.string().nullable(),
   "preparedActorRef": zod.string().nullable(),
+  "labelMode": zod.enum(['generated', 'existing']),
   "notes": zod.string().nullable(),
   "labelsPrintedAt": zod.string().nullable(),
   "handedOverAt": zod.string().nullable(),
@@ -1423,6 +1515,7 @@ export const CancelVehicleHandoffResponse = zod.object({
   "movementReference": zod.string().nullable(),
   "preparedActorType": zod.string().nullable(),
   "preparedActorRef": zod.string().nullable(),
+  "labelMode": zod.enum(['generated', 'existing']),
   "notes": zod.string().nullable(),
   "labelsPrintedAt": zod.string().nullable(),
   "handedOverAt": zod.string().nullable(),

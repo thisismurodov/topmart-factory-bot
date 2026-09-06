@@ -132,7 +132,7 @@ export function VehicleHandoffs({ active }: { active: boolean }) {
             )}
           </h3>
           <p className="mt-1 max-w-2xl text-sm text-slate-500">
-            Fabrika botidagi «Mashinani to‘ldirish» orqali yaratiladi. Avto zaxira faqat yakuniy «Zaxiraga o‘tkazish» bosqichida o‘zgaradi.
+            Top Mart bo‘limida C-3 markaziy omboridan yaratiladi. Avto zaxira faqat yakuniy «Zaxiraga o‘tkazish» bosqichida o‘zgaradi.
           </p>
         </div>
         <Button variant="outline" className="min-h-11 shrink-0 self-start" onClick={refresh} disabled={list.isFetching} data-testid="button-refresh-handoffs">
@@ -163,7 +163,7 @@ export function VehicleHandoffs({ active }: { active: boolean }) {
       ) : !handoffs.length ? (
         <div className="m-4 rounded-md border border-dashed p-8 text-center text-sm text-slate-500">
           <Truck className="mx-auto mb-2 h-7 w-7 opacity-40" />
-          Topshirishlar hali yo‘q. Ular fabrika botidagi «Mashinani to‘ldirish» orqali yaratiladi.
+            Topshirishlar hali yo‘q. Top Mart bosh sahifasida C-3 dan mashinaga yuklashni boshlang.
         </div>
       ) : (
         <div className="grid gap-3 p-4 sm:p-5" data-testid="list-vehicle-handoffs">

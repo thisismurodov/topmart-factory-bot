@@ -43,7 +43,7 @@ const NAV_ITEMS = [
   { href: "/inventory",  label: "Ombor",       icon: Warehouse },
   { href: "/ish-jarayoni", label: "Ish jarayoni", icon: Activity },
   { href: "/flow-map",   label: "Oqim xaritasi", icon: Waypoints },
-  { href: "/distribution", label: "Distribyutsiya", icon: Truck },
+  { href: "/distribution", label: "Top Mart", icon: Truck },
   { href: "/audit",      label: "Audit log",   icon: ClipboardList },
 ];
 

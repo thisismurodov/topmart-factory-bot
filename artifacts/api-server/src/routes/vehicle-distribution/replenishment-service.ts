@@ -13,6 +13,7 @@ import {
   createHandoffInTx,
   HandoffConflictError,
   HandoffValidationError,
+  resolveConfiguredCentralWarehouse,
   type HandoffActor,
 } from "./handoff-service";
 
@@ -406,18 +407,15 @@ export async function approveRequestInTx(
     return loadRequest(client, id, pre.pilot.vehicleId);
   const qty = Number(pre.row.requested_quantity);
   const weight = qty * Number(pre.row.unit_weight);
-  const candidates = await client.query(
-    `SELECT w.id
-       FROM public.warehouses w
-       JOIN public.inventory i ON i.warehouse_id=w.id AND i.product=$1
-      WHERE w.active=TRUE AND COALESCE(w.location_type,'general')<>'vehicle'
-        AND w.purpose='finished' AND i.quantity >= $2 AND i.weight_kg >= $3
-      ORDER BY w.id`,
-    [String(pre.row.product_name), qty, weight],
-  );
-  if (!candidates.rows.length)
-    throw new ReplenishmentConflictError("No eligible source warehouse has enough stock");
-  const sourceId = Number(candidates.rows[0].id);
+  let sourceId: number;
+  try {
+    sourceId = await resolveConfiguredCentralWarehouse(client);
+  } catch (error) {
+    if (error instanceof HandoffValidationError) {
+      throw new ReplenishmentConflictError(error.message);
+    }
+    throw error;
+  }
   await lockParents(client, [pre.pilot.warehouseId, sourceId]);
   const pilot = await resolvePilot(client);
   const source = await client.query(
@@ -430,7 +428,9 @@ export async function approveRequestInTx(
     [sourceId, String(pre.row.product_name), qty, weight],
   );
   if (!source.rows.length)
-    throw new ReplenishmentConflictError("Selected source no longer has enough stock");
+    throw new ReplenishmentConflictError(
+      "Configured central warehouse does not have enough stock",
+    );
   const locked = await client.query(
     `SELECT * FROM distribution.vehicle_replenishment_requests
       WHERE id=$1 AND vehicle_id=$2 FOR UPDATE`,

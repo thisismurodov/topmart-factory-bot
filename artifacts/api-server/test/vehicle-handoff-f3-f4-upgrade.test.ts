@@ -318,6 +318,12 @@ beforeAll(async () => {
      VALUES ('ERP Manba F3F4', TRUE, 'general', 'finished') RETURNING id`,
   );
   erpWarehouseId = Number(erp.rows[0].id);
+  await client.query(
+    `INSERT INTO distribution.topmart_config
+       (id, customer_id, central_warehouse_id)
+     VALUES (1, 1, $1)`,
+    [erpWarehouseId],
+  );
 
   await client.query(
     `INSERT INTO distribution.mahsulotlar (nomi, sku, faol) VALUES ('Arqon UP', 'SKU-UP', 1)`,
@@ -467,10 +473,11 @@ describe("F3 → F4 in-place schema upgrade", () => {
 
   it("legacy F3 data survived the upgrade (handoff + item + printed event)", async () => {
     const h = await client.query(
-      `SELECT status FROM distribution.vehicle_handoffs WHERE id=$1`,
+      `SELECT status,label_mode FROM distribution.vehicle_handoffs WHERE id=$1`,
       [legacyHandoffId],
     );
     expect(h.rows[0].status).toBe("prepared");
+    expect(h.rows[0].label_mode).toBe("generated");
     const ev = await client.query(
       `SELECT COUNT(*)::int AS n FROM distribution.vehicle_unit_events
         WHERE handoff_id=$1 AND event_type='label_printed'`,
@@ -484,7 +491,23 @@ describe("F4 flow on the upgraded DB (both credential paths, terminal reprint)",
   let handoffId = 0;
   let batchCode = "";
 
-  it("admin prepares labels on a fresh handoff (exact counts + barcode identity)", async () => {
+  it("pre-existing prepared generated handoff with no F4 session can prepare", async () => {
+    const before = await client.query(
+      `SELECT COUNT(*)::int AS n
+         FROM distribution.vehicle_label_prepare_sessions WHERE handoff_id=$1`,
+      [legacyHandoffId],
+    );
+    expect(before.rows[0].n).toBe(0);
+    const prepared = await call(
+      "POST",
+      `/vehicle-distribution/handoffs/${legacyHandoffId}/labels/prepare`,
+      { token: adminToken, body: { operationKey: opKey() } },
+    );
+    expect(prepared.status).toBe(200);
+    expect(prepared.body.totalLabels).toBe(1);
+  });
+
+  it("admin prepares labels on an explicitly historical/generated handoff", async () => {
     const r = await call("POST", "/vehicle-distribution/handoffs", {
       token: adminToken,
       body: {
@@ -495,6 +518,12 @@ describe("F4 flow on the upgraded DB (both credential paths, terminal reprint)",
     });
     expect(r.status).toBe(200);
     handoffId = r.body.id as number;
+    // Fixture boundary: the HTTP create is post-policy and therefore stamped
+    // existing. Persist generated to model a handoff created before C-3 reuse.
+    await client.query(
+      `UPDATE distribution.vehicle_handoffs SET label_mode='generated' WHERE id=$1`,
+      [handoffId],
+    );
 
     const p = await call(
       "POST",

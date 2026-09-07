@@ -20,5 +20,7 @@ source = "artifacts/telegram-bot"
 
 [services.deploy]
 startCommand = "python3 main.py"
+healthcheckPath = "/healthz"
+healthcheckTimeout = 120
 overlapSeconds = 0
 restartPolicyType = "on_failure"

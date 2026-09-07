@@ -2,6 +2,8 @@ import os
 import logging
 import traceback
 import warnings
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import Thread
 from telegram.warnings import PTBUserWarning
 
 warnings.filterwarnings("ignore", message="If 'per_message=False'", category=PTBUserWarning)
@@ -30,9 +32,48 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     level=logging.INFO,
 )
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID", "")
+
+
+class _HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        if self.path == "/healthz":
+            body = b'{"status":"ok"}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        self.send_response(404)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def log_message(self, _format: str, *_args: object) -> None:
+        return
+
+
+def _start_health_server() -> ThreadingHTTPServer | None:
+    raw_port = os.environ.get("PORT")
+    if not raw_port:
+        return None
+
+    try:
+        port = int(raw_port)
+    except ValueError as exc:
+        raise RuntimeError("PORT must be an integer") from exc
+    if not 1 <= port <= 65535:
+        raise RuntimeError("PORT must be between 1 and 65535")
+
+    server = ThreadingHTTPServer(("0.0.0.0", port), _HealthHandler)
+    Thread(target=server.serve_forever, name="health-server", daemon=True).start()
+    logger.info("Health server listening on port %s", port)
+    return server
 
 
 async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -57,41 +98,47 @@ def main() -> None:
     if not token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN environment variable is not set")
 
+    health_server = _start_health_server()
     logger.info("Initialising database …")
-    init_db()
+    try:
+        init_db()
 
-    persistence = PicklePersistence(filepath="data/bot_state.pkl")
-    app = (
-        ApplicationBuilder()
-        .token(token)
-        .persistence(persistence)
-        .connect_timeout(30)
-        .read_timeout(30)
-        .build()
-    )
+        persistence = PicklePersistence(filepath="data/bot_state.pkl")
+        app = (
+            ApplicationBuilder()
+            .token(token)
+            .persistence(persistence)
+            .connect_timeout(30)
+            .read_timeout(30)
+            .build()
+        )
 
-    app.add_error_handler(global_error_handler)
+        app.add_error_handler(global_error_handler)
 
-    register_cleardata(app)
-    register_salary_handlers(app)
-    register_report_handlers(app)
-    register_ai_handlers(app)
-    register_sales_handlers(app)
-    register_debt_handlers(app)
-    app.add_handler(build_inventory_handler())
-    app.add_handler(build_vehicle_handoff_handler())
-    app.add_handler(build_admin_handler())
-    app.add_handler(build_packer_handler())
-    register_close_day_handlers(app)
-    app.add_handler(build_conversation_handler())
-    register_label_handlers(app)
-    register_kpi_handlers(app)
-    register_start_handlers(app)
+        register_cleardata(app)
+        register_salary_handlers(app)
+        register_report_handlers(app)
+        register_ai_handlers(app)
+        register_sales_handlers(app)
+        register_debt_handlers(app)
+        app.add_handler(build_inventory_handler())
+        app.add_handler(build_vehicle_handoff_handler())
+        app.add_handler(build_admin_handler())
+        app.add_handler(build_packer_handler())
+        register_close_day_handlers(app)
+        app.add_handler(build_conversation_handler())
+        register_label_handlers(app)
+        register_kpi_handlers(app)
+        register_start_handlers(app)
 
-    start_scheduler(app.bot, ADMIN_CHAT_ID, ai_hour=AI_HOUR)
+        start_scheduler(app.bot, ADMIN_CHAT_ID, ai_hour=AI_HOUR)
 
-    logger.info("Diyor Mahsulotlari Bot v3.1 started (polling) …")
-    app.run_polling(drop_pending_updates=True)
+        logger.info("Diyor Mahsulotlari Bot v3.1 started (polling) …")
+        app.run_polling(drop_pending_updates=True)
+    finally:
+        if health_server is not None:
+            health_server.shutdown()
+            health_server.server_close()
 
 
 if __name__ == "__main__":

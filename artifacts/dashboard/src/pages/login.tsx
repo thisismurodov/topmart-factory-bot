@@ -81,7 +81,7 @@ export default function Login() {
           <div className="w-16 h-16 bg-primary rounded-xl flex items-center justify-center mb-4 shadow-lg">
             <ShoppingCart className="w-8 h-8 text-primary-foreground" />
           </div>
-          <h1 className="text-3xl font-bold tracking-tight text-foreground uppercase">TopMart ERP</h1>
+          <h1 className="text-3xl font-bold tracking-tight text-foreground uppercase text-center">Diyor Mahsulotlari ERP</h1>
           <p className="text-muted-foreground mt-2 font-mono text-sm">BOSHQARUV TIZIMI</p>
         </div>
 

@@ -310,7 +310,7 @@ def _build_pdf_report(data: dict, period_label: str) -> bytes:
 
     story.append(Spacer(1, 0.5 * cm))
     story.append(Paragraph(
-        f"<font color='#94a3b8' size='8'>TopMart Factory ERP  ·  {today_str}</font>",
+        f"<font color='#94a3b8' size='8'>Diyor Mahsulotlari ERP  ·  {today_str}</font>",
         styles["Normal"],
     ))
 

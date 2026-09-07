@@ -32,6 +32,17 @@ def admin_reply_keyboard() -> ReplyKeyboardMarkup:
     )
 
 
+def omborchi_reply_keyboard() -> ReplyKeyboardMarkup:
+    """Warehouse operators can receive external purchases and fill vehicles."""
+    return ReplyKeyboardMarkup(
+        [
+            ["🏬 Ombor"],
+            ["🚚 Mashinani to‘ldirish"],
+        ],
+        resize_keyboard=True,
+    )
+
+
 def packer_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [

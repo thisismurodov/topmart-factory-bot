@@ -58,6 +58,7 @@ Arqon ishlab chiqarish zavodi uchun Telegram bot — partiyalarni kiritish, nazo
 - `TELEGRAM_BOT_TOKEN` — Telegram bot tokeni (@BotFather)
 - `SESSION_SECRET` — Express session secret
 - `AI_INTERNAL_KEY` — bot↔API ichki autentifikatsiya kaliti (bot va API'da bir xil bo'lishi shart)
+- `WAREHOUSE_BOT_KEY` — Top Mart tashqi xarid kvitansiyalari uchun alohida bot↔API maxfiy kaliti. API server va factory Telegram bot deploymentlarida bir xil, `AI_INTERNAL_KEY` va `VEHICLE_DISTRIBUTION_BOT_KEY`dan farqli bo'lishi shart; receipt chaqiruvlari `x-warehouse-bot-key` yuboradi
 - `API_BASE_URL` — bot uchun API manzili (`https://<api-host>/api`). Replit'da default `http://localhost:80/api`
 - `AI_HOUR` — kunlik AI tahlil yuboriladigan soat (0-23, Asia/Tashkent). Standart: 20
 - `AI_INTEGRATIONS_OPENAI_*` — Replit AI integration o'zgaruvchilari. DIQQAT: bu ICHKI proksi manzili (http://127.0.0.1:...), faqat Replit muhitida (workspace + Replit deployment) ishlaydi. Railway'ga KO'CHIRMANG — u yerda proksi yo'q. API server ularsiz ham ko'tariladi (lazy klient); Railway'da AI endpointlar chaqirilganda aniq xato qaytadi, AI funksiyalar Replit deployment orqali ishlaydi

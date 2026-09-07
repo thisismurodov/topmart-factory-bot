@@ -26,7 +26,7 @@ from ..database import (
     get_mahsulot_prices, get_user_role, get_vehicle_handoff_hidden_products,
     get_vehicle_handoff_products, get_vehicle_handoff_source_warehouses,
 )
-from ..keyboards import admin_reply_keyboard
+from ..keyboards import admin_reply_keyboard, omborchi_reply_keyboard
 from ..vehicle_label_pdf import build_batch_session_pdf
 
 (MENU, SOURCE, PRODUCT, QUANTITY, WEIGHT, CART, REVIEW, EXISTING, WARNING) = range(9)
@@ -36,7 +36,12 @@ MAX_REASON_NAMES = 8
 
 def _admin(user_id: int) -> bool:
     row = get_user_role(user_id)
-    return bool(row and row["role"] == "admin")
+    return bool(row and row["role"] in ("admin", "omborchi"))
+
+
+def _reply_keyboard(user_id: int):
+    row = get_user_role(user_id)
+    return omborchi_reply_keyboard() if row and row["role"] == "omborchi" else admin_reply_keyboard()
 
 
 def _token(update: Update) -> str:
@@ -125,8 +130,15 @@ def _review_view(state: dict) -> tuple[str, InlineKeyboardMarkup]:
             price_part = f"{_money(narx)} × {qty} = *{_money(_dec(narx) * qty)}*"
         lines.append(f"{i}. {it['name']} — {qty} dona / {float(it['weight']):g} kg · {price_part}")
     total_qty, total_kg, total_sum, missing = _cart_totals(cart, prices)
+    package_count = sum(
+        (int(it["quantity"]) + int(it["pieces_per_box"]) - 1) // int(it["pieces_per_box"])
+        for it in cart
+        if int(it.get("pieces_per_box") or 0) > 0
+    )
     lines += ["", f"📦 Jami: {len(cart)} tovar · {total_qty} dona · ⚖️ {total_kg:g} kg",
               f"💰 *Jami summa (savdo narxlari): {_money(total_sum)}*"]
+    if package_count:
+        lines.append(f"🏷️ Kutilayotgan etiketka: *{package_count} ta*")
     if missing:
         lines.append(f"⚠️ Narxi yo‘q (jamiga kirmadi): {', '.join(missing)}")
     lines += ["", "Tasdiqlaysizmi?"]
@@ -180,7 +192,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     if data[2] == "cancel":
         context.user_data.pop("vh", None)
         await q.edit_message_text("❌ Bekor qilindi.")
-        await q.message.reply_text("Asosiy menyu:", reply_markup=admin_reply_keyboard())
+        await q.message.reply_text("Asosiy menyu:", reply_markup=_reply_keyboard(q.from_user.id))
         return ConversationHandler.END
     if data[2] == "list":
         return await _show_handoffs(q, context)
@@ -193,13 +205,16 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     if data[2] != "new":
         await _reject(q)
         return MENU
-    warehouses = get_vehicle_handoff_source_warehouses()
+    warehouses = [
+        w for w in get_vehicle_handoff_source_warehouses()
+        if str(w.get("name") or "").strip().upper() == "C-03"
+    ]
     eligible = [w for w in warehouses if w["eligible"]]
     hidden = [w for w in warehouses if not w["eligible"]]
     hidden_note = _hidden_lines("Tanlab bo‘lmaydiganlar", hidden, "name")
     if not eligible:
         await q.edit_message_text(
-            "❌ Yuklash mumkin bo‘lgan, qoldiqli manba ombor yo‘q." + hidden_note
+            "❌ C-03 omborida yuklash mumkin bo‘lgan qoldiq yo‘q." + hidden_note
         )
         return ConversationHandler.END
     state["warehouses"] = {str(w["id"]): w for w in eligible}
@@ -320,12 +335,17 @@ async def enter_weight(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         if expected is not None else
         "🏷️ Profil og‘irligi belgilanmagan — kiritilgan jami kg ishlatiladi.\n"
     )
-    state.setdefault("cart", []).append({
+    item = {
         "mahsulot_id": int(p["mahsulot_id"]),
         "name": p["name"],
         "quantity": qty,
         "weight": weight,
-    })
+    }
+    # Old persisted conversations do not have packaging metadata; retain their
+    # exact cart shape while carrying it for new package-count previews.
+    if p.get("pieces_per_box") is not None:
+        item["pieces_per_box"] = p["pieces_per_box"]
+    state.setdefault("cart", []).append(item)
     state.pop("pending_product", None)
     state.pop("pending_qty", None)
     text, markup = _cart_view(state)
@@ -416,7 +436,8 @@ async def confirm_create(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         sum_line += f"⚠️ Narxi yo‘q: {', '.join(missing)}\n"
     await q.edit_message_text(
         f"✅ Topshirish *#{handoff_id}* tayyorlandi.\n"
-        f"📦 {len(cart)} tovar · {total_qty} dona · ⚖️ {total_kg:g} kg\n"
+        f"📦 {len(cart)} tovar · {total_qty} dona · ⚖️ {total_kg:g} kg · "
+        f"🏷️ {labels['totalLabels']} ta etiketka\n"
         + sum_line +
         "⚠️ PDF yuborildi, lekin “chop etildi” hali tasdiqlanmadi.",
         parse_mode="Markdown",
@@ -662,7 +683,7 @@ async def action_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.pop("vh", None)
     await update.effective_message.reply_text("❌ Bekor qilindi.",
-                                              reply_markup=admin_reply_keyboard())
+                                              reply_markup=_reply_keyboard(update.effective_user.id))
     return ConversationHandler.END
 
 

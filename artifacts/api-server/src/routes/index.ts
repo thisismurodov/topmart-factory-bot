@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { requireAuth } from "../middleware/requireAuth";
 import { requireAuthOrInternalKey } from "../middleware/requireAuthOrInternalKey";
+import { requireAuthOrWarehouseBotKey } from "../middleware/requireAuthOrWarehouseBotKey";
 import healthRouter from "./health";
 import authRouter from "./auth";
 import aiRouter from "./ai";
@@ -13,7 +14,7 @@ import salaryRouter from "./salary";
 import payrollRouter from "./payroll";
 import customersRouter from "./customers";
 import salesRouter from "./sales";
-import topmartRouter from "./topmart";
+import topmartRouter, { topmartExternalPurchaseRouter } from "./topmart";
 import inventoryRouter from "./inventory";
 import inventoryV2Router from "./inventory-v2";
 import warehousesRouter from "./warehouses";
@@ -60,6 +61,13 @@ router.use(vehicleReplenishmentRouter);
 router.use(vehicleReturnRouter);
 router.use(vehicleWeeklySummaryRouter);
 router.use(printAgentHealthRouter);
+
+// ── Top Mart external receipts — admin session OR dedicated warehouse bot key
+// These exact paths MUST be mounted before every pathless auth wall below.
+// The warehouse bot deliberately sends neither x-internal-key nor Bearer.
+router.use("/topmart/external-products", requireAuthOrWarehouseBotKey);
+router.use("/topmart/external-purchases", requireAuthOrWarehouseBotKey);
+router.use(topmartExternalPurchaseRouter);
 
 // ── AI routes — Bearer session (dashboard) OR x-internal-key (bot) ────────────
 router.use(requireAuthOrInternalKey, aiRouter);

@@ -16,7 +16,7 @@
 - [Container inventory weight](container-inventory-weight.md) — existence = qty>0 OR weight>0 (raw ham!); bot record_movement dual-mode (kg vs dona) + atomic availability guard in txn; stock = inventory, never batches−sales.
 - [Material Flow two-step WIP](material-flow-wip.md) — manual-only for now: bot batches ignore WIP; dashboard RECEIVE/PRODUCE owns the ledger; raw-in syncs container + global stock.
 - [Distribution bot integration](distribution-integration.md) — SQLite bot folded into monorepo on central Postgres `distribution` schema via psycopg2 shim; watch SQLite→PG GROUP BY strictness + GROUP_CONCAT.
-- [Dual init schema (bot + API + Drizzle)](dual-init-schema.md) — new columns/tables sync in THREE places: bot init_db (py), API initDb (ts), lib/db Drizzle; schema-drift workflow catches misses.
+- [Dual init schema (bot + API + Drizzle)](dual-init-schema.md) — sync all schema mirrors; distribution bot must still boot without public ERP parent tables.
 - [Fresh-DB boot ordering](fresh-db-boot-ordering.md) — empty DB exposes ALTER-before-CREATE (42P01, not caught) + never-created tables (sale_items); guard test runs bot init_db()+API initDb() on a throwaway Railway DB.
 - [Telegram-bot test schema isolation](bot-test-schema-isolation.md) — never mutate DATABASE_URL env at test-module import; patch bot.database.DATABASE_URL in setUpClass or combined discovery breaks.
 - [Shared-DB test schema contention](test-schema-contention.md) — api-server tests run on shared Railway DB; schema/DB names MUST be unique per run (pid+timestamp) or parallel agent validations DROP each other's schemas.
@@ -35,6 +35,7 @@
 - [Distribution data restore paths](distribution-data-restore.md) — bot agent-delete cascades wipe shops/sales; recover from attached_assets/topmart_*.db SQLite snapshots; role='blok' shows name without access.
 - [Audit-log writes must be transactional](audit-log-writes.md) — read→UPDATE→audit INSERT need one txn + FOR UPDATE or parallel edits corrupt the chain; `??` swallows explicit null in PATCH bodies.
 - [Two product catalogs (ERP vs savdo bot)](two-product-catalogs.md) — public.products ≠ distribution.mahsulotlar (by design); bridge = dashboard section + sync-to-erp; normalize apostrophe variants when matching names.
+- [Diyor ERP / Top Mart boundary](diyor-topmart-boundary.md) — Top Mart is a fixed Diyor customer at C-03; omborchi creates new package labels; stock moves only at final transfer.
 - [Last-write-wins sync needs server-side versioning](lww-sync-versioning.md) — client seq guards alone fail review; use op_seq conditional upsert + tombstone (no DELETE) so late PUTs can't resurrect resets.
 - [Canonical item-master migration](canonical-item-master.md) — v2 reset + legacy purge EXECUTED 2026-08-17 on prod; baseline-9=physical count; archives legacy.*_pre_reset_20260817 (no-touch, recovery path); never re-run GO.
 - [Catalog cleanup & ombor products](catalog-cleanup.md) — 08-17 bot-names reset; 08-18 +84 ombor-only products (in_sales=f,in_production=f) from container stock; bot kirim 'store' cat filters on those flags.

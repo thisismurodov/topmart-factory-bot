@@ -543,7 +543,7 @@ export function SalesBotProductsSection({ onCreateMaster }: { onCreateMaster?: (
     });
 
   return (
-    <div className="mt-10">
+    <div className="mt-2">
       <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
         <div>
           <h2 className="text-xl font-bold tracking-tight flex items-center gap-2">
@@ -555,10 +555,10 @@ export function SalesBotProductsSection({ onCreateMaster }: { onCreateMaster?: (
               : `${items.length} ta mahsulot · ${faolCount} faol` +
                 (missing.length > 0 ? ` · ${missing.length} tasi ERP katalogida yo'q` : "")}
           </p>
-          <p className="text-xs text-muted-foreground mt-0.5">
+          <p className="text-xs text-muted-foreground mt-0.5 max-w-3xl leading-relaxed">
             Savdo (agent) botidagi katalog bilan umumiy ro'yxat — bu yerdagi o'zgarish botda darhol ko'rinadi.
-            Yangi mahsulot yuqoridagi master katalogda ("Savdoda ishlatiladi" bilan) yaratiladi;
-            bu yerdagi bog'lash vositalari faqat eski yozuvlarni migratsiya qilish uchun.
+            Bu yerda ham <b>Diyor Mahsulotlari zavodi ishlab chiqaradigan</b> mahsulotlar (SKU orqali bog'langan), ham
+            <b> faqat Top Mart distribyutsiyasi orqali sotiladigan tashqi mahsulotlar</b> (SKU siz yoki alohida yaratilgan) boshqariladi.
           </p>
         </div>
         <div className="flex gap-2">
@@ -588,8 +588,8 @@ export function SalesBotProductsSection({ onCreateMaster }: { onCreateMaster?: (
             </Button>
           )}
           {onCreateMaster && (
-            <Button onClick={onCreateMaster}>
-              <Plus className="w-4 h-4 mr-2" /> Yangi mahsulot (master)
+            <Button onClick={onCreateMaster} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+              <Plus className="w-4 h-4 mr-2" /> Tashqi mahsulot qo'shish
             </Button>
           )}
         </div>

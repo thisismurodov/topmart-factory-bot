@@ -346,6 +346,7 @@ router.post("/sales", async (req, res): Promise<void> => {
           WHERE id=$1 AND active=TRUE
             AND COALESCE(location_type,'general') <> 'vehicle'
             AND purpose='finished'
+            AND UPPER(TRIM(name))='C-03'
           FOR SHARE`,
         [topmartConfig!.central_warehouse_id],
       );

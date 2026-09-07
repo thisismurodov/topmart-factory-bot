@@ -1,10 +1,11 @@
-import { beforeAll, afterAll, describe, it, expect } from "vitest";
+import { beforeAll, afterAll, describe, it, expect, vi } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import express from "express";
 import apiRouter from "../src/routes/index";
 import vehicleDistributionRouter from "../src/routes/vehicle-distribution";
 import vehicleWeeklySummaryRouter from "../src/routes/vehicle-distribution/weekly-summary-router";
+import { pool } from "@workspace/db";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Router-STACK regression test (task: bugungi 401 sinfini avtomatik to'sish).
@@ -33,7 +34,11 @@ const SAVED = {
   enabled: process.env.VEHICLE_DISTRIBUTION_ENABLED,
   approved: process.env.VEHICLE_DISTRIBUTION_SCHEMA_APPROVED,
   labels: process.env.PRODUCTION_LABELS_SCHEMA_APPROVED,
+  aiKey: process.env.AI_INTERNAL_KEY,
+  warehouseKey: process.env.WAREHOUSE_BOT_KEY,
 };
+const AI_KEY = "router-stack-test-ai-key";
+const WAREHOUSE_KEY = "router-stack-test-warehouse-key";
 
 let server: http.Server;
 let baseUrl: string;
@@ -46,6 +51,8 @@ beforeAll(async () => {
   process.env.VEHICLE_DISTRIBUTION_ENABLED = "1";
   delete process.env.VEHICLE_DISTRIBUTION_SCHEMA_APPROVED;
   delete process.env.PRODUCTION_LABELS_SCHEMA_APPROVED;
+  process.env.AI_INTERNAL_KEY = AI_KEY;
+  process.env.WAREHOUSE_BOT_KEY = WAREHOUSE_KEY;
 
   const app = express();
   app.use(express.json());
@@ -63,6 +70,8 @@ afterAll(async () => {
     ["VEHICLE_DISTRIBUTION_ENABLED", SAVED.enabled],
     ["VEHICLE_DISTRIBUTION_SCHEMA_APPROVED", SAVED.approved],
     ["PRODUCTION_LABELS_SCHEMA_APPROVED", SAVED.labels],
+    ["AI_INTERNAL_KEY", SAVED.aiKey],
+    ["WAREHOUSE_BOT_KEY", SAVED.warehouseKey],
   ] as const) {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
@@ -224,5 +233,48 @@ describe("pathsiz devorlar pastdagi yo'llarni hali ham qo'riqlaydi", () => {
   it("kalitsiz ixtiyoriy pastki yo'l → 401 (ochilib qolmagan)", async () => {
     const r = await get("/api/definitely-not-a-route");
     expect(r.status).toBe(401);
+  });
+});
+
+describe("warehouse receipt wall stays scoped to receipt paths", () => {
+  it("valid warehouse key reaches Telegram operator-role authorization", async () => {
+    const query = vi.spyOn(pool, "query").mockResolvedValue({ rows: [] } as never);
+    try {
+      const response = await get("/api/topmart/external-products", {
+        "x-warehouse-bot-key": WAREHOUSE_KEY,
+        "x-telegram-chat-id": "999999999999999999",
+      });
+      expect(response.status).toBe(403);
+      expect(response.body?.error).toBe(
+        "Admin session or authorized Telegram warehouse operator required",
+      );
+    } finally {
+      query.mockRestore();
+    }
+  });
+
+  it("shared AI key still reaches distribution suggestions but cannot reach receipts", async () => {
+    const query = vi.spyOn(pool, "query")
+      .mockResolvedValueOnce({ rows: [{ today: "2026-09-07", dow: 1 }] } as never)
+      .mockResolvedValue({ rows: [] } as never);
+    try {
+      const suggestions = await get("/api/distribution/suggestions", {
+        "x-internal-key": AI_KEY,
+      });
+      expect(suggestions.status).toBe(200);
+      expect(suggestions.body?.date).toBe("2026-09-07");
+    } finally {
+      query.mockRestore();
+    }
+
+    expect((await get("/api/topmart/external-products")).status).toBe(401);
+    expect((await get("/api/topmart/external-products", {
+      "x-warehouse-bot-key": "wrong-key",
+      "x-telegram-chat-id": "100",
+    })).status).toBe(401);
+    expect((await get("/api/topmart/external-products", {
+      "x-internal-key": AI_KEY,
+      "x-telegram-chat-id": "100",
+    })).status).toBe(401);
   });
 });

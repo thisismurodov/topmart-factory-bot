@@ -37,6 +37,9 @@ export const stockMovementsTable = pgTable("stock_movements", {
   uniqueIndex("uq_stock_movements_vehicle_return_reference")
     .on(table.reference)
     .where(sql`${table.reference} LIKE 'vehicle-return:%'`),
+  uniqueIndex("uq_stock_movements_topmart_external_reference")
+    .on(table.reference)
+    .where(sql`${table.reference} LIKE 'topmart-external:%'`),
 ]);
 
 export const insertStockMovementSchema = createInsertSchema(stockMovementsTable).omit({ id: true, createdAt: true });

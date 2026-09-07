@@ -4,7 +4,10 @@ from telegram.ext import (
     ContextTypes, CommandHandler, MessageHandler,
     CallbackQueryHandler, filters,
 )
-from ..keyboards import main_menu_keyboard, packer_menu_keyboard, contact_keyboard, admin_reply_keyboard
+from ..keyboards import (
+    main_menu_keyboard, packer_menu_keyboard, contact_keyboard,
+    admin_reply_keyboard, omborchi_reply_keyboard,
+)
 from ..database import (
     get_today_batches, get_worker_monthly,
     get_user_role, set_user_role, find_user_by_phone,
@@ -39,6 +42,12 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 parse_mode="Markdown",
                 reply_markup=admin_reply_keyboard(),
             )
+        elif role == "omborchi":
+            await update.message.reply_text(
+                f"🏬 *Omborchi* — {name}\nAsosiy menyu:",
+                parse_mode="Markdown",
+                reply_markup=omborchi_reply_keyboard(),
+            )
         elif role == "packer":
             await _show_packer_menu(update, chat_id, name)
         else:
@@ -46,7 +55,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     await update.message.reply_text(
-        "👋 *TopMart Factory Bot* 🏭\n\n"
+        "👋 *Diyor Mahsulotlari Bot* 🏭\n\n"
         "Telefon raqamingizni ulang — tizim sizni avtomatik aniqlaydi.",
         parse_mode="Markdown",
         reply_markup=contact_keyboard(),
@@ -89,6 +98,9 @@ async def contact_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                         InlineKeyboardButton("👷 Worker",   callback_data=f"appusr:{chat_id}:worker"),
                         InlineKeyboardButton("📦 Packer",  callback_data=f"appusr:{chat_id}:packer"),
                     ],
+                    [InlineKeyboardButton(
+                        "🏬 Omborchi", callback_data=f"appusr:{chat_id}:omborchi"
+                    )],
                     [InlineKeyboardButton("❌ Rad etish", callback_data=f"rejusr:{chat_id}")],
                 ]),
             )
@@ -100,7 +112,7 @@ async def contact_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     role = worker_config["role"]
     set_user_role(chat_id, name, role)
 
-    icon = "📦" if role == "packer" else "👷"
+    icon = "📦" if role == "packer" else ("🏬" if role == "omborchi" else "👷")
     await update.message.reply_text(
         f"{icon} *{name}*, xush kelibsiz!\nLavozim: *{role}*",
         parse_mode="Markdown",
@@ -109,6 +121,8 @@ async def contact_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     if role == "packer":
         await _show_packer_menu(update, chat_id, name)
+    elif role == "omborchi":
+        await update.message.reply_text("Asosiy menyu:", reply_markup=omborchi_reply_keyboard())
     else:
         await _show_worker_earnings(update, name)
 
@@ -123,6 +137,9 @@ async def approve_user_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     _, pending_chat_id_s, role = query.data.split(":", 2)
     pending_chat_id = int(pending_chat_id_s)
+    if role not in {"worker", "packer", "omborchi"}:
+        await query.answer("Noto'g'ri rol.", show_alert=True)
+        return
 
     pending = get_pending_user(pending_chat_id)
     if not pending:
@@ -137,7 +154,7 @@ async def approve_user_callback(update: Update, context: ContextTypes.DEFAULT_TY
     set_user_role(pending_chat_id, tg_name, role)
     delete_pending_user(pending_chat_id)
 
-    icon = "📦" if role == "packer" else "👷"
+    icon = "📦" if role == "packer" else ("🏬" if role == "omborchi" else "👷")
     await query.edit_message_text(
         f"{icon} *{tg_name}* — {role} sifatida qo'shildi\n"
         f"Tel: `+{phone}` | Prefix: `{prefix}`",
@@ -150,6 +167,12 @@ async def approve_user_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 f"✅ *Tasdiqlandi!*\n\n"
                 f"Siz *Upakovkachi* sifatida qo'shildingiz.\n"
                 f"Hodimlaringiz belgilanishi bilan /start orqali kirishingiz mumkin."
+            )
+        elif role == "omborchi":
+            msg_text = (
+                f"✅ *Tasdiqlandi!*\n\n"
+                f"Siz *Omborchi* sifatida qo'shildingiz.\n"
+                f"Davom etish uchun /start bosing."
             )
         else:
             msg_text = (
@@ -205,6 +228,8 @@ async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         kb = packer_menu_keyboard()
     elif role == "admin":
         kb = admin_reply_keyboard()
+    elif role == "omborchi":
+        kb = omborchi_reply_keyboard()
     else:
         kb = main_menu_keyboard()
     await update.message.reply_text("Menyu:", reply_markup=kb)
@@ -344,6 +369,8 @@ def _role_keyboard(user_row):
         return packer_menu_keyboard()
     if role == "admin":
         return admin_reply_keyboard()
+    if role == "omborchi":
+        return omborchi_reply_keyboard()
     return main_menu_keyboard()
 
 

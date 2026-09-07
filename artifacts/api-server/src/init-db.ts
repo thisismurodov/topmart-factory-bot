@@ -1,151 +1,3 @@
-import { pool, db, adminUsersTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
-import bcrypt from "bcryptjs";
-import { logger } from "./lib/logger";
-
-// API server cold-start DB bootstrap. Runs on every boot and is fully
-// idempotent (CREATE TABLE IF NOT EXISTS / ADD COLUMN IF NOT EXISTS) so it is
-// safe against a brand-new empty DB as well as the existing production DB.
-//
-// IMPORTANT: this function is the single source of truth for what the API
-// guarantees to exist at runtime. The fresh-db-boot test imports and runs it
-// against a throwaway database, so keep all schema bootstrapping here (do not
-// inline schema DDL back into index.ts).
-export async function initDb(): Promise<void> {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS print_agent_health (
-      agent_id TEXT PRIMARY KEY,
-      printer_name TEXT NOT NULL,
-      printer_available BOOLEAN NOT NULL,
-      media_valid BOOLEAN NOT NULL,
-      printable_area_valid BOOLEAN NOT NULL,
-      physical_width_mm NUMERIC(8,2),
-      physical_height_mm NUMERIC(8,2),
-      printable_width_mm NUMERIC(8,2),
-      printable_height_mm NUMERIC(8,2),
-      healthy BOOLEAN NOT NULL,
-      detail TEXT NOT NULL DEFAULT '',
-      last_seen_at TIMESTAMP WITH TIME ZONE NOT NULL,
-      last_transition_at TIMESTAMP WITH TIME ZONE NOT NULL,
-      last_notified_status TEXT,
-      notified_chat_ids TEXT[] NOT NULL DEFAULT '{}',
-      created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-      CONSTRAINT print_agent_health_notified_status_check
-        CHECK (last_notified_status IS NULL OR last_notified_status IN ('healthy','unhealthy'))
-    )
-  `);
-  await pool.query(`
-    ALTER TABLE print_agent_health
-      ADD COLUMN IF NOT EXISTS notified_chat_ids TEXT[] NOT NULL DEFAULT '{}'
-  `);
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_print_agent_health_last_seen
-      ON print_agent_health (last_seen_at)
-  `);
-
-  // admin_users jadvali (Drizzle schema bor, lekin Railway DB'da bo'lmasligi mumkin)
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS admin_users (
-      id SERIAL PRIMARY KEY,
-      username TEXT NOT NULL UNIQUE,
-      password_hash TEXT NOT NULL,
-      role TEXT NOT NULL DEFAULT 'admin',
-      created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
-    )
-  `);
-
-  // admin_sessions — Drizzle sxemasida yo'q, raw SQL bilan yaratiladi
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS admin_sessions (
-      id SERIAL PRIMARY KEY,
-      token TEXT NOT NULL UNIQUE,
-      user_id INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
-      created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
-    )
-  `);
-
-  // products.weight (og'irlik) — runtime DB (Railway) ustuniga idempotent qo'shamiz.
-  // drizzle.config bo'sh Replit DB'ga ishlaydi, shuning uchun bu ALTER kerak.
-  await pool.query(`
-    ALTER TABLE IF EXISTS products
-      ADD COLUMN IF NOT EXISTS weight NUMERIC(12,3) NOT NULL DEFAULT 1
-  `);
-
-  // products.pieces_per_box — qutidagi dona soni (etiketika: 1 quti = N dona)
-  await pool.query(`
-    ALTER TABLE IF EXISTS products
-      ADD COLUMN IF NOT EXISTS pieces_per_box INTEGER NOT NULL DEFAULT 1
-  `);
-
-  // products.roll_length_m — o'ramdagi metr (etiketkadagi METRI qatori profildan olinadi)
-  await pool.query(`
-    ALTER TABLE IF EXISTS products
-      ADD COLUMN IF NOT EXISTS roll_length_m NUMERIC(12,2) NOT NULL DEFAULT 0
-  `);
-
-  // products.in_sales / in_production — Bitta mahsulot bazasi modullari (Task 104):
-  // bitta master yozuv savdo va ishlab chiqarish bo'limlarida qaysi rejimda
-  // ishlatilishini belgilaydi.
-  await pool.query(`
-    ALTER TABLE IF EXISTS products
-      ADD COLUMN IF NOT EXISTS in_sales BOOLEAN NOT NULL DEFAULT FALSE,
-      ADD COLUMN IF NOT EXISTS in_production BOOLEAN NOT NULL DEFAULT TRUE
-  `);
-
-  // products.cost_price — qo'lda tan narx (savdo mahsulotlari uchun): >0 bo'lsa
-  // BOM/mehnat/elektr o'rniga TO'LIQ tan narx sifatida ishlatiladi.
-  await pool.query(`
-    ALTER TABLE IF EXISTS products
-      ADD COLUMN IF NOT EXISTS cost_price NUMERIC(12,2) NOT NULL DEFAULT 0
-  `);
-
-  // Backfill: savdo katalogiga (distribution.mahsulotlar) SKU orqali bog'langan
-  // mahsulotlar avtomatik "savdoda ishlatiladi" deb belgilanadi. Idempotent va
-  // o'z-o'zini tuzatadi: in_sales o'chirilsa sync mahsulotni faol=0 qiladi,
-  // shuning uchun bu backfill uni qayta yoqmaydi.
-  await pool.query(`
-    DO $$ BEGIN
-      IF to_regclass('distribution.mahsulotlar') IS NOT NULL THEN
-        UPDATE products p SET in_sales = TRUE
-         WHERE p.in_sales = FALSE AND p.sku <> ''
-           AND EXISTS (SELECT 1 FROM distribution.mahsulotlar m
-                        WHERE m.faol = 1 AND m.sku = p.sku);
-      END IF;
-    END $$
-  `);
-
-  // products.sku — yagona katalog identifikatori: bo'sh bo'lmagan SKU'lar unikal
-  await pool.query(`
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_products_sku_unique
-      ON products (sku) WHERE sku <> ''
-  `);
-
-  // raw_materials.currency — xom ashyo valyutasi (UZS yoki USD)
-  await pool.query(`
-    ALTER TABLE IF EXISTS raw_materials
-      ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'UZS'
-  `);
-
-  // product_price_tiers — hajm bo'yicha tier narxlash
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS product_price_tiers (
-      id           SERIAL PRIMARY KEY,
-      product_id   INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-      min_quantity NUMERIC(12,3) NOT NULL DEFAULT 0 CHECK (min_quantity >= 0),
-      max_quantity NUMERIC(12,3) NOT NULL DEFAULT 0 CHECK (max_quantity >= min_quantity),
-      price        NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (price >= 0),
-      currency     TEXT NOT NULL DEFAULT 'UZS' CHECK (currency IN ('UZS','USD')),
-      created_at   TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
-    )
-  `);
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_ppt_product ON product_price_tiers(product_id)
-  `);
-
-  // packer_product_assignments — packer ishchilari uchun mahsulot biriktirishlar
-  // (bot init_db ham yaratadi, lekin API cold-start da mavjudligini kafolatlaymiz)
-  await pool.query(`
     CREATE TABLE IF NOT EXISTS packer_product_assignments (
       id           SERIAL PRIMARY KEY,
       packer_name  TEXT NOT NULL,
@@ -391,8 +243,27 @@ export async function initDb(): Promise<void> {
   // Central Top Mart is selected explicitly by an admin. Never seed or infer
   // either side: existing public customer/warehouse rows are validated on PUT.
   await pool.query(`CREATE SCHEMA IF NOT EXISTS distribution`);
-  // Existing rows predate C-3 label reuse and therefore retain generated mode;
-  // all new API-created C-3 handoffs explicitly persist existing mode.
+  // Top Mart COGS triggers are installed by API startup, so their distribution
+  // prerequisites must exist even when the distribution bot has not booted yet.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS distribution.mahsulotlar (
+      id SERIAL PRIMARY KEY, nomi TEXT, narx BIGINT, birlik TEXT DEFAULT 'dona',
+      faol INTEGER DEFAULT 1, sku TEXT DEFAULT ''
+    );
+    CREATE TABLE IF NOT EXISTS distribution.savdolar (
+      id SERIAL PRIMARY KEY, dokon_id BIGINT, agent_id BIGINT, jami_summa BIGINT,
+      tolov_turi TEXT, foto TEXT, created_at TEXT, operation_key TEXT,
+      operation_fingerprint TEXT, status TEXT DEFAULT 'active',
+      posted_at TIMESTAMP WITH TIME ZONE
+    );
+    CREATE TABLE IF NOT EXISTS distribution.savdo_tafsilot (
+      id SERIAL PRIMARY KEY, savdo_id BIGINT, mahsulot_id BIGINT,
+      miqdor DOUBLE PRECISION, narx BIGINT, summa BIGINT
+    )
+  `);
+  // Preserve every stored row's historical mode. Older releases may already
+  // contain generated or existing handoffs; new API-created handoffs explicitly
+  // persist their mode and must never be blanket-backfilled.
   await pool.query(`
     ALTER TABLE IF EXISTS distribution.vehicle_handoffs
       ADD COLUMN IF NOT EXISTS label_mode TEXT NOT NULL DEFAULT 'generated'
@@ -457,6 +328,246 @@ export async function initDb(): Promise<void> {
   `);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_topmart_config_customer ON distribution.topmart_config(customer_id)`);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_topmart_config_warehouse ON distribution.topmart_config(central_warehouse_id)`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS distribution.topmart_external_purchase_receipts (
+      id                  SERIAL PRIMARY KEY,
+      reference           TEXT NOT NULL,
+      reference_key       TEXT NOT NULL,
+      request_fingerprint TEXT NOT NULL,
+      product_id          INTEGER NOT NULL,
+      product_name        TEXT NOT NULL,
+      supplier            TEXT NOT NULL,
+      quantity            INTEGER NOT NULL,
+      total_weight_kg     NUMERIC(12,3) NOT NULL,
+      total_cost          NUMERIC(14,2) NOT NULL,
+      c03_warehouse_id    INTEGER NOT NULL,
+      stock_movement_id   INTEGER NOT NULL,
+      received_by         TEXT NOT NULL,
+      received_at         TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+      CONSTRAINT topmart_external_purchase_quantity_check CHECK (quantity > 0),
+      CONSTRAINT topmart_external_purchase_weight_check CHECK (total_weight_kg > 0),
+      CONSTRAINT topmart_external_purchase_cost_check CHECK (total_cost >= 0)
+    )
+  `);
+  await pool.query(`
+    ALTER TABLE distribution.topmart_external_purchase_receipts
+      DROP CONSTRAINT IF EXISTS topmart_external_purchase_receipts_product_id_fkey,
+      DROP CONSTRAINT IF EXISTS topmart_external_purchase_receipts_c03_warehouse_id_fkey,
+      DROP CONSTRAINT IF EXISTS topmart_external_purchase_receipts_stock_movement_id_fkey
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_topmart_external_purchase_reference ON distribution.topmart_external_purchase_receipts(reference_key)`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_topmart_external_purchase_movement ON distribution.topmart_external_purchase_receipts(stock_movement_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_topmart_external_purchase_product ON distribution.topmart_external_purchase_receipts(product_id, received_at)`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS distribution.topmart_external_cost_allocations (
+      id                  SERIAL PRIMARY KEY,
+      receipt_id          INTEGER NOT NULL REFERENCES distribution.topmart_external_purchase_receipts(id),
+      savdo_id            BIGINT NOT NULL,
+      savdo_tafsilot_id   BIGINT NOT NULL,
+      product_id          INTEGER NOT NULL,
+      allocated_quantity  NUMERIC(14,3) NOT NULL,
+      allocated_cost      NUMERIC(20,6) NOT NULL,
+      created_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+      CONSTRAINT topmart_external_cost_quantity_check CHECK (allocated_quantity > 0),
+      CONSTRAINT topmart_external_cost_cost_check CHECK (allocated_cost >= 0)
+    )
+  `);
+  await pool.query(`
+    ALTER TABLE distribution.topmart_external_cost_allocations
+      DROP CONSTRAINT IF EXISTS topmart_external_cost_allocations_product_id_fkey
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_topmart_external_cost_receipt_detail ON distribution.topmart_external_cost_allocations(receipt_id, savdo_tafsilot_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_topmart_external_cost_sale ON distribution.topmart_external_cost_allocations(savdo_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_topmart_external_cost_product ON distribution.topmart_external_cost_allocations(product_id)`);
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION distribution.rebuild_topmart_external_cost(p_product_id INTEGER)
+    RETURNS void LANGUAGE plpgsql AS $$
+    DECLARE
+      v_needed NUMERIC(14,3);
+      v_available NUMERIC(14,3);
+      v_take NUMERIC(14,3);
+      v_basis NUMERIC(14,3);
+      sale_line RECORD;
+      lot RECORD;
+    BEGIN
+      IF to_regclass('public.products') IS NULL THEN RETURN; END IF;
+      PERFORM pg_advisory_xact_lock(hashtextextended('topmart-cogs:' || p_product_id::text,0));
+      DELETE FROM distribution.topmart_external_cost_allocations
+       WHERE product_id=p_product_id;
+      FOR sale_line IN
+        SELECT st.id detail_id,st.savdo_id,st.miqdor::numeric(14,3) quantity,
+               lower(btrim(COALESCE(NULLIF(m.birlik,''),'dona'))) unit
+          FROM distribution.savdo_tafsilot st
+          JOIN distribution.savdolar s ON s.id=st.savdo_id
+          JOIN distribution.mahsulotlar m ON m.id=st.mahsulot_id
+          JOIN products p ON p.sku=m.sku AND p.active=TRUE
+         WHERE p.id=p_product_id AND p.in_sales=TRUE AND p.in_production=FALSE
+           AND m.faol=1 AND st.miqdor>0 AND COALESCE(s.status,'active')<>'cancelled'
+           AND (SELECT COUNT(*) FROM products px
+                 WHERE px.sku=m.sku AND px.active=TRUE)=1
+           AND (SELECT COUNT(*) FROM distribution.mahsulotlar mx
+                 WHERE mx.sku=m.sku AND mx.faol=1)=1
+         ORDER BY s.created_at NULLS LAST,s.id,st.id
+      LOOP
+        v_needed:=sale_line.quantity;
+        FOR lot IN
+          SELECT r.id,r.total_cost,
+                 CASE WHEN sale_line.unit='kg' THEN r.total_weight_kg
+                      ELSE r.quantity::numeric END basis,
+                 COALESCE(SUM(a.allocated_quantity),0) used
+            FROM distribution.topmart_external_purchase_receipts r
+            LEFT JOIN distribution.topmart_external_cost_allocations a ON a.receipt_id=r.id
+           WHERE r.product_id=p_product_id
+           GROUP BY r.id,r.total_cost,r.total_weight_kg,r.quantity,r.received_at
+          HAVING CASE WHEN sale_line.unit='kg' THEN r.total_weight_kg
+                      ELSE r.quantity::numeric END>COALESCE(SUM(a.allocated_quantity),0)
+           ORDER BY r.received_at,r.id
+        LOOP
+          v_basis:=lot.basis;
+          v_available:=v_basis-lot.used;
+          v_take:=LEAST(v_needed,v_available);
+          INSERT INTO distribution.topmart_external_cost_allocations
+            (receipt_id,savdo_id,savdo_tafsilot_id,product_id,allocated_quantity,allocated_cost)
+          VALUES (lot.id,sale_line.savdo_id,sale_line.detail_id,p_product_id,v_take,
+                  ROUND((lot.total_cost::numeric*v_take/v_basis),6));
+          v_needed:=v_needed-v_take;
+          EXIT WHEN v_needed<=0;
+        END LOOP;
+      END LOOP;
+    END;
+    $$
+  `);
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION distribution.allocate_topmart_external_cost()
+    RETURNS trigger LANGUAGE plpgsql AS $$
+    DECLARE
+      v_product_id INTEGER;
+      v_old_product_id INTEGER;
+      v_product_ids INTEGER[]:=ARRAY[]::INTEGER[];
+    BEGIN
+      IF to_regclass('public.products') IS NULL THEN
+        IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+        RETURN NEW;
+      END IF;
+      IF TG_OP IN ('UPDATE','DELETE') THEN
+        SELECT p.id INTO v_old_product_id
+          FROM distribution.mahsulotlar m
+          JOIN products p ON p.sku=m.sku AND p.active=TRUE
+         WHERE m.id=OLD.mahsulot_id AND btrim(COALESCE(m.sku,''))<>''
+           AND p.in_sales=TRUE AND p.in_production=FALSE
+           AND (SELECT COUNT(*) FROM products px
+                 WHERE px.sku=m.sku AND px.active=TRUE)=1;
+        v_product_ids:=array_append(v_product_ids,v_old_product_id);
+      END IF;
+      IF TG_OP IN ('INSERT','UPDATE') THEN
+        SELECT p.id INTO v_product_id
+          FROM distribution.mahsulotlar m
+          JOIN products p ON p.sku=m.sku AND p.active=TRUE
+         WHERE m.id=NEW.mahsulot_id AND btrim(COALESCE(m.sku,''))<>''
+           AND p.in_sales=TRUE AND p.in_production=FALSE
+           AND (SELECT COUNT(*) FROM products px
+                 WHERE px.sku=m.sku AND px.active=TRUE)=1;
+        v_product_ids:=array_append(v_product_ids,v_product_id);
+      END IF;
+      FOR v_product_id IN
+        SELECT DISTINCT x FROM unnest(v_product_ids) x
+         WHERE x IS NOT NULL ORDER BY x
+      LOOP
+        PERFORM distribution.rebuild_topmart_external_cost(v_product_id);
+      END LOOP;
+      IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+      RETURN NEW;
+    END;
+    $$
+  `);
+  await pool.query(`DROP TRIGGER IF EXISTS topmart_external_cost_allocate ON distribution.savdo_tafsilot`);
+  await pool.query(`
+    CREATE TRIGGER topmart_external_cost_allocate
+    AFTER INSERT OR UPDATE OF savdo_id,mahsulot_id,miqdor OR DELETE ON distribution.savdo_tafsilot
+    FOR EACH ROW EXECUTE FUNCTION distribution.allocate_topmart_external_cost()
+  `);
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION distribution.sync_topmart_external_cost_sale_status()
+    RETURNS trigger LANGUAGE plpgsql AS $$
+    DECLARE
+      v_product_id INTEGER;
+    BEGIN
+      IF NEW.status IS NOT DISTINCT FROM OLD.status THEN RETURN NEW; END IF;
+      IF to_regclass('public.products') IS NULL THEN RETURN NEW; END IF;
+      FOR v_product_id IN
+        SELECT DISTINCT p.id
+          FROM distribution.savdo_tafsilot st
+          JOIN distribution.mahsulotlar m ON m.id=st.mahsulot_id
+          JOIN products p ON p.sku=m.sku AND p.active=TRUE
+         WHERE st.savdo_id=NEW.id AND p.in_sales=TRUE AND p.in_production=FALSE
+           AND (SELECT COUNT(*) FROM products px
+                 WHERE px.sku=m.sku AND px.active=TRUE)=1
+         ORDER BY p.id
+      LOOP
+        PERFORM distribution.rebuild_topmart_external_cost(v_product_id);
+      END LOOP;
+      RETURN NEW;
+    END;
+    $$
+  `);
+  await pool.query(`DROP TRIGGER IF EXISTS topmart_external_cost_sale_status ON distribution.savdolar`);
+  await pool.query(`
+    CREATE TRIGGER topmart_external_cost_sale_status
+    AFTER UPDATE OF status ON distribution.savdolar
+    FOR EACH ROW EXECUTE FUNCTION distribution.sync_topmart_external_cost_sale_status()
+  `);
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION distribution.sync_topmart_external_cost_product_mapping()
+    RETURNS trigger LANGUAGE plpgsql AS $$
+    DECLARE
+      v_product_id INTEGER;
+      v_skus TEXT[]:=ARRAY[]::TEXT[];
+    BEGIN
+      IF to_regclass('public.products') IS NULL THEN
+        IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+        RETURN NEW;
+      END IF;
+      IF TG_OP IN ('UPDATE','DELETE') THEN v_skus:=array_append(v_skus,OLD.sku); END IF;
+      IF TG_OP IN ('INSERT','UPDATE') THEN v_skus:=array_append(v_skus,NEW.sku); END IF;
+      FOR v_product_id IN
+        SELECT DISTINCT p.id
+          FROM products p
+          JOIN unnest(v_skus) sku_value ON sku_value=p.sku
+         WHERE p.active=TRUE AND p.in_sales=TRUE AND p.in_production=FALSE
+           AND btrim(COALESCE(p.sku,''))<>''
+           AND (SELECT COUNT(*) FROM products px
+                 WHERE px.sku=p.sku AND px.active=TRUE)=1
+         ORDER BY p.id
+      LOOP
+        PERFORM distribution.rebuild_topmart_external_cost(v_product_id);
+      END LOOP;
+      IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+      RETURN NEW;
+    END;
+    $$
+  `);
+  await pool.query(`DROP TRIGGER IF EXISTS topmart_external_cost_product_mapping ON distribution.mahsulotlar`);
+  await pool.query(`
+    CREATE TRIGGER topmart_external_cost_product_mapping
+    AFTER INSERT OR UPDATE OF sku,faol,birlik OR DELETE ON distribution.mahsulotlar
+    FOR EACH ROW EXECUTE FUNCTION distribution.sync_topmart_external_cost_product_mapping()
+  `);
+  // Backfill pre-existing receipt lots and sales on the first upgraded boot.
+  // Re-running is safe: each product is rebuilt deterministically under lock.
+  await pool.query(`
+    DO $$
+    DECLARE v_product_id INTEGER;
+    BEGIN
+      FOR v_product_id IN
+        SELECT DISTINCT product_id
+          FROM distribution.topmart_external_purchase_receipts
+         ORDER BY product_id
+      LOOP
+        PERFORM distribution.rebuild_topmart_external_cost(v_product_id);
+      END LOOP;
+    END;
+    $$
+  `);
 
   // Production schema o'zgarishi oddiy restartda tasodifan qo'llanmaydi.
   // Faqat foydalanuvchi aniq DDL modelini tasdiqlagan migration jarayoni yoki
@@ -610,6 +721,11 @@ export async function initDb(): Promise<void> {
   await pool.query(`ALTER TABLE IF EXISTS stock_movements ADD COLUMN IF NOT EXISTS weight_kg NUMERIC`);
   await pool.query(`ALTER TABLE IF EXISTS stock_movements ADD COLUMN IF NOT EXISTS reference TEXT`);
   await pool.query(`ALTER TABLE IF EXISTS stock_movements ADD COLUMN IF NOT EXISTS reason TEXT`);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_movements_topmart_external_reference
+      ON public.stock_movements(reference)
+      WHERE reference LIKE 'topmart-external:%'
+  `);
   // F7: exactly one movement per deterministic vehicle-sale detail reference.
   // Legacy/null/non-pilot references remain unconstrained.
   await pool.query(`

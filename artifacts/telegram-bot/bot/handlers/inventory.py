@@ -1,179 +1,3 @@
-"""
-Ombor (Inventory) handlers for Telegram bot.
-Menu: ➕ Kirim | ➖ Chiqim | 🔄 O'tkazish | 📋 Qoldiqlar | 📜 Tarix
-Kirimda kategoriya tanlanadi: 📦 Tayyor mahsulot | 🧵 Xom ashyo
-"""
-import re
-import secrets
-
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
-from telegram.ext import (
-    ContextTypes, ConversationHandler, MessageHandler,
-    CallbackQueryHandler, filters,
-)
-from ..database import (
-    get_user_role, get_warehouses, get_warehouse_by_name,
-    get_stock_by_warehouse, get_stock_for_warehouse, get_stock_by_warehouse_typed,
-    record_movement, get_recent_movements, get_product_names,
-    get_sale_products, get_raw_material_names, get_store_product_names,
-    get_containers, get_inventory_line,
-    get_raw_materials_full, get_raw_material_by_id,
-    get_stock_locations, get_unit_for_item,
-)
-from ..api_client import adjust_inventory, adjust_raw_material
-
-# ── States ─────────────────────────────────────────────────────────────────────
-(
-    INV_MAIN,
-    INV_IN_CATEGORY, INV_IN_PRODUCT, INV_IN_QTY, INV_IN_WAREHOUSE, INV_IN_CONFIRM,
-    INV_OUT_WAREHOUSE, INV_OUT_PRODUCT, INV_OUT_QTY, INV_OUT_CONFIRM,
-    INV_TR_FROM, INV_TR_PRODUCT, INV_TR_QTY, INV_TR_TO, INV_TR_CONFIRM,
-    INV_ADJ_CONTAINER, INV_ADJ_PRODUCT, INV_ADJ_QTY, INV_ADJ_WEIGHT, INV_ADJ_CONFIRM,
-    INV_RADJ_MATERIAL, INV_RADJ_STOCK, INV_RADJ_CONFIRM,
-) = range(23)
-
-
-# ── Keyboards ──────────────────────────────────────────────────────────────────
-
-def _inv_main_kb() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        [
-            ["➕ Kirim", "➖ Chiqim"],
-            ["🔄 Skladlararo o'tkazish"],
-            ["✏️ Konteynerni to'g'rilash"],
-            ["🧵 Xom ashyoni to'g'rilash"],
-            ["📋 Qoldiqlar", "📜 Harakatlar tarixi"],
-            ["🔙 Asosiy menyu"],
-        ],
-        resize_keyboard=True,
-    )
-
-
-def _warehouse_inline(warehouses: list[dict], prefix: str) -> InlineKeyboardMarkup:
-    buttons = [
-        [InlineKeyboardButton(w["name"], callback_data=f"{prefix}:{w['id']}:{w['name']}")]
-        for w in warehouses
-    ]
-    buttons.append([InlineKeyboardButton("❌ Bekor", callback_data=f"{prefix}:cancel")])
-    return InlineKeyboardMarkup(buttons)
-
-
-def _product_inline(products: list[str], prefix: str, token: str) -> InlineKeyboardMarkup:
-    """Har bir mahsulot ALOHIDA qatorda — uzun nomlar to'liq ko'rinadi.
-    callback_data = '{prefix}:{token}:{indeks}' — 64-bayt limitiga har doim
-    sig'adi; token callbackni AYNAN shu klaviaturaga bog'laydi (eski xabar
-    tugmasi yangi ro'yxatga adashib tushmasligi uchun). Ro'yxat chaqiruvchi
-    tomonidan ctx.user_data['inv_plist'] = (token, ro'yxat) qilib saqlanadi."""
-    rows = [
-        [InlineKeyboardButton(p, callback_data=f"{prefix}:{token}:{i}")]
-        for i, p in enumerate(products)
-    ]
-    rows.append([InlineKeyboardButton("❌ Bekor", callback_data=f"{prefix}:cancel")])
-    return InlineKeyboardMarkup(rows)
-
-
-def _new_plist_token() -> str:
-    return secrets.token_hex(3)  # 6 ta hex belgi
-
-
-_PLIST_CB_RE = re.compile(r"^([0-9a-f]{6}):(\d+)$")
-
-
-def _resolve_product_cb(q_data: str, ctx: ContextTypes.DEFAULT_TYPE) -> str | None:
-    """'kp:a1b2c3:3' callbackdan mahsulot nomini topadi. Token joriy
-    klaviaturanikiga mos kelmasa — None (eskirgan tugma). Eski (publishgacha
-    yuborilgan) nom-asosli callbacklar nomning o'zini qaytaradi; sof raqamli
-    nomlar ham token talabi tufayli indeks bilan adashmaydi."""
-    raw = q_data.split(":", 1)[1]
-    m = _PLIST_CB_RE.fullmatch(raw)
-    if not m:
-        return raw  # eski xabar: callbackda nomning o'zi
-    stored = ctx.user_data.get("inv_plist")
-    if not (isinstance(stored, tuple) and len(stored) == 2 and stored[0] == m.group(1)):
-        return None  # boshqa klaviaturaning tugmasi — eskirgan
-    plist = stored[1]
-    idx = int(m.group(2))
-    return plist[idx] if 0 <= idx < len(plist) else None
-
-
-def _is_allowed(chat_id: int) -> bool:
-    row = get_user_role(chat_id)
-    return row is not None and row["role"] in ("admin", "packer")
-
-
-def _fmt_amt(v) -> str:
-    """837.7 → '837.7', 61080 → '61 080', 4572.25 → '4 572.3'."""
-    s = f"{float(v):,.1f}".replace(",", " ")
-    return s[:-2] if s.endswith(".0") else s
-
-
-def _stock_line(r: dict) -> str:
-    """Inventar qatori uchun 'X dona · Y kg' ko'rinishidagi matn."""
-    parts = []
-    if float(r.get("quantity") or 0) > 0:
-        parts.append(f"{_fmt_amt(r['quantity'])} dona")
-    if float(r.get("weight_kg") or 0) > 0:
-        parts.append(f"{_fmt_amt(r['weight_kg'])} kg")
-    return " · ".join(parts) if parts else "0"
-
-
-def _md(s) -> str:
-    """Telegram legacy-Markdown maxsus belgilarini ekranlash (_ * ` [)."""
-    return re.sub(r"([_*`\[])", r"\\\1", str(s))
-
-
-def _stock_list_text(items: list[dict], key: str = "product", max_lines: int = 25) -> str:
-    lines = [f"  • {_md(i[key])} — {_stock_line(i)}" for i in items[:max_lines]]
-    if len(items) > max_lines:
-        lines.append(f"  … yana {len(items) - max_lines} ta")
-    return "\n".join(lines)
-
-
-# ── Entry ──────────────────────────────────────────────────────────────────────
-
-async def ombor_entry(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
-    if not _is_allowed(update.effective_chat.id):
-        await update.message.reply_text("❌ Ruxsat yo'q.")
-        return ConversationHandler.END
-    await update.message.reply_text(
-        "🏬 *Ombor Boshqaruvi*\n\nAmalni tanlang:",
-        parse_mode="Markdown",
-        reply_markup=_inv_main_kb(),
-    )
-    return INV_MAIN
-
-
-async def ombor_back(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
-    from ..keyboards import admin_reply_keyboard
-    await update.message.reply_text("Asosiy menyuga qaytdingiz.", reply_markup=admin_reply_keyboard())
-    return ConversationHandler.END
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# ➕  KIRIM — 1. Kategoriya tanlash
-# ══════════════════════════════════════════════════════════════════════════════
-
-async def kirim_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text(
-        "➕ *Kirim*\n\nQaysi kategoriya?",
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("📦 Tayyor mahsulot", callback_data="kcat:finished"),
-                InlineKeyboardButton("🧵 Xom ashyo",       callback_data="kcat:raw"),
-            ],
-            [InlineKeyboardButton("🏬 Ombor mahsuloti", callback_data="kcat:store")],
-            [InlineKeyboardButton("❌ Bekor", callback_data="kcat:cancel")],
-        ]),
-    )
-    return INV_IN_CATEGORY
-
-
-async def kirim_category_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
-    q = update.callback_query
-    await q.answer()
-    if q.data == "kcat:cancel":
-        await q.edit_message_text("❌ Bekor qilindi.")
         return INV_MAIN
 
     cat = q.data.split(":", 1)[1]  # 'finished' / 'store' / 'raw'
@@ -1054,6 +878,7 @@ def build_inventory_handler() -> ConversationHandler:
         entry_points=[MessageHandler(OMBOR_TEXT, ombor_entry)],
         states={
             INV_MAIN: [
+                MessageHandler(f.Regex(r"^🛒 Tashqi xarid kirimi$"),    external_purchase_start),
                 MessageHandler(f.Regex(r"^➕ Kirim$"),                  kirim_start),
                 MessageHandler(f.Regex(r"^➖ Chiqim$"),                 chiqim_start),
                 MessageHandler(f.Regex(r"^🔄 Skladlararo o'tkazish$"), transfer_start),
@@ -1089,6 +914,13 @@ def build_inventory_handler() -> ConversationHandler:
             INV_RADJ_MATERIAL: [CallbackQueryHandler(raw_adjust_material_cb, pattern=r"^rm:")],
             INV_RADJ_STOCK:    [MessageHandler(f.TEXT & ~f.COMMAND,         raw_adjust_stock)],
             INV_RADJ_CONFIRM:  [CallbackQueryHandler(raw_adjust_confirm_cb, pattern=r"^raconfirm:")],
+            INV_EXT_PRODUCT:   [CallbackQueryHandler(external_product_cb, pattern=r"^extp:")],
+            INV_EXT_SUPPLIER:  [MessageHandler(f.TEXT & ~f.COMMAND, external_supplier)],
+            INV_EXT_QTY:       [MessageHandler(f.TEXT & ~f.COMMAND, external_quantity)],
+            INV_EXT_WEIGHT:    [MessageHandler(f.TEXT & ~f.COMMAND, external_weight)],
+            INV_EXT_COST:      [MessageHandler(f.TEXT & ~f.COMMAND, external_cost)],
+            INV_EXT_REFERENCE: [MessageHandler(f.TEXT & ~f.COMMAND, external_reference)],
+            INV_EXT_CONFIRM:   [CallbackQueryHandler(external_confirm_cb, pattern=r"^extconfirm:")],
         },
         fallbacks=[
             MessageHandler(f.Regex(r"^🔙 Asosiy menyu$"), ombor_back),

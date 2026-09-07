@@ -38,3 +38,20 @@ in `lib/db/src/schema/` to match runtime — do NOT alter the runtime DDL to mat
 Drizzle (Drizzle is never used for migrations here).
 
 **Update (2026-08-18):** THREE sync points, not two: bot `init_db` (py), API `initDb` (ts), and `lib/db/src/schema` (Drizzle) — plus the prod ALTER itself. The `schema-drift` workflow catches misses. Drizzle numeric defaults are strings (`.default("0")`).
+
+## Distribution bot cross-schema boundary
+
+**Rule:** Distribution-owned tables must not use foreign keys to `public` ERP
+tables. Store those IDs as logical references, validate them transactionally in
+the ERP API, and make cross-schema triggers no-op when their public dependency
+does not exist.
+
+**Why:** The distribution bot is a standalone initializer and its Field/vehicle
+fresh-database paths run before any ERP tables exist. A valid Top Mart reference
+became a boot-time `relation "products" does not exist` failure when represented
+as a database foreign key.
+
+**How to apply:** Run distribution drift validation without creating fake public
+parent tables. Cross-schema accounting or sync code may activate once the API
+catalog exists, but distribution sales and bot startup must remain functional
+without it.

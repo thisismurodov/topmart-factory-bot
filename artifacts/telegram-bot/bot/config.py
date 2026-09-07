@@ -34,6 +34,9 @@ AI_INTERNAL_KEY = os.environ.get("AI_INTERNAL_KEY", "")
 # handoff endpoints (x-vehicle-distribution-bot-key header). NEVER reuse
 # AI_INTERNAL_KEY for vehicle calls. Left empty by default; deployment sets it.
 VEHICLE_DISTRIBUTION_BOT_KEY = os.environ.get("VEHICLE_DISTRIBUTION_BOT_KEY", "")
+# WAREHOUSE_BOT_KEY — dedicated transport credential for Top Mart external
+# purchase receipt calls. It must never fall back to AI_INTERNAL_KEY.
+WAREHOUSE_BOT_KEY = os.environ.get("WAREHOUSE_BOT_KEY", "")
 # AI_HOUR — kunlik AI tahlil yuboriladigan soat (0-23, Asia/Tashkent). Standart: 20.
 try:
     AI_HOUR = int(os.environ.get("AI_HOUR", "20"))

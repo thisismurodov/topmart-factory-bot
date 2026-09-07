@@ -1,59 +1,3 @@
-import { execFileSync } from "node:child_process";
-import path from "node:path";
-import { getTableColumns } from "drizzle-orm";
-import type { Column } from "drizzle-orm";
-import { getTableConfig } from "drizzle-orm/pg-core";
-import pg from "pg";
-import {
-  normalizeDrizzleDefault,
-  normalizeRuntimeDefault,
-  normalizeType,
-  withDatabase,
-} from "./drift-utils";
-import { provisionLocalTestPostgres } from "./local-test-postgres";
-import {
-  agentLocationsTable,
-  aiSuggestCacheTable,
-  agentPlansTable,
-  deliveryAgentsTable,
-  deliveryRoutesTable,
-  distMahsulotlarTable,
-  distUsersTable,
-  dokonlarTable,
-  dokonLocationLogTable,
-  fieldOpsTable,
-  fieldRouteOrdersTable,
-  mijozBalansTable,
-  nasiyaTable,
-  olmaganDokonlarTable,
-  pulOlishTable,
-  revisitlarTable,
-  savdolarTable,
-  savdoTafsilotTable,
-  vehiclesTable,
-  vehicleAssignmentsTable,
-  vehicleHandoffsTable,
-  vehicleHandoffItemsTable,
-  vehicleUnitEventsTable,
-  vehicleSaleAllocationsTable,
-  vehicleLabelClaimsTable,
-  vehicleLabelPrepareSessionsTable,
-  vehicleLabelPrintSessionsTable,
-  vehicleStockTargetsTable,
-  vehicleReplenishmentRequestsTable,
-  vehicleReplenishmentOutboxTable,
-  vehicleReconciliationsTable,
-  vehicleReconciliationItemsTable,
-  vehicleReturnsTable,
-  vehicleReturnItemsTable,
-  vehicleRouteReportsTable,
-  topmartConfigTable,
-  topmartLabelReceiptsTable,
-} from "@workspace/db";
-
-// Distribution sxemasi UCH joyda ta'riflangan va qo'lda sinxron saqlanadi:
-//
-//   1. Bot runtime DDL — artifacts/distribution-bot/database/connection.py
 //      (_INIT_DDL, har startupda ishlaydi)
 //   2. Mustaqil DDL skript — scripts/src/init-distribution.ts
 //   3. Kanonik Drizzle mirror — lib/db/src/schema/distribution.ts
@@ -87,6 +31,8 @@ const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const TABLES = {
   topmart_config: topmartConfigTable,
   topmart_label_receipts: topmartLabelReceiptsTable,
+  topmart_external_purchase_receipts: topmartExternalPurchaseReceiptsTable,
+  topmart_external_cost_allocations: topmartExternalCostAllocationsTable,
   agent_locations: agentLocationsTable,
   ai_suggest_cache: aiSuggestCacheTable,
   agent_plans: agentPlansTable,
@@ -413,6 +359,12 @@ function compare(
 // ─────────────────────────────────────────────────────────────────────────────
 
 type CheckSpec = { table: string; name: string; expr: string };
+type ForeignKeySpec = {
+  table: string;
+  column: string;
+  foreignTable: string;
+  foreignColumn: string;
+};
 type PartialIdxSpec = { table: string; name: string; predicate: string };
 
 /**
@@ -459,7 +411,10 @@ async function readActualChecks(pool: pg.Pool): Promise<Map<string, CheckSpec>> 
     JOIN pg_namespace n   ON n.oid = c.relnamespace
     WHERE n.nspname = 'distribution'
       AND con.contype = 'c'
-      AND (c.relname LIKE 'vehicle%' OR c.relname = 'topmart_label_receipts')
+      AND (c.relname LIKE 'vehicle%' OR c.relname IN (
+        'topmart_label_receipts', 'topmart_external_purchase_receipts',
+        'topmart_external_cost_allocations'
+      ))
     ORDER BY c.relname, con.conname
   `);
   const out = new Map<string, CheckSpec>();
@@ -515,6 +470,11 @@ const EXPECTED_CHECKS: CheckSpec[] = [
   { table: "vehicle_handoffs", name: "vehicle_handoffs_label_mode_check", expr: normalizeExpr("label_mode IN ('generated','existing')") },
   { table: "topmart_label_receipts", name: "topmart_label_receipts_pieces_check", expr: normalizeExpr("pieces_in_label > 0") },
   { table: "topmart_label_receipts", name: "topmart_label_receipts_weight_check", expr: normalizeExpr("weight_kg > 0") },
+  { table: "topmart_external_purchase_receipts", name: "topmart_external_purchase_quantity_check", expr: normalizeExpr("quantity > 0") },
+  { table: "topmart_external_purchase_receipts", name: "topmart_external_purchase_weight_check", expr: normalizeExpr("total_weight_kg > 0") },
+  { table: "topmart_external_purchase_receipts", name: "topmart_external_purchase_cost_check", expr: normalizeExpr("total_cost >= 0") },
+  { table: "topmart_external_cost_allocations", name: "topmart_external_cost_quantity_check", expr: normalizeExpr("allocated_quantity > 0") },
+  { table: "topmart_external_cost_allocations", name: "topmart_external_cost_cost_check", expr: normalizeExpr("allocated_cost >= 0") },
   { table: "vehicle_handoff_items", name: "vehicle_handoff_items_qty_check",  expr: normalizeExpr("quantity_dispatched > 0") },
   { table: "vehicle_handoff_items", name: "vehicle_handoff_items_cost_check", expr: normalizeExpr("unit_cost >= 0") },
   { table: "vehicle_handoff_items", name: "vehicle_handoff_items_pieces_per_box_check", expr: normalizeExpr("pieces_per_box > 0") },
@@ -595,6 +555,33 @@ const EXPECTED_CHECKS: CheckSpec[] = [
   { table: "vehicle_return_items", name: "vehicle_return_items_return_weight_check", expr: normalizeExpr("return_weight_kg > 0") },
   { table: "vehicle_return_items", name: "vehicle_return_items_identity_check", expr: normalizeExpr("btrim(barcode) <> '' AND btrim(product_name) <> '' AND btrim(sku) <> ''") },
 ];
+
+// Distribution must initialize independently of the ERP public schema. These
+// IDs are logical references validated by the Top Mart API transaction.
+const EXPECTED_FOREIGN_KEYS: ForeignKeySpec[] = [];
+
+async function compareExternalPurchaseForeignKeys(label: string, pool: pg.Pool): Promise<boolean> {
+  const { rows } = await pool.query<ForeignKeySpec>(`
+    SELECT c.relname AS table, a.attname AS column,
+           fc.relname AS "foreignTable", fa.attname AS "foreignColumn"
+      FROM pg_constraint con
+      JOIN pg_class c ON c.oid=con.conrelid
+      JOIN pg_namespace n ON n.oid=c.relnamespace
+      JOIN pg_attribute a ON a.attrelid=con.conrelid AND a.attnum=con.conkey[1]
+      JOIN pg_class fc ON fc.oid=con.confrelid
+      JOIN pg_attribute fa ON fa.attrelid=con.confrelid AND fa.attnum=con.confkey[1]
+     WHERE n.nspname='distribution' AND c.relname='topmart_external_purchase_receipts'
+       AND con.contype='f'
+  `);
+  const key = (fk: ForeignKeySpec) =>
+    `${fk.table}.${fk.column}->${fk.foreignTable}.${fk.foreignColumn}`;
+  const actual = new Set(rows.map(key));
+  const expected = new Set(EXPECTED_FOREIGN_KEYS.map(key));
+  const drift = [...expected].some((key) => !actual.has(key)) ||
+    [...actual].some((key) => !expected.has(key));
+  if (drift) console.error(`✗ [${label}] external purchase FK drift`);
+  return drift;
+}
 
 // Canonical expected partial unique indexes for vehicle tables.
 const EXPECTED_PARTIAL_INDEXES: PartialIdxSpec[] = [
@@ -786,7 +773,6 @@ async function main(): Promise<void> {
 
   const botUrl = withDatabase(adminUrl, BOT_DB);
   const tsUrl = withDatabase(adminUrl, TS_DB);
-
   // Bola jarayonlar throwaway bazaga ulanishi shart; lib/db va bot
   // RAILWAY_DATABASE_URL ni birinchi o'ringa qo'yadi — olib tashlaymiz.
   // Vehicle pilot: throwaway DBs always enable vehicle tables so drift
@@ -842,6 +828,7 @@ async function main(): Promise<void> {
     readActualIndexes(botPool),
   ]);
   const botCheckDrift = await compareVehicleChecksAndPartialIndexes("bot _INIT_DDL", botPool);
+  const botFkDrift = await compareExternalPurchaseForeignKeys("bot _INIT_DDL", botPool);
   await botPool.end();
 
   const tsPool = new pg.Pool({ connectionString: tsUrl });
@@ -850,6 +837,7 @@ async function main(): Promise<void> {
     readActualIndexes(tsPool),
   ]);
   const tsCheckDrift = await compareVehicleChecksAndPartialIndexes("init-distribution.ts", tsPool);
+  const tsFkDrift = await compareExternalPurchaseForeignKeys("init-distribution.ts", tsPool);
   await tsPool.end();
 
   const botDrift = compare("bot _INIT_DDL", expected, botActual);
@@ -857,7 +845,7 @@ async function main(): Promise<void> {
   const botIndexDrift = compareIndexes("bot _INIT_DDL", expectedIndexes, botActualIndexes);
   const tsIndexDrift = compareIndexes("init-distribution.ts", expectedIndexes, tsActualIndexes);
 
-  if (botDrift || tsDrift || botIndexDrift || tsIndexDrift || botCheckDrift || tsCheckDrift) {
+  if (botDrift || tsDrift || botIndexDrift || tsIndexDrift || botCheckDrift || tsCheckDrift || botFkDrift || tsFkDrift) {
     console.error(
       "\nDistribution sxema drifti aniqlandi. UCHALA nusxani ham yangilang: " +
         "artifacts/distribution-bot/database/connection.py (_INIT_DDL), " +

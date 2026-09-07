@@ -65,8 +65,10 @@ router.post("/sales-products", async (req, res): Promise<void> => {
     // Master yozuvda SKU bo'lishi shart — savdo katalogi SKU orqali bog'lanadi.
     const autoSku = await uniqueProductSku(name.trim());
     const { rows } = await pool.query(
-      `INSERT INTO products (name, sku, unit_type, rate_type, currency_type, default_sale_price, active, in_sales)
-       VALUES ($1,$5,$2,$2,$3,$4,TRUE,TRUE)
+      `INSERT INTO products
+         (name, sku, unit_type, rate_type, currency_type, default_sale_price,
+          active, in_sales, in_production)
+       VALUES ($1,$5,$2,$2,$3,$4,TRUE,TRUE,FALSE)
        ON CONFLICT (name) DO UPDATE
          SET unit_type=$2, rate_type=$2, currency_type=$3, default_sale_price=$4, active=TRUE, in_sales=TRUE,
              sku = CASE WHEN products.sku <> '' THEN products.sku ELSE EXCLUDED.sku END

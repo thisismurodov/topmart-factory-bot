@@ -35,6 +35,12 @@ def _ctx(state):
 
 
 class VehicleHandoffSafetyTest(unittest.IsolatedAsyncioTestCase):
+    def test_omborchi_is_allowed_but_other_roles_are_denied(self):
+        with patch.object(vh, "get_user_role", return_value={"role": "omborchi"}):
+            self.assertTrue(vh._admin(10))
+        with patch.object(vh, "get_user_role", return_value={"role": "worker"}):
+            self.assertFalse(vh._admin(10))
+
     async def test_non_admin_cannot_start(self):
         update = SimpleNamespace(
             effective_user=SimpleNamespace(id=99),
@@ -70,11 +76,11 @@ class VehicleHandoffSafetyTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state, vh.WEIGHT)
         update.message.reply_text.assert_awaited_once()
 
-    async def test_warehouse_selector_shows_hidden_reasons(self):
+    async def test_warehouse_selector_only_shows_c03(self):
         query = _query("vh:tok:new")
         context = _ctx({"token": "tok", "done": set()})
         warehouses = [
-            {"id": 1, "name": "Tayyor A", "eligible": True, "reason": None},
+            {"id": 1, "name": "C-03", "eligible": True, "reason": None},
             {"id": 2, "name": "C-05", "eligible": False, "reason": "dona qoldiq yo‘q"},
             {"id": 3, "name": "Xomashyo", "eligible": False,
              "reason": "tayyor mahsulot ombori emas"},
@@ -85,13 +91,13 @@ class VehicleHandoffSafetyTest(unittest.IsolatedAsyncioTestCase):
             state = await vh.menu_callback(SimpleNamespace(callback_query=query), context)
         self.assertEqual(state, vh.SOURCE)
         text = query.edit_message_text.await_args.args[0]
-        self.assertIn("C-05", text)
-        self.assertIn("dona qoldiq yo‘q", text)
-        self.assertIn("tayyor mahsulot ombori emas", text)
+        self.assertIn("C-03", str(context.user_data["vh"]["warehouses"]))
+        self.assertNotIn("C-05", text)
+        self.assertNotIn("Xomashyo", text)
         keyboard = query.edit_message_text.await_args.kwargs["reply_markup"].inline_keyboard
-        # 1 eligible warehouse button + cancel — hidden ones are NOT selectable.
+        # Canonical C-03 button + cancel; every other warehouse is excluded.
         self.assertEqual(len(keyboard), 2)
-        self.assertEqual(keyboard[0][0].text, "Tayyor A")
+        self.assertEqual(keyboard[0][0].text, "C-03")
 
     async def test_no_eligible_warehouse_still_lists_reasons(self):
         query = _query("vh:tok:new")
@@ -105,8 +111,8 @@ class VehicleHandoffSafetyTest(unittest.IsolatedAsyncioTestCase):
             state = await vh.menu_callback(SimpleNamespace(callback_query=query), context)
         self.assertEqual(state, ConversationHandler.END)
         text = query.edit_message_text.await_args.args[0]
-        self.assertIn("C-05", text)
-        self.assertIn("dona qoldiq yo‘q", text)
+        self.assertNotIn("C-05", text)
+        self.assertIn("C-03", text)
 
     async def test_weight_entry_appends_item_and_shows_cart(self):
         update = SimpleNamespace(effective_user=SimpleNamespace(id=10), message=_message("7.5"))
@@ -345,6 +351,21 @@ class VehicleHandoffSafetyTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("13 500 so‘m", success_text)
         query.message.reply_document.assert_awaited_once()
         confirm.assert_not_called()
+
+    async def test_review_shows_expected_package_count_when_available(self):
+        query = _query("vh:tok:finish")
+        state = {
+            "token": "tok", "done": set(),
+            "warehouse": {"id": 4, "name": "A"},
+            "cart": [{"mahsulot_id": 29, "name": "P", "quantity": 150,
+                      "weight": 15, "pieces_per_box": 100}],
+        }
+        with patch.object(vh, "_admin", return_value=True), \
+             patch.object(vh, "get_mahsulot_prices", return_value={29: 1}):
+            result = await vh.cart_callback(
+                SimpleNamespace(callback_query=query), _ctx(state))
+        self.assertEqual(result, vh.REVIEW)
+        self.assertIn("2 ta", query.edit_message_text.await_args.args[0])
 
     async def test_lifecycle_warning_does_not_perform_transition(self):
         query = _query("vh:tok:warn:stock:8")

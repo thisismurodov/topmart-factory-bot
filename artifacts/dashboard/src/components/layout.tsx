@@ -128,7 +128,7 @@ export function Layout({ children }: { children: ReactNode }) {
       <aside className="w-16 md:w-64 bg-sidebar border-r border-sidebar-border flex flex-col shrink-0">
         <div className="h-16 flex items-center justify-center md:justify-start px-3 md:px-6 border-b border-sidebar-border bg-sidebar-accent/50">
           <ShoppingCart className="w-6 h-6 text-sidebar-foreground md:mr-3 shrink-0" />
-          <span className="hidden md:inline font-bold text-lg tracking-tight text-sidebar-foreground uppercase">TopMart ERP</span>
+          <span className="hidden md:inline font-bold text-lg tracking-tight text-sidebar-foreground uppercase">Diyor Mahsulotlari ERP</span>
         </div>
         <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
           {NAV_ITEMS.map((item) => {

@@ -8,7 +8,12 @@ import logging
 import urllib.error
 import urllib.request
 
-from .config import API_BASE_URL, AI_INTERNAL_KEY, VEHICLE_DISTRIBUTION_BOT_KEY
+from .config import (
+    API_BASE_URL,
+    AI_INTERNAL_KEY,
+    VEHICLE_DISTRIBUTION_BOT_KEY,
+    WAREHOUSE_BOT_KEY,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -66,6 +71,93 @@ def vehicle_get(path: str) -> tuple[bool, object]:
 def vehicle_post(path: str, payload: dict | None = None) -> tuple[bool, object]:
     """Generic dedicated-key POST to a vehicle-distribution endpoint."""
     return _vehicle_request("POST", path, payload)
+
+
+def _internal_request(
+    method: str, path: str, payload: dict | None = None, chat_id: int | None = None,
+) -> tuple[bool, object]:
+    if not API_BASE_URL:
+        return False, "API_BASE_URL o'rnatilmagan"
+    if not AI_INTERNAL_KEY:
+        return False, "AI_INTERNAL_KEY o'rnatilmagan"
+    headers = {
+        "Content-Type": "application/json",
+        "x-internal-key": AI_INTERNAL_KEY,
+    }
+    if chat_id is not None:
+        headers["x-telegram-chat-id"] = str(int(chat_id))
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    req = urllib.request.Request(
+        API_BASE_URL.rstrip("/") + path, data=data, headers=headers, method=method
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = resp.read().decode("utf-8")
+            return True, json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as exc:
+        try:
+            body = json.loads(exc.read().decode("utf-8"))
+            return False, body.get("error") or f"HTTP {exc.code}"
+        except Exception:
+            return False, f"HTTP {exc.code}"
+    except Exception as exc:
+        _log.warning("internal %s %s so'rovida xato: %s", method, path, exc)
+        return False, str(exc)
+
+
+def _warehouse_request(
+    method: str, path: str, payload: dict | None = None, chat_id: int | None = None,
+) -> tuple[bool, object]:
+    if not API_BASE_URL:
+        return False, "API_BASE_URL o'rnatilmagan"
+    if not WAREHOUSE_BOT_KEY:
+        return False, "WAREHOUSE_BOT_KEY o'rnatilmagan"
+    headers = {
+        "Content-Type": "application/json",
+        "x-warehouse-bot-key": WAREHOUSE_BOT_KEY,
+    }
+    if chat_id is not None:
+        headers["x-telegram-chat-id"] = str(int(chat_id))
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    req = urllib.request.Request(
+        API_BASE_URL.rstrip("/") + path, data=data, headers=headers, method=method
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = resp.read().decode("utf-8")
+            return True, json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as exc:
+        try:
+            body = json.loads(exc.read().decode("utf-8"))
+            return False, body.get("error") or f"HTTP {exc.code}"
+        except Exception:
+            return False, f"HTTP {exc.code}"
+    except Exception as exc:
+        _log.warning("warehouse %s %s so'rovida xato: %s", method, path, exc)
+        return False, str(exc)
+
+
+def list_external_purchase_products(chat_id: int) -> tuple[bool, object]:
+    return _warehouse_request("GET", "/topmart/external-products", chat_id=chat_id)
+
+
+def receive_external_purchase(
+    product_id: int,
+    supplier: str,
+    quantity: int,
+    total_weight_kg: str | float,
+    total_cost: str | float,
+    receipt_reference: str,
+    chat_id: int,
+) -> tuple[bool, object]:
+    return _warehouse_request("POST", "/topmart/external-purchases", {
+        "productId": product_id,
+        "supplier": supplier,
+        "quantity": quantity,
+        "totalWeightKg": total_weight_kg,
+        "totalCost": total_cost,
+        "receiptReference": receipt_reference,
+    }, chat_id=chat_id)
 
 
 def list_vehicle_handoffs() -> tuple[bool, object]:

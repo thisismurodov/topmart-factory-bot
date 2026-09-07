@@ -20,4 +20,5 @@ source = "artifacts/telegram-bot"
 
 [services.deploy]
 startCommand = "python3 main.py"
+overlapSeconds = 0
 restartPolicyType = "on_failure"

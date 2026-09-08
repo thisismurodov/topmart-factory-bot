@@ -1,3 +1,151 @@
+import { pool, db, adminUsersTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
+import bcrypt from "bcryptjs";
+import { logger } from "./lib/logger";
+
+// API server cold-start DB bootstrap. Runs on every boot and is fully
+// idempotent (CREATE TABLE IF NOT EXISTS / ADD COLUMN IF NOT EXISTS) so it is
+// safe against a brand-new empty DB as well as the existing production DB.
+//
+// IMPORTANT: this function is the single source of truth for what the API
+// guarantees to exist at runtime. The fresh-db-boot test imports and runs it
+// against a throwaway database, so keep all schema bootstrapping here (do not
+// inline schema DDL back into index.ts).
+export async function initDb(): Promise<void> {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS print_agent_health (
+      agent_id TEXT PRIMARY KEY,
+      printer_name TEXT NOT NULL,
+      printer_available BOOLEAN NOT NULL,
+      media_valid BOOLEAN NOT NULL,
+      printable_area_valid BOOLEAN NOT NULL,
+      physical_width_mm NUMERIC(8,2),
+      physical_height_mm NUMERIC(8,2),
+      printable_width_mm NUMERIC(8,2),
+      printable_height_mm NUMERIC(8,2),
+      healthy BOOLEAN NOT NULL,
+      detail TEXT NOT NULL DEFAULT '',
+      last_seen_at TIMESTAMP WITH TIME ZONE NOT NULL,
+      last_transition_at TIMESTAMP WITH TIME ZONE NOT NULL,
+      last_notified_status TEXT,
+      notified_chat_ids TEXT[] NOT NULL DEFAULT '{}',
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+      CONSTRAINT print_agent_health_notified_status_check
+        CHECK (last_notified_status IS NULL OR last_notified_status IN ('healthy','unhealthy'))
+    )
+  `);
+  await pool.query(`
+    ALTER TABLE print_agent_health
+      ADD COLUMN IF NOT EXISTS notified_chat_ids TEXT[] NOT NULL DEFAULT '{}'
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_print_agent_health_last_seen
+      ON print_agent_health (last_seen_at)
+  `);
+
+  // admin_users jadvali (Drizzle schema bor, lekin Railway DB'da bo'lmasligi mumkin)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS admin_users (
+      id SERIAL PRIMARY KEY,
+      username TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'admin',
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  // admin_sessions — Drizzle sxemasida yo'q, raw SQL bilan yaratiladi
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS admin_sessions (
+      id SERIAL PRIMARY KEY,
+      token TEXT NOT NULL UNIQUE,
+      user_id INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  // products.weight (og'irlik) — runtime DB (Railway) ustuniga idempotent qo'shamiz.
+  // drizzle.config bo'sh Replit DB'ga ishlaydi, shuning uchun bu ALTER kerak.
+  await pool.query(`
+    ALTER TABLE IF EXISTS products
+      ADD COLUMN IF NOT EXISTS weight NUMERIC(12,3) NOT NULL DEFAULT 1
+  `);
+
+  // products.pieces_per_box — qutidagi dona soni (etiketika: 1 quti = N dona)
+  await pool.query(`
+    ALTER TABLE IF EXISTS products
+      ADD COLUMN IF NOT EXISTS pieces_per_box INTEGER NOT NULL DEFAULT 1
+  `);
+
+  // products.roll_length_m — o'ramdagi metr (etiketkadagi METRI qatori profildan olinadi)
+  await pool.query(`
+    ALTER TABLE IF EXISTS products
+      ADD COLUMN IF NOT EXISTS roll_length_m NUMERIC(12,2) NOT NULL DEFAULT 0
+  `);
+
+  // products.in_sales / in_production — Bitta mahsulot bazasi modullari (Task 104):
+  // bitta master yozuv savdo va ishlab chiqarish bo'limlarida qaysi rejimda
+  // ishlatilishini belgilaydi.
+  await pool.query(`
+    ALTER TABLE IF EXISTS products
+      ADD COLUMN IF NOT EXISTS in_sales BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS in_production BOOLEAN NOT NULL DEFAULT TRUE
+  `);
+
+  // products.cost_price — qo'lda tan narx (savdo mahsulotlari uchun): >0 bo'lsa
+  // BOM/mehnat/elektr o'rniga TO'LIQ tan narx sifatida ishlatiladi.
+  await pool.query(`
+    ALTER TABLE IF EXISTS products
+      ADD COLUMN IF NOT EXISTS cost_price NUMERIC(12,2) NOT NULL DEFAULT 0
+  `);
+
+  // Backfill: savdo katalogiga (distribution.mahsulotlar) SKU orqali bog'langan
+  // mahsulotlar avtomatik "savdoda ishlatiladi" deb belgilanadi. Idempotent va
+  // o'z-o'zini tuzatadi: in_sales o'chirilsa sync mahsulotni faol=0 qiladi,
+  // shuning uchun bu backfill uni qayta yoqmaydi.
+  await pool.query(`
+    DO $$ BEGIN
+      IF to_regclass('distribution.mahsulotlar') IS NOT NULL THEN
+        UPDATE products p SET in_sales = TRUE
+         WHERE p.in_sales = FALSE AND p.sku <> ''
+           AND EXISTS (SELECT 1 FROM distribution.mahsulotlar m
+                        WHERE m.faol = 1 AND m.sku = p.sku);
+      END IF;
+    END $$
+  `);
+
+  // products.sku — yagona katalog identifikatori: bo'sh bo'lmagan SKU'lar unikal
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_products_sku_unique
+      ON products (sku) WHERE sku <> ''
+  `);
+
+  // raw_materials.currency — xom ashyo valyutasi (UZS yoki USD)
+  await pool.query(`
+    ALTER TABLE IF EXISTS raw_materials
+      ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'UZS'
+  `);
+
+  // product_price_tiers — hajm bo'yicha tier narxlash
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS product_price_tiers (
+      id           SERIAL PRIMARY KEY,
+      product_id   INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+      min_quantity NUMERIC(12,3) NOT NULL DEFAULT 0 CHECK (min_quantity >= 0),
+      max_quantity NUMERIC(12,3) NOT NULL DEFAULT 0 CHECK (max_quantity >= min_quantity),
+      price        NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (price >= 0),
+      currency     TEXT NOT NULL DEFAULT 'UZS' CHECK (currency IN ('UZS','USD')),
+      created_at   TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_ppt_product ON product_price_tiers(product_id)
+  `);
+
+  // packer_product_assignments — packer ishchilari uchun mahsulot biriktirishlar
+  // (bot init_db ham yaratadi, lekin API cold-start da mavjudligini kafolatlaymiz)
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS packer_product_assignments (
       id           SERIAL PRIMARY KEY,
       packer_name  TEXT NOT NULL,

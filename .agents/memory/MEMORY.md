@@ -62,3 +62,4 @@
 - [Pathless auth-wall ordering](pathless-auth-wall-ordering.md) — bot-key routers mount before ALL pathless walls; path-scoped walls list exact route families, never shared prefixes; instant 401 = mount order.
 - [OpenAPI strict responses & codegen](openapi-strict-responses.md) — new response field = spec (props+required) → api-spec codegen → every SQL/mapper site; UIs show names, raw #id only fallback.
 - [Route-end marker atomicity](route-end-marker-atomicity.md) — once-only gate markers must commit in the SAME txn as the gated work; marker-first + swallowed error = work suppressed forever.
+- [Railway Telegram bot deploys](railway-telegram-poller-deploys.md) — expose PORT /healthz, prevent poller overlap, and suppress HTTP INFO logs that can reveal Bot API tokens.

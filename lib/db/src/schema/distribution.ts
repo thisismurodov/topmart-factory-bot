@@ -1,3 +1,287 @@
+import { pgSchema, serial, text, integer, bigint, boolean, doublePrecision, timestamp, uniqueIndex, index, check, numeric, date } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { createInsertSchema } from "drizzle-zod";
+import { z } from "zod/v4";
+
+// Distribution module lives in its own Postgres schema so its Uzbek-named tables
+// (dokonlar, savdolar, ...) never collide with the public ERP tables.
+export const distribution = pgSchema("distribution");
+
+// Singleton factory → Top Mart mapping. customer_id and central_warehouse_id are
+// logical references to public customers/warehouses; the admin API validates
+// both existing rows before writing the one permitted row.
+export const topmartConfigTable = distribution.table(
+  "topmart_config",
+  {
+    id: integer("id").primaryKey().notNull().default(1),
+    customerId: integer("customer_id").notNull(),
+    centralWarehouseId: integer("central_warehouse_id").notNull(),
+    updatedBy: integer("updated_by"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check("topmart_config_singleton_check", sql`${t.id} = 1`),
+    uniqueIndex("uq_topmart_config_customer").on(t.customerId),
+    uniqueIndex("uq_topmart_config_warehouse").on(t.centralWarehouseId),
+  ],
+);
+
+/** Immutable proof that an already-issued batch label physically entered C-3
+ * against one credited Top Mart sale. This is provenance, not a custody ledger. */
+export const topmartLabelReceiptsTable = distribution.table(
+  "topmart_label_receipts",
+  {
+    id: serial("id").primaryKey(),
+    productionLabelId: integer("production_label_id").notNull(),
+    barcode: text("barcode").notNull(),
+    saleId: integer("sale_id").notNull(),
+    centralWarehouseId: integer("central_warehouse_id").notNull(),
+    productSku: text("product_sku").notNull(),
+    piecesInLabel: integer("pieces_in_label").notNull(),
+    weightKg: numeric("weight_kg", { precision: 12, scale: 3 }).notNull(),
+    receiptFingerprint: text("receipt_fingerprint").notNull(),
+    receivedBy: integer("received_by").notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("uq_topmart_label_receipts_production_label").on(t.productionLabelId),
+    uniqueIndex("uq_topmart_label_receipts_barcode").on(t.barcode),
+    index("idx_topmart_label_receipts_sale").on(t.saleId),
+    index("idx_topmart_label_receipts_warehouse").on(t.centralWarehouseId),
+    check("topmart_label_receipts_pieces_check", sql`${t.piecesInLabel} > 0`),
+    check("topmart_label_receipts_weight_check", sql`${t.weightKg} > 0`),
+  ],
+);
+
+export const topmartExternalPurchaseReceiptsTable = distribution.table(
+  "topmart_external_purchase_receipts",
+  {
+    id: serial("id").primaryKey(),
+    reference: text("reference").notNull(),
+    referenceKey: text("reference_key").notNull(),
+    requestFingerprint: text("request_fingerprint").notNull(),
+    /** Logical reference to public.products; distribution bot can boot independently. */
+    productId: integer("product_id").notNull(),
+    productName: text("product_name").notNull(),
+    supplier: text("supplier").notNull(),
+    quantity: integer("quantity").notNull(),
+    totalWeightKg: numeric("total_weight_kg", { precision: 12, scale: 3 }).notNull(),
+    totalCost: numeric("total_cost", { precision: 14, scale: 2 }).notNull(),
+    /** Logical reference to public.warehouses, validated transactionally by the API. */
+    c03WarehouseId: integer("c03_warehouse_id").notNull(),
+    /** Logical reference to public.stock_movements, created in the same API transaction. */
+    stockMovementId: integer("stock_movement_id").notNull(),
+    receivedBy: text("received_by").notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("uq_topmart_external_purchase_reference").on(t.referenceKey),
+    uniqueIndex("uq_topmart_external_purchase_movement").on(t.stockMovementId),
+    index("idx_topmart_external_purchase_product").on(t.productId, t.receivedAt),
+    check("topmart_external_purchase_quantity_check", sql`${t.quantity} > 0`),
+    check("topmart_external_purchase_weight_check", sql`${t.totalWeightKg} > 0`),
+    check("topmart_external_purchase_cost_check", sql`${t.totalCost} >= 0`),
+  ],
+);
+
+// Sotuv agentlari (sales agents / users)
+export const distUsersTable = distribution.table("users", {
+  id: serial("id").primaryKey(),
+  telegramId: bigint("telegram_id", { mode: "number" }).unique(),
+  name: text("name"),
+  role: text("role").default("agent"),
+  viloyat: text("viloyat"),
+  createdAt: text("created_at"),
+});
+
+// Do'konlar (stores / customers of the distributor)
+export const dokonlarTable = distribution.table("dokonlar", {
+  id: serial("id").primaryKey(),
+  nomi: text("nomi"),
+  egasi: text("egasi"),
+  telefon: text("telefon"),
+  viloyat: text("viloyat"),
+  hudud: text("hudud"),
+  latitude: doublePrecision("latitude"),
+  longitude: doublePrecision("longitude"),
+  foto: text("foto"),
+  agentId: bigint("agent_id", { mode: "number" }),
+  holat: text("holat").default("faol"),
+  createdAt: text("created_at"),
+  ownerTelegramId: bigint("owner_telegram_id", { mode: "number" }),
+  // Repeat system fields
+  firstOrderDate: text("first_order_date"),
+  lastOrderDate: text("last_order_date"),
+  totalOrders: integer("total_orders").default(0),
+  repeatOrders: integer("repeat_orders").default(0),
+  totalSales: bigint("total_sales", { mode: "number" }).default(0),
+  avgRepeatDays: doublePrecision("avg_repeat_days").default(0),
+});
+
+// Mahsulotlar (distributed products)
+export const distMahsulotlarTable = distribution.table("mahsulotlar", {
+  id: serial("id").primaryKey(),
+  nomi: text("nomi"),
+  narx: bigint("narx", { mode: "number" }),
+  birlik: text("birlik").default("dona"),
+  faol: integer("faol").default(1),
+  sku: text("sku").default(""),
+});
+
+// Savdolar (sales headers)
+export const savdolarTable = distribution.table(
+  "savdolar",
+  {
+    id: serial("id").primaryKey(),
+    dokonId: bigint("dokon_id", { mode: "number" }),
+    agentId: bigint("agent_id", { mode: "number" }),
+    jamiSumma: bigint("jami_summa", { mode: "number" }),
+    tolovTuri: text("tolov_turi"),
+    foto: text("foto"),
+    createdAt: text("created_at"),
+    operationKey: text("operation_key"),
+    operationFingerprint: text("operation_fingerprint"),
+    status: text("status").default("active"),
+    postedAt: timestamp("posted_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("idx_savdolar_agent").on(t.agentId),
+    uniqueIndex("uq_savdolar_operation_key")
+      .on(t.operationKey)
+      .where(sql`${t.operationKey} IS NOT NULL`),
+  ],
+);
+
+// Savdo tafsilot (sale line items)
+export const savdoTafsilotTable = distribution.table("savdo_tafsilot", {
+  id: serial("id").primaryKey(),
+  savdoId: bigint("savdo_id", { mode: "number" }),
+  mahsulotId: bigint("mahsulot_id", { mode: "number" }),
+  miqdor: doublePrecision("miqdor"),
+  narx: bigint("narx", { mode: "number" }),
+  summa: bigint("summa", { mode: "number" }),
+});
+
+/**
+ * FIFO receipt-lot COGS for Top Mart-only external products.
+ * allocatedQuantity uses the sale/catalog unit (pieces for dona, kg for kg);
+ * allocatedCost is UZS and keeps sub-tiyin precision so partial lots reconcile.
+ */
+export const topmartExternalCostAllocationsTable = distribution.table(
+  "topmart_external_cost_allocations",
+  {
+    id: serial("id").primaryKey(),
+    receiptId: integer("receipt_id").notNull().references(() => topmartExternalPurchaseReceiptsTable.id),
+    savdoId: bigint("savdo_id", { mode: "number" }).notNull(),
+    savdoTafsilotId: bigint("savdo_tafsilot_id", { mode: "number" }).notNull(),
+    /** Logical reference to public.products; distribution bot can boot independently. */
+    productId: integer("product_id").notNull(),
+    allocatedQuantity: numeric("allocated_quantity", { precision: 14, scale: 3 }).notNull(),
+    allocatedCost: numeric("allocated_cost", { precision: 20, scale: 6 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("uq_topmart_external_cost_receipt_detail").on(t.receiptId, t.savdoTafsilotId),
+    index("idx_topmart_external_cost_sale").on(t.savdoId),
+    index("idx_topmart_external_cost_product").on(t.productId),
+    check("topmart_external_cost_quantity_check", sql`${t.allocatedQuantity} > 0`),
+    check("topmart_external_cost_cost_check", sql`${t.allocatedCost} >= 0`),
+  ],
+);
+
+// Olmagan do'konlar (visited-but-no-order log)
+export const olmaganDokonlarTable = distribution.table("olmagan_dokonlar", {
+  id: serial("id").primaryKey(),
+  dokonId: bigint("dokon_id", { mode: "number" }),
+  agentId: bigint("agent_id", { mode: "number" }),
+  sabab: text("sabab"),
+  sababText: text("sabab_text"),
+  latitude: doublePrecision("latitude"),
+  longitude: doublePrecision("longitude"),
+  qaytishSanasi: text("qaytish_sanasi"),
+  bajarildi: integer("bajarildi").default(0),
+  createdAt: text("created_at"),
+  foto: text("foto"),
+});
+
+// Pul olish (cash collection / payments received)
+export const pulOlishTable = distribution.table("pul_olish", {
+  id: serial("id").primaryKey(),
+  dokonId: bigint("dokon_id", { mode: "number" }),
+  agentId: bigint("agent_id", { mode: "number" }),
+  summa: bigint("summa", { mode: "number" }),
+  createdAt: text("created_at"),
+});
+
+// Nasiya (credit / debt)
+export const nasiyaTable = distribution.table("nasiya", {
+  id: serial("id").primaryKey(),
+  dokonId: bigint("dokon_id", { mode: "number" }),
+  agentId: bigint("agent_id", { mode: "number" }),
+  savdoId: bigint("savdo_id", { mode: "number" }),
+  jamiSumma: bigint("jami_summa", { mode: "number" }),
+  tolangan: bigint("tolangan", { mode: "number" }).default(0),
+  qoldiq: bigint("qoldiq", { mode: "number" }),
+  createdAt: text("created_at"),
+  updatedAt: text("updated_at"),
+});
+
+// Mijoz balans (store running balance)
+export const mijozBalansTable = distribution.table("mijoz_balans", {
+  id: serial("id").primaryKey(),
+  dokonId: bigint("dokon_id", { mode: "number" }).unique(),
+  balans: bigint("balans", { mode: "number" }).default(0),
+});
+
+// Revisitlar (scheduled revisits)
+export const revisitlarTable = distribution.table(
+  "revisitlar",
+  {
+    id: serial("id").primaryKey(),
+    dokonId: bigint("dokon_id", { mode: "number" }),
+    agentId: bigint("agent_id", { mode: "number" }),
+    lastOrderDate: text("last_order_date"),
+    revisitDate: text("revisit_date"),
+    status: text("status").default("pending"),
+    createdAt: text("created_at"),
+  },
+  (t) => [index("idx_revisit_pending").on(t.revisitDate, t.status)],
+);
+
+// Agent plans (monthly targets)
+export const agentPlansTable = distribution.table(
+  "agent_plans",
+  {
+    id: serial("id").primaryKey(),
+    agentId: bigint("agent_id", { mode: "number" }),
+    oy: text("oy"),
+    savdoPlan: bigint("savdo_plan", { mode: "number" }).default(0),
+    dokonPlan: integer("dokon_plan").default(0),
+    createdAt: text("created_at"),
+  },
+  (t) => [uniqueIndex("uq_agent_plans_agent_oy").on(t.agentId, t.oy)],
+);
+
+// Delivery agents
+export const deliveryAgentsTable = distribution.table("delivery_agents", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  telefon: text("telefon"),
+  tugilganKun: text("tugilgan_kun"),
+  mashinaTuri: text("mashina_turi"),
+  mashinaNomeri: text("mashina_nomeri"),
+  hudud: text("hudud"),
+  telegramId: bigint("telegram_id", { mode: "number" }),
+  faol: integer("faol").default(1),
+  createdAt: text("created_at"),
+});
+
+// Delivery routes
+export const deliveryRoutesTable = distribution.table(
+  "delivery_routes",
+  {
+    id: serial("id").primaryKey(),
+    deliveryAgentId: bigint("delivery_agent_id", { mode: "number" }).notNull(),
     kun: integer("kun").notNull(),
     dokonId: bigint("dokon_id", { mode: "number" }).notNull(),
     tartib: integer("tartib").default(0),

@@ -1,3 +1,61 @@
+import { execFileSync } from "node:child_process";
+import path from "node:path";
+import { getTableColumns } from "drizzle-orm";
+import type { Column } from "drizzle-orm";
+import { getTableConfig } from "drizzle-orm/pg-core";
+import pg from "pg";
+import {
+  normalizeDrizzleDefault,
+  normalizeRuntimeDefault,
+  normalizeType,
+  withDatabase,
+} from "./drift-utils";
+import { provisionLocalTestPostgres } from "./local-test-postgres";
+import {
+  agentLocationsTable,
+  aiSuggestCacheTable,
+  agentPlansTable,
+  deliveryAgentsTable,
+  deliveryRoutesTable,
+  distMahsulotlarTable,
+  distUsersTable,
+  dokonlarTable,
+  dokonLocationLogTable,
+  fieldOpsTable,
+  fieldRouteOrdersTable,
+  mijozBalansTable,
+  nasiyaTable,
+  olmaganDokonlarTable,
+  pulOlishTable,
+  revisitlarTable,
+  savdolarTable,
+  savdoTafsilotTable,
+  vehiclesTable,
+  vehicleAssignmentsTable,
+  vehicleHandoffsTable,
+  vehicleHandoffItemsTable,
+  vehicleUnitEventsTable,
+  vehicleSaleAllocationsTable,
+  vehicleLabelClaimsTable,
+  vehicleLabelPrepareSessionsTable,
+  vehicleLabelPrintSessionsTable,
+  vehicleStockTargetsTable,
+  vehicleReplenishmentRequestsTable,
+  vehicleReplenishmentOutboxTable,
+  vehicleReconciliationsTable,
+  vehicleReconciliationItemsTable,
+  vehicleReturnsTable,
+  vehicleReturnItemsTable,
+  vehicleRouteReportsTable,
+  topmartConfigTable,
+  topmartLabelReceiptsTable,
+  topmartExternalPurchaseReceiptsTable,
+  topmartExternalCostAllocationsTable,
+} from "@workspace/db";
+
+// Distribution sxemasi UCH joyda ta'riflangan va qo'lda sinxron saqlanadi:
+//
+//   1. Bot runtime DDL — artifacts/distribution-bot/database/connection.py
 //      (_INIT_DDL, har startupda ishlaydi)
 //   2. Mustaqil DDL skript — scripts/src/init-distribution.ts
 //   3. Kanonik Drizzle mirror — lib/db/src/schema/distribution.ts

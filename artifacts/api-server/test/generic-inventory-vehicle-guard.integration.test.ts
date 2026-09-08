@@ -180,7 +180,7 @@ beforeAll(async () => {
   const warehouses = await db.query(
     `INSERT INTO warehouses(name, location_type, purpose) VALUES
        ('General A','general','finished'),
-       ('General B','container','finished'),
+       ('C-03','container','finished'),
        ('Vehicle','vehicle','finished'),
        ('Raw Warehouse','general','raw'),
        ('General Purpose Warehouse','general','general')
@@ -192,7 +192,7 @@ beforeAll(async () => {
     `INSERT INTO products(name, unit_type, weight) VALUES
        ('Qty Product','dona',2.5),('Kg Product','kg',1);
      INSERT INTO batches(product, quantity, weight_kg) VALUES ('Kg Product',10,20);
-     INSERT INTO customers(name) VALUES ('Test Customer');
+     INSERT INTO customers(name) VALUES ('Top Mart');
      INSERT INTO admin_users(id,role) VALUES (1,'admin')`,
   );
 

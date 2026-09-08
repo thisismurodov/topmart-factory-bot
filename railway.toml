@@ -11,7 +11,7 @@ dockerfilePath = "artifacts/api-server/Dockerfile"
 
 [services.deploy]
 startCommand = "node --enable-source-maps /workspace/artifacts/api-server/dist/index.mjs"
-healthcheckPath = "/api/health"
+healthcheckPath = "/api/healthz"
 restartPolicyType = "on_failure"
 
 [[services]]

@@ -1,3 +1,580 @@
+"""Connection layer: PostgreSQL pool, transactions, init DDL.
+
+Rules:
+- The ONLY place a psycopg2 connection is ever opened.
+- Connection URL comes from env (RAILWAY_DATABASE_URL preferred, else
+  DATABASE_URL) — never hardcoded.
+- Every checkout goes through the pool; per-command connects are forbidden.
+- All queries use native PostgreSQL syntax (%s params, RETURNING id).
+"""
+
+import logging
+import os
+import threading
+from contextlib import contextmanager
+
+import psycopg2
+import psycopg2.pool
+
+log = logging.getLogger("distribution.db")
+
+DB_URL = os.environ.get("RAILWAY_DATABASE_URL") or os.environ.get("DATABASE_URL")
+if not DB_URL:
+    raise RuntimeError("RAILWAY_DATABASE_URL or DATABASE_URL must be set")
+_DB_SSL = bool(os.environ.get("RAILWAY_DATABASE_URL"))
+
+_POOL_MIN = int(os.environ.get("DB_POOL_MIN", "1"))
+_POOL_MAX = int(os.environ.get("DB_POOL_MAX", "10"))
+
+_pool = None
+_pool_lock = threading.Lock()
+
+
+class DatabaseUnavailable(Exception):
+    """Raised when no healthy connection can be obtained from the pool."""
+
+
+def _connect_kwargs():
+    kw = {
+        "dsn": DB_URL,
+        # Keep long-idle pooled connections alive through NAT/proxies.
+        "keepalives": 1,
+        "keepalives_idle": 60,
+        "keepalives_interval": 15,
+        "keepalives_count": 3,
+        # Set search_path once per connection — no extra round trip later.
+        "options": "-c search_path=distribution,public",
+    }
+    if _DB_SSL:
+        kw["sslmode"] = "require"
+    return kw
+
+
+def _get_pool():
+    global _pool
+    if _pool is None:
+        with _pool_lock:
+            if _pool is None:
+                _pool = psycopg2.pool.ThreadedConnectionPool(
+                    _POOL_MIN, _POOL_MAX, **_connect_kwargs()
+                )
+                log.info("DB pool created (min=%s max=%s)", _POOL_MIN, _POOL_MAX)
+    return _pool
+
+
+def _checkout():
+    """Get a healthy raw connection from the pool (validates, retries once)."""
+    pool = _get_pool()
+    last_err = None
+    for _ in range(3):
+        try:
+            conn = pool.getconn()
+        except psycopg2.pool.PoolError as e:
+            last_err = e
+            break
+        try:
+            if conn.closed:
+                raise psycopg2.InterfaceError("connection already closed")
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+            conn.rollback()
+            return conn
+        except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
+            last_err = e
+            log.warning("Discarding stale pooled connection: %s", e)
+            try:
+                pool.putconn(conn, close=True)
+            except Exception:
+                pass
+    log.error("Database unavailable: %s", last_err)
+    raise DatabaseUnavailable(str(last_err))
+
+
+class PooledConnection:
+    """Thin wrapper so `conn.close()` returns the connection to the pool.
+
+    Exposes the native psycopg2 cursor — %s params, real transactions.
+    """
+
+    def __init__(self, conn):
+        self._conn = conn
+        self._returned = False
+
+    def cursor(self):
+        return self._conn.cursor()
+
+    def commit(self):
+        self._conn.commit()
+
+    def rollback(self):
+        try:
+            self._conn.rollback()
+        except Exception:
+            pass
+
+    def close(self):
+        if self._returned:
+            return
+        self._returned = True
+        try:
+            self._conn.rollback()  # drop any uncommitted state before reuse
+        except Exception:
+            pass
+        try:
+            _get_pool().putconn(self._conn, close=bool(self._conn.closed))
+        except Exception:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+
+    def __del__(self):
+        # Safety net: if a handler raised before close(), return the
+        # connection to the pool on GC instead of leaking a pool slot.
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type is None:
+            try:
+                self._conn.commit()
+            except Exception:
+                self.rollback()
+                self.close()
+                raise
+        else:
+            self.rollback()
+        self.close()
+        return False
+
+
+def get_db():
+    """Checkout a pooled connection. Caller must close() (or use `with`)."""
+    return PooledConnection(_checkout())
+
+
+@contextmanager
+def transaction():
+    """All-or-nothing unit of work: yields a cursor; commit on success,
+    rollback on ANY exception. No partial saves."""
+    conn = PooledConnection(_checkout())
+    cur = conn.cursor()
+    try:
+        yield cur
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
+        conn.close()
+
+
+def close_pool():
+    global _pool
+    with _pool_lock:
+        if _pool is not None:
+            try:
+                _pool.closeall()
+            except Exception:
+                pass
+            _pool = None
+
+
+_INIT_DDL = """
+CREATE SCHEMA IF NOT EXISTS distribution;
+CREATE TABLE IF NOT EXISTS distribution.topmart_config (
+    id INTEGER PRIMARY KEY DEFAULT 1,
+    customer_id INTEGER NOT NULL,
+    central_warehouse_id INTEGER NOT NULL,
+    updated_by INTEGER,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    CONSTRAINT topmart_config_singleton_check CHECK (id = 1)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_topmart_config_customer
+    ON distribution.topmart_config (customer_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_topmart_config_warehouse
+    ON distribution.topmart_config (central_warehouse_id);
+
+CREATE TABLE IF NOT EXISTS distribution.topmart_external_purchase_receipts (
+    id                  SERIAL PRIMARY KEY,
+    reference           TEXT NOT NULL,
+    reference_key       TEXT NOT NULL,
+    request_fingerprint TEXT NOT NULL,
+    product_id          INTEGER NOT NULL,
+    product_name        TEXT NOT NULL,
+    supplier            TEXT NOT NULL,
+    quantity            INTEGER NOT NULL,
+    total_weight_kg     NUMERIC(12,3) NOT NULL,
+    total_cost          NUMERIC(14,2) NOT NULL,
+    c03_warehouse_id    INTEGER NOT NULL,
+    stock_movement_id   INTEGER NOT NULL,
+    received_by         TEXT NOT NULL,
+    received_at         TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    CONSTRAINT topmart_external_purchase_quantity_check CHECK (quantity > 0),
+    CONSTRAINT topmart_external_purchase_weight_check CHECK (total_weight_kg > 0),
+    CONSTRAINT topmart_external_purchase_cost_check CHECK (total_cost >= 0)
+);
+ALTER TABLE distribution.topmart_external_purchase_receipts
+    DROP CONSTRAINT IF EXISTS topmart_external_purchase_receipts_product_id_fkey,
+    DROP CONSTRAINT IF EXISTS topmart_external_purchase_receipts_c03_warehouse_id_fkey,
+    DROP CONSTRAINT IF EXISTS topmart_external_purchase_receipts_stock_movement_id_fkey;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_topmart_external_purchase_reference
+    ON distribution.topmart_external_purchase_receipts(reference_key);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_topmart_external_purchase_movement
+    ON distribution.topmart_external_purchase_receipts(stock_movement_id);
+CREATE INDEX IF NOT EXISTS idx_topmart_external_purchase_product
+    ON distribution.topmart_external_purchase_receipts(product_id, received_at);
+CREATE TABLE IF NOT EXISTS distribution.topmart_external_cost_allocations (
+    id SERIAL PRIMARY KEY,
+    receipt_id INTEGER NOT NULL REFERENCES distribution.topmart_external_purchase_receipts(id),
+    savdo_id BIGINT NOT NULL, savdo_tafsilot_id BIGINT NOT NULL,
+    product_id INTEGER NOT NULL,
+    allocated_quantity NUMERIC(14,3) NOT NULL,
+    allocated_cost NUMERIC(20,6) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    CONSTRAINT topmart_external_cost_quantity_check CHECK (allocated_quantity > 0),
+    CONSTRAINT topmart_external_cost_cost_check CHECK (allocated_cost >= 0)
+);
+ALTER TABLE distribution.topmart_external_cost_allocations
+    DROP CONSTRAINT IF EXISTS topmart_external_cost_allocations_product_id_fkey;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_topmart_external_cost_receipt_detail
+    ON distribution.topmart_external_cost_allocations(receipt_id,savdo_tafsilot_id);
+CREATE INDEX IF NOT EXISTS idx_topmart_external_cost_sale
+    ON distribution.topmart_external_cost_allocations(savdo_id);
+CREATE INDEX IF NOT EXISTS idx_topmart_external_cost_product
+    ON distribution.topmart_external_cost_allocations(product_id);
+CREATE TABLE IF NOT EXISTS distribution.users (
+    id SERIAL PRIMARY KEY, telegram_id BIGINT UNIQUE, name TEXT,
+    role TEXT DEFAULT 'agent', viloyat TEXT, created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS distribution.dokonlar (
+    id SERIAL PRIMARY KEY, nomi TEXT, egasi TEXT, telefon TEXT, viloyat TEXT,
+    hudud TEXT, latitude DOUBLE PRECISION, longitude DOUBLE PRECISION, foto TEXT,
+    agent_id BIGINT, holat TEXT DEFAULT 'faol', created_at TEXT, owner_telegram_id BIGINT,
+    first_order_date TEXT, last_order_date TEXT, total_orders INTEGER DEFAULT 0,
+    repeat_orders INTEGER DEFAULT 0, total_sales BIGINT DEFAULT 0, avg_repeat_days DOUBLE PRECISION DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS distribution.mahsulotlar (
+    id SERIAL PRIMARY KEY, nomi TEXT, narx BIGINT, birlik TEXT DEFAULT 'dona', faol INTEGER DEFAULT 1,
+    sku TEXT DEFAULT ''
+);
+ALTER TABLE distribution.mahsulotlar ADD COLUMN IF NOT EXISTS sku TEXT DEFAULT '';
+CREATE TABLE IF NOT EXISTS distribution.savdolar (
+    id SERIAL PRIMARY KEY, dokon_id BIGINT, agent_id BIGINT, jami_summa BIGINT,
+    tolov_turi TEXT, foto TEXT, created_at TEXT, operation_key TEXT,
+    operation_fingerprint TEXT, status TEXT DEFAULT 'active',
+    posted_at TIMESTAMP WITH TIME ZONE
+);
+ALTER TABLE distribution.savdolar
+    ADD COLUMN IF NOT EXISTS operation_key TEXT,
+    ADD COLUMN IF NOT EXISTS operation_fingerprint TEXT,
+    ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active',
+    ADD COLUMN IF NOT EXISTS posted_at TIMESTAMP WITH TIME ZONE;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_savdolar_operation_key
+    ON distribution.savdolar (operation_key) WHERE operation_key IS NOT NULL;
+CREATE TABLE IF NOT EXISTS distribution.savdo_tafsilot (
+    id SERIAL PRIMARY KEY, savdo_id BIGINT, mahsulot_id BIGINT, miqdor DOUBLE PRECISION, narx BIGINT, summa BIGINT
+);
+CREATE OR REPLACE FUNCTION distribution.rebuild_topmart_external_cost(p_product_id INTEGER)
+RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+    v_needed NUMERIC(14,3); v_available NUMERIC(14,3);
+    v_take NUMERIC(14,3); v_basis NUMERIC(14,3); sale_line RECORD; lot RECORD;
+BEGIN
+    IF to_regclass('public.products') IS NULL THEN RETURN; END IF;
+    PERFORM pg_advisory_xact_lock(hashtextextended('topmart-cogs:' || p_product_id::text,0));
+    DELETE FROM distribution.topmart_external_cost_allocations WHERE product_id=p_product_id;
+    FOR sale_line IN
+      SELECT st.id detail_id,st.savdo_id,st.miqdor::numeric(14,3) quantity,
+        lower(btrim(COALESCE(NULLIF(m.birlik,''),'dona'))) unit
+        FROM distribution.savdo_tafsilot st
+        JOIN distribution.savdolar s ON s.id=st.savdo_id
+        JOIN distribution.mahsulotlar m ON m.id=st.mahsulot_id
+        JOIN products p ON p.sku=m.sku AND p.active=TRUE
+       WHERE p.id=p_product_id AND p.in_sales=TRUE AND p.in_production=FALSE
+         AND m.faol=1 AND st.miqdor>0 AND COALESCE(s.status,'active')<>'cancelled'
+         AND (SELECT COUNT(*) FROM products px WHERE px.sku=m.sku AND px.active=TRUE)=1
+         AND (SELECT COUNT(*) FROM distribution.mahsulotlar mx
+               WHERE mx.sku=m.sku AND mx.faol=1)=1
+       ORDER BY s.created_at NULLS LAST,s.id,st.id
+    LOOP
+      v_needed:=sale_line.quantity;
+      FOR lot IN
+        SELECT r.id,r.total_cost,
+          CASE WHEN sale_line.unit='kg' THEN r.total_weight_kg ELSE r.quantity::numeric END basis,
+          COALESCE(SUM(a.allocated_quantity),0) used
+          FROM distribution.topmart_external_purchase_receipts r
+          LEFT JOIN distribution.topmart_external_cost_allocations a ON a.receipt_id=r.id
+         WHERE r.product_id=p_product_id
+         GROUP BY r.id,r.total_cost,r.total_weight_kg,r.quantity,r.received_at
+        HAVING CASE WHEN sale_line.unit='kg' THEN r.total_weight_kg ELSE r.quantity::numeric END
+          > COALESCE(SUM(a.allocated_quantity),0)
+         ORDER BY r.received_at,r.id
+      LOOP
+        v_basis:=lot.basis; v_available:=v_basis-lot.used; v_take:=LEAST(v_needed,v_available);
+        INSERT INTO distribution.topmart_external_cost_allocations
+          (receipt_id,savdo_id,savdo_tafsilot_id,product_id,allocated_quantity,allocated_cost)
+        VALUES (lot.id,sale_line.savdo_id,sale_line.detail_id,p_product_id,v_take,
+          ROUND((lot.total_cost::numeric*v_take/v_basis),6));
+        v_needed:=v_needed-v_take; EXIT WHEN v_needed<=0;
+      END LOOP;
+    END LOOP;
+END;
+$$;
+CREATE OR REPLACE FUNCTION distribution.allocate_topmart_external_cost()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    v_product_id INTEGER; v_old_product_id INTEGER;
+    v_product_ids INTEGER[]:=ARRAY[]::INTEGER[];
+BEGIN
+    IF to_regclass('public.products') IS NULL THEN
+      IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+      RETURN NEW;
+    END IF;
+    IF TG_OP IN ('UPDATE','DELETE') THEN
+      SELECT p.id INTO v_old_product_id
+        FROM distribution.mahsulotlar m JOIN products p ON p.sku=m.sku AND p.active=TRUE
+       WHERE m.id=OLD.mahsulot_id AND btrim(COALESCE(m.sku,''))<>''
+         AND p.in_sales=TRUE AND p.in_production=FALSE
+         AND (SELECT COUNT(*) FROM products px WHERE px.sku=m.sku AND px.active=TRUE)=1;
+      v_product_ids:=array_append(v_product_ids,v_old_product_id);
+    END IF;
+    IF TG_OP IN ('INSERT','UPDATE') THEN
+      SELECT p.id INTO v_product_id
+        FROM distribution.mahsulotlar m JOIN products p ON p.sku=m.sku AND p.active=TRUE
+       WHERE m.id=NEW.mahsulot_id AND btrim(COALESCE(m.sku,''))<>''
+         AND p.in_sales=TRUE AND p.in_production=FALSE
+         AND (SELECT COUNT(*) FROM products px WHERE px.sku=m.sku AND px.active=TRUE)=1;
+      v_product_ids:=array_append(v_product_ids,v_product_id);
+    END IF;
+    FOR v_product_id IN
+      SELECT DISTINCT x FROM unnest(v_product_ids) x WHERE x IS NOT NULL ORDER BY x
+    LOOP
+      PERFORM distribution.rebuild_topmart_external_cost(v_product_id);
+    END LOOP;
+    IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS topmart_external_cost_allocate ON distribution.savdo_tafsilot;
+CREATE TRIGGER topmart_external_cost_allocate
+AFTER INSERT OR UPDATE OF savdo_id,mahsulot_id,miqdor OR DELETE ON distribution.savdo_tafsilot
+FOR EACH ROW EXECUTE FUNCTION distribution.allocate_topmart_external_cost();
+CREATE OR REPLACE FUNCTION distribution.sync_topmart_external_cost_sale_status()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    v_product_id INTEGER;
+BEGIN
+    IF NEW.status IS NOT DISTINCT FROM OLD.status THEN RETURN NEW; END IF;
+    IF to_regclass('public.products') IS NULL THEN RETURN NEW; END IF;
+    FOR v_product_id IN
+      SELECT DISTINCT p.id
+        FROM distribution.savdo_tafsilot st
+        JOIN distribution.mahsulotlar m ON m.id=st.mahsulot_id
+        JOIN products p ON p.sku=m.sku AND p.active=TRUE
+       WHERE st.savdo_id=NEW.id AND p.in_sales=TRUE AND p.in_production=FALSE
+         AND (SELECT COUNT(*) FROM products px WHERE px.sku=m.sku AND px.active=TRUE)=1
+       ORDER BY p.id
+    LOOP
+      PERFORM distribution.rebuild_topmart_external_cost(v_product_id);
+    END LOOP;
+    RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS topmart_external_cost_sale_status ON distribution.savdolar;
+CREATE TRIGGER topmart_external_cost_sale_status
+AFTER UPDATE OF status ON distribution.savdolar
+FOR EACH ROW EXECUTE FUNCTION distribution.sync_topmart_external_cost_sale_status();
+CREATE OR REPLACE FUNCTION distribution.sync_topmart_external_cost_product_mapping()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    v_product_id INTEGER; v_skus TEXT[]:=ARRAY[]::TEXT[];
+BEGIN
+    IF to_regclass('public.products') IS NULL THEN
+      IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+      RETURN NEW;
+    END IF;
+    IF TG_OP IN ('UPDATE','DELETE') THEN v_skus:=array_append(v_skus,OLD.sku); END IF;
+    IF TG_OP IN ('INSERT','UPDATE') THEN v_skus:=array_append(v_skus,NEW.sku); END IF;
+    FOR v_product_id IN
+      SELECT DISTINCT p.id FROM products p
+      JOIN unnest(v_skus) sku_value ON sku_value=p.sku
+      WHERE p.active=TRUE AND p.in_sales=TRUE AND p.in_production=FALSE
+        AND btrim(COALESCE(p.sku,''))<>''
+        AND (SELECT COUNT(*) FROM products px WHERE px.sku=p.sku AND px.active=TRUE)=1
+      ORDER BY p.id
+    LOOP
+      PERFORM distribution.rebuild_topmart_external_cost(v_product_id);
+    END LOOP;
+    IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS topmart_external_cost_product_mapping ON distribution.mahsulotlar;
+CREATE TRIGGER topmart_external_cost_product_mapping
+AFTER INSERT OR UPDATE OF sku,faol,birlik OR DELETE ON distribution.mahsulotlar
+FOR EACH ROW EXECUTE FUNCTION distribution.sync_topmart_external_cost_product_mapping();
+DO $$
+DECLARE v_product_id INTEGER;
+BEGIN
+    FOR v_product_id IN
+      SELECT DISTINCT product_id FROM distribution.topmart_external_purchase_receipts ORDER BY product_id
+    LOOP
+      PERFORM distribution.rebuild_topmart_external_cost(v_product_id);
+    END LOOP;
+END;
+$$;
+CREATE TABLE IF NOT EXISTS distribution.olmagan_dokonlar (
+    id SERIAL PRIMARY KEY, dokon_id BIGINT, agent_id BIGINT, sabab TEXT, sabab_text TEXT,
+    latitude DOUBLE PRECISION, longitude DOUBLE PRECISION, qaytish_sanasi TEXT,
+    bajarildi INTEGER DEFAULT 0, created_at TEXT, foto TEXT
+);
+CREATE TABLE IF NOT EXISTS distribution.pul_olish (
+    id SERIAL PRIMARY KEY, dokon_id BIGINT, agent_id BIGINT, summa BIGINT, created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS distribution.nasiya (
+    id SERIAL PRIMARY KEY, dokon_id BIGINT, agent_id BIGINT, savdo_id BIGINT, jami_summa BIGINT,
+    tolangan BIGINT DEFAULT 0, qoldiq BIGINT, created_at TEXT, updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS distribution.mijoz_balans (
+    id SERIAL PRIMARY KEY, dokon_id BIGINT UNIQUE, balans BIGINT DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_savdolar_agent ON distribution.savdolar (agent_id);
+CREATE TABLE IF NOT EXISTS distribution.revisitlar (
+    id SERIAL PRIMARY KEY, dokon_id BIGINT, agent_id BIGINT, last_order_date TEXT,
+    revisit_date TEXT, status TEXT DEFAULT 'pending', created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_revisit_pending ON distribution.revisitlar (revisit_date, status);
+CREATE TABLE IF NOT EXISTS distribution.agent_plans (
+    id SERIAL PRIMARY KEY, agent_id BIGINT, oy TEXT, savdo_plan BIGINT DEFAULT 0,
+    dokon_plan INTEGER DEFAULT 0, created_at TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_plans_agent_oy ON distribution.agent_plans (agent_id, oy);
+CREATE TABLE IF NOT EXISTS distribution.delivery_agents (
+    id SERIAL PRIMARY KEY, name TEXT NOT NULL, telefon TEXT, tugilgan_kun TEXT,
+    mashina_turi TEXT, mashina_nomeri TEXT, hudud TEXT, telegram_id BIGINT,
+    faol INTEGER DEFAULT 1, created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS distribution.delivery_routes (
+    id SERIAL PRIMARY KEY, delivery_agent_id BIGINT NOT NULL, kun INTEGER NOT NULL,
+    dokon_id BIGINT NOT NULL, tartib INTEGER DEFAULT 0, created_at TEXT, added_by_dlv INTEGER DEFAULT 0,
+    force_saved INTEGER DEFAULT 0, biz_score INTEGER, biz_reasons TEXT
+);
+ALTER TABLE distribution.delivery_routes ADD COLUMN IF NOT EXISTS force_saved INTEGER DEFAULT 0;
+ALTER TABLE distribution.delivery_routes ADD COLUMN IF NOT EXISTS biz_score INTEGER;
+ALTER TABLE distribution.delivery_routes ADD COLUMN IF NOT EXISTS biz_reasons TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_routes_agent_kun_dokon ON distribution.delivery_routes (delivery_agent_id, kun, dokon_id);
+CREATE INDEX IF NOT EXISTS idx_routes_agent_day ON distribution.delivery_routes (delivery_agent_id, kun);
+CREATE TABLE IF NOT EXISTS distribution.agent_locations (
+    id SERIAL PRIMARY KEY, agent_id BIGINT NOT NULL, latitude DOUBLE PRECISION NOT NULL,
+    longitude DOUBLE PRECISION NOT NULL, source TEXT DEFAULT 'manual', created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_agent_locations_agent_time ON distribution.agent_locations (agent_id, created_at);
+CREATE TABLE IF NOT EXISTS distribution.field_ops (
+    id SERIAL PRIMARY KEY, client_op_id TEXT NOT NULL, agent_id BIGINT NOT NULL,
+    op_type TEXT NOT NULL, dokon_id BIGINT, result_id BIGINT, created_at TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_field_ops_client_op ON distribution.field_ops (client_op_id);
+CREATE TABLE IF NOT EXISTS distribution.dokon_location_log (
+    id SERIAL PRIMARY KEY, dokon_id BIGINT NOT NULL,
+    old_latitude DOUBLE PRECISION, old_longitude DOUBLE PRECISION,
+    new_latitude DOUBLE PRECISION, new_longitude DOUBLE PRECISION,
+    changed_by TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_dokon_location_log_dokon ON distribution.dokon_location_log (dokon_id, created_at);
+CREATE TABLE IF NOT EXISTS distribution.ai_suggest_cache (
+    cache_key TEXT PRIMARY KEY,
+    items TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS distribution.field_route_orders (
+    id SERIAL PRIMARY KEY, delivery_agent_id BIGINT NOT NULL, sana TEXT NOT NULL,
+    dokon_ids TEXT NOT NULL, op_seq BIGINT NOT NULL DEFAULT 0, updated_at TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_field_route_orders_agent_sana ON distribution.field_route_orders (delivery_agent_id, sana);
+
+CREATE OR REPLACE FUNCTION distribution.enforce_posted_vehicle_sale_immutable()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    IF OLD.operation_key LIKE 'vehicle-sale:%' AND OLD.status = 'posted' THEN
+        RAISE EXCEPTION 'posted vehicle sale is immutable' USING ERRCODE='55000';
+    END IF;
+    RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+END $$;
+DROP TRIGGER IF EXISTS savdolar_posted_vehicle_immutable ON distribution.savdolar;
+CREATE TRIGGER savdolar_posted_vehicle_immutable
+BEFORE UPDATE OR DELETE ON distribution.savdolar
+FOR EACH ROW EXECUTE FUNCTION distribution.enforce_posted_vehicle_sale_immutable();
+
+CREATE OR REPLACE FUNCTION distribution.enforce_posted_vehicle_sale_detail_immutable()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM distribution.savdolar s
+        WHERE s.id=OLD.savdo_id AND s.operation_key LIKE 'vehicle-sale:%'
+          AND s.status='posted'
+    ) THEN
+        RAISE EXCEPTION 'posted vehicle sale detail is immutable' USING ERRCODE='55000';
+    END IF;
+    RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+END $$;
+DROP TRIGGER IF EXISTS savdo_tafsilot_posted_vehicle_immutable ON distribution.savdo_tafsilot;
+CREATE TRIGGER savdo_tafsilot_posted_vehicle_immutable
+BEFORE UPDATE OR DELETE ON distribution.savdo_tafsilot
+FOR EACH ROW EXECUTE FUNCTION distribution.enforce_posted_vehicle_sale_detail_immutable();
+"""
+
+
+_VEHICLE_DDL = """
+CREATE TABLE IF NOT EXISTS distribution.vehicles (
+    id               SERIAL PRIMARY KEY,
+    plate_number     TEXT NOT NULL,
+    vehicle_type     TEXT NOT NULL DEFAULT 'DAMAS',
+    description      TEXT,
+    capacity_kg      NUMERIC(12,3) NOT NULL DEFAULT 0,
+    status           TEXT NOT NULL DEFAULT 'active',
+    warehouse_id     INTEGER NOT NULL,
+    created_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    CONSTRAINT vehicles_type_check     CHECK (vehicle_type IN ('DAMAS','LABO','NEXIA','SPARK','COBALT','OTHER')),
+    CONSTRAINT vehicles_status_check   CHECK (status IN ('active','inactive','in_warehouse','on_route','maintenance')),
+    CONSTRAINT vehicles_capacity_check CHECK (capacity_kg >= 0)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicles_plate     ON distribution.vehicles (plate_number);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicles_warehouse ON distribution.vehicles (warehouse_id);
+CREATE INDEX        IF NOT EXISTS idx_vehicles_status   ON distribution.vehicles (status);
+
+CREATE TABLE IF NOT EXISTS distribution.vehicle_assignments (
+    id                SERIAL PRIMARY KEY,
+    vehicle_id        INTEGER NOT NULL,
+    delivery_agent_id INTEGER NOT NULL,
+    assigned_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    unassigned_at     TIMESTAMP WITH TIME ZONE,
+    status            TEXT NOT NULL DEFAULT 'active',
+    notes             TEXT,
+    created_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    CONSTRAINT vehicle_assignments_status_check CHECK (status IN ('active','ended'))
+);
+CREATE INDEX IF NOT EXISTS idx_vehicle_assignments_vehicle ON distribution.vehicle_assignments (vehicle_id, status);
+CREATE INDEX IF NOT EXISTS idx_vehicle_assignments_agent   ON distribution.vehicle_assignments (delivery_agent_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_assignments_active_vehicle
+    ON distribution.vehicle_assignments (vehicle_id) WHERE status = 'active';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_assignments_active_agent
+    ON distribution.vehicle_assignments (delivery_agent_id) WHERE status = 'active';
+
+CREATE TABLE IF NOT EXISTS distribution.vehicle_handoffs (
+    id                    SERIAL PRIMARY KEY,
+    vehicle_id            INTEGER NOT NULL,
+    delivery_agent_id     INTEGER NOT NULL,
     source_warehouse_id   INTEGER NOT NULL,
     vehicle_warehouse_id  INTEGER NOT NULL,
     handoff_date          DATE NOT NULL,

@@ -1,3 +1,402 @@
+"""
+Ombor (Inventory) handlers for Telegram bot.
+Menu: ➕ Kirim | ➖ Chiqim | 🔄 O'tkazish | 📋 Qoldiqlar | 📜 Tarix
+Kirimda kategoriya tanlanadi: 📦 Tayyor mahsulot | 🧵 Xom ashyo
+"""
+import re
+import secrets
+
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
+from telegram.ext import (
+    ContextTypes, ConversationHandler, MessageHandler,
+    CallbackQueryHandler, filters,
+)
+from ..database import (
+    get_user_role, get_warehouses, get_warehouse_by_name,
+    get_stock_by_warehouse, get_stock_for_warehouse, get_stock_by_warehouse_typed,
+    record_movement, get_recent_movements, get_product_names,
+    get_sale_products, get_raw_material_names, get_store_product_names,
+    get_containers, get_inventory_line,
+    get_raw_materials_full, get_raw_material_by_id,
+    get_stock_locations, get_unit_for_item,
+)
+from ..api_client import (
+    adjust_inventory, adjust_raw_material, list_external_purchase_products,
+    receive_external_purchase,
+)
+
+# ── States ─────────────────────────────────────────────────────────────────────
+(
+    INV_MAIN,
+    INV_IN_CATEGORY, INV_IN_PRODUCT, INV_IN_QTY, INV_IN_WAREHOUSE, INV_IN_CONFIRM,
+    INV_OUT_WAREHOUSE, INV_OUT_PRODUCT, INV_OUT_QTY, INV_OUT_CONFIRM,
+    INV_TR_FROM, INV_TR_PRODUCT, INV_TR_QTY, INV_TR_TO, INV_TR_CONFIRM,
+    INV_ADJ_CONTAINER, INV_ADJ_PRODUCT, INV_ADJ_QTY, INV_ADJ_WEIGHT, INV_ADJ_CONFIRM,
+    INV_RADJ_MATERIAL, INV_RADJ_STOCK, INV_RADJ_CONFIRM,
+    INV_EXT_PRODUCT, INV_EXT_SUPPLIER, INV_EXT_QTY, INV_EXT_WEIGHT,
+    INV_EXT_COST, INV_EXT_REFERENCE, INV_EXT_CONFIRM,
+) = range(30)
+
+
+# ── Keyboards ──────────────────────────────────────────────────────────────────
+
+def _inv_main_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        [
+            ["➕ Kirim", "➖ Chiqim"],
+            ["🛒 Tashqi xarid kirimi"],
+            ["🔄 Skladlararo o'tkazish"],
+            ["✏️ Konteynerni to'g'rilash"],
+            ["🧵 Xom ashyoni to'g'rilash"],
+            ["📋 Qoldiqlar", "📜 Harakatlar tarixi"],
+            ["🔙 Asosiy menyu"],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def _warehouse_inline(warehouses: list[dict], prefix: str) -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton(w["name"], callback_data=f"{prefix}:{w['id']}:{w['name']}")]
+        for w in warehouses
+    ]
+    buttons.append([InlineKeyboardButton("❌ Bekor", callback_data=f"{prefix}:cancel")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def _product_inline(products: list[str], prefix: str, token: str) -> InlineKeyboardMarkup:
+    """Har bir mahsulot ALOHIDA qatorda — uzun nomlar to'liq ko'rinadi.
+    callback_data = '{prefix}:{token}:{indeks}' — 64-bayt limitiga har doim
+    sig'adi; token callbackni AYNAN shu klaviaturaga bog'laydi (eski xabar
+    tugmasi yangi ro'yxatga adashib tushmasligi uchun). Ro'yxat chaqiruvchi
+    tomonidan ctx.user_data['inv_plist'] = (token, ro'yxat) qilib saqlanadi."""
+    rows = [
+        [InlineKeyboardButton(p, callback_data=f"{prefix}:{token}:{i}")]
+        for i, p in enumerate(products)
+    ]
+    rows.append([InlineKeyboardButton("❌ Bekor", callback_data=f"{prefix}:cancel")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _new_plist_token() -> str:
+    return secrets.token_hex(3)  # 6 ta hex belgi
+
+
+_PLIST_CB_RE = re.compile(r"^([0-9a-f]{6}):(\d+)$")
+
+
+def _resolve_product_cb(q_data: str, ctx: ContextTypes.DEFAULT_TYPE) -> str | None:
+    """'kp:a1b2c3:3' callbackdan mahsulot nomini topadi. Token joriy
+    klaviaturanikiga mos kelmasa — None (eskirgan tugma). Eski (publishgacha
+    yuborilgan) nom-asosli callbacklar nomning o'zini qaytaradi; sof raqamli
+    nomlar ham token talabi tufayli indeks bilan adashmaydi."""
+    raw = q_data.split(":", 1)[1]
+    m = _PLIST_CB_RE.fullmatch(raw)
+    if not m:
+        return raw  # eski xabar: callbackda nomning o'zi
+    stored = ctx.user_data.get("inv_plist")
+    if not (isinstance(stored, tuple) and len(stored) == 2 and stored[0] == m.group(1)):
+        return None  # boshqa klaviaturaning tugmasi — eskirgan
+    plist = stored[1]
+    idx = int(m.group(2))
+    return plist[idx] if 0 <= idx < len(plist) else None
+
+
+def _is_allowed(chat_id: int) -> bool:
+    row = get_user_role(chat_id)
+    return row is not None and row["role"] in ("admin", "packer")
+
+
+def _is_external_purchase_allowed(chat_id: int) -> bool:
+    row = get_user_role(chat_id)
+    return row is not None and row["role"] in ("admin", "omborchi")
+
+
+def _fmt_amt(v) -> str:
+    """837.7 → '837.7', 61080 → '61 080', 4572.25 → '4 572.3'."""
+    s = f"{float(v):,.1f}".replace(",", " ")
+    return s[:-2] if s.endswith(".0") else s
+
+
+def _fmt_exact_decimal(v: str) -> str:
+    """Canonical decimalni floatga aylantirmay, kasr aniqligini saqlab guruhlaydi."""
+    integer, dot, fraction = str(v).partition(".")
+    grouped = f"{int(integer):,}".replace(",", " ")
+    return f"{grouped}.{fraction}" if dot else grouped
+
+
+def _stock_line(r: dict) -> str:
+    """Inventar qatori uchun 'X dona · Y kg' ko'rinishidagi matn."""
+    parts = []
+    if float(r.get("quantity") or 0) > 0:
+        parts.append(f"{_fmt_amt(r['quantity'])} dona")
+    if float(r.get("weight_kg") or 0) > 0:
+        parts.append(f"{_fmt_amt(r['weight_kg'])} kg")
+    return " · ".join(parts) if parts else "0"
+
+
+def _md(s) -> str:
+    """Telegram legacy-Markdown maxsus belgilarini ekranlash (_ * ` [)."""
+    return re.sub(r"([_*`\[])", r"\\\1", str(s))
+
+
+def _stock_list_text(items: list[dict], key: str = "product", max_lines: int = 25) -> str:
+    lines = [f"  • {_md(i[key])} — {_stock_line(i)}" for i in items[:max_lines]]
+    if len(items) > max_lines:
+        lines.append(f"  … yana {len(items) - max_lines} ta")
+    return "\n".join(lines)
+
+
+# ── Entry ──────────────────────────────────────────────────────────────────────
+
+async def ombor_entry(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if not (_is_allowed(update.effective_chat.id) or
+            _is_external_purchase_allowed(update.effective_chat.id)):
+        await update.message.reply_text("❌ Ruxsat yo'q.")
+        return ConversationHandler.END
+    if not _is_allowed(update.effective_chat.id):
+        await update.message.reply_text(
+            "🏬 *Ombor Boshqaruvi*\n\nAmalni tanlang:",
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardMarkup(
+                [["🛒 Tashqi xarid kirimi"], ["🔙 Asosiy menyu"]],
+                resize_keyboard=True,
+            ),
+        )
+        return INV_MAIN
+    await update.message.reply_text(
+        "🏬 *Ombor Boshqaruvi*\n\nAmalni tanlang:",
+        parse_mode="Markdown",
+        reply_markup=_inv_main_kb(),
+    )
+    return INV_MAIN
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 🛒 TOP MART TASHQI XARID KIRIMI — only server mutates canonical C-03
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _external_state(ctx: ContextTypes.DEFAULT_TYPE) -> dict:
+    return ctx.user_data.setdefault("external_purchase", {})
+
+
+async def external_purchase_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if not _is_external_purchase_allowed(update.effective_chat.id):
+        await update.message.reply_text("❌ Faqat omborchi yoki admin uchun.")
+        return INV_MAIN
+    ok, data = list_external_purchase_products(update.effective_chat.id)
+    if not ok:
+        await update.message.reply_text(f"❌ Mahsulotlar olinmadi: {data}")
+        return INV_MAIN
+    products = data if isinstance(data, list) else []
+    if not products:
+        await update.message.reply_text(
+            "❌ Faol Top Mart-only tashqi mahsulot topilmadi."
+        )
+        return INV_MAIN
+    token = _new_plist_token()
+    state = {"token": token, "products": products}
+    ctx.user_data["external_purchase"] = state
+    rows = [
+        [InlineKeyboardButton(
+            str(product["name"]), callback_data=f"extp:{token}:{index}"
+        )]
+        for index, product in enumerate(products)
+    ]
+    rows.append([InlineKeyboardButton("❌ Bekor", callback_data=f"extp:{token}:cancel")])
+    await update.message.reply_text(
+        "🛒 *Tashqi xarid kirimi*\n\nMahsulotni tanlang:",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(rows),
+    )
+    return INV_EXT_PRODUCT
+
+
+async def external_product_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    q = update.callback_query
+    await q.answer()
+    if not _is_external_purchase_allowed(update.effective_chat.id):
+        await q.edit_message_text("❌ Ruxsat yo'q.")
+        return ConversationHandler.END
+    state = _external_state(ctx)
+    parts = (q.data or "").split(":")
+    if len(parts) != 3 or parts[1] != state.get("token"):
+        await q.edit_message_text("⚠️ Tugma eskirgan. Jarayonni qaytadan boshlang.")
+        return INV_MAIN
+    if parts[2] == "cancel":
+        await q.edit_message_text("❌ Bekor qilindi.")
+        return INV_MAIN
+    try:
+        product = state["products"][int(parts[2])]
+    except (ValueError, IndexError, KeyError, TypeError):
+        await q.edit_message_text("⚠️ Noto'g'ri mahsulot. Qaytadan boshlang.")
+        return INV_MAIN
+    state["product"] = product
+    await q.edit_message_text(
+        f"📦 *{_md(product['name'])}*\n\nYetkazib beruvchi nomini kiriting:",
+        parse_mode="Markdown",
+    )
+    return INV_EXT_SUPPLIER
+
+
+async def external_supplier(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    value = (update.message.text or "").strip()
+    if not value or len(value) > 200:
+        await update.message.reply_text("⚠️ Yetkazib beruvchi nomini kiriting (200 belgigacha):")
+        return INV_EXT_SUPPLIER
+    _external_state(ctx)["supplier"] = value
+    await update.message.reply_text("📊 Dona miqdorini kiriting (musbat butun son):")
+    return INV_EXT_QTY
+
+
+async def external_quantity(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    value = (update.message.text or "").strip()
+    try:
+        quantity = int(value)
+        if quantity <= 0 or str(quantity) != value:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text("⚠️ Musbat butun dona sonini kiriting:")
+        return INV_EXT_QTY
+    _external_state(ctx)["quantity"] = quantity
+    await update.message.reply_text("⚖️ Jami og'irlikni kiriting (kg, musbat son):")
+    return INV_EXT_WEIGHT
+
+
+def _parse_decimal(text: str, *, positive: bool, scale: int) -> str | None:
+    normalized = text.strip().replace(",", ".")
+    if not re.fullmatch(rf"\d+(?:\.\d{{1,{scale}}})?", normalized):
+        return None
+    integer, _, fraction = normalized.partition(".")
+    integer = integer.lstrip("0") or "0"
+    fraction = fraction.rstrip("0")
+    canonical = f"{integer}.{fraction}" if fraction else integer
+    if (positive and canonical == "0"):
+        return None
+    return canonical
+
+
+async def external_weight(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    weight = _parse_decimal(update.message.text or "", positive=True, scale=3)
+    if weight is None:
+        await update.message.reply_text("⚠️ Musbat kg kiriting (3 kasr xonasigacha):")
+        return INV_EXT_WEIGHT
+    _external_state(ctx)["total_weight_kg"] = weight
+    await update.message.reply_text("💰 Jami xarajatni kiriting (0 yoki musbat, so'm):")
+    return INV_EXT_COST
+
+
+async def external_cost(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    cost = _parse_decimal(update.message.text or "", positive=False, scale=2)
+    if cost is None:
+        await update.message.reply_text("⚠️ 0 yoki musbat jami xarajat kiriting:")
+        return INV_EXT_COST
+    _external_state(ctx)["total_cost"] = cost
+    await update.message.reply_text(
+        "🧾 Xarid hujjati raqamini kiriting (takrorlanmas reference):"
+    )
+    return INV_EXT_REFERENCE
+
+
+async def external_reference(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    reference = (update.message.text or "").strip()
+    if not reference or len(reference) > 200:
+        await update.message.reply_text("⚠️ Hujjat raqami majburiy (200 belgigacha):")
+        return INV_EXT_REFERENCE
+    state = _external_state(ctx)
+    state["receipt_reference"] = reference
+    await update.message.reply_text(
+        "✅ *Tasdiqlang:*\n\n"
+        f"📦 {_md(state['product']['name'])}\n"
+        f"🏭 Yetkazuvchi: {_md(state['supplier'])}\n"
+        f"📊 {state['quantity']} dona\n"
+        f"⚖️ {_fmt_exact_decimal(state['total_weight_kg'])} kg\n"
+        f"💰 {_fmt_exact_decimal(state['total_cost'])} so'm\n"
+        f"🧾 {_md(reference)}\n"
+        "🏬 Qabul qiluvchi: C-03",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Tasdiqlash", callback_data="extconfirm:yes"),
+            InlineKeyboardButton("❌ Bekor", callback_data="extconfirm:no"),
+        ]]),
+    )
+    return INV_EXT_CONFIRM
+
+
+async def external_confirm_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    q = update.callback_query
+    await q.answer()
+    if not _is_external_purchase_allowed(update.effective_chat.id):
+        await q.edit_message_text("❌ Ruxsat yo'q.")
+        return ConversationHandler.END
+    if q.data != "extconfirm:yes":
+        await q.edit_message_text("❌ Bekor qilindi.")
+        return INV_MAIN
+    state = _external_state(ctx)
+    ok, result = receive_external_purchase(
+        product_id=int(state["product"]["id"]),
+        supplier=state["supplier"],
+        quantity=state["quantity"],
+        total_weight_kg=state["total_weight_kg"],
+        total_cost=state["total_cost"],
+        receipt_reference=state["receipt_reference"],
+        chat_id=update.effective_chat.id,
+    )
+    if not ok:
+        await q.edit_message_text(f"❌ Kirim bajarilmadi: {result}")
+        return INV_MAIN
+    replayed = isinstance(result, dict) and result.get("replayed") is True
+    await q.edit_message_text(
+        ("✅ Bu hujjat avval qabul qilingan — zaxira qayta o'zgarmadi."
+         if replayed else
+         "✅ Tashqi xarid C-03 ga qabul qilindi.")
+    )
+    ctx.user_data.pop("external_purchase", None)
+    return INV_MAIN
+
+
+async def ombor_back(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    from ..keyboards import (
+        admin_reply_keyboard, omborchi_reply_keyboard, packer_menu_keyboard,
+        main_menu_keyboard,
+    )
+    user = get_user_role(update.effective_chat.id)
+    role = user["role"] if user else ""
+    keyboard = (
+        omborchi_reply_keyboard() if role == "omborchi"
+        else packer_menu_keyboard() if role == "packer"
+        else admin_reply_keyboard() if role == "admin"
+        else main_menu_keyboard()
+    )
+    await update.message.reply_text("Asosiy menyuga qaytdingiz.", reply_markup=keyboard)
+    return ConversationHandler.END
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ➕  KIRIM — 1. Kategoriya tanlash
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def kirim_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text(
+        "➕ *Kirim*\n\nQaysi kategoriya?",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("📦 Tayyor mahsulot", callback_data="kcat:finished"),
+                InlineKeyboardButton("🧵 Xom ashyo",       callback_data="kcat:raw"),
+            ],
+            [InlineKeyboardButton("🏬 Ombor mahsuloti", callback_data="kcat:store")],
+            [InlineKeyboardButton("❌ Bekor", callback_data="kcat:cancel")],
+        ]),
+    )
+    return INV_IN_CATEGORY
+
+
+async def kirim_category_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    q = update.callback_query
+    await q.answer()
+    if q.data == "kcat:cancel":
+        await q.edit_message_text("❌ Bekor qilindi.")
         return INV_MAIN
 
     cat = q.data.split(":", 1)[1]  # 'finished' / 'store' / 'raw'

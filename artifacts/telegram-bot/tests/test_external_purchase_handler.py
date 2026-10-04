@@ -18,6 +18,40 @@ def _button_texts(keyboard):
 
 
 class ExternalPurchaseHandlerTest(unittest.IsolatedAsyncioTestCase):
+    def test_warehouse_permissions_preserve_admin_access_and_reject_other_roles(self):
+        for role in ("admin", "omborchi"):
+            with self.subTest(role=role), patch.object(
+                inventory, "get_user_role", return_value={"role": role}
+            ):
+                self.assertTrue(inventory._is_allowed(7))
+                self.assertTrue(inventory._is_external_purchase_allowed(7))
+        for role in ("worker", "blocked"):
+            with self.subTest(role=role), patch.object(
+                inventory, "get_user_role", return_value={"role": role}
+            ):
+                self.assertFalse(inventory._is_allowed(7))
+                self.assertFalse(inventory._is_external_purchase_allowed(7))
+        with patch.object(inventory, "get_user_role", return_value=None):
+            self.assertFalse(inventory._is_allowed(7))
+            self.assertFalse(inventory._is_external_purchase_allowed(7))
+
+    async def test_admin_and_omborchi_receive_same_inventory_actions(self):
+        menus = []
+        for role in ("admin", "omborchi"):
+            update = SimpleNamespace(
+                effective_chat=SimpleNamespace(id=7), message=_message(),
+            )
+            with patch.object(inventory, "get_user_role", return_value={"role": role}):
+                state = await inventory.ombor_entry(update, SimpleNamespace(user_data={}))
+            self.assertEqual(state, inventory.INV_MAIN)
+            menus.append(_button_texts(
+                update.message.reply_text.await_args.kwargs["reply_markup"]
+            ))
+        self.assertEqual(menus[0], menus[1])
+        for action in ("➕ Kirim", "➖ Chiqim", "🔄 Skladlararo o'tkazish",
+                       "🛒 Tashqi xarid kirimi", "📋 Qoldiqlar", "📜 Harakatlar tarixi"):
+            self.assertIn(action, menus[1])
+
     def test_role_keyboards_expose_warehouse_entry_and_admin_external_receipt(self):
         omborchi_buttons = _button_texts(omborchi_reply_keyboard())
         self.assertIn("🏬 Ombor", omborchi_buttons)

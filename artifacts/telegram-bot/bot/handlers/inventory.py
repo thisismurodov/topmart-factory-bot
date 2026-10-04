@@ -104,7 +104,7 @@ def _resolve_product_cb(q_data: str, ctx: ContextTypes.DEFAULT_TYPE) -> str | No
 
 def _is_allowed(chat_id: int) -> bool:
     row = get_user_role(chat_id)
-    return row is not None and row["role"] in ("admin", "packer")
+    return row is not None and row["role"] in ("admin", "packer", "omborchi")
 
 
 def _is_external_purchase_allowed(chat_id: int) -> bool:

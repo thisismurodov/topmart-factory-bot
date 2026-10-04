@@ -33,7 +33,7 @@ def admin_reply_keyboard() -> ReplyKeyboardMarkup:
 
 
 def omborchi_reply_keyboard() -> ReplyKeyboardMarkup:
-    """Warehouse operators can receive external purchases and fill vehicles."""
+    """Warehouse operators manage stock movements, purchases and vehicle loads."""
     return ReplyKeyboardMarkup(
         [
             ["🏬 Ombor"],

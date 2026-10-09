@@ -1177,6 +1177,26 @@ async def raw_adjust_confirm_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) 
 # 📋  QOLDIQLAR — kategoriya bo'yicha ajratilgan
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _stock_message_chunks(text: str, limit: int = 3500) -> list[str]:
+    """Keep every character; bound UTF-16 length even for emoji-heavy names."""
+    chunks, current, size = [], "", 0
+    for line in text.splitlines(keepends=True):
+        units = len(line.encode("utf-16-le")) // 2
+        if size + units > limit and current:
+            chunks.append(current)
+            current, size = "", 0
+        for char in line:
+            units = len(char.encode("utf-16-le")) // 2
+            if size + units > limit:
+                chunks.append(current)
+                current, size = "", 0
+            current += char
+            size += units
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 async def qoldiqlar(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     data = get_stock_by_warehouse_typed()
     finished = data.get("finished", [])
@@ -1186,11 +1206,11 @@ async def qoldiqlar(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         await update.message.reply_text("📋 Ombor bo'sh.", reply_markup=_inv_main_kb())
         return INV_MAIN
 
-    lines = ["📋 *Ombor Qoldiqlari*\n"]
+    lines = ["📋 Ombor Qoldiqlari\n"]
 
     # Tayyor mahsulotlar
     if finished:
-        lines.append("📦 *Tayyor mahsulotlar*")
+        lines.append("📦 Tayyor mahsulotlar")
         groups: dict = {}
         for r in finished:
             wh = r["warehouse_name"]
@@ -1203,7 +1223,7 @@ async def qoldiqlar(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
 
     # Xom ashyo
     if raw:
-        lines.append("🧵 *Xom ashyo*")
+        lines.append("🧵 Xom ashyo")
         groups2: dict = {}
         for r in raw:
             wh = r["warehouse_name"]
@@ -1213,11 +1233,13 @@ async def qoldiqlar(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
             for i in items:
                 lines.append(f"    • {i['product']} — {_stock_line(i)}")
 
-    await update.message.reply_text(
-        "\n".join(lines),
-        parse_mode="Markdown",
-        reply_markup=_inv_main_kb(),
-    )
+    chunks = _stock_message_chunks("\n".join(lines))
+    for index, text in enumerate(chunks):
+        await update.message.reply_text(
+            text,
+            parse_mode=None,
+            reply_markup=_inv_main_kb() if index == len(chunks) - 1 else None,
+        )
     return INV_MAIN
 
 

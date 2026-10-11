@@ -4189,6 +4189,28 @@ def mah_list(msg):
     if not is_admin(uid): return
     bot.send_message(uid,"🛍 Mahsulotlar bo'limi:",reply_markup=mah_menu_kb())
 
+def _catalog_chunks(text, limit=3500):
+    """Lossless plain-text chunks, bounded in Telegram UTF-16 units."""
+    chunks = []
+    current = ""
+    size = 0
+    for line in text.splitlines(keepends=True):
+        line_size = len(line.encode("utf-16-le")) // 2
+        if current and size + line_size > limit:
+            chunks.append(current)
+            current, size = "", 0
+        for char in line:
+            width = 2 if ord(char) > 0xFFFF else 1
+            if size + width > limit:
+                chunks.append(current)
+                current, size = "", 0
+            current += char
+            size += width
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 @bot.message_handler(func=lambda m:m.text=="📋 Mahsulotlar ro'yxati")
 def mah_royxat(msg):
     uid=msg.from_user.id
@@ -4199,7 +4221,10 @@ def mah_royxat(msg):
     if not rows: bot.send_message(uid,"❗ Mahsulotlar yo'q.",reply_markup=mah_menu_kb()); return
     text="🛍 Mahsulotlar ro'yxati:\n\n"
     for r in rows: text+=f"  [{r[0]}] {r[1]} — {fmt(r[2])}/{r[3]}\n"
-    bot.send_message(uid,text,reply_markup=mah_menu_kb())
+    chunks = _catalog_chunks(text)
+    for index, chunk in enumerate(chunks):
+        bot.send_message(uid, chunk,
+                         reply_markup=mah_menu_kb() if index == len(chunks)-1 else None)
 
 @bot.message_handler(func=lambda m:m.text=="➕ Mahsulot qo'shish")
 def mah_qosh_start(msg):

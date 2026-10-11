@@ -719,14 +719,14 @@ export const vehicleLabelClaimsTable = distribution.table(
     index("idx_vehicle_label_claims_return").on(t.returnId),
     check(
       "vehicle_label_claims_status_check",
-      sql`${t.status} IN ('prepared','printed','loaded','return_reserved','sold','returned')`,
+      sql`${t.status} IN ('prepared','printed','loaded','return_reserved','sold','returned','voided')`,
     ),
     check("vehicle_label_claims_weight_check", sql`${t.unitWeightKg} > 0`),
     check("vehicle_label_claims_pieces_in_label_check", sql`${t.piecesInLabel} > 0`),
     check("vehicle_label_claims_remaining_quantity_check", sql`${t.remainingQuantity} >= 0 AND ${t.remainingQuantity} <= ${t.piecesInLabel}`),
     check(
       "vehicle_label_claims_status_remaining_check",
-      sql`(${t.status} IN ('sold','returned') AND ${t.remainingQuantity} = 0)
+      sql`(${t.status} IN ('sold','returned','voided') AND ${t.remainingQuantity} = 0)
            OR (${t.status} IN ('prepared','printed','loaded','return_reserved') AND ${t.remainingQuantity} > 0)`,
     ),
     check(

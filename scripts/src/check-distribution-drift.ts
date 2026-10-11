@@ -542,11 +542,11 @@ const EXPECTED_CHECKS: CheckSpec[] = [
   { table: "vehicle_unit_events", name: "vehicle_unit_events_qty_check",  expr: normalizeExpr("quantity <> 0") },
   { table: "vehicle_sale_allocations", name: "vehicle_sale_allocations_qty_check",    expr: normalizeExpr("allocated_quantity > 0") },
   { table: "vehicle_sale_allocations", name: "vehicle_sale_allocations_weight_check", expr: normalizeExpr("allocated_weight_kg > 0") },
-  { table: "vehicle_label_claims", name: "vehicle_label_claims_status_check", expr: normalizeExpr("status IN ('prepared','printed','loaded','return_reserved','sold','returned')") },
+  { table: "vehicle_label_claims", name: "vehicle_label_claims_status_check", expr: normalizeExpr("status IN ('prepared','printed','loaded','return_reserved','sold','returned','voided')") },
   { table: "vehicle_label_claims", name: "vehicle_label_claims_weight_check", expr: normalizeExpr("unit_weight_kg > 0") },
   { table: "vehicle_label_claims", name: "vehicle_label_claims_pieces_in_label_check", expr: normalizeExpr("pieces_in_label > 0") },
   { table: "vehicle_label_claims", name: "vehicle_label_claims_remaining_quantity_check", expr: normalizeExpr("remaining_quantity >= 0 AND remaining_quantity <= pieces_in_label") },
-  { table: "vehicle_label_claims", name: "vehicle_label_claims_status_remaining_check", expr: normalizeExpr("(status IN ('sold','returned') AND remaining_quantity = 0) OR (status IN ('prepared','printed','loaded','return_reserved') AND remaining_quantity > 0)") },
+  { table: "vehicle_label_claims", name: "vehicle_label_claims_status_remaining_check", expr: normalizeExpr("(status IN ('sold','returned','voided') AND remaining_quantity = 0) OR (status IN ('prepared','printed','loaded','return_reserved') AND remaining_quantity > 0)") },
   { table: "vehicle_label_claims", name: "vehicle_label_claims_return_linkage_check", expr: normalizeExpr(`
     (status = 'return_reserved' AND return_id IS NOT NULL AND returned_at IS NULL AND returned_by IS NULL)
     OR (status = 'returned' AND

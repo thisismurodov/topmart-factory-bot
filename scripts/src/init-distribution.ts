@@ -706,12 +706,12 @@ CREATE TABLE IF NOT EXISTS distribution.vehicle_label_claims (
   operation_key       TEXT,
   created_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
   updated_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-  CONSTRAINT vehicle_label_claims_status_check CHECK (status IN ('prepared','printed','loaded','sold','returned')),
+  CONSTRAINT vehicle_label_claims_status_check CHECK (status IN ('prepared','printed','loaded','sold','returned','voided')),
   CONSTRAINT vehicle_label_claims_weight_check CHECK (unit_weight_kg > 0),
   CONSTRAINT vehicle_label_claims_pieces_in_label_check CHECK (pieces_in_label > 0),
   CONSTRAINT vehicle_label_claims_remaining_quantity_check CHECK (remaining_quantity >= 0 AND remaining_quantity <= pieces_in_label),
   CONSTRAINT vehicle_label_claims_status_remaining_check CHECK (
-    (status IN ('sold','returned') AND remaining_quantity = 0)
+    (status IN ('sold','returned','voided') AND remaining_quantity = 0)
     OR (status IN ('prepared','printed','loaded','return_reserved') AND remaining_quantity > 0)
   )
 );
@@ -1171,20 +1171,20 @@ ALTER TABLE distribution.vehicle_label_claims
   ADD COLUMN IF NOT EXISTS pieces_in_label INTEGER NOT NULL DEFAULT 1,
   ADD COLUMN IF NOT EXISTS remaining_quantity INTEGER NOT NULL DEFAULT 1;
 UPDATE distribution.vehicle_label_claims
-   SET remaining_quantity = CASE WHEN status IN ('sold','returned') THEN 0 ELSE 1 END
+   SET remaining_quantity = CASE WHEN status IN ('sold','returned','voided') THEN 0 ELSE 1 END
  WHERE remaining_quantity = 1;
 ALTER TABLE distribution.vehicle_label_claims
   DROP CONSTRAINT IF EXISTS vehicle_label_claims_status_check;
 ALTER TABLE distribution.vehicle_label_claims
   ADD CONSTRAINT vehicle_label_claims_status_check
-  CHECK (status IN ('prepared','printed','loaded','return_reserved','sold','returned'));
+  CHECK (status IN ('prepared','printed','loaded','return_reserved','sold','returned','voided'));
 ALTER TABLE distribution.vehicle_label_claims DROP CONSTRAINT IF EXISTS vehicle_label_claims_pieces_in_label_check;
 ALTER TABLE distribution.vehicle_label_claims ADD CONSTRAINT vehicle_label_claims_pieces_in_label_check CHECK (pieces_in_label > 0);
 ALTER TABLE distribution.vehicle_label_claims DROP CONSTRAINT IF EXISTS vehicle_label_claims_remaining_quantity_check;
 ALTER TABLE distribution.vehicle_label_claims ADD CONSTRAINT vehicle_label_claims_remaining_quantity_check CHECK (remaining_quantity >= 0 AND remaining_quantity <= pieces_in_label);
 ALTER TABLE distribution.vehicle_label_claims DROP CONSTRAINT IF EXISTS vehicle_label_claims_status_remaining_check;
 ALTER TABLE distribution.vehicle_label_claims ADD CONSTRAINT vehicle_label_claims_status_remaining_check CHECK (
-  (status IN ('sold','returned') AND remaining_quantity = 0)
+  (status IN ('sold','returned','voided') AND remaining_quantity = 0)
   OR (status IN ('prepared','printed','loaded','return_reserved') AND remaining_quantity > 0)
 );
 ALTER TABLE distribution.vehicle_label_claims

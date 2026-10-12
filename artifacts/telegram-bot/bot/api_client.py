@@ -257,6 +257,7 @@ def adjust_inventory(
     note: str = "",
     operator: str | None = None,
     chat_id: int | None = None,
+    expected_weight_kg: float | None = None,
 ) -> tuple[bool, str | None]:
     """POST /ombor/adjust — konteyner liniyasining miqdor (va kg) ni to'g'rilaydi.
 
@@ -277,6 +278,8 @@ def adjust_inventory(
     if operator:
         payload["operator"] = operator
     if chat_id is not None:
+        if expected_weight_kg is not None:
+            payload["expectedWeightKg"] = expected_weight_kg
         ok, result = _warehouse_request("POST", "/ombor/adjust", payload, chat_id=chat_id)
         return ok, None if ok else str(result)
 

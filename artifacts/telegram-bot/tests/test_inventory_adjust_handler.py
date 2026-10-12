@@ -50,6 +50,7 @@ class AdjustWeightTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(api.call_args.kwargs["weight_kg"], 30.6)
                     self.assertEqual(api.call_args.kwargs["qty"], 1200)
                     self.assertEqual(api.call_args.kwargs["chat_id"], 7)
+                    self.assertEqual(api.call_args.kwargs["expected_weight_kg"], 25.5)
                 self.assertIn("30.6 kg", update.callback_query.edit_message_text.await_args.args[0])
 
     async def test_invalid_weight_stays_on_input_without_calling_api(self):

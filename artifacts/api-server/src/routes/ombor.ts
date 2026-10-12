@@ -6,6 +6,7 @@ import { buildFlowGraph } from "../lib/flowGraph";
 import { buildDepartmentDetail } from "../lib/departmentDetail";
 import { requireAuthOrWarehouseBotKey } from "../middleware/requireAuthOrWarehouseBotKey";
 import { requireExternalPurchaseActor } from "./topmart";
+import { correctC03Weight } from "../lib/c03WeightCorrection";
 import {
   guardGenericInventoryWarehouses,
   genericInventoryWarehouseErrorStatus,
@@ -26,6 +27,7 @@ warehouseAdjustmentRouter.post("/ombor/adjust", (req, res, next) => {
     const actor = await requireExternalPurchaseActor(req, res);
     if (!actor) return;
     req.username = actor; // Never trust the caller's operator field on this path.
+    if (await correctC03Weight(req, res)) return;
     await adjustInventory(req, res);
   } catch (error) {
     next(error);

@@ -76,6 +76,7 @@ beforeAll(async () => {
       active BOOLEAN NOT NULL DEFAULT TRUE,
       location_type TEXT NOT NULL DEFAULT 'general',
       capacity_kg NUMERIC DEFAULT 20000
+      ,purpose TEXT NOT NULL DEFAULT 'finished'
     );
     CREATE TABLE user_roles (chat_id BIGINT PRIMARY KEY, worker_name TEXT, role TEXT);
     INSERT INTO user_roles VALUES (700001,'Test keeper','omborchi'),(700002,'Test worker','worker');
@@ -268,6 +269,41 @@ describe("Ombor container weight (kg) integrity", () => {
 });
 
 describe("Ombor recount (adjust) weight integrity", () => {
+  it("corrects only C-03 weight with audit, rejects quantity/stale edits, replays safely, blocks vehicles", async () => {
+    const previous = process.env.WAREHOUSE_BOT_KEY;
+    process.env.WAREHOUSE_BOT_KEY = "test-c03-key";
+    const headers = { "x-warehouse-bot-key": "test-c03-key", "x-telegram-chat-id": "700001" };
+    try {
+      const result = await pool.query("INSERT INTO warehouses(name,location_type) VALUES ('C-03','container'),('DM-001','vehicle') RETURNING id,name");
+      const c03 = result.rows.find((r: any) => r.name === "C-03").id;
+      const dm = result.rows.find((r: any) => r.name === "DM-001").id;
+      for (const id of [c03, dm]) await pool.query("INSERT INTO inventory(warehouse_id,product,quantity,weight_kg) VALUES($1,$2,1200,25.5)", [id,DONA]);
+      const body = { warehouseId:c03,product:DONA,qty:1200,weightKg:30.6,expectedWeightKg:25.5 };
+      const url = "/dedicated/ombor/adjust";
+      expect((await post(url,{...body,qty:1199},headers)).status).toBe(409);
+      expect((await post(url,{...body,expectedWeightKg:20},headers)).status).toBe(409);
+      expect((await post(url,{...body,weightKg:0},headers)).status).toBe(400);
+      expect((await post(url,{...body,warehouseId:dm},headers)).status).toBe(400);
+      expect((await post("/ombor/adjust",body)).status).toBe(400); // generic remains closed
+      expect((await post(url,body,headers)).status).toBe(200);
+      expect((await post(url,body,headers)).status).toBe(200); // retry, no duplicate audit
+      const stock = await pool.query("SELECT quantity,weight_kg FROM inventory WHERE warehouse_id=$1",[c03]);
+      expect(Number(stock.rows[0].quantity)).toBe(1200);
+      expect(Number(stock.rows[0].weight_kg)).toBe(30.6);
+      expect(weightOf(await items(dm),DONA)).toBe(25.5);
+      const log = await pool.query("SELECT quantity,weight_kg,created_by FROM stock_movements WHERE to_warehouse_id=$1",[c03]);
+      expect(log.rows).toHaveLength(1);
+      expect(Number(log.rows[0].quantity)).toBe(0);
+      expect(Number(log.rows[0].weight_kg)).toBe(5.1);
+      expect(log.rows[0].created_by).toBe("Test keeper");
+      await pool.query("DELETE FROM stock_movements WHERE to_warehouse_id=$1",[c03]);
+      await pool.query("DELETE FROM inventory WHERE warehouse_id=ANY($1::int[])",[[c03,dm]]);
+      await pool.query("DELETE FROM warehouses WHERE id=ANY($1::int[])",[[c03,dm]]);
+    } finally {
+      if(previous===undefined) delete process.env.WAREHOUSE_BOT_KEY;
+      else process.env.WAREHOUSE_BOT_KEY=previous;
+    }
+  });
   it("dedicated correction verifies key AND role, derives actor, and does not expose sibling routes", async () => {
     const previous = process.env.WAREHOUSE_BOT_KEY;
     process.env.WAREHOUSE_BOT_KEY = "test-only-warehouse-key";

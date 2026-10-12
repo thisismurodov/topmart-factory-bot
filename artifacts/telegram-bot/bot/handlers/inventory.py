@@ -995,6 +995,9 @@ async def adjust_qty(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         await update.message.reply_text("⚠️ 0 yoki musbat son kiriting:")
         return INV_ADJ_QTY
     ctx.user_data["adj_qty"] = qty
+    if str(ctx.user_data.get("adj_wh_name", "")).strip().upper() == "C-03" and qty != ctx.user_data["adj_old_qty"]:
+        await update.message.reply_text("C-03 da dona sonini o'zgartirmaymiz. Joriy dona sonini kiriting:")
+        return INV_ADJ_QTY
     await update.message.reply_text("⚖️ To'g'ri JAMI og'irlikni kiriting (kg, 0 yoki musbat son):")
     return INV_ADJ_WEIGHT
 
@@ -1051,6 +1054,7 @@ async def adjust_confirm_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
         note=f"Bot orqali tuzatish: {who}",
         operator=who,
         chat_id=update.effective_chat.id,
+        expected_weight_kg=ctx.user_data.get("adj_old_weight"),
     )
     if ok:
         msg = (

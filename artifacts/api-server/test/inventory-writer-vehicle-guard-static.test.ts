@@ -104,6 +104,7 @@ describe("static vehicle guard for every public.inventory writer", () => {
 
   it("allows no undiscovered inventory-mutating source file", () => {
     const known = [
+      "lib/c03WeightCorrection.ts",
       "routes/ombor.ts",
       "routes/inventory-v2.ts",
       "routes/sales.ts",

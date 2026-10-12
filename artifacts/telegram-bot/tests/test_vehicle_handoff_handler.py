@@ -68,13 +68,38 @@ class VehicleHandoffSafetyTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state, vh.QUANTITY)
         update.message.reply_text.assert_awaited_once()
 
-    async def test_weight_allows_at_most_three_decimal_places(self):
+    async def test_old_weight_screen_without_pending_product_expires(self):
         update = SimpleNamespace(effective_user=SimpleNamespace(id=10), message=_message("1.2345"))
         context = _ctx({})
         with patch.object(vh, "_admin", return_value=True):
             state = await vh.enter_weight(update, context)
-        self.assertEqual(state, vh.WEIGHT)
+        self.assertEqual(state, ConversationHandler.END)
+
+    async def test_quantity_automatically_uses_profile_without_weight_prompt(self):
+        update = SimpleNamespace(effective_user=SimpleNamespace(id=10), message=_message("300"))
+        state = {"token": "tok", "warehouse": {"id": 4, "name": "C-03"},
+                 "pending_product": {"mahsulot_id": 29, "name": "P",
+                                     "available_quantity": 1200, "unit_weight_kg": "0.025",
+                                     "pieces_per_box": 12}}
+        with patch.object(vh, "_admin", return_value=True):
+            result = await vh.enter_quantity(update, _ctx(state))
+        self.assertEqual(result, vh.CART)
+        self.assertEqual(state["cart"][0]["weight"], 7.5)
+        self.assertEqual(state["cart"][0]["quantity"], 300)
+        self.assertEqual(state["cart"][0]["pieces_per_box"], 12)
+        self.assertNotIn("pending_qty", state)
+        self.assertIn("300 dona × 0.025 kg = 7.500 kg", update.message.reply_text.call_args.args[0])
         update.message.reply_text.assert_awaited_once()
+
+    async def test_invalid_profile_never_adds_cart_item_or_falls_back_to_manual_kg(self):
+        for weight in (None, 0, -1, "NaN", "Infinity", "bad", "0.0255"):
+            with self.subTest(weight=weight):
+                update = SimpleNamespace(effective_user=SimpleNamespace(id=10), message=_message("300"))
+                state = {"pending_product": {"available_quantity": 1200, "unit_weight_kg": weight}}
+                with patch.object(vh, "_admin", return_value=True):
+                    result = await vh.enter_quantity(update, _ctx(state))
+                self.assertEqual(result, ConversationHandler.END)
+                self.assertFalse(state.get("cart"))
 
     async def test_warehouse_selector_only_shows_c03(self):
         query = _query("vh:tok:new")
@@ -114,8 +139,8 @@ class VehicleHandoffSafetyTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("C-05", text)
         self.assertIn("C-03", text)
 
-    async def test_weight_entry_appends_item_and_shows_cart(self):
-        update = SimpleNamespace(effective_user=SimpleNamespace(id=10), message=_message("7.5"))
+    async def test_legacy_weight_entry_ignores_manual_value_and_uses_profile(self):
+        update = SimpleNamespace(effective_user=SimpleNamespace(id=10), message=_message("999"))
         state = {
             "token": "tok", "done": set(),
             "warehouse": {"id": 4, "name": "A"},
@@ -344,7 +369,7 @@ class VehicleHandoffSafetyTest(unittest.IsolatedAsyncioTestCase):
             4,
             [{"mahsulot_id": 29, "quantity": 3, "weight": 7.5}],
             "telegram-factory:create:tok",
-            "Telegram factory bot; 1 ta tovar; operator jami kg: 7.5",
+            "Telegram factory bot; 1 ta tovar; jami kg: 7.5",
         )
         # Success message carries the savdo-priced total.
         success_text = query.edit_message_text.await_args.args[0]

@@ -1,14 +1,13 @@
 """Admin-only Telegram flow for the frozen DM-001 vehicle handoff pilot.
 
 Multi-item cart flow: the operator picks a source warehouse once, then adds
-product+quantity+weight lines one by one ("Yana tovar qo‘shish"), and only
+product+quantity lines with profile-derived weight ("Yana tovar qo‘shish"), and only
 "Tugatish" creates ONE handoff carrying the whole cart. The review screen and
 the success message show per-line and total sums priced with the savdo bot
 catalog (distribution.mahsulotlar.narx).
 """
 import hashlib
-import re
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -307,34 +306,43 @@ async def enter_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("⚠️ Miqdor mavjud qoldiqdan oshmasligi kerak:")
         return QUANTITY
     state["pending_qty"] = int(text)
-    await update.message.reply_text("⚖️ Jami musbat og‘irlikni kg da kiriting (masalan, 25.5):")
-    return WEIGHT
+    return await _append_profile_weight(update, context)
 
 
 async def enter_weight(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Resume an older persisted WEIGHT screen without accepting manual kg."""
     if not _admin(update.effective_user.id) or "vh" not in context.user_data:
         await update.message.reply_text("❌ Sessiya eskirgan.")
         return ConversationHandler.END
-    raw_weight = update.message.text.strip().replace(",", ".")
-    try:
-        if not re.fullmatch(r"\d+(?:\.\d{1,3})?", raw_weight):
-            raise ValueError
-        weight = float(raw_weight)
-        if weight <= 0:
-            raise ValueError
-    except ValueError:
-        await update.message.reply_text("⚠️ Musbat kg kiriting:")
-        return WEIGHT
+    await update.message.reply_text("Kg endi qo'lda kiritilmaydi — mahsulot profilidan hisoblanadi.")
+    return await _append_profile_weight(update, context)
+
+
+async def _append_profile_weight(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     state = context.user_data["vh"]
-    p = state["pending_product"]
-    qty = int(state["pending_qty"])
-    unit_weight = float(p.get("unit_weight_kg") or 0)
-    expected = unit_weight * qty if unit_weight > 0 else None
-    profile_line = (
-        f"🏷️ Profil bo‘yicha jami: *{expected:g} kg*\n"
-        if expected is not None else
-        "🏷️ Profil og‘irligi belgilanmagan — kiritilgan jami kg ishlatiladi.\n"
-    )
+    p = state.get("pending_product")
+    qty = state.get("pending_qty")
+    if not p or not isinstance(qty, int) or qty <= 0:
+        await update.message.reply_text("Sessiya eskirgan. /start orqali yuklashni qaytadan boshlang.")
+        return ConversationHandler.END
+    try:
+        unit_weight = Decimal(str(p.get("unit_weight_kg")))
+        # The downstream per-piece ledger is currently limited to milli-kg.
+        if not unit_weight.is_finite() or unit_weight <= 0 or unit_weight != unit_weight.quantize(Decimal("0.001")):
+            raise ValueError
+        total = unit_weight * qty
+        if total > Decimal("999999999.999"):
+            raise ValueError
+    except (InvalidOperation, ValueError, TypeError):
+        state.pop("pending_qty", None)
+        await update.message.reply_text(
+            "Mahsulot profilidagi bir dona kg yaroqsiz yoki hisob chegaradan oshdi. "
+            "Profilga musbat kg (hozircha 3 kasr xonasigacha) kiriting, "
+            "so'ng /start orqali yuklashni qaytadan boshlang. Tovar savatga qo'shilmadi."
+        )
+        return ConversationHandler.END
+    weight = float(total)
+    profile_line = f"🏷️ Hisob: *{qty} dona × {unit_weight:g} kg = {total:g} kg*\n"
     item = {
         "mahsulot_id": int(p["mahsulot_id"]),
         "name": p["name"],
@@ -407,7 +415,7 @@ async def confirm_create(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await q.answer()
     state["done"].add("create")
     total_qty, total_kg, total_sum, missing = _cart_totals(cart, state.get("prices"))
-    notes = f"Telegram factory bot; {len(cart)} ta tovar; operator jami kg: {total_kg:g}"
+    notes = f"Telegram factory bot; {len(cart)} ta tovar; jami kg: {total_kg:g}"
     ok, result = create_vehicle_handoff(
         state["warehouse"]["id"],
         [{"mahsulot_id": it["mahsulot_id"], "quantity": it["quantity"],

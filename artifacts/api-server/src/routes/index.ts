@@ -25,7 +25,7 @@ import exchangeRateRouter from "./exchange-rate";
 import rawMaterialsRouter from "./raw-materials";
 import productMaterialsRouter from "./product-materials";
 import packerProductAssignmentsRouter from "./packer-product-assignments";
-import omborRouter from "./ombor";
+import omborRouter, { warehouseAdjustmentRouter } from "./ombor";
 import auditRouter from "./audit";
 import distributionRouter, { distributionSuggestionsRouter } from "./distribution";
 import fieldRouter from "./field";
@@ -68,6 +68,7 @@ router.use(printAgentHealthRouter);
 router.use("/topmart/external-products", requireAuthOrWarehouseBotKey);
 router.use("/topmart/external-purchases", requireAuthOrWarehouseBotKey);
 router.use(topmartExternalPurchaseRouter);
+router.use(warehouseAdjustmentRouter);
 
 // ── AI routes — Bearer session (dashboard) OR x-internal-key (bot) ────────────
 router.use(requireAuthOrInternalKey, aiRouter);

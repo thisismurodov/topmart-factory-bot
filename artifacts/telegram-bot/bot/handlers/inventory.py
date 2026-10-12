@@ -974,13 +974,13 @@ async def adjust_product_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
     ctx.user_data["adj_unit"]       = unit
     ctx.user_data["adj_old_qty"]    = float(line["quantity"] or 0)
     ctx.user_data["adj_old_weight"] = float(line["weight_kg"] or 0)
+    ctx.user_data.pop("adj_weight", None)
 
     txt = (
         f"📦 *{product}*\n"
         f"Joriy miqdor: *{ctx.user_data['adj_old_qty']:g}*"
     )
-    if unit == "kg":
-        txt += f"\nJoriy og'irlik: *{ctx.user_data['adj_old_weight']:g} kg*"
+    txt += f"\nJoriy og'irlik: *{ctx.user_data['adj_old_weight']:g} kg*"
     txt += "\n\nTo'g'ri miqdorni kiriting:"
     await q.edit_message_text(txt, parse_mode="Markdown")
     return INV_ADJ_QTY
@@ -995,21 +995,16 @@ async def adjust_qty(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         await update.message.reply_text("⚠️ 0 yoki musbat son kiriting:")
         return INV_ADJ_QTY
     ctx.user_data["adj_qty"] = qty
-    # kg-mahsulot uchun og'irlik majburiy; dona uchun so'ramaymiz.
-    if ctx.user_data.get("adj_unit") == "kg":
-        await update.message.reply_text("⚖️ To'g'ri og'irlikni kiriting (kg):")
-        return INV_ADJ_WEIGHT
-    return await _adjust_show_confirm(update, ctx)
+    await update.message.reply_text("⚖️ To'g'ri JAMI og'irlikni kiriting (kg, 0 yoki musbat son):")
+    return INV_ADJ_WEIGHT
 
 
 async def adjust_weight(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
-    try:
-        w = float(update.message.text.replace(",", "."))
-        if w < 0:
-            raise ValueError
-    except ValueError:
-        await update.message.reply_text("⚠️ 0 yoki musbat son kiriting:")
+    parsed = _parse_decimal((update.message.text or "").replace(",", "."), positive=False, scale=3)
+    if parsed is None:
+        await update.message.reply_text("⚠️ 0 yoki musbat kg kiriting (3 kasr xonasigacha):")
         return INV_ADJ_WEIGHT
+    w = float(parsed)
     ctx.user_data["adj_weight"] = w
     return await _adjust_show_confirm(update, ctx)
 
@@ -1022,7 +1017,7 @@ async def _adjust_show_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -
         f"📦 Mahsulot: *{ctx.user_data['adj_product']}*",
         f"📊 Miqdor: {ctx.user_data['adj_old_qty']:g} → *{ctx.user_data['adj_qty']:g}*",
     ]
-    if unit == "kg":
+    if "adj_weight" in ctx.user_data:
         lines.append(
             f"⚖️ Og'irlik: {ctx.user_data['adj_old_weight']:g} → *{ctx.user_data['adj_weight']:g} kg*"
         )
@@ -1046,7 +1041,7 @@ async def adjust_confirm_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
     user = get_user_role(update.effective_chat.id)
     who  = user["worker_name"] if user else str(update.effective_chat.id)
     unit = ctx.user_data.get("adj_unit", "dona")
-    weight = ctx.user_data.get("adj_weight") if unit == "kg" else None
+    weight = ctx.user_data.get("adj_weight")
 
     ok, err = adjust_inventory(
         warehouse_id=ctx.user_data["adj_wh_id"],
@@ -1055,6 +1050,7 @@ async def adjust_confirm_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
         weight_kg=weight,
         note=f"Bot orqali tuzatish: {who}",
         operator=who,
+        chat_id=update.effective_chat.id,
     )
     if ok:
         msg = (
@@ -1062,7 +1058,7 @@ async def adjust_confirm_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
             f"🏬 {ctx.user_data['adj_wh_name']}\n"
             f"📦 {ctx.user_data['adj_product']} — {ctx.user_data['adj_qty']:g}"
         )
-        if unit == "kg" and weight is not None:
+        if weight is not None:
             msg += f"\n⚖️ {weight:g} kg"
         await q.edit_message_text(msg, parse_mode="Markdown")
     else:

@@ -19,7 +19,18 @@ function sourceFiles(dir = srcDir): string[] {
 
 const inventoryMutation = /\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(?:public\.)?inventory\b/i;
 
+// Inline the shared named handler for source inspection. Both authenticated
+// entrypoints call the same guarded writer; keep checking its actual SQL body.
+function inlineAdjustment(source: string): string {
+  const definition = /async function adjustInventory\(req: Request, res: Response\): Promise<void> \{([\s\S]*?)\n}\nrouter\.post\("\/ombor\/adjust", adjustInventory\);/;
+  if (!source.includes("async function adjustInventory(")) return source;
+  expect(source).toMatch(definition);
+  expect(source).toContain("await adjustInventory(req, res)");
+  return source.replace(definition, 'router.post("/ombor/adjust", async (req, res) => {$1\n});');
+}
+
 function mutatingPostPaths(source: string): string[] {
+  source = inlineAdjustment(source);
   const starts = [...source.matchAll(/router\.post\("([^"]+)"/g)];
   const paths: string[] = [];
   for (let i = 0; i < starts.length; i += 1) {
@@ -49,7 +60,7 @@ describe("static vehicle guard for every public.inventory writer", () => {
   });
 
   it("requires the reusable parent-row guard on every arbitrary-ID writer", () => {
-    const ombor = read("routes/ombor.ts");
+    const ombor = inlineAdjustment(read("routes/ombor.ts"));
     for (const [route, call] of [
       ["/ombor/transfer", "guardGenericInventoryWarehouses(client, [fromId, toId])"],
       ["/ombor/finished-in", "guardGenericInventoryWarehouses(client, [warehouseId])"],

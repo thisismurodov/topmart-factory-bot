@@ -1,15 +1,36 @@
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request, type Response } from "express";
 import { pool } from "@workspace/db";
 import { getUsdToUzsRate } from "../lib/exchangeRate";
 import { notifyNegativeWip, NEGATIVE_WIP_EPS } from "../lib/wipAlerts";
 import { buildFlowGraph } from "../lib/flowGraph";
 import { buildDepartmentDetail } from "../lib/departmentDetail";
+import { requireAuthOrWarehouseBotKey } from "../middleware/requireAuthOrWarehouseBotKey";
+import { requireExternalPurchaseActor } from "./topmart";
 import {
   guardGenericInventoryWarehouses,
   genericInventoryWarehouseErrorStatus,
 } from "../lib/genericInventoryWarehouseGuard";
 
 const router: IRouter = Router();
+// Export ONLY the correction endpoint for early, dedicated-key mounting.
+export const warehouseAdjustmentRouter: IRouter = Router();
+warehouseAdjustmentRouter.post("/ombor/adjust", (req, res, next) => {
+  // Session/internal-key clients retain their existing downstream auth path.
+  if (!req.headers["x-warehouse-bot-key"]) {
+    next("router");
+    return;
+  }
+  requireAuthOrWarehouseBotKey(req, res, next);
+}, async (req, res, next) => {
+  try {
+    const actor = await requireExternalPurchaseActor(req, res);
+    if (!actor) return;
+    req.username = actor; // Never trust the caller's operator field on this path.
+    await adjustInventory(req, res);
+  } catch (error) {
+    next(error);
+  }
+});
 
 // Stock movements log WHO performed an action. Dashboard requests carry an
 // authenticated session (req.username); the Telegram bot calls in via the
@@ -339,17 +360,17 @@ router.post("/ombor/finished-in", async (req, res): Promise<void> => {
 // ── POST /api/ombor/adjust ─────────────────────────────────────────────────────
 // Konteyner liniyasining miqdori VA og'irligini bir amalda to'g'rilash
 // (qayta sanash / to'kilish tuzatishi). Yangi qiymatlar absolyut (ustiga emas).
-router.post("/ombor/adjust", async (req, res): Promise<void> => {
+async function adjustInventory(req: Request, res: Response): Promise<void> {
   const { warehouseId, product, qty, weightKg, note = "" } = req.body ?? {};
   if (!warehouseId || !product) {
     res.status(400).json({ error: "warehouseId, product required" }); return;
   }
   const newQty = Number(qty);
-  if (isNaN(newQty) || newQty < 0) {
+  if (!Number.isFinite(newQty) || newQty < 0) {
     res.status(400).json({ error: "qty must be >= 0" }); return;
   }
   const explicitWeight = weightKg != null && weightKg !== "" ? Number(weightKg) : null;
-  if (explicitWeight != null && (isNaN(explicitWeight) || explicitWeight < 0)) {
+  if (explicitWeight != null && (!Number.isFinite(explicitWeight) || explicitWeight < 0)) {
     res.status(400).json({ error: "weightKg invalid" }); return;
   }
 
@@ -362,7 +383,7 @@ router.post("/ombor/adjust", async (req, res): Promise<void> => {
       `SELECT i.quantity, i.weight_kg, i.product_type, LOWER(p.unit_type) AS unit_type
        FROM inventory i
        LEFT JOIN products p ON p.name = i.product
-       WHERE i.warehouse_id=$1 AND i.product=$2`,
+       WHERE i.warehouse_id=$1 AND i.product=$2 FOR UPDATE OF i`,
       [warehouseId, product],
     );
     if (!curRes.rows.length) {
@@ -380,8 +401,9 @@ router.post("/ombor/adjust", async (req, res): Promise<void> => {
       await client.query("ROLLBACK");
       res.status(400).json({ error: "kg-mahsulot uchun og'irlik (kg) majburiy" }); return;
     }
-    // dona-mahsulotlar uchun og'irlik doimo 0.
-    const newWeight = isKg ? (explicitWeight as number) : 0;
+    // Piece-counted stock can also carry a real measured weight.
+    // Older callers that omit it must preserve the locked stored value.
+    const newWeight = explicitWeight ?? oldWeight;
 
     const qtyChanged    = newQty !== oldQty;
     const weightChanged = newWeight !== oldWeight;
@@ -399,7 +421,7 @@ router.post("/ombor/adjust", async (req, res): Promise<void> => {
     const delta = newQty - oldQty;
     const movementType = delta > 0 ? "IN" : delta < 0 ? "OUT" : "IN";
     let auto = `Tuzatish: ${oldQty} → ${newQty}`;
-    if (isKg) auto += `, ${oldWeight} → ${newWeight} kg`;
+    auto += `, ${oldWeight} → ${newWeight} kg`;
     const noteText = note ? `${note} (${auto})` : auto;
     if (movementType === "IN") {
       await client.query(
@@ -425,7 +447,8 @@ router.post("/ombor/adjust", async (req, res): Promise<void> => {
   } finally {
     client.release();
   }
-});
+}
+router.post("/ombor/adjust", adjustInventory);
 
 // ── GET /api/ombor/search ──────────────────────────────────────────────────────
 router.get("/ombor/search", async (req, res): Promise<void> => {

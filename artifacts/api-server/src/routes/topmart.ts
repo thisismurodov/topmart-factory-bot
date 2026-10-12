@@ -84,7 +84,7 @@ async function externalPurchaseActor(req: Request): Promise<string | null> {
   return result.rows[0]?.worker_name ?? null;
 }
 
-async function requireExternalPurchaseActor(req: Request, res: Response): Promise<string | null> {
+export async function requireExternalPurchaseActor(req: Request, res: Response): Promise<string | null> {
   const actor = await externalPurchaseActor(req);
   if (actor == null) {
     res.status(403).json({ error: "Admin session or authorized Telegram warehouse operator required" });

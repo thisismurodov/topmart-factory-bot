@@ -256,6 +256,7 @@ def adjust_inventory(
     weight_kg: float | None = None,
     note: str = "",
     operator: str | None = None,
+    chat_id: int | None = None,
 ) -> tuple[bool, str | None]:
     """POST /ombor/adjust — konteyner liniyasining miqdor (va kg) ni to'g'rilaydi.
 
@@ -275,6 +276,9 @@ def adjust_inventory(
         payload["note"] = note
     if operator:
         payload["operator"] = operator
+    if chat_id is not None:
+        ok, result = _warehouse_request("POST", "/ombor/adjust", payload, chat_id=chat_id)
+        return ok, None if ok else str(result)
 
     data = json.dumps(payload).encode("utf-8")
     headers = {"Content-Type": "application/json"}

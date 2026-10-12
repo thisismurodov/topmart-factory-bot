@@ -29,10 +29,10 @@ const wh: Record<string, number> = {};
 const KG = "Oq 5 kg test";
 const DONA = "Tulpor test";
 
-async function post(path: string, body: unknown): Promise<{ status: number; json: any }> {
+async function post(path: string, body: unknown, headers: Record<string, string> = {}): Promise<{ status: number; json: any }> {
   const r = await fetch(`${apiUrl}${path}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...headers },
     body: JSON.stringify(body),
   });
   return { status: r.status, json: await r.json().catch(() => null) };
@@ -77,6 +77,8 @@ beforeAll(async () => {
       location_type TEXT NOT NULL DEFAULT 'general',
       capacity_kg NUMERIC DEFAULT 20000
     );
+    CREATE TABLE user_roles (chat_id BIGINT PRIMARY KEY, worker_name TEXT, role TEXT);
+    INSERT INTO user_roles VALUES (700001,'Test keeper','omborchi'),(700002,'Test worker','worker');
     CREATE TABLE products (
       cost_price NUMERIC(12,2) NOT NULL DEFAULT 0,
       name TEXT PRIMARY KEY,
@@ -141,9 +143,10 @@ beforeAll(async () => {
     wh[name] = rows[0].id;
   }
 
-  const { default: omborRouter } = await import("../src/routes/ombor");
+  const { default: omborRouter, warehouseAdjustmentRouter } = await import("../src/routes/ombor");
   const app = express();
   app.use(express.json());
+  app.use("/dedicated", warehouseAdjustmentRouter);
   app.use(omborRouter);
   await new Promise<void>((resolve) => {
     server = app.listen(0, "127.0.0.1", resolve);
@@ -265,6 +268,32 @@ describe("Ombor container weight (kg) integrity", () => {
 });
 
 describe("Ombor recount (adjust) weight integrity", () => {
+  it("dedicated correction verifies key AND role, derives actor, and does not expose sibling routes", async () => {
+    const previous = process.env.WAREHOUSE_BOT_KEY;
+    process.env.WAREHOUSE_BOT_KEY = "test-only-warehouse-key";
+    try {
+      await pool.query(`INSERT INTO inventory (warehouse_id,product,quantity,weight_kg) VALUES ($1,$2,1200,25.5)`, [wh.A, DONA]);
+      const body = { warehouseId: wh.A, product: DONA, qty: 1200, weightKg: 30.6, operator: "forged" };
+      const path = "/dedicated/ombor/adjust";
+      // This isolated early router delegates header-less legacy callers.
+      // The composed app's downstream session/internal-key wall handles them.
+      expect((await post(path, body)).status).toBe(404);
+      expect((await post(path, body, { "x-warehouse-bot-key": "wrong" })).status).toBe(401);
+      const key = { "x-warehouse-bot-key": "test-only-warehouse-key" };
+      expect((await post(path, body, key)).status).toBe(403);
+      expect((await post(path, body, { ...key, "x-telegram-chat-id": "700002" })).status).toBe(403);
+      expect(weightOf(await items(wh.A), DONA)).toBe(25.5);
+      expect((await post(path, body, { ...key, "x-telegram-chat-id": "700001" })).status).toBe(200);
+      expect(weightOf(await items(wh.A), DONA)).toBe(30.6);
+      const history = await pool.query("SELECT created_by,note FROM stock_movements");
+      expect(history.rows[0].created_by).toBe("Test keeper");
+      expect(history.rows[0].note).toContain("25.5 → 30.6 kg");
+      expect((await post("/dedicated/ombor/finished-in", body, key)).status).toBe(404);
+    } finally {
+      if (previous === undefined) delete process.env.WAREHOUSE_BOT_KEY;
+      else process.env.WAREHOUSE_BOT_KEY = previous;
+    }
+  });
   it("adjusting a kg product writes the exact new quantity AND weight", async () => {
     // Seed a stored line whose weight is wrong so the recount must overwrite it.
     await pool.query(
@@ -302,8 +331,8 @@ describe("Ombor recount (adjust) weight integrity", () => {
     expect(weightOf(rows, KG)).toBeCloseTo(300, 3);
   });
 
-  it("forces a dona product to 0 weight even if a weight is sent", async () => {
-    // Seed a dona line carrying a bogus stored weight to prove it gets zeroed.
+  it("stores explicit weight for a dona product", async () => {
+    // Piece-counted goods retain a separately measured physical weight.
     await pool.query(
       `INSERT INTO inventory (warehouse_id, product, quantity, weight_kg, product_type)
        VALUES ($1,$2,50,99,'finished')`,
@@ -315,18 +344,37 @@ describe("Ombor recount (adjust) weight integrity", () => {
     });
     expect(res.status).toBe(200);
 
-    // Stored weight is forced to 0 regardless of the sent weightKg.
+    // Explicit correction replaces, rather than adds to, the stored weight.
     const { rows: stored } = await pool.query(
       `SELECT quantity, weight_kg FROM inventory WHERE warehouse_id=$1 AND product=$2`,
       [wh.A, DONA],
     );
     expect(Number(stored[0].quantity)).toBe(30);
-    expect(Number(stored[0].weight_kg)).toBe(0);
+    expect(Number(stored[0].weight_kg)).toBe(77);
 
-    // GET items reports dona products as weightless (null).
+    // GET items exposes the measured weight even for dona.
     const rows = await items(wh.A);
     expect(qtyOf(rows, DONA)).toBe(30);
-    expect(weightOf(rows, DONA)).toBeNull();
+    expect(weightOf(rows, DONA)).toBe(77);
+  });
+
+  it("preserves dona weight when omitted, and permits a weight-only correction", async () => {
+    await pool.query(
+      `INSERT INTO inventory (warehouse_id,product,quantity,weight_kg) VALUES ($1,$2,1200,25.5)`,
+      [wh.A, DONA],
+    );
+    const unchanged = await post("/ombor/adjust", { warehouseId: wh.A, product: DONA, qty: 1200 });
+    expect(unchanged.status).toBe(400);
+    expect(weightOf(await items(wh.A), DONA)).toBe(25.5);
+    const corrected = await post("/ombor/adjust", {
+      warehouseId: wh.A, product: DONA, qty: 1200, weightKg: 30.6,
+    });
+    expect(corrected.status).toBe(200);
+    expect(qtyOf(await items(wh.A), DONA)).toBe(1200);
+    expect(weightOf(await items(wh.A), DONA)).toBe(30.6);
+    const legacy = await post("/ombor/adjust", { warehouseId: wh.A, product: DONA, qty: 1199 });
+    expect(legacy.status).toBe(200);
+    expect(weightOf(await items(wh.A), DONA)).toBe(30.6);
   });
 
   it("GET items reports the corrected stored weight after a kg recount", async () => {

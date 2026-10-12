@@ -237,6 +237,30 @@ describe("pathsiz devorlar pastdagi yo'llarni hali ham qo'riqlaydi", () => {
 });
 
 describe("warehouse receipt wall stays scoped to receipt paths", () => {
+  it("warehouse correction reaches actor authorization before pathless walls", async () => {
+    const query = vi.spyOn(pool, "query").mockResolvedValue({ rows: [] } as never);
+    try {
+      const response = await fetch(baseUrl + "/api/ombor/adjust", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-warehouse-bot-key": WAREHOUSE_KEY,
+          "x-telegram-chat-id": "999999999999999999",
+        },
+        body: JSON.stringify({ warehouseId: 9, product: "test", qty: 1200, weightKg: 30.6 }),
+      });
+      expect(response.status).toBe(403);
+      expect((await response.json()).error).toBe(
+        "Admin session or authorized Telegram warehouse operator required",
+      );
+      const unauthenticated = await fetch(baseUrl + "/api/ombor/adjust", {
+        method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+      });
+      expect(unauthenticated.status).toBe(401);
+    } finally {
+      query.mockRestore();
+    }
+  });
   it("valid warehouse key reaches Telegram operator-role authorization", async () => {
     const query = vi.spyOn(pool, "query").mockResolvedValue({ rows: [] } as never);
     try {

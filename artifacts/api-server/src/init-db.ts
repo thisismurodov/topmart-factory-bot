@@ -69,7 +69,7 @@ export async function initDb(): Promise<void> {
   // drizzle.config bo'sh Replit DB'ga ishlaydi, shuning uchun bu ALTER kerak.
   await pool.query(`
     ALTER TABLE IF EXISTS products
-      ADD COLUMN IF NOT EXISTS weight NUMERIC(12,3) NOT NULL DEFAULT 1
+      ADD COLUMN IF NOT EXISTS weight NUMERIC(13,4) NOT NULL DEFAULT 1
   `);
 
   // products.pieces_per_box — qutidagi dona soni (etiketika: 1 quti = N dona)
@@ -448,7 +448,7 @@ export async function initDb(): Promise<void> {
       central_warehouse_id  INTEGER NOT NULL,
       product_sku           TEXT NOT NULL,
       pieces_in_label       INTEGER NOT NULL,
-      weight_kg             NUMERIC(12,3) NOT NULL,
+      weight_kg             NUMERIC(13,4) NOT NULL,
       receipt_fingerprint   TEXT NOT NULL,
       received_by           INTEGER NOT NULL,
       received_at           TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
@@ -486,7 +486,7 @@ export async function initDb(): Promise<void> {
       product_name        TEXT NOT NULL,
       supplier            TEXT NOT NULL,
       quantity            INTEGER NOT NULL,
-      total_weight_kg     NUMERIC(12,3) NOT NULL,
+      total_weight_kg     NUMERIC(13,4) NOT NULL,
       total_cost          NUMERIC(14,2) NOT NULL,
       c03_warehouse_id    INTEGER NOT NULL,
       stock_movement_id   INTEGER NOT NULL,
@@ -735,7 +735,7 @@ export async function initDb(): Promise<void> {
         pieces_in_label  INTEGER NOT NULL DEFAULT 1,
         pieces_per_box   INTEGER NOT NULL DEFAULT 1,
         quantity_total   INTEGER NOT NULL,
-        weight_kg        NUMERIC(12,3) NOT NULL DEFAULT 0,
+        weight_kg        NUMERIC(13,4) NOT NULL DEFAULT 0,
         length_m         NUMERIC(12,2),
         product_name     TEXT NOT NULL,
         product_sku      TEXT NOT NULL DEFAULT '',

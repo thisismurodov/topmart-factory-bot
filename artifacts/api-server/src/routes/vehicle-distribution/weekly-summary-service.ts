@@ -9,7 +9,7 @@ import {
 } from "./service";
 
 export const WEEKLY_QTY_TOLERANCE = 0.001;
-export const WEEKLY_WEIGHT_TOLERANCE_KG = 0.001;
+export const WEEKLY_WEIGHT_TOLERANCE_KG = 0.0001;
 export const WEEKLY_BLOCKER_DETAIL_LIMIT = 25;
 
 export class WeeklySummaryValidationError extends Error {}
@@ -38,9 +38,10 @@ type Blocker = {
 
 const zero = (): Metric => ({ quantity: 0, weightKg: 0 });
 const round3 = (n: number): number => Math.round(n * 1000) / 1000;
+const roundWeight = (n: number): number => Math.round(n * 10000) / 10000;
 const add = (a: Metric, quantity: number, weightKg: number): void => {
   a.quantity = round3(a.quantity + quantity);
-  a.weightKg = round3(a.weightKg + weightKg);
+  a.weightKg = roundWeight(a.weightKg + weightKg);
 };
 const iso = (v: unknown): string =>
   v instanceof Date ? v.toISOString() : String(v);
@@ -414,11 +415,11 @@ export async function readPilotWeeklySummary(
       const indeterminate = p.handedBack.quantity !== 0;
       const claimVariance = {
         quantity: round3(p.inventory.quantity - p.claims.quantity),
-        weightKg: round3(p.inventory.weightKg - p.claims.weightKg),
+        weightKg: roundWeight(p.inventory.weightKg - p.claims.weightKg),
       };
       const flowVariance = {
         quantity: round3(p.movements.quantity - p.events.quantity),
-        weightKg: round3(p.movements.weightKg - p.events.weightKg),
+        weightKg: roundWeight(p.movements.weightKg - p.events.weightKg),
       };
       if (
         !indeterminate &&
@@ -444,11 +445,11 @@ export async function readPilotWeeklySummary(
         movementNet: p.movements,
         expectedOpening: {
           quantity: round3(p.claims.quantity - p.events.quantity),
-          weightKg: round3(p.claims.weightKg - p.events.weightKg),
+          weightKg: roundWeight(p.claims.weightKg - p.events.weightKg),
         },
         inventoryOpening: {
           quantity: round3(p.inventory.quantity - p.movements.quantity),
-          weightKg: round3(p.inventory.weightKg - p.movements.weightKg),
+          weightKg: roundWeight(p.inventory.weightKg - p.movements.weightKg),
         },
         claimInventoryVariance: indeterminate ? null : claimVariance,
         movementEventVariance: flowVariance,

@@ -679,7 +679,7 @@ export async function claimExistingLabelsInTx(
       || String(receipt.barcode) !== String(label.barcode_value)
       || String(receipt.product_sku) !== String(label.product_sku)
       || Number(receipt.pieces_in_label) !== Number(label.pieces_in_label)
-      || Math.abs(Number(receipt.weight_kg) - Number(label.weight_kg)) > 0.001
+      || Math.abs(Number(receipt.weight_kg) - Number(label.weight_kg)) > 0.0001
     ) {
       throw new HandoffConflictError(
         `Immutable receipt provenance does not match production label ${label.barcode_value}`,
@@ -791,7 +791,7 @@ export async function claimExistingLabelsInTx(
       || haveWeightKg + 1e-9 < need.weightKg
     ) {
       throw new HandoffConflictError(
-        `C-3 inventory cannot cover selected ${productName}: need ${need.quantity} pieces / ${need.weightKg.toFixed(3)} kg, have ${haveQuantity} / ${haveWeightKg.toFixed(3)} kg`,
+        `C-3 inventory cannot cover selected ${productName}: need ${need.quantity} pieces / ${need.weightKg.toFixed(4)} kg, have ${haveQuantity} / ${haveWeightKg.toFixed(4)} kg`,
       );
     }
   }

@@ -241,7 +241,7 @@ export interface CreateVehicleHandoffItemInput {
      */
   quantity: number;
   /**
-     * @maximum 999999999.999
+     * @maximum 999999999.9999
      * @exclusiveMinimum 0
      */
   totalWeightKg?: number;

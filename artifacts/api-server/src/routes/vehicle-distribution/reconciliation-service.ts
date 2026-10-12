@@ -408,7 +408,7 @@ async function snapshotVehicleInventory(
       productName,
       sku: String(pp.rows[0].sku ?? ""),
       expectedQuantity: round3(Number(r.quantity)),
-      expectedWeightKg: round3(Number(r.weight_kg)),
+      expectedWeightKg: Math.round(Number(r.weight_kg) * 10000) / 10000,
     });
   }
   return out;

@@ -1120,7 +1120,7 @@ function ProductDialog({
                       <FormItem>
                         <FormLabel>Og'irlik (kg)</FormLabel>
                         <FormControl>
-                          <Input type="number" step="0.001" min={0} {...field} />
+                          <Input type="number" step="0.0001" min={0} {...field} />
                         </FormControl>
                         {isEdit && Number(watchedWeight) !== Number(product?.weight ?? 1) && (
                           <p className="text-xs text-amber-600">

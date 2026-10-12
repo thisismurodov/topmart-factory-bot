@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS distribution.topmart_external_purchase_receipts (
   product_name        TEXT NOT NULL,
   supplier            TEXT NOT NULL,
   quantity            INTEGER NOT NULL,
-  total_weight_kg     NUMERIC(12,3) NOT NULL,
+  total_weight_kg     NUMERIC(13,4) NOT NULL,
   total_cost          NUMERIC(14,2) NOT NULL,
   c03_warehouse_id    INTEGER NOT NULL,
   stock_movement_id   INTEGER NOT NULL,
@@ -586,8 +586,8 @@ CREATE TABLE IF NOT EXISTS distribution.vehicle_handoff_items (
   unit_cost            NUMERIC(12,2) NOT NULL DEFAULT 0,
   product_name         TEXT,
   pieces_per_box       INTEGER NOT NULL DEFAULT 1,
-  unit_weight_kg       NUMERIC(12,3),
-  total_weight_kg      NUMERIC(12,3),
+  unit_weight_kg       NUMERIC(13,4),
+  total_weight_kg      NUMERIC(13,4),
   created_at           TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
   CONSTRAINT vehicle_handoff_items_qty_check  CHECK (quantity_dispatched > 0),
   CONSTRAINT vehicle_handoff_items_cost_check CHECK (unit_cost >= 0),
@@ -597,8 +597,8 @@ CREATE TABLE IF NOT EXISTS distribution.vehicle_handoff_items (
 );
 ALTER TABLE distribution.vehicle_handoff_items ADD COLUMN IF NOT EXISTS product_name    TEXT;
 ALTER TABLE distribution.vehicle_handoff_items ADD COLUMN IF NOT EXISTS pieces_per_box  INTEGER NOT NULL DEFAULT 1;
-ALTER TABLE distribution.vehicle_handoff_items ADD COLUMN IF NOT EXISTS unit_weight_kg  NUMERIC(12,3);
-ALTER TABLE distribution.vehicle_handoff_items ADD COLUMN IF NOT EXISTS total_weight_kg NUMERIC(12,3);
+ALTER TABLE distribution.vehicle_handoff_items ADD COLUMN IF NOT EXISTS unit_weight_kg  NUMERIC(13,4);
+ALTER TABLE distribution.vehicle_handoff_items ADD COLUMN IF NOT EXISTS total_weight_kg NUMERIC(13,4);
 ALTER TABLE distribution.vehicle_handoff_items DROP CONSTRAINT IF EXISTS vehicle_handoff_items_pieces_per_box_check;
 ALTER TABLE distribution.vehicle_handoff_items ADD CONSTRAINT vehicle_handoff_items_pieces_per_box_check CHECK (pieces_per_box > 0);
 CREATE INDEX        IF NOT EXISTS idx_vehicle_handoff_items_handoff           ON distribution.vehicle_handoff_items (handoff_id);
@@ -666,7 +666,7 @@ CREATE TABLE IF NOT EXISTS distribution.topmart_label_receipts (
   central_warehouse_id  INTEGER NOT NULL,
   product_sku           TEXT NOT NULL,
   pieces_in_label       INTEGER NOT NULL,
-  weight_kg             NUMERIC(12,3) NOT NULL,
+  weight_kg             NUMERIC(13,4) NOT NULL,
   receipt_fingerprint   TEXT NOT NULL,
   received_by           INTEGER NOT NULL,
   received_at           TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
@@ -699,7 +699,7 @@ CREATE TABLE IF NOT EXISTS distribution.vehicle_label_claims (
   barcode             TEXT NOT NULL,
   mahsulot_id         INTEGER NOT NULL,
   sku                 TEXT NOT NULL DEFAULT '',
-  unit_weight_kg      NUMERIC(12,3) NOT NULL,
+  unit_weight_kg      NUMERIC(13,4) NOT NULL,
   pieces_in_label     INTEGER NOT NULL DEFAULT 1,
   remaining_quantity  INTEGER NOT NULL DEFAULT 1,
   status              TEXT NOT NULL DEFAULT 'prepared',
@@ -769,7 +769,7 @@ CREATE TABLE IF NOT EXISTS distribution.vehicle_sale_allocations (
   product_sku         TEXT NOT NULL DEFAULT '',
   vehicle_id          INTEGER NOT NULL,
   allocated_quantity  NUMERIC(12,3) NOT NULL,
-  allocated_weight_kg NUMERIC(12,3) NOT NULL,
+  allocated_weight_kg NUMERIC(13,4) NOT NULL,
   production_label_id INTEGER,
   barcode             TEXT,
   source_unit_event_id INTEGER,
@@ -1065,7 +1065,7 @@ CREATE TABLE IF NOT EXISTS distribution.vehicle_reconciliation_items (
   product_name          TEXT,
   sku                   TEXT NOT NULL DEFAULT '',
   expected_quantity     NUMERIC(12,3) NOT NULL,
-  expected_weight_kg    NUMERIC(12,3),
+  expected_weight_kg    NUMERIC(13,4),
   actual_quantity       NUMERIC(12,3),
   discrepancy           NUMERIC(12,3) NOT NULL DEFAULT 0,
   counted_by            BIGINT,
@@ -1082,7 +1082,7 @@ CREATE TABLE IF NOT EXISTS distribution.vehicle_reconciliation_items (
 ALTER TABLE distribution.vehicle_reconciliation_items
   ADD COLUMN IF NOT EXISTS public_product_id  BIGINT,
   ADD COLUMN IF NOT EXISTS product_name       TEXT,
-  ADD COLUMN IF NOT EXISTS expected_weight_kg NUMERIC(12,3),
+  ADD COLUMN IF NOT EXISTS expected_weight_kg NUMERIC(13,4),
   ADD COLUMN IF NOT EXISTS counted_by         BIGINT,
   ADD COLUMN IF NOT EXISTS counted_at         TIMESTAMP WITH TIME ZONE;
 ALTER TABLE distribution.vehicle_reconciliation_items ALTER COLUMN mahsulot_id     DROP NOT NULL;
@@ -1227,9 +1227,9 @@ CREATE TABLE IF NOT EXISTS distribution.vehicle_return_items (
   public_product_id        BIGINT NOT NULL,
   product_name             TEXT NOT NULL,
   sku                      TEXT NOT NULL,
-  unit_weight_kg           NUMERIC(12,3) NOT NULL,
+  unit_weight_kg           NUMERIC(13,4) NOT NULL,
   return_quantity          INTEGER NOT NULL DEFAULT 1,
-  return_weight_kg         NUMERIC(12,3) NOT NULL DEFAULT 1,
+  return_weight_kg         NUMERIC(13,4) NOT NULL DEFAULT 1,
   destination_warehouse_id INTEGER NOT NULL,
   movement_reference       TEXT NOT NULL UNIQUE,
   created_at               TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
@@ -1242,7 +1242,7 @@ CREATE TABLE IF NOT EXISTS distribution.vehicle_return_items (
 );
 ALTER TABLE distribution.vehicle_return_items
   ADD COLUMN IF NOT EXISTS return_quantity INTEGER NOT NULL DEFAULT 1,
-  ADD COLUMN IF NOT EXISTS return_weight_kg NUMERIC(12,3) NOT NULL DEFAULT 1;
+  ADD COLUMN IF NOT EXISTS return_weight_kg NUMERIC(13,4) NOT NULL DEFAULT 1;
 UPDATE distribution.vehicle_return_items
    SET return_weight_kg = unit_weight_kg
  WHERE return_quantity = 1

@@ -34,6 +34,10 @@ VEHICLE_DISTRIBUTION_BRANDING = (
     "Top Mart — Official Partner of Diyor Mahsulotlari"
 )
 
+def _weight_num(value: float) -> str:
+    """Keep 0.1 gram precision on weight text, without changing other units."""
+    return f"{value:.4f}".rstrip("0").rstrip(".")
+
 
 def build_vehicle_distribution_label(
     batch_code: str,
@@ -93,7 +97,7 @@ def build_vehicle_distribution_label(
     if piece_weight is None and unit_weight > 0 and pieces > 0:
         piece_weight = unit_weight / pieces
     kg_txt = (
-        f"JAMI {_num(unit_weight)} KG · 1 DONA {_num(piece_weight)} KG"
+        f"JAMI {_weight_num(unit_weight)} KG · 1 DONA {_weight_num(piece_weight)} KG"
         if unit_weight > 0 and piece_weight is not None and piece_weight > 0
         else "—"
     )

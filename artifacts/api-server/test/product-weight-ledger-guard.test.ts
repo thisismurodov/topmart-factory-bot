@@ -1,4 +1,4 @@
-import { beforeAll, afterAll, describe, it, expect } from "vitest";
+import { beforeAll, afterAll, describe, it, expect, vi } from "vitest";
 import express from "express";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -50,6 +50,15 @@ async function weightOf(name: string): Promise<number> {
 beforeAll(async () => {
   const db = await import("@workspace/db");
   pool = db.pool as unknown as Pool;
+  // Catalog propagation uses explicitly qualified production schemas. It is
+  // outside this weight/ledger test and must never touch the shared live catalog.
+  const originalQuery = pool.query.bind(pool) as (...args: any[]) => any;
+  vi.spyOn(pool, "query").mockImplementation(((...args: any[]) => {
+    if (typeof args[0] === "string" && /UPDATE distribution\.mahsulotlar\b/.test(args[0])) {
+      return Promise.resolve({ rows: [], rowCount: 0 });
+    }
+    return originalQuery(...args);
+  }) as typeof pool.query);
 
   await pool.query(`DROP SCHEMA IF EXISTS ${SCHEMA} CASCADE`);
   await pool.query(`CREATE SCHEMA ${SCHEMA}`);
@@ -120,6 +129,18 @@ afterAll(async () => {
 });
 
 describe("PATCH /products weight vs wip ledger guard", () => {
+  it("fails closed before migration and round-trips four-decimal weights afterwards", async () => {
+    const before = await weightOf(FRESH);
+    expect((await patch(FRESH, {weight:0.0255})).status).toBe(400);
+    expect(await weightOf(FRESH)).toBe(before);
+    await pool.query("ALTER TABLE products ALTER COLUMN weight TYPE NUMERIC(13,4)");
+    const saved = await patch(FRESH, {weight:0.0255});
+    expect(saved.status, JSON.stringify(saved.json)).toBe(200);
+    expect(await weightOf(FRESH)).toBe(0.0255);
+    expect((await patch(FRESH, {weight:0.02555})).status).toBe(400);
+    expect(await weightOf(FRESH)).toBe(0.0255);
+    await pool.query("UPDATE products SET weight=$1 WHERE name=$2",[before,FRESH]);
+  });
   it("blocks a weight change with 409 when PRODUCE ledger rows exist", async () => {
     const res = await patch(LEDGERED, { weight: 7 });
     expect(res.status).toBe(409);

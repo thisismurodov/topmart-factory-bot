@@ -79,20 +79,20 @@ class VehicleHandoffSafetyTest(unittest.IsolatedAsyncioTestCase):
         update = SimpleNamespace(effective_user=SimpleNamespace(id=10), message=_message("300"))
         state = {"token": "tok", "warehouse": {"id": 4, "name": "C-03"},
                  "pending_product": {"mahsulot_id": 29, "name": "P",
-                                     "available_quantity": 1200, "unit_weight_kg": "0.025",
+                                     "available_quantity": 1200, "unit_weight_kg": "0.0255",
                                      "pieces_per_box": 12}}
         with patch.object(vh, "_admin", return_value=True):
             result = await vh.enter_quantity(update, _ctx(state))
         self.assertEqual(result, vh.CART)
-        self.assertEqual(state["cart"][0]["weight"], 7.5)
+        self.assertEqual(state["cart"][0]["weight"], 7.65)
         self.assertEqual(state["cart"][0]["quantity"], 300)
         self.assertEqual(state["cart"][0]["pieces_per_box"], 12)
         self.assertNotIn("pending_qty", state)
-        self.assertIn("300 dona × 0.025 kg = 7.500 kg", update.message.reply_text.call_args.args[0])
+        self.assertIn("300 dona × 0.0255 kg = 7.6500 kg", update.message.reply_text.call_args.args[0])
         update.message.reply_text.assert_awaited_once()
 
     async def test_invalid_profile_never_adds_cart_item_or_falls_back_to_manual_kg(self):
-        for weight in (None, 0, -1, "NaN", "Infinity", "bad", "0.0255"):
+        for weight in (None, 0, -1, "NaN", "Infinity", "bad", "0.02555"):
             with self.subTest(weight=weight):
                 update = SimpleNamespace(effective_user=SimpleNamespace(id=10), message=_message("300"))
                 state = {"pending_product": {"available_quantity": 1200, "unit_weight_kg": weight}}

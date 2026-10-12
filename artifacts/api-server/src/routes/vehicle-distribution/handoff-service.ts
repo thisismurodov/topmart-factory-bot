@@ -393,14 +393,14 @@ type ResolvedItem = {
   piecesPerBox: number;
 };
 
-/** Weight snapshots are NUMERIC(12,3). Keep all API-side calculations on that
+/** Weight snapshots are NUMERIC(13,4). Keep all API-side calculations on that
  * same stable precision so JS floating-point tails never affect persistence,
  * replay checks, or package passports. */
 function roundWeightKg(value: number): number {
-  return Math.round((value + Number.EPSILON) * 1000) / 1000;
+  return Math.round((value + Number.EPSILON) * 10000) / 10000;
 }
 
-const MAX_WEIGHT_KG = 999_999_999.999;
+const MAX_WEIGHT_KG = 999_999_999.9999;
 /** Conservative pilot bounds for manual Telegram warehouse fills. */
 export const MAX_HANDOFF_QUANTITY = 100_000;
 export const MAX_HANDOFF_LABELS_PER_LINE = 100;
@@ -444,11 +444,11 @@ function canonicalSnapshotWeightKg(
   }
   const canonical = roundWeightKg(value);
   // Only absorb binary floating-point representation noise, never a material
-  // fourth decimal place that NUMERIC(12,3) would silently round.
+  // fifth decimal place that NUMERIC(13,4) would silently round.
   const tolerance = Number.EPSILON * Math.max(1, Math.abs(value)) * 2;
   if (Math.abs(value - canonical) > tolerance) {
     throw new HandoffValidationError(
-      `Item ${source} must have at most 3 decimal places (mahsulotId=${mahsulotId})`,
+      `Item ${source} must have at most 4 decimal places (mahsulotId=${mahsulotId})`,
     );
   }
   return canonical;
@@ -464,14 +464,14 @@ function validateExplicitTotalForQuantity(
   mahsulotId: number,
 ): number {
   const canonical = canonicalExplicitTotalWeightKg(value, mahsulotId);
-  const totalMilliKg = Math.round(canonical * 1000);
+  const totalWeightUnits = Math.round(canonical * 10000);
   if (
     Number.isInteger(quantity) &&
     quantity > 0 &&
-    totalMilliKg % quantity !== 0
+    totalWeightUnits % quantity !== 0
   ) {
     throw new HandoffValidationError(
-      `Item totalWeightKg must divide exactly by quantity at 3-decimal precision (mahsulotId=${mahsulotId})`,
+      `Item totalWeightKg must divide exactly by quantity at 4-decimal precision (mahsulotId=${mahsulotId})`,
     );
   }
   return canonical;
@@ -604,9 +604,9 @@ async function resolveItem(
   const unitWeightKg =
     explicitTotalWeightKg === undefined
       ? roundWeightKg(totalWeightKg / input.quantity)
-      : Math.round(explicitTotalWeightKg * 1000) /
+      : Math.round(explicitTotalWeightKg * 10000) /
         input.quantity /
-        1000;
+        10000;
   if (!(totalWeightKg > 0) || !(unitWeightKg > 0)) {
     throw new HandoffValidationError(
       `Item weight is too small for the supported kilogram precision (mahsulotId=${input.mahsulotId})`,
@@ -618,7 +618,7 @@ async function resolveItem(
     )
   ) {
     throw new HandoffValidationError(
-      `Item totalWeightKg cannot produce a positive 3-decimal weight for every package (mahsulotId=${input.mahsulotId})`,
+      `Item totalWeightKg cannot produce a positive 4-decimal weight for every package (mahsulotId=${input.mahsulotId})`,
     );
   }
   return {

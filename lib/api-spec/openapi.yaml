@@ -2376,8 +2376,8 @@ components:
         totalWeightKg:
           type: number
           exclusiveMinimum: 0
-          maximum: 999999999.999
-          multipleOf: 0.001
+          maximum: 999999999.9999
+          multipleOf: 0.0001
       required: [mahsulotId, quantity]
       additionalProperties: false
 

@@ -38,7 +38,7 @@ export const topmartLabelReceiptsTable = distribution.table(
     centralWarehouseId: integer("central_warehouse_id").notNull(),
     productSku: text("product_sku").notNull(),
     piecesInLabel: integer("pieces_in_label").notNull(),
-    weightKg: numeric("weight_kg", { precision: 12, scale: 3 }).notNull(),
+    weightKg: numeric("weight_kg", { precision: 13, scale: 4 }).notNull(),
     receiptFingerprint: text("receipt_fingerprint").notNull(),
     receivedBy: integer("received_by").notNull(),
     receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
@@ -65,7 +65,7 @@ export const topmartExternalPurchaseReceiptsTable = distribution.table(
     productName: text("product_name").notNull(),
     supplier: text("supplier").notNull(),
     quantity: integer("quantity").notNull(),
-    totalWeightKg: numeric("total_weight_kg", { precision: 12, scale: 3 }).notNull(),
+    totalWeightKg: numeric("total_weight_kg", { precision: 13, scale: 4 }).notNull(),
     totalCost: numeric("total_cost", { precision: 14, scale: 2 }).notNull(),
     /** Logical reference to public.warehouses, validated transactionally by the API. */
     c03WarehouseId: integer("c03_warehouse_id").notNull(),
@@ -551,9 +551,9 @@ export const vehicleHandoffItemsTable = distribution.table(
     /** Number of pieces in each source box at prepare time. */
     piecesPerBox: integer("pieces_per_box").notNull().default(1),
     /** F3: snapshot per-unit weight (kg) at prepare time (nullable, >=0 if set). */
-    unitWeightKg: numeric("unit_weight_kg", { precision: 12, scale: 3 }),
+    unitWeightKg: numeric("unit_weight_kg", { precision: 13, scale: 4 }),
     /** F3: snapshot total weight (kg) = unit_weight_kg * quantity (nullable, >=0). */
-    totalWeightKg: numeric("total_weight_kg", { precision: 12, scale: 3 }),
+    totalWeightKg: numeric("total_weight_kg", { precision: 13, scale: 4 }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -646,7 +646,7 @@ export const vehicleSaleAllocationsTable = distribution.table(
     productSku: text("product_sku").notNull().default(""),
     vehicleId: integer("vehicle_id").notNull(),
     allocatedQuantity: numeric("allocated_quantity", { precision: 12, scale: 3 }).notNull(),
-    allocatedWeightKg: numeric("allocated_weight_kg", { precision: 12, scale: 3 }).notNull(),
+    allocatedWeightKg: numeric("allocated_weight_kg", { precision: 13, scale: 4 }).notNull(),
     /** Logical ref to public.production_labels.id (nullable). */
     productionLabelId: integer("production_label_id"),
     /** Logical ref to public.production_labels.barcode_value (nullable). */
@@ -698,7 +698,7 @@ export const vehicleLabelClaimsTable = distribution.table(
     piecesInLabel: integer("pieces_in_label").notNull().default(1),
     /** Unsold/unreturned quantity currently represented by this claim. */
     remainingQuantity: integer("remaining_quantity").notNull().default(1),
-    unitWeightKg: numeric("unit_weight_kg", { precision: 12, scale: 3 }).notNull(),
+    unitWeightKg: numeric("unit_weight_kg", { precision: 13, scale: 4 }).notNull(),
     status: text("status").notNull().default("prepared"),
     /** Client idempotency token (nullable; partial-unique in runtime DDL). */
     operationKey: text("operation_key"),
@@ -1031,7 +1031,7 @@ export const vehicleReconciliationItemsTable = distribution.table(
     sku: text("sku").notNull().default(""),
     expectedQuantity: numeric("expected_quantity", { precision: 12, scale: 3 }).notNull(),
     /** F6: snapshot of the expected on-vehicle weight. NULL for legacy lines. */
-    expectedWeightKg: numeric("expected_weight_kg", { precision: 12, scale: 3 }),
+    expectedWeightKg: numeric("expected_weight_kg", { precision: 13, scale: 4 }),
     /** NULL until the line is physically counted (F6 patch). */
     actualQuantity: numeric("actual_quantity", { precision: 12, scale: 3 }),
     discrepancy: numeric("discrepancy", { precision: 12, scale: 3 }).notNull().default("0"),
@@ -1123,9 +1123,9 @@ export const vehicleReturnItemsTable = distribution.table(
     publicProductId: bigint("public_product_id", { mode: "number" }).notNull(),
     productName: text("product_name").notNull(),
     sku: text("sku").notNull(),
-    unitWeightKg: numeric("unit_weight_kg", { precision: 12, scale: 3 }).notNull(),
+    unitWeightKg: numeric("unit_weight_kg", { precision: 13, scale: 4 }).notNull(),
     returnQuantity: integer("return_quantity").notNull().default(1),
-    returnWeightKg: numeric("return_weight_kg", { precision: 12, scale: 3 }).notNull().default("1"),
+    returnWeightKg: numeric("return_weight_kg", { precision: 13, scale: 4 }).notNull().default("1"),
     destinationWarehouseId: integer("destination_warehouse_id").notNull(),
     movementReference: text("movement_reference").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

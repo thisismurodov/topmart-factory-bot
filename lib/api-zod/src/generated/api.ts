@@ -999,8 +999,8 @@ export const ListVehicleHandoffsResponse = zod.object({
 export const createVehicleHandoffBodyItemsItemQuantityMax = 100000;
 
 export const createVehicleHandoffBodyItemsItemTotalWeightKgExclusiveMin = 0;
-export const createVehicleHandoffBodyItemsItemTotalWeightKgMax = 999999999.999;
-export const createVehicleHandoffBodyItemsItemTotalWeightKgMultipleOf = 0.001;
+export const createVehicleHandoffBodyItemsItemTotalWeightKgMax = 999999999.9999;
+export const createVehicleHandoffBodyItemsItemTotalWeightKgMultipleOf = 0.0001;
 
 
 

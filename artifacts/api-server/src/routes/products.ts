@@ -4,6 +4,21 @@ import { getUsdToUzsRate } from "../lib/exchangeRate";
 import { uniqueProductSku } from "../lib/sku";
 import { notifyPackersLeftWithoutProducts } from "../lib/packerAlerts";
 
+async function profileWeightError(value: unknown): Promise<string | null> {
+  const n = Number(value);
+  if (!Number.isFinite(n) || !/^\d{1,9}(?:\.\d{1,4})?$/.test(String(value))) {
+    return "Og'irlik ko'pi bilan 4 kasr xonali musbat son bo'lishi kerak";
+  }
+  if (Math.abs(n * 1000 - Math.round(n * 1000)) < 1e-7) return null;
+  const { rows } = await pool.query(
+    `SELECT numeric_scale FROM information_schema.columns
+      WHERE table_schema=current_schema() AND table_name='products' AND column_name='weight'`,
+  );
+  return !rows.length || (rows[0].numeric_scale !== null && Number(rows[0].numeric_scale) < 4)
+    ? "4 kasrli og'irlik uchun baza yangilanishi hali bajarilmagan. Og'irlik saqlanmadi."
+    : null;
+}
+
 // SKU orqali bog'langan savdo bot mahsulotiga narx/nom o'zgarishini uzatish.
 // narx faqat UZS mahsulotlarda sinxronlanadi (mahsulotlar.narx UZS'da).
 async function propagateToDistribution(productName: string): Promise<void> {
@@ -274,6 +289,8 @@ router.post("/products", async (req, res): Promise<void> => {
   const finalWeight   = Number(weight) > 0 ? Number(weight) : 1;
 
   try {
+    const precisionError = await profileWeightError(finalWeight);
+    if (precisionError) { res.status(400).json({ error: precisionError }); return; }
     // POST upsert (ON CONFLICT (name) DO UPDATE) mavjud mahsulot og'irligini ham
     // yangilaydi — PATCH bilan bir xil ledger himoyasi shu yerda ham kerak.
     if (req.body?.confirmWeightChange !== true) {
@@ -351,6 +368,10 @@ router.post("/products", async (req, res): Promise<void> => {
 
 // ── PATCH /products/:name — update ────────────────────────────────────────────
 router.patch("/products/:name", async (req, res): Promise<void> => {
+  if (req.body?.weight !== undefined) {
+    const precisionError = await profileWeightError(req.body.weight);
+    if (precisionError) { res.status(400).json({ error: precisionError }); return; }
+  }
   const productName = decodeURIComponent(req.params.name);
   const fields: string[] = [];
   const vals: unknown[] = [];

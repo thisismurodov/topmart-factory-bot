@@ -1,5 +1,6 @@
 import { beforeAll, afterAll, beforeEach, describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import http from "node:http";
@@ -109,7 +110,7 @@ async function createPublicTables(c: pg.Client): Promise<void> {
       id                SERIAL UNIQUE NOT NULL,
       name              TEXT PRIMARY KEY,
       sku               TEXT NOT NULL DEFAULT '',
-      weight            NUMERIC(12,3) NOT NULL DEFAULT 1,
+      weight            NUMERIC(13,4) NOT NULL DEFAULT 1,
       pieces_per_box    INTEGER NOT NULL DEFAULT 1,
       active            BOOLEAN NOT NULL DEFAULT TRUE
     )`);
@@ -188,7 +189,7 @@ async function createProductionLabelsSchema(c: pg.Client): Promise<void> {
       pieces_in_label  INTEGER NOT NULL DEFAULT 1,
       pieces_per_box   INTEGER NOT NULL DEFAULT 1,
       quantity_total   INTEGER NOT NULL,
-      weight_kg        NUMERIC(12,3) NOT NULL DEFAULT 0,
+      weight_kg        NUMERIC(13,4) NOT NULL DEFAULT 0,
       length_m         NUMERIC(12,2),
       product_name     TEXT NOT NULL,
       product_sku      TEXT NOT NULL DEFAULT '',
@@ -1321,6 +1322,43 @@ describe("create prepared handoff", () => {
     expect(Number(src.rows[0].quantity)).toBe(100);
   });
 
+  it("widens legacy weight without changing values, then preserves 0.0255 kg per piece", async () => {
+    await client.query("ALTER TABLE products ALTER COLUMN weight TYPE NUMERIC(12,3)");
+    const before = await client.query("SELECT name,weight::float8 AS weight FROM products ORDER BY name");
+    const migration = readFileSync(new URL("../../../scripts/sql/weight-precision-4.sql", import.meta.url), "utf8");
+    await client.query(migration);
+    await client.query(migration); // repeatable, no stock/data rewrite
+    expect((await client.query("SELECT name,weight::float8 AS weight FROM products ORDER BY name")).rows).toEqual(before.rows);
+    await client.query("UPDATE products SET weight=0.0255,pieces_per_box=12 WHERE sku=$1", [prodA.sku]);
+    await client.query("UPDATE inventory SET quantity=1200,weight_kg=30.6 WHERE warehouse_id=$1", [erpWarehouseId]);
+    const r = await call("POST", "/vehicle-distribution/handoffs", {
+      token: adminToken,
+      body: { sourceWarehouseId: erpWarehouseId,
+        items: [{ mahsulotId: prodA.mahsulotId,quantity:300,totalWeightKg:7.65 }],
+        operationKey: opKey() },
+    });
+    expect(r.status).toBe(200);
+    expect(r.body.items[0].unitWeightKg).toBe(0.0255);
+    expect(r.body.items[0].totalWeightKg).toBe(7.65);
+    const stored = await client.query("SELECT unit_weight_kg,total_weight_kg FROM distribution.vehicle_handoff_items WHERE handoff_id=$1",[r.body.id]);
+    expect(Number(stored.rows[0].unit_weight_kg)).toBe(0.0255);
+    expect(Number(stored.rows[0].total_weight_kg)).toBe(7.65);
+    const prepared = await prepareLabels(r.body.id);
+    expect(prepared.status).toBe(200);
+    const claims = await client.query("SELECT unit_weight_kg,pieces_in_label FROM distribution.vehicle_label_claims WHERE handoff_id=$1",[r.body.id]);
+    expect(claims.rows).toHaveLength(25);
+    expect(claims.rows.every((c: any) => Number(c.unit_weight_kg) === 0.0255 && Number(c.pieces_in_label) === 12)).toBe(true);
+    const one = await call("POST", "/vehicle-distribution/handoffs", {
+      token: adminToken, body: { sourceWarehouseId: erpWarehouseId,
+        items:[{mahsulotId:prodA.mahsulotId,quantity:1,totalWeightKg:0.0255}],
+        operationKey:opKey() },
+    });
+    expect(one.status, JSON.stringify(one.body)).toBe(200);
+    expect((await prepareLabels(one.body.id)).status).toBe(200);
+    const label = await client.query("SELECT weight_kg FROM production_labels WHERE batch_code=$1", [`VH-${one.body.id}`]);
+    expect(Number(label.rows[0].weight_kg)).toBe(0.0255);
+  });
+
   it("uses an explicit line total and derives a stable per-unit weight", async () => {
     const r = await call("POST", "/vehicle-distribution/handoffs", {
       token: adminToken,
@@ -1413,7 +1451,7 @@ describe("create prepared handoff", () => {
     expect(r.status).toBe(400);
   });
 
-  it("rejects explicit totals with more than three decimal places", async () => {
+  it("rejects explicit totals with more than four decimal places", async () => {
     const r = await call("POST", "/vehicle-distribution/handoffs", {
       token: adminToken,
       body: {
@@ -1422,7 +1460,7 @@ describe("create prepared handoff", () => {
           {
             mahsulotId: prodA.mahsulotId,
             quantity: 1,
-            totalWeightKg: 1.0001,
+            totalWeightKg: 1.00001,
           },
         ],
         operationKey: opKey(),

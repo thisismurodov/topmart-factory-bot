@@ -327,17 +327,17 @@ async def _append_profile_weight(update: Update, context: ContextTypes.DEFAULT_T
         return ConversationHandler.END
     try:
         unit_weight = Decimal(str(p.get("unit_weight_kg")))
-        # The downstream per-piece ledger is currently limited to milli-kg.
-        if not unit_weight.is_finite() or unit_weight <= 0 or unit_weight != unit_weight.quantize(Decimal("0.001")):
+        # The profile and downstream per-piece ledger share 0.1 gram precision.
+        if not unit_weight.is_finite() or unit_weight <= 0 or unit_weight != unit_weight.quantize(Decimal("0.0001")):
             raise ValueError
         total = unit_weight * qty
-        if total > Decimal("999999999.999"):
+        if total > Decimal("999999999.9999"):
             raise ValueError
     except (InvalidOperation, ValueError, TypeError):
         state.pop("pending_qty", None)
         await update.message.reply_text(
             "Mahsulot profilidagi bir dona kg yaroqsiz yoki hisob chegaradan oshdi. "
-            "Profilga musbat kg (hozircha 3 kasr xonasigacha) kiriting, "
+            "Profilga musbat kg (4 kasr xonasigacha) kiriting, "
             "so'ng /start orqali yuklashni qaytadan boshlang. Tovar savatga qo'shilmadi."
         )
         return ConversationHandler.END

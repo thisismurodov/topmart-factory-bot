@@ -27,7 +27,7 @@ export const productionLabelsTable = pgTable("production_labels", {
   piecesInLabel: integer("pieces_in_label").notNull().default(1),
   piecesPerBox: integer("pieces_per_box").notNull().default(1),
   quantityTotal: integer("quantity_total").notNull(),
-  weightKg: numeric("weight_kg", { precision: 12, scale: 3 }).notNull().default("0"),
+  weightKg: numeric("weight_kg", { precision: 13, scale: 4 }).notNull().default("0"),
   lengthM: numeric("length_m", { precision: 12, scale: 2 }),
   productName: text("product_name").notNull(),
   productSku: text("product_sku").notNull().default(""),

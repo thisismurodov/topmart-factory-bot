@@ -2731,25 +2731,21 @@ async function createHandoff(
   });
 }
 
-describe("F11 load cap (me’yor = yuklash limiti)", () => {
-  it("target quantity caps a new handoff; at-limit passes, over-limit → 400", async () => {
+describe("Stock targets are recommendations, not load limits", () => {
+  it("allows loading above a target when source stock exists", async () => {
     expect((await putTarget()).status).toBe(200); // min 3, target 10
     const over = await createHandoff(prodA.mahsulotId, 11);
-    expect(over.status).toBe(400);
-    expect(String(over.body.error)).toContain("me’yor (limit) 10");
+    expect(over.status).toBe(200);
     const ok = await createHandoff(prodA.mahsulotId, 10);
     expect(ok.status).toBe(200);
   });
 
-  it("counts current vehicle stock + in-flight handoffs toward the cap", async () => {
+  it("current and in-flight stock do not impose a target cap", async () => {
     expect((await putTarget()).status).toBe(200); // target 10
     await setStock(vehicleWarehouseId, prodA.name, 4, 10);
     await makePrepared(3); // in-flight pipeline
     const over = await createHandoff(prodA.mahsulotId, 4); // 4+3+4=11 > 10
-    expect(over.status).toBe(400);
-    expect(String(over.body.error)).toContain("mashinada 4 dona");
-    expect(String(over.body.error)).toContain("yo‘lda 3 dona");
-    expect(String(over.body.error)).toContain("ko‘pi bilan 3 dona");
+    expect(over.status).toBe(200);
     const ok = await createHandoff(prodA.mahsulotId, 3); // 4+3+3=10 → OK
     expect(ok.status).toBe(200);
   });
@@ -2787,7 +2783,7 @@ describe("F11 load cap (me’yor = yuklash limiti)", () => {
     expect(approve.body.handoffId).toBeTruthy();
   });
 
-  it("multi-item handoff: one capped line over the limit rejects atomically", async () => {
+  it("allows a multi-item handoff with a line above its target", async () => {
     expect((await putTarget()).status).toBe(200); // prodA target 10
     const over = await call("POST", "/vehicle-distribution/handoffs", {
       token: adminToken,
@@ -2800,8 +2796,7 @@ describe("F11 load cap (me’yor = yuklash limiti)", () => {
         operationKey: opKey(),
       },
     });
-    expect(over.status).toBe(400);
-    expect(String(over.body.error)).toContain("me’yor (limit) 10");
+    expect(over.status).toBe(200);
     // Rad atomik bo'lgan: muvaffaqiyatsiz urinish pipeline'da iz qoldirmaydi,
     // shuning uchun xuddi shu juftlik limit ichida bemalol o'tadi.
     const ok = await call("POST", "/vehicle-distribution/handoffs", {
@@ -2852,11 +2847,10 @@ describe("F11 load cap (me’yor = yuklash limiti)", () => {
     expect(replay.body.id).toBe(first.body.id);
     // Yangi yuklashga esa endi joy yo'q.
     const blocked = await createHandoff(prodA.mahsulotId, 1);
-    expect(blocked.status).toBe(400);
-    expect(String(blocked.body.error)).toContain("ko‘pi bilan 0 dona");
+    expect(blocked.status).toBe(200);
   });
 
-  it("approve rejection by the cap is a 400 with the me’yor text; request stays pending", async () => {
+  it("replenishment approval is not blocked by another handoff's target usage", async () => {
     expect((await putTarget()).status).toBe(200); // min 3, target 10; stock 0
     const req = await manualRequest(); // requested = 10 - 0 = 10
     expect(req.status).toBe(200);
@@ -2867,15 +2861,14 @@ describe("F11 load cap (me’yor = yuklash limiti)", () => {
       `/vehicle-distribution/pilot/replenishment-requests/${req.body.id}/approve`,
       { token: adminToken },
     );
-    expect(approve.status).toBe(400); // 0 + 6 + 10 > 10 — 409 EMAS, izoh ko'rinadi
-    expect(String(approve.body.error)).toContain("me’yor (limit) 10");
+    expect(approve.status).toBe(200);
     const detail = await call(
       "GET",
       `/vehicle-distribution/pilot/replenishment-requests/${req.body.id}`,
       { token: adminToken },
     );
     expect(detail.status).toBe(200);
-    expect(detail.body.status).toBe("pending"); // rollback — keyin bekor qilsa bo'ladi
+    expect(detail.body.status).toBe("approved");
   });
 });
 

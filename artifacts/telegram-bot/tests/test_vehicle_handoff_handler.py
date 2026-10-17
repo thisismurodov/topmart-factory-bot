@@ -97,7 +97,7 @@ class VehicleHandoffSafetyTest(unittest.IsolatedAsyncioTestCase):
                  "pending_weight": "20.55",
                  "pending_product": {"mahsulot_id": 29, "name": "P",
                                      "available_quantity": 1200, "unit_weight_kg": "0.0255",
-                                     "pieces_per_box": 12}}
+                                     "pieces_per_box": 12, "unit_type": "kg"}}
         with patch.object(vh, "_admin", return_value=True):
             result = await vh.enter_quantity(update, _ctx(state))
         self.assertEqual(result, vh.CART)
@@ -108,6 +108,37 @@ class VehicleHandoffSafetyTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("pending_qty", state)
         self.assertIn("9 ta etiketka", update.message.reply_text.call_args.args[0])
         update.message.reply_text.assert_awaited_once()
+
+    async def test_dona_1000_uses_profile_and_ten_box_labels(self):
+        state = {"token": "tok", "warehouse": {"id": 4, "name": "C-03"},
+                 "pending_product": {"mahsulot_id": 29, "name": "Qop ip 100 talik",
+                                     "available_quantity": 1000, "unit_type": "dona",
+                                     "unit_weight_kg": "0.1150", "pieces_per_box": 100}}
+        update = SimpleNamespace(effective_user=SimpleNamespace(id=10), message=_message("1000"))
+        with patch.object(vh, "_admin", return_value=True):
+            result = await vh.enter_quantity(update, _ctx(state))
+        self.assertEqual(result, vh.CART)
+        self.assertEqual(state["cart"][0]["quantity"], 1000)
+        self.assertEqual(state["cart"][0]["weight"], 115)
+        self.assertEqual(state["cart"][0]["pieces_per_box"], 100)
+        self.assertNotIn("measured_packages", state["cart"][0])
+        self.assertIn("10 ta etiketka", update.message.reply_text.call_args.args[0])
+
+    async def test_start_recovers_kg_and_archives_legacy_dona_packages(self):
+        kg = {"mahsulot_id": 1, "name": "Shlanka", "quantity": 6,
+              "weight": 21.55, "unit_type": "kg", "pieces_per_box": 1,
+              "measured_packages": True}
+        old_dona = {"mahsulot_id": 2, "name": "Qop ip", "quantity": 10,
+                    "weight": 115, "pieces_per_box": 1, "measured_packages": True}
+        state = {"token": "old", "warehouse": {"id": 4, "name": "C-03"},
+                 "done": set(), "cart": [kg, old_dona]}
+        update = SimpleNamespace(effective_user=SimpleNamespace(id=10), message=_message())
+        with patch.object(vh, "_admin", return_value=True), patch.object(vh, "_token", return_value="new"):
+            result = await vh.start(update, _ctx(state))
+        self.assertEqual(result, vh.CART)
+        self.assertEqual(state["cart"], [kg])
+        self.assertEqual(state["recovered_entries"], [old_dona])
+        self.assertEqual(state["token"], "new")
 
     async def test_invalid_measured_weight_never_adds_cart_item(self):
         for weight in (None, 0, -1, "NaN", "Infinity", "bad", "0.02555"):

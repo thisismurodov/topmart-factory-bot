@@ -101,9 +101,10 @@ def _cart_view(state: dict) -> tuple[str, InlineKeyboardMarkup]:
     w = state.get("warehouse") or {}
     lines = [f"🧺 *Savat — DM-001* · 🏬 {w.get('name', '?')}", ""]
     for i, it in enumerate(cart, 1):
-        lines.append(f"{i}. {it['name']} — *{int(it['quantity'])} dona* / {float(it['weight']):g} kg")
+        unit = "qadoq" if it.get("unit_type") == "kg" else "dona"
+        lines.append(f"{i}. {it['name']} — *{int(it['quantity'])} {unit}* / {float(it['weight']):g} kg")
     total_qty, total_kg, _, _ = _cart_totals(cart, None)
-    lines += ["", f"📦 Jami: *{len(cart)} tovar* · {total_qty} dona · ⚖️ {total_kg:g} kg"]
+    lines += ["", f"📦 Jami: *{len(cart)} tovar* · ⚖️ {total_kg:g} kg"]
     token = state["token"]
     rows = [
         [InlineKeyboardButton("➕ Yana tovar qo‘shish", callback_data=f"vh:{token}:more")],
@@ -128,14 +129,15 @@ def _review_view(state: dict) -> tuple[str, InlineKeyboardMarkup]:
         else:
             amount = _dec(it["weight"]) if it.get("unit_type") == "kg" else qty
             price_part = f"{_money(narx)} × {amount} = *{_money(_dec(narx) * amount)}*"
-        lines.append(f"{i}. {it['name']} — {qty} dona / {float(it['weight']):g} kg · {price_part}")
+        unit = "qadoq" if it.get("unit_type") == "kg" else "dona"
+        lines.append(f"{i}. {it['name']} — {qty} {unit} / {float(it['weight']):g} kg · {price_part}")
     total_qty, total_kg, total_sum, missing = _cart_totals(cart, prices)
     package_count = sum(
         (int(it["quantity"]) + int(it["pieces_per_box"]) - 1) // int(it["pieces_per_box"])
         for it in cart
         if int(it.get("pieces_per_box") or 0) > 0
     )
-    lines += ["", f"📦 Jami: {len(cart)} tovar · {total_qty} dona · ⚖️ {total_kg:g} kg",
+    lines += ["", f"📦 Jami: {len(cart)} tovar · ⚖️ {total_kg:g} kg",
               f"💰 *Jami summa (savdo narxlari): {_money(total_sum)}*"]
     if package_count:
         lines.append(f"🏷️ Kutilayotgan etiketka: *{package_count} ta*")
@@ -159,6 +161,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         await update.message.reply_text("❌ Bu amal faqat admin uchun.")
         return ConversationHandler.END
     token = _token(update)
+    saved = context.user_data.get("vh")
+    if saved and saved.get("cart") and "create" not in saved.get("done", set()):
+        saved["token"] = token
+        invalid = [it for it in saved["cart"]
+                   if it.get("measured_packages") and it.get("unit_type") != "kg"]
+        if invalid:
+            saved.setdefault("recovered_entries", []).extend(invalid)
+            saved["cart"] = [it for it in saved["cart"] if it not in invalid]
+            await update.message.reply_text(
+                "Oldingi ma’lumot saqlandi. Bu donali tovarlarni haqiqiy DONA "
+                "soni bilan qayta qo‘shing:\n" +
+                "\n".join(f"{it['name']}: {it['weight']:g} kg, {it['quantity']} qadoq"
+                          for it in invalid))
+        if saved["cart"]:
+            text, markup = _cart_view(saved)
+            await update.message.reply_text("Oldingi yuklash savati tiklandi.\n\n" + text,
+                                           parse_mode="Markdown", reply_markup=markup)
+            return CART
+        context.user_data["vh_recovery"] = saved
     context.user_data["vh"] = {"token": token, "done": set(), "cart": []}
     await update.message.reply_text(
         "🚚 *DM-001 mashinasi*\n\nAmalni tanlang:",
@@ -290,6 +311,13 @@ async def choose_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     state.pop("pending_weight", None)
     state.pop("pending_qty", None)
     p = state["pending_product"]
+    if p.get("unit_type") != "kg":
+        await q.edit_message_text(
+            f"📦 {p['name']}\nQoldiq: {float(p['available_quantity']):g} dona\n\n"
+            f"Jami nechta DONA yuklaysiz?\n"
+            f"1 quti: {int(p.get('pieces_per_box') or 1)} dona. "
+            "Kg va etiketkalar mahsulot profilidan hisoblanadi.")
+        return QUANTITY
     await q.edit_message_text(
         f"📦 *{p['name']}*\nQoldiq: *{float(p.get('available_weight_kg', 0)):g} kg / {float(p['available_quantity']):g} dona*\n\n"
         "Jami og‘irlikni kg da kiriting (masalan: 20.55):", parse_mode="Markdown",
@@ -303,6 +331,40 @@ async def enter_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return ConversationHandler.END
     text = update.message.text.strip()
     state = context.user_data["vh"]
+    p = state.get("pending_product", {})
+    if p.get("unit_type") != "kg" and "pending_weight" in state:
+        state.pop("pending_weight", None)
+        await update.message.reply_text("Donali mahsulot uchun kg/qadoq emas, haqiqiy jami DONA sonini qayta kiriting:")
+        return QUANTITY
+    if p.get("unit_type") != "kg" and "pending_weight" not in state:
+        if not text.isdigit() or not 0 < int(text) <= int(float(p.get("available_quantity", 0))):
+            await update.message.reply_text("Mavjud qoldiqdan oshmaydigan musbat butun DONA sonini kiriting:")
+            return QUANTITY
+        qty = int(text)
+        try:
+            unit_weight = Decimal(str(p.get("unit_weight_kg")))
+            pieces = int(p.get("pieces_per_box") or 1)
+            if not unit_weight.is_finite() or unit_weight <= 0 or pieces <= 0:
+                raise ValueError
+        except (ValueError, InvalidOperation, TypeError):
+            await update.message.reply_text("Mahsulot profilida 1 dona kg yoki qutidagi dona soni noto‘g‘ri. Profilni tuzating.")
+            return QUANTITY
+        count = (qty + pieces - 1) // pieces
+        if count > 100:
+            await update.message.reply_text("Bir yuklashda ko‘pi bilan 100 ta etiketka. Dona sonini kamaytiring.")
+            return QUANTITY
+        total = unit_weight * qty
+        state.setdefault("cart", []).append({
+            "mahsulot_id": int(p["mahsulot_id"]), "name": p["name"],
+            "quantity": qty, "weight": float(total), "pieces_per_box": pieces,
+            "unit_type": "dona",
+        })
+        state.pop("pending_product", None)
+        text_view, markup = _cart_view(state)
+        await update.message.reply_text(
+            f"Qo‘shildi: {qty} dona · {total:g} kg · {count} ta etiketka.\n\n" + text_view,
+            parse_mode="Markdown", reply_markup=markup)
+        return CART
     if "pending_weight" not in state:
         await update.message.reply_text("Avval jami og‘irlikni kg da kiriting:")
         return WEIGHT
@@ -385,7 +447,7 @@ async def _append_measured_weight(update: Update, context: ContextTypes.DEFAULT_
     state.pop("pending_weight", None)
     text, markup = _cart_view(state)
     await update.message.reply_text(
-        f"➕ Qo‘shildi: *{p['name']}* — {qty} dona / {weight:g} kg\n"
+        f"➕ Qo‘shildi: *{p['name']}* — {qty} qadoq / {weight:g} kg\n"
         + profile_line + "\n" + text,
         parse_mode="Markdown", reply_markup=markup,
     )
@@ -435,6 +497,10 @@ async def confirm_create(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if "create" in state["done"]:
         await _reject(q, "Bu so‘rov allaqachon bajarilgan.")
         return REVIEW
+    if any(it.get("measured_packages") and it.get("unit_type") != "kg"
+           for it in state.get("cart", [])):
+        await q.answer("Eski donali qator bor. Mashinani to‘ldirish menyusini qayta oching; savat saqlanadi.", show_alert=True)
+        return REVIEW
     cart = state.get("cart") or []
     if not cart:
         await _reject(q, "Savat bo‘sh.")
@@ -471,7 +537,7 @@ async def confirm_create(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         sum_line += f"⚠️ Narxi yo‘q: {', '.join(missing)}\n"
     await q.edit_message_text(
         f"✅ Topshirish *#{handoff_id}* tayyorlandi.\n"
-        f"📦 {len(cart)} tovar · {total_qty} dona · ⚖️ {total_kg:g} kg · "
+        f"📦 {len(cart)} tovar · ⚖️ {total_kg:g} kg · "
         f"🏷️ {labels['totalLabels']} ta etiketka\n"
         + sum_line +
         "⚠️ PDF yuborildi, lekin “chop etildi” hali tasdiqlanmadi.",

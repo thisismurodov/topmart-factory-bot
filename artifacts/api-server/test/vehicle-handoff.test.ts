@@ -1006,10 +1006,10 @@ describe("F4 prepare labels", () => {
     ).toBeCloseTo(15, 3);
   });
 
-  it("rejects totals that cannot give every package a positive 3-decimal weight", async () => {
+  it("rejects totals that cannot give every package a positive 4-decimal weight", async () => {
     const cases = [
-      { quantity: 3, totalWeightKg: 0.002, piecesPerBox: 1 },
-      { quantity: 101, totalWeightKg: 0.002, piecesPerBox: 100 },
+      { quantity: 3, totalWeightKg: 0.0001, piecesPerBox: 1 },
+      { quantity: 101, totalWeightKg: 0.0001, piecesPerBox: 100 },
     ];
     for (const scenario of cases) {
       await client.query(
@@ -1604,7 +1604,9 @@ describe("create prepared handoff", () => {
     },
   );
 
-  it("rejects a 3-decimal total that cannot divide exactly by quantity", async () => {
+  it("preserves box totals that cannot divide exactly into 0.1g pieces", async () => {
+    await client.query(`UPDATE products SET pieces_per_box=120 WHERE name=$1`,[prodA.name]);
+    await client.query(`UPDATE inventory SET quantity=120,weight_kg=11 WHERE product=$1 AND warehouse_id=$2`,[prodA.name,erpWarehouseId]);
     const r = await call("POST", "/vehicle-distribution/handoffs", {
       token: adminToken,
       body: {
@@ -1612,14 +1614,14 @@ describe("create prepared handoff", () => {
         items: [
           {
             mahsulotId: prodA.mahsulotId,
-            quantity: 150,
-            totalWeightKg: 15.001,
+            quantity: 120,
+            totalWeightKg: 11,
           },
         ],
         operationKey: opKey(),
       },
     });
-    expect(r.status).toBe(400);
+    expect(r.status).toBe(200);
   });
 
   it("bot-created handoff carries the warehouse_bot actor", async () => {

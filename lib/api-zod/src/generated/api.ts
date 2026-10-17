@@ -878,7 +878,7 @@ export const BootstrapVehicleDistributionPilotResponse = zod.object({
 
 
 /**
- * Authenticated read-only stock view for the single pilot vehicle (DM-001 / DAMAS / agent NAVRUZBEK). The pilot vehicle and its expected vehicle warehouse are resolved entirely server-side — the request takes no vehicle or warehouse input. Fails closed (404) unless the vehicle-distribution feature is enabled, and returns 503 when enabled without schema approval. When the pilot has not been bootstrapped (no active NAVRUZBEK assignment on DM-001 with the exact expected vehicle warehouse), returns a deterministic not-bootstrapped payload (bootstrapped=false, null vehicle/warehouse, empty items, zeroed totals) and NEVER falls back to a generic warehouse. Stock items include only nonzero-quantity inventory rows (stock-card display semantics), sorted by product name.
+ * Authenticated read-only stock view for the single pilot vehicle (DM-001 / DAMAS / agent NAVRUZBEK). The pilot vehicle and its expected vehicle warehouse are resolved entirely server-side — the request takes no vehicle or warehouse input. Fails closed (404) unless the vehicle-distribution feature is enabled, and returns 503 when enabled without schema approval. When the pilot has not been bootstrapped (no active NAVRUZBEK assignment on DM-001 with the exact expected vehicle warehouse), returns a deterministic not-bootstrapped payload (bootstrapped=false, null vehicle/warehouse, empty items, zeroed totals) and NEVER falls back to a generic warehouse. Stock items include inventory rows with nonzero quantity or weight (including kg-only stock), sorted by product name.
  * @summary Read the pilot vehicle warehouse stock cards (read model)
  */
 export const GetVehicleDistributionPilotStockResponse = zod.object({
@@ -899,6 +899,13 @@ export const GetVehicleDistributionPilotStockResponse = zod.object({
   "active": zod.boolean()
 }),zod.null()]),
   "items": zod.array(zod.object({
+  "unitType": zod.string().nullish(),
+  "loadedPackageCount": zod.number().nullish().describe('Historical package count from completed kg handoffs, not remaining packages.'),
+  "currency": zod.string().nullish(),
+  "costUnitPrice": zod.number().nullish(),
+  "retailUnitPrice": zod.number().nullish(),
+  "costValue": zod.number().nullish(),
+  "retailValue": zod.number().nullish(),
   "product": zod.string(),
   "productName": zod.string(),
   "productSku": zod.string().nullable(),
@@ -909,7 +916,7 @@ export const GetVehicleDistributionPilotStockResponse = zod.object({
   "skuCount": zod.number(),
   "totalQuantity": zod.number(),
   "totalWeightKg": zod.number()
-}).describe('Read model of the pilot vehicle warehouse stock. When not bootstrapped, vehicle and warehouse are null, items is empty, and every total is zero. Stock items include only nonzero-quantity rows, sorted by productName.')
+}).describe('Read model of the pilot vehicle warehouse stock. When not bootstrapped, vehicle and warehouse are null, items is empty, and every total is zero. Stock items include rows with nonzero quantity or weight, sorted by productName.')
 
 
 /**

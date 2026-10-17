@@ -69,7 +69,7 @@ export async function initDb(): Promise<void> {
   // drizzle.config bo'sh Replit DB'ga ishlaydi, shuning uchun bu ALTER kerak.
   await pool.query(`
     ALTER TABLE IF EXISTS products
-      ADD COLUMN IF NOT EXISTS weight NUMERIC(13,4) NOT NULL DEFAULT 1
+      ADD COLUMN IF NOT EXISTS weight NUMERIC(17,8) NOT NULL DEFAULT 1
   `);
 
   // products.pieces_per_box — qutidagi dona soni (etiketika: 1 quti = N dona)

@@ -73,6 +73,23 @@ export interface VehicleDistributionPilot {
  * One stock card line for the pilot vehicle warehouse. productSku is nullable (and may be an empty string) because a matching catalog product may not exist for a raw inventory row.
  */
 export interface VehicleDistributionPilotStockItem {
+  /** @nullable */
+  unitType?: string | null;
+  /**
+     * Historical package count from completed kg handoffs, not remaining packages.
+     * @nullable
+     */
+  loadedPackageCount?: number | null;
+  /** @nullable */
+  currency?: string | null;
+  /** @nullable */
+  costUnitPrice?: number | null;
+  /** @nullable */
+  retailUnitPrice?: number | null;
+  /** @nullable */
+  costValue?: number | null;
+  /** @nullable */
+  retailValue?: number | null;
   product: string;
   productName: string;
   /** @nullable */
@@ -84,7 +101,7 @@ export interface VehicleDistributionPilotStockItem {
 }
 
 /**
- * Read model of the pilot vehicle warehouse stock. When not bootstrapped, vehicle and warehouse are null, items is empty, and every total is zero. Stock items include only nonzero-quantity rows, sorted by productName.
+ * Read model of the pilot vehicle warehouse stock. When not bootstrapped, vehicle and warehouse are null, items is empty, and every total is zero. Stock items include rows with nonzero quantity or weight, sorted by productName.
  */
 export interface VehicleDistributionPilotStock {
   bootstrapped: boolean;

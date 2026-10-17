@@ -353,7 +353,7 @@ async def enter_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if count > 100:
             await update.message.reply_text("Bir yuklashda ko‘pi bilan 100 ta etiketka. Dona sonini kamaytiring.")
             return QUANTITY
-        total = unit_weight * qty
+        total = (unit_weight * qty).quantize(Decimal("0.0001"))
         state.setdefault("cart", []).append({
             "mahsulot_id": int(p["mahsulot_id"]), "name": p["name"],
             "quantity": qty, "weight": float(total), "pieces_per_box": pieces,

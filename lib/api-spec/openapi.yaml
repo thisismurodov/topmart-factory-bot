@@ -961,7 +961,7 @@ paths:
         warehouse), returns a deterministic not-bootstrapped payload
         (bootstrapped=false, null vehicle/warehouse, empty items, zeroed
         totals) and NEVER falls back to a generic warehouse. Stock items include
-        only nonzero-quantity inventory rows (stock-card display semantics),
+        inventory rows with nonzero quantity or weight (including kg-only stock),
         sorted by product name.
       responses:
         "200":
@@ -2109,6 +2109,15 @@ components:
         nullable (and may be an empty string) because a matching catalog product
         may not exist for a raw inventory row.
       properties:
+        unitType: { type: ["string", "null"] }
+        loadedPackageCount:
+          type: ["number", "null"]
+          description: Historical package count from completed kg handoffs, not remaining packages.
+        currency: { type: ["string", "null"] }
+        costUnitPrice: { type: ["number", "null"] }
+        retailUnitPrice: { type: ["number", "null"] }
+        costValue: { type: ["number", "null"] }
+        retailValue: { type: ["number", "null"] }
         product:
           type: string
         productName:
@@ -2128,7 +2137,7 @@ components:
       description: >-
         Read model of the pilot vehicle warehouse stock. When not bootstrapped,
         vehicle and warehouse are null, items is empty, and every total is zero.
-        Stock items include only nonzero-quantity rows, sorted by productName.
+        Stock items include rows with nonzero quantity or weight, sorted by productName.
       properties:
         bootstrapped:
           type: boolean

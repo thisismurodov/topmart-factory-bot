@@ -109,6 +109,20 @@ class VehicleHandoffSafetyTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("9 ta etiketka", update.message.reply_text.call_args.args[0])
         update.message.reply_text.assert_awaited_once()
 
+    async def test_leska_box_totals_keep_measured_kg(self):
+        for weight, expected in [("0.09166667", 11), ("0.06666667", 8)]:
+            with self.subTest(weight=weight):
+                state = {"token": "tok", "warehouse": {"id": 4, "name": "C-03"},
+                         "pending_product": {"mahsulot_id": 29, "name": "Leska",
+                                             "available_quantity": 120, "unit_type": "dona",
+                                             "unit_weight_kg": weight, "pieces_per_box": 120}}
+                update = SimpleNamespace(effective_user=SimpleNamespace(id=10), message=_message("120"))
+                with patch.object(vh, "_admin", return_value=True):
+                    result = await vh.enter_quantity(update, _ctx(state))
+                self.assertEqual(result, vh.CART)
+                self.assertEqual(state["cart"][0]["quantity"], 120)
+                self.assertEqual(state["cart"][0]["weight"], expected)
+
     async def test_dona_1000_uses_profile_and_ten_box_labels(self):
         state = {"token": "tok", "warehouse": {"id": 4, "name": "C-03"},
                  "pending_product": {"mahsulot_id": 29, "name": "Qop ip 100 talik",

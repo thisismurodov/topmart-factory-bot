@@ -466,16 +466,8 @@ function validateExplicitTotalForQuantity(
   mahsulotId: number,
 ): number {
   const canonical = canonicalExplicitTotalWeightKg(value, mahsulotId);
-  const totalWeightUnits = Math.round(canonical * 10000);
-  if (
-    Number.isInteger(quantity) &&
-    quantity > 0 &&
-    totalWeightUnits % quantity !== 0
-  ) {
-    throw new HandoffValidationError(
-      `Item totalWeightKg must divide exactly by quantity at 4-decimal precision (mahsulotId=${mahsulotId})`,
-    );
-  }
+  // A measured box total need not divide into 0.1g pieces (120 pieces / 11kg).
+  // allocatePackageWeightsKg preserves the exact total across printed boxes.
   return canonical;
 }
 
@@ -598,7 +590,7 @@ async function resolveItem(
   validateHandoffPackagePlan(input.quantity, piecesPerBox);
   const totalWeightKg = canonicalSnapshotWeightKg(
     explicitTotalWeightKg === undefined
-      ? profileUnitWeightKg * input.quantity
+      ? roundWeightKg(profileUnitWeightKg * input.quantity)
       : explicitTotalWeightKg,
     input.mahsulotId,
     explicitTotalWeightKg === undefined

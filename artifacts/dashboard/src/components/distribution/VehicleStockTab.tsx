@@ -7,30 +7,33 @@ import {
   getGetVehicleDistributionPilotMovementsQueryKey,
   GetVehicleDistributionPilotStockQueryError
 } from "@workspace/api-client-react";
-import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { RefreshCw, Truck, Box, MapPin, Package, AlertCircle, ArrowRightLeft, Database, ClipboardList, PackageCheck, PackagePlus, Undo2, CalendarCheck2 } from "lucide-react";
+import { Box, Package, ArrowRightLeft, Database, ClipboardList, PackageCheck, PackagePlus, Undo2, CalendarCheck2 } from "lucide-react";
 import { VehicleHandoffs } from "./VehicleHandoffs";
 import { VehicleReconciliations } from "./VehicleReconciliations";
 import { VehicleReplenishment } from "./VehicleReplenishment";
 import { VehicleReturns } from "./VehicleReturns";
 import { VehicleWeeklyReadiness } from "./VehicleWeeklyReadiness";
+import { VehicleWarehouseHero } from "./VehicleWarehouseHero";
+import { classifyMovementType, formatStockPrimary, formatLoadedPackages, formatMoney, formatQty, type StockItemValueFields } from "./vehicle-stock-helpers";
 
 // --- Subcomponents ---
 
 function MovementTypeBadge({ type }: { type: string }) {
   if (!type) return <Badge variant="outline">—</Badge>;
-  const lower = type.toLowerCase();
-  if (lower.includes("load") || lower.includes("in")) 
-    return <Badge className="bg-indigo-100 text-indigo-700 hover:bg-indigo-200 border-indigo-200 uppercase text-[10px] tracking-wider px-1.5 h-5">{type}</Badge>;
-  if (lower.includes("unload") || lower.includes("out") || lower.includes("sale") || lower.includes("disp")) 
-    return <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-200 border-amber-200 uppercase text-[10px] tracking-wider px-1.5 h-5">{type}</Badge>;
-  
-  return <Badge variant="secondary" className="uppercase text-[10px] tracking-wider text-slate-600 px-1.5 h-5">{type}</Badge>;
+  const kind = classifyMovementType(type);
+  const base = "uppercase text-[10px] tracking-wider px-1.5 h-5";
+  if (kind === "sale")
+    return <Badge data-testid="badge-movement-sale" className={`${base} bg-rose-100 text-rose-700 hover:bg-rose-200 border-rose-200`}>{type}</Badge>;
+  if (kind === "load")
+    return <Badge className={`${base} bg-emerald-100 text-emerald-800 hover:bg-emerald-200 border-emerald-200`}>{type}</Badge>;
+  if (kind === "unload")
+    return <Badge className={`${base} bg-amber-100 text-amber-700 hover:bg-amber-200 border-amber-200`}>{type}</Badge>;
+  return <Badge variant="secondary" className={`${base} text-slate-600`}>{type}</Badge>;
 }
 
 function MovementsPage({ 
@@ -177,65 +180,13 @@ export default function VehicleStockTab({ active }: { active: boolean }) {
 
   return (
     <div className="space-y-4 pt-4">
-      {/* Header Info Card */}
-      <Card className="bg-slate-50 border-slate-200 shadow-sm">
-        <CardContent className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex flex-col gap-1.5">
-            <div className="flex items-center gap-2">
-              <Truck className="w-5 h-5 text-indigo-600" />
-              <h2 className="text-lg font-bold text-slate-800 tracking-tight">
-                {isBootstrapped ? stockData?.vehicle?.plateNumber : "Avto ombor"}
-              </h2>
-              {isBootstrapped && stockData?.vehicle?.status && (
-                <Badge variant="outline" className="bg-white text-indigo-700 border-indigo-200">
-                  {stockData.vehicle.status}
-                </Badge>
-              )}
-            </div>
-            
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-600">
-              {isBootstrapped && stockData?.warehouse && (
-                <span className="flex items-center gap-1.5">
-                  <MapPin className="w-3.5 h-3.5 opacity-70" />
-                  {stockData.warehouse.name}
-                </span>
-              )}
-              {!isBootstrapped && (
-                <span className="text-amber-600 flex items-center gap-1.5">
-                  <AlertCircle className="w-4 h-4" /> Boshlang'ich holat o'rnatilmagan
-                </span>
-              )}
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3 self-start sm:self-center">
-            {isBootstrapped && (
-              <div className="flex items-center gap-3 bg-white px-3 py-1.5 rounded-md border border-slate-200 shadow-sm text-sm">
-                <div className="flex flex-col">
-                  <span className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">Jami mahsulot (dona)</span>
-                  <span className="font-bold text-slate-700">{stockData?.totalQuantity?.toLocaleString("uz-UZ") ?? 0} dona</span>
-                </div>
-                <div className="w-px h-6 bg-slate-200 mx-1"></div>
-                <div className="flex flex-col">
-                  <span className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">Umumiy Vazn</span>
-                  <span className="font-bold text-slate-700">{stockData?.totalWeightKg?.toLocaleString("uz-UZ") ?? 0} kg</span>
-                </div>
-              </div>
-            )}
-            
-            <Button 
-              variant="outline" 
-              size="icon" 
-              className="h-9 w-9 bg-white text-slate-600 border-slate-200 hover:bg-slate-100" 
-              onClick={handleRefresh}
-              disabled={isStockFetching}
-              title="Yangilash"
-            >
-              <RefreshCw className={`w-4 h-4 ${isStockFetching ? "animate-spin" : ""}`} />
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+      <VehicleWarehouseHero
+        stock={stockData}
+        isLoading={isStockFetching && !stockData}
+        isFetching={isStockFetching}
+        onRefresh={handleRefresh}
+        active={active}
+      />
 
       {/* Tabs for Stock & Movements */}
       <Tabs value={subTab} onValueChange={setSubTab}>
@@ -326,13 +277,15 @@ export default function VehicleStockTab({ active }: { active: boolean }) {
                     <TableRow className="hover:bg-slate-50">
                       <TableHead className="w-[120px]">Kodu</TableHead>
                       <TableHead>Nomi</TableHead>
-                       <TableHead className="text-right">Miqdor (dona)</TableHead>
+                       <TableHead className="text-right">Miqdor</TableHead>
                       <TableHead className="text-right">Vazn (kg)</TableHead>
+                      <TableHead className="text-right">Tannarx</TableHead>
+                      <TableHead className="text-right">Sotuv qiymati</TableHead>
                       <TableHead className="w-[150px]">Oxirgi yangilanish</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {stockData.items.map((item, idx) => (
+                    {stockData.items.map((item, idx) => { const v = item as typeof item & StockItemValueFields; const pk = formatLoadedPackages(v); return (
                       <TableRow key={`${item.product}-${idx}`} className="group">
                         <TableCell className="font-mono text-xs text-slate-500">
                           {item.productSku || item.product}
@@ -342,17 +295,20 @@ export default function VehicleStockTab({ active }: { active: boolean }) {
                         </TableCell>
                         <TableCell className="text-right">
                           <span className="inline-flex items-center justify-center min-w-[3rem] px-2 py-0.5 rounded-md bg-slate-100 font-semibold text-slate-700 text-sm">
-                             {item.quantity.toLocaleString("uz-UZ")} dona
+                             {formatStockPrimary(v)}
                           </span>
+                          {pk && <div className="text-[10px] text-slate-400 mt-0.5" title="Topshirishlar bo‘yicha yuklangan qadoqlar (tarixiy, qoldiq emas)">{pk}</div>}
                         </TableCell>
                         <TableCell className="text-right text-slate-600 text-sm">
-                          {item.weightKg.toLocaleString("uz-UZ")}
+                          {formatQty(item.weightKg)}
                         </TableCell>
+                        <TableCell className="text-right text-sm tabular-nums whitespace-nowrap text-slate-700">{formatMoney(v.costValue, v.currency)}</TableCell>
+                        <TableCell className="text-right text-sm tabular-nums whitespace-nowrap font-medium text-slate-800">{formatMoney(v.retailValue, v.currency)}</TableCell>
                         <TableCell className="text-xs text-slate-400 whitespace-nowrap">
                           {item.updatedAt ? item.updatedAt.slice(0, 16).replace('T', ' ') : "—"}
                         </TableCell>
                       </TableRow>
-                    ))}
+                    ); })}
                   </TableBody>
                 </Table>
               </div>

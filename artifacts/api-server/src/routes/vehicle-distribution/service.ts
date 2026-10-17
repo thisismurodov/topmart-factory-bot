@@ -290,6 +290,13 @@ export type PilotStockItem = {
   quantity: number;
   weightKg: number;
   updatedAt: string | null;
+  unitType?: string | null;
+  loadedPackageCount?: number | null;
+  currency?: string | null;
+  costUnitPrice?: number | null;
+  retailUnitPrice?: number | null;
+  costValue?: number | null;
+  retailValue?: number | null;
 };
 
 export type PilotStockState = {
@@ -397,7 +404,7 @@ async function resolvePilotSoft(
 /**
  * Read the pilot vehicle warehouse stock cards. Read-only.
  *
- * Includes only nonzero-quantity inventory rows (documented choice), sorted by
+ * Includes inventory rows with nonzero quantity or weight, sorted by
  * product name, each enriched with the catalog product SKU when a matching
  * products row exists (productSku is null otherwise; it may also be an empty
  * string when the catalog row carries an empty SKU). Totals are computed from
@@ -423,18 +430,32 @@ export async function readPilotStock(
 
   const { vehicle, warehouse } = resolved;
 
-  // Only nonzero-quantity rows (stock-card semantics). LEFT JOIN products so a
+  // Kg goods have zero pieces but positive weight. LEFT JOIN products so a
   // raw inventory row without a catalog match still appears (productSku null).
   const { rows } = await client.query(
     `SELECT i.product           AS product,
             i.quantity          AS quantity,
             COALESCE(i.weight_kg, 0) AS weight_kg,
             i.updated_at        AS updated_at,
-            p.sku               AS sku
+            p.sku               AS sku,
+            p.unit_type, p.currency_type,
+            CASE WHEN p.in_production THEN NULLIF(p.default_sale_price,0)
+                 ELSE NULLIF(p.cost_price,0) END AS cost_price,
+            CASE WHEN p.currency_type='UZS' THEN
+              (SELECT d.narx FROM distribution.mahsulotlar d
+               WHERE d.sku=p.sku AND d.faol=1 ORDER BY d.id LIMIT 1)
+            ELSE NULL END AS retail_price,
+            CASE WHEN p.unit_type='kg' THEN (
+              SELECT COALESCE(SUM(hi.quantity_dispatched),0)
+              FROM distribution.vehicle_handoff_items hi
+              JOIN distribution.vehicle_handoffs h ON h.id=hi.handoff_id
+              WHERE h.vehicle_warehouse_id=i.warehouse_id
+                AND h.status='stock_transferred' AND hi.sku=p.sku
+            ) ELSE NULL END AS loaded_packages
        FROM inventory i
        LEFT JOIN products p ON p.name = i.product
       WHERE i.warehouse_id = $1
-        AND i.quantity <> 0
+        AND (i.quantity <> 0 OR COALESCE(i.weight_kg, 0) <> 0)
       ORDER BY i.product`,
     [warehouse.id],
   );
@@ -445,6 +466,13 @@ export async function readPilotStock(
     productSku: row.sku == null ? null : String(row.sku),
     quantity: Number(row.quantity),
     weightKg: Number(row.weight_kg),
+    unitType: row.unit_type ?? null,
+    loadedPackageCount: row.loaded_packages == null ? null : Number(row.loaded_packages),
+    currency: row.currency_type ?? null,
+    costUnitPrice: row.cost_price == null ? null : Number(row.cost_price),
+    retailUnitPrice: row.retail_price == null || Number(row.retail_price) <= 0 ? null : Number(row.retail_price),
+    costValue: row.cost_price == null ? null : Math.round(Number(row.cost_price) * Number(row.unit_type === "kg" ? row.weight_kg : row.quantity) * 100) / 100,
+    retailValue: row.retail_price == null || Number(row.retail_price) <= 0 ? null : Math.round(Number(row.retail_price) * Number(row.unit_type === "kg" ? row.weight_kg : row.quantity) * 100) / 100,
     updatedAt: iso(row.updated_at),
   }));
 

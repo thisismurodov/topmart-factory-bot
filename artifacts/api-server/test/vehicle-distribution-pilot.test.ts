@@ -134,8 +134,25 @@ async function createPublicTables(c: pg.Client): Promise<void> {
     CREATE TABLE IF NOT EXISTS products (
       id   SERIAL PRIMARY KEY,
       name TEXT NOT NULL,
-      sku  TEXT NOT NULL DEFAULT ''
+      sku  TEXT NOT NULL DEFAULT '',
+      unit_type TEXT DEFAULT 'dona',
+      currency_type TEXT DEFAULT 'UZS',
+      in_production BOOLEAN DEFAULT FALSE,
+      default_sale_price NUMERIC DEFAULT 0,
+      cost_price NUMERIC DEFAULT 0
     )`);
+  await c.query(`CREATE TABLE IF NOT EXISTS distribution.mahsulotlar
+    (id SERIAL PRIMARY KEY,sku TEXT,narx NUMERIC,faol INTEGER DEFAULT 1)`);
+  await c.query(`ALTER TABLE products
+    ADD COLUMN IF NOT EXISTS unit_type TEXT DEFAULT 'dona',
+    ADD COLUMN IF NOT EXISTS currency_type TEXT DEFAULT 'UZS',
+    ADD COLUMN IF NOT EXISTS in_production BOOLEAN DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS default_sale_price NUMERIC DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS cost_price NUMERIC DEFAULT 0`);
+  await c.query(`CREATE TABLE IF NOT EXISTS distribution.vehicle_handoffs
+    (id SERIAL PRIMARY KEY,vehicle_warehouse_id INTEGER,status TEXT)`);
+  await c.query(`CREATE TABLE IF NOT EXISTS distribution.vehicle_handoff_items
+    (id SERIAL PRIMARY KEY,handoff_id INTEGER,sku TEXT,quantity_dispatched NUMERIC)`);
   // stock_movements (public ERP table) — mirror of the API initDb DDL so the F5
   // movements read model has a real table to query against.
   await c.query(`
@@ -1258,12 +1275,25 @@ describe("F5 stock — exact rows, totals, SKU, sorting, isolation", () => {
   it("returns exactly the nonzero vehicle rows, sorted by product, exact totals", async () => {
     // Catalog SKUs for two of the three products (third has no catalog row).
     await client.query(
-      `INSERT INTO products (name, sku) VALUES ('Zeta', 'SKU-Z'), ('Alpha', 'SKU-A'), ('Beta', '')`,
+      `INSERT INTO products (name, sku) VALUES ('Zeta', 'SKU-Z'), ('Alpha', 'SKU-A'), ('Beta', ''), ('Tulpor', 'SKU-T')`,
     );
-    // Vehicle inventory: two nonzero + one zero (must be excluded).
+    await client.query(`UPDATE products SET unit_type='kg',in_production=false,cost_price=10000 WHERE name='Tulpor'`);
+    await client.query(`UPDATE products SET in_production=true,default_sale_price=1000 WHERE name='Alpha'`);
+    await client.query(`INSERT INTO distribution.mahsulotlar(sku,narx) VALUES ('SKU-T',20000),('SKU-A',1120)`);
+    for (const [status,qty] of [["stock_transferred",9],["prepared",99]] as const) {
+      const h = await client.query(`INSERT INTO distribution.vehicle_handoffs
+        (vehicle_id,delivery_agent_id,source_warehouse_id,vehicle_warehouse_id,handoff_date,status,prepared_actor_type,prepared_actor_ref)
+        SELECT v.id,a.delivery_agent_id,$2,$1,CURRENT_DATE,$3,'admin','test'
+        FROM distribution.vehicles v JOIN distribution.vehicle_assignments a ON a.vehicle_id=v.id
+        WHERE v.warehouse_id=$1 AND a.status='active' RETURNING id`,[vehicleWarehouseId,erpWarehouseId,status]);
+      await client.query(`INSERT INTO distribution.vehicle_handoff_items
+        (handoff_id,mahsulot_id,sku,product_name,quantity_dispatched,unit_weight_kg,total_weight_kg,pieces_per_box)
+        SELECT $1,id,'SKU-T','Tulpor',$2,1,$2,1 FROM distribution.mahsulotlar WHERE sku='SKU-T' LIMIT 1`,[h.rows[0].id,qty]);
+    }
+    // Piece and kg-only stock must appear; completely empty stock is excluded.
     await client.query(
       `INSERT INTO inventory (warehouse_id, product, quantity, weight_kg)
-       VALUES ($1,'Zeta',3,9.0),($1,'Alpha',10,25.5),($1,'Zeroed',0,0)`,
+       VALUES ($1,'Zeta',3,9.0),($1,'Alpha',10,25.5),($1,'Tulpor',0,20.55),($1,'Zeroed',0,0)`,
       [vehicleWarehouseId],
     );
     // Unrelated warehouse stock — must never appear.
@@ -1284,8 +1314,15 @@ describe("F5 stock — exact rows, totals, SKU, sorting, isolation", () => {
     expect(body.vehicle?.plateNumber).toBe(PILOT_VEHICLE_PLATE);
     expect(body.warehouse?.id).toBe(vehicleWarehouseId);
 
-    // Only the two nonzero rows, sorted by product name (Alpha < Zeta).
-    expect(body.items.map((i) => i.product)).toEqual(["Alpha", "Zeta"]);
+    // Both stock units appear, sorted by product name.
+    expect(body.items.map((i) => i.product)).toEqual(["Alpha", "Tulpor", "Zeta"]);
+    expect(body.items.find((i) => i.product === "Tulpor")).toMatchObject({
+      quantity: 0,
+      weightKg: 20.55,
+      loadedPackageCount: 9,
+      costValue: 205500,
+      retailValue: 411000,
+    });
     // No zero row leaked in.
     expect(body.items.some((i) => i.product === "Zeroed")).toBe(false);
     // No other-warehouse noise (quantity 999) leaked.
@@ -1295,6 +1332,8 @@ describe("F5 stock — exact rows, totals, SKU, sorting, isolation", () => {
     expect(alpha.productName).toBe("Alpha");
     expect(alpha.productSku).toBe("SKU-A");
     expect(alpha.quantity).toBe(10);
+    expect(alpha.costValue).toBe(10000);
+    expect(alpha.retailValue).toBe(11200);
     expect(alpha.weightKg).toBeCloseTo(25.5, 3);
     expect(typeof alpha.updatedAt).toBe("string");
 
@@ -1302,9 +1341,9 @@ describe("F5 stock — exact rows, totals, SKU, sorting, isolation", () => {
     expect(zeta.productSku).toBe("SKU-Z");
 
     // Totals derived from the returned (nonzero) rows only.
-    expect(body.skuCount).toBe(2);
+    expect(body.skuCount).toBe(3);
     expect(body.totalQuantity).toBe(13);
-    expect(body.totalWeightKg).toBeCloseTo(34.5, 3);
+    expect(body.totalWeightKg).toBeCloseTo(55.05, 3);
   });
 
   it("productSku is null when no catalog product row exists", async () => {

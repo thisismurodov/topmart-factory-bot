@@ -10,6 +10,23 @@
  * One stock card line for the pilot vehicle warehouse. productSku is nullable (and may be an empty string) because a matching catalog product may not exist for a raw inventory row.
  */
 export interface VehicleDistributionPilotStockItem {
+  /** @nullable */
+  unitType?: string | null;
+  /**
+     * Historical package count from completed kg handoffs, not remaining packages.
+     * @nullable
+     */
+  loadedPackageCount?: number | null;
+  /** @nullable */
+  currency?: string | null;
+  /** @nullable */
+  costUnitPrice?: number | null;
+  /** @nullable */
+  retailUnitPrice?: number | null;
+  /** @nullable */
+  costValue?: number | null;
+  /** @nullable */
+  retailValue?: number | null;
   product: string;
   productName: string;
   /** @nullable */

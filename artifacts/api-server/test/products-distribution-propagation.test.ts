@@ -197,7 +197,7 @@ describe("PATCH /products → distribution.mahsulotlar propagation", () => {
 
     const m = await mahsulot("ARQON-5MM-T");
     expect(m).not.toBeNull();
-    expect(m!.narx).toBe(13500); // ROUND(13500.4)
+    expect(m!.narx).toBe(15120); // ROUND(13500.4 * 1.12)
     expect(m!.nomi).toBe("Arqon 5mm test"); // nomi ERP nomiga tenglashadi
   });
 
@@ -215,7 +215,7 @@ describe("PATCH /products → distribution.mahsulotlar propagation", () => {
     const r = await patch("Arqon 5mm test", { defaultSalePrice: 0 });
     expect(r.status).toBe(200);
     const m = await mahsulot("ARQON-5MM-T");
-    expect(m!.narx).toBe(13500); // 0 propagate qilinmaydi
+    expect(m!.narx).toBe(15120); // 0 propagate qilinmaydi
   });
 
   it("SKU bog'lanmagan mahsulot PATCH qilinganda mahsulotlar'da hech narsa o'zgarmaydi", async () => {
@@ -255,14 +255,14 @@ describe("POST /products SKU to'qnashuv va upsert", () => {
 
     // POST upsert'ning O'ZI ham eski SKU orqali yangi narxni propagate qiladi
     let m = await mahsulot("ARQON-5MM-T");
-    expect(m!.narx).toBe(15000);
+    expect(m!.narx).toBe(16800);
     expect(m!.nomi).toBe("Arqon 5mm test");
 
     // Keyingi PATCH hali ham eski SKU orqali propagate qiladi
     const p = await patch("Arqon 5mm test", { defaultSalePrice: 16000 });
     expect(p.status).toBe(200);
     m = await mahsulot("ARQON-5MM-T");
-    expect(m!.narx).toBe(16000);
+    expect(m!.narx).toBe(17920);
   });
 
   it("USD mahsulot POST upsert'da nomi sinxronlanadi, narx TEGILMAYDI", async () => {
@@ -279,6 +279,36 @@ describe("POST /products SKU to'qnashuv va upsert", () => {
 });
 
 describe("Bitta mahsulot bazasi — in_sales sinxronizatsiyasi", () => {
+  it("Diyor 10000 → Top Mart 11200; repeated sync never compounds markup", async () => {
+    const r = await post({
+      name: "Diyor markup test", sku: "DIYOR-MARKUP-T",
+      defaultSalePrice: 10000, inSales: true, inProduction: true,
+    });
+    expect(r.status).toBe(201);
+    expect((await mahsulot("DIYOR-MARKUP-T"))!.narx).toBe(11200);
+    expect((await patch("Diyor markup test", { piecesPerBox: 12 })).status).toBe(200);
+    expect((await mahsulot("DIYOR-MARKUP-T"))!.narx).toBe(11200);
+    expect((await patch("Diyor markup test", { defaultSalePrice: 20000 })).status).toBe(200);
+    expect((await mahsulot("DIYOR-MARKUP-T"))!.narx).toBe(22400);
+  });
+
+  it("external purchases keep entered retail price, not cost + markup", async () => {
+    const r = await post({
+      name: "External retail test", sku: "EXTERNAL-RETAIL-T",
+      defaultSalePrice: 10000, costPrice: 7000, inSales: true, inProduction: false,
+    });
+    expect(r.status).toBe(201);
+    expect((await mahsulot("EXTERNAL-RETAIL-T"))!.narx).toBe(10000);
+    expect((await patch("External retail test", { costPrice: 8000 })).status).toBe(200);
+    expect((await mahsulot("EXTERNAL-RETAIL-T"))!.narx).toBe(10000);
+    expect((await patch("External retail test", { defaultSalePrice: 12000 })).status).toBe(200);
+    expect((await mahsulot("EXTERNAL-RETAIL-T"))!.narx).toBe(12000);
+    // Legacy propagation path must also exempt external goods.
+    expect((await patch("External retail test", { inSales: false })).status).toBe(200);
+    expect((await patch("External retail test", { defaultSalePrice: 13000 })).status).toBe(200);
+    expect((await mahsulot("EXTERNAL-RETAIL-T"))!.narx).toBe(13000);
+  });
+
   it("POST inSales=true yangi mahsulotni savdo katalogiga avtomatik qo'shadi", async () => {
     const r = await post({
       name: "Master yangi test", sku: "MASTER-NEW-T",
@@ -291,7 +321,7 @@ describe("Bitta mahsulot bazasi — in_sales sinxronizatsiyasi", () => {
     );
     expect(rows.length).toBe(1);
     expect(rows[0].nomi).toBe("Master yangi test");
-    expect(Number(rows[0].narx)).toBe(5000);
+    expect(Number(rows[0].narx)).toBe(5600);
     expect(rows[0].birlik).toBe("kg");
     expect(Number(rows[0].faol)).toBe(1);
   });
@@ -307,7 +337,7 @@ describe("Bitta mahsulot bazasi — in_sales sinxronizatsiyasi", () => {
     );
     expect(rows.length).toBe(1); // yangi qator YARATILMAGAN
     expect(rows[0].sku).toBe("BOGLIQSIZ-T");
-    expect(Number(rows[0].narx)).toBe(11000);
+    expect(Number(rows[0].narx)).toBe(12320);
   });
 
   it("PATCH inSales=false bog'langan savdo qatorini nofaol qiladi, true qayta yoqadi", async () => {

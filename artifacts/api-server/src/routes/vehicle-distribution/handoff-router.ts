@@ -311,6 +311,7 @@ export function createVehicleHandoffRouter(pool: Pool): IRouter {
               mahsulotId: i.mahsulotId,
               quantity: i.quantity,
               totalWeightKg: i.totalWeightKg,
+              measuredPackages: i.measuredPackages,
             })),
             notes: body.notes ?? null,
             operationKey: body.operationKey,

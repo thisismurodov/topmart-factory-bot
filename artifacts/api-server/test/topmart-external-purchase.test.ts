@@ -75,6 +75,8 @@ beforeAll(async () => {
     CREATE TABLE products (
       id SERIAL PRIMARY KEY, name TEXT UNIQUE NOT NULL, sku TEXT NOT NULL DEFAULT '',
       unit_type TEXT NOT NULL DEFAULT 'dona', active BOOLEAN NOT NULL,
+      cost_price NUMERIC(12,2) NOT NULL DEFAULT 0,
+      currency_type TEXT NOT NULL DEFAULT 'UZS',
       in_sales BOOLEAN NOT NULL, in_production BOOLEAN NOT NULL
     );
     CREATE TABLE warehouses (
@@ -164,11 +166,15 @@ const warehouseHeaders = {
 
 describe("Top Mart external purchase receipts", () => {
   it("lists only active sales-only external products", async () => {
+    await pool.query("UPDATE products SET cost_price=1250.25 WHERE id=$1", [eligibleId]);
     const response = await request("/topmart/external-products", "GET", undefined, {
       ...warehouseHeaders,
     });
     expect(response.status).toBe(200);
     expect(response.json.map((row: any) => row.id)).toEqual([eligibleId]);
+    expect(response.json[0].costPrice).toBe("1250.25");
+    expect(response.json[0].currencyType).toBe("UZS");
+    expect(response.json[0].unitType).toBe("dona");
   });
 
   it("credits canonical C-03 and writes exactly one auditable IN", async () => {

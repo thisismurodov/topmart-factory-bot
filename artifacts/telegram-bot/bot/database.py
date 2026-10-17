@@ -2484,13 +2484,13 @@ def get_vehicle_handoff_source_warehouses() -> list[dict]:
             """SELECT w.id, w.name, COALESCE(w.purpose, '') AS purpose,
                       EXISTS (
                         SELECT 1 FROM inventory i
-                         WHERE i.warehouse_id=w.id AND i.quantity>0
+                         WHERE i.warehouse_id=w.id AND (i.quantity>0 OR i.weight_kg>0)
                       ) AS has_piece_stock,
                       EXISTS (
                         SELECT 1
                           FROM inventory i
                           JOIN products p ON p.name=i.product AND p.active=TRUE
-                         WHERE i.warehouse_id=w.id AND i.quantity>0
+                         WHERE i.warehouse_id=w.id AND (i.quantity>0 OR (p.unit_type='kg' AND i.weight_kg>0))
                            AND COALESCE(p.sku, '') <> ''
                            AND (SELECT COUNT(*) FROM distribution.mahsulotlar d
                                  WHERE d.sku=p.sku AND d.faol=1
@@ -2510,7 +2510,7 @@ def get_vehicle_handoff_source_warehouses() -> list[dict]:
         if r["purpose"] != "finished":
             reason = "tayyor mahsulot ombori emas"
         elif not r["has_piece_stock"]:
-            reason = "dona qoldiq yo‘q"
+            reason = "qoldiq yo‘q"
         elif not r["has_eligible"]:
             reason = "savdo bot SKU mosligi yo‘q"
         else:
@@ -2521,18 +2521,18 @@ def get_vehicle_handoff_source_warehouses() -> list[dict]:
 
 
 def get_vehicle_handoff_products(warehouse_id: int) -> list[dict]:
-    """Unique active SKU mappings that currently have piece stock at a source."""
+    """Unique active SKU mappings with piece stock or kg-product weight stock."""
     with get_conn() as (conn, cur):
         cur.execute(
             """SELECT d.id AS mahsulot_id, p.name, p.sku,
                       i.quantity AS available_quantity,
                       COALESCE(i.weight_kg, 0) AS available_weight_kg,
                        p.weight AS unit_weight_kg,
-                       p.pieces_per_box
+                       p.pieces_per_box, p.unit_type
                  FROM inventory i
                  JOIN products p ON p.name=i.product AND p.active=TRUE
                  JOIN distribution.mahsulotlar d ON d.sku=p.sku
-                WHERE i.warehouse_id=%s AND i.quantity>0
+                WHERE i.warehouse_id=%s AND (i.quantity>0 OR (p.unit_type='kg' AND i.weight_kg>0))
                   AND d.faol=1 AND COALESCE(d.sku, '') <> ''
                   AND (SELECT COUNT(*) FROM distribution.mahsulotlar dx
                         WHERE dx.sku=p.sku AND dx.faol=1
@@ -2561,7 +2561,7 @@ def get_vehicle_handoff_hidden_products(warehouse_id: int) -> list[dict]:
                                  WHERE px.sku=p.sku AND px.active=TRUE), 0) AS erp_matches
                  FROM inventory i
                  LEFT JOIN products p ON p.name=i.product AND p.active=TRUE
-                WHERE i.warehouse_id=%s AND i.quantity>0
+                WHERE i.warehouse_id=%s AND (i.quantity>0 OR (p.unit_type='kg' AND i.weight_kg>0))
                 ORDER BY i.product""",
             (warehouse_id,),
         )
@@ -2724,6 +2724,26 @@ def record_movement(
     amount = float(weight_kg) if kg_mode else float(quantity)
     try:
         with get_conn() as (conn, cur):
+            # Generic movements must never bypass Top Mart sales/handoff ledgers.
+            warehouse_ids = sorted({
+                int(value) for value in (from_warehouse_id, to_warehouse_id)
+                if value is not None
+            })
+            if warehouse_ids:
+                cur.execute(
+                    """SELECT id, name, location_type FROM warehouses
+                       WHERE id = ANY(%s) ORDER BY id FOR UPDATE""",
+                    (warehouse_ids,),
+                )
+                warehouses = cur.fetchall()
+                if len(warehouses) != len(warehouse_ids) or any(
+                    str(w["name"]).strip().upper() == "C-03"
+                    or w["location_type"] == "vehicle"
+                    for w in warehouses
+                ):
+                    conn.rollback()
+                    return False
+
             def _incoming_weight() -> float:
                 """Kirim uchun og'irlik — kg-mahsulot bo'lsa partiya nisbati bo'yicha."""
                 cur.execute("SELECT unit_type FROM products WHERE name=%s", (product,))

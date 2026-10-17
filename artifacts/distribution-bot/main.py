@@ -87,6 +87,7 @@ from database import (
     get_user, get_balans, update_balans_delta, apply_balans_delta,
     update_dokon_repeat, create_sale, record_pul_olish, pay_nasiya_fifo,
     create_vehicle_pilot_sale, VehiclePilotSaleError, is_vehicle_pilot_seller,
+    get_vehicle_seller_products,
     get_admin_telegram_ids,
     acknowledge, deliver_retryable,
 )
@@ -2445,6 +2446,12 @@ def tovar_berish(msg):
     conn=get_db();c=conn.cursor()
     c.execute("SELECT id,nomi,narx,birlik FROM mahsulotlar WHERE faol=1 AND (COALESCE(sku,'')='' OR EXISTS (SELECT 1 FROM public.products p WHERE p.sku=mahsulotlar.sku AND p.in_sales=TRUE)) ORDER BY nomi")
     mahsulotlar=c.fetchall(); conn.close()
+    if _is_vehicle_distribution_pilot_user(user):
+        try:
+            mahsulotlar = get_vehicle_seller_products(uid)
+        except VehiclePilotSaleError as exc:
+            bot.send_message(uid, "❗ " + str(exc))
+            return
     if not mahsulotlar: bot.send_message(uid,"❗ Mahsulotlar yo'q."); return
     # Delivery agent: today's route only
     if user[3]=="delivery":

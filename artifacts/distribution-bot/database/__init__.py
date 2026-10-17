@@ -8,6 +8,7 @@ from .connection import get_db, init_db, transaction, close_pool, DatabaseUnavai
 from .users import get_user, get_admin_telegram_ids
 from .customers import get_balans, update_balans_delta, apply_balans_delta, update_dokon_repeat
 from .sales import (
+    get_vehicle_seller_products,
     create_sale, create_vehicle_pilot_sale, VehiclePilotSaleError,
     VehiclePilotIdempotencyConflict, is_vehicle_pilot_seller,
 )

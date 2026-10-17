@@ -186,6 +186,7 @@ def create_vehicle_handoff(
             "mahsulotId": int(it["mahsulot_id"]),
             "quantity": int(it["quantity"]),
             "totalWeightKg": float(it["weight"]),
+            **({"measuredPackages": True} if it.get("measured_packages") else {}),
         } for it in items],
         "operationKey": operation_key,
     }

@@ -140,14 +140,30 @@ router.post("/workers/delete", async (req, res): Promise<void> => {
     return;
   }
 
-  const result = await pool.query("DELETE FROM workers WHERE name = $1", [parsed.data.name]);
-
-  if ((result.rowCount ?? 0) === 0) {
-    res.status(404).json({ error: "Worker not found" });
-    return;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      "UPDATE workers SET role = 'blocked' WHERE name = $1 RETURNING name",
+      [parsed.data.name],
+    );
+    if (!result.rowCount) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "Worker not found" });
+      return;
+    }
+    await client.query(
+      "UPDATE user_roles SET role = 'blocked' WHERE worker_name = $1",
+      [parsed.data.name],
+    );
+    await client.query("COMMIT");
+    res.json(DeleteWorkerResponse.parse({ status: "ok" }));
+  } catch {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: "Worker access could not be revoked" });
+  } finally {
+    client.release();
   }
-
-  res.json(DeleteWorkerResponse.parse({ status: "ok" }));
 });
 
 export default router;

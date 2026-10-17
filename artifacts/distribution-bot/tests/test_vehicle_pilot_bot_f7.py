@@ -61,6 +61,31 @@ def message(text, uid=700):
 
 
 class VehiclePilotBotF7(unittest.TestCase):
+    @patch.object(main.bot, "send_message")
+    def test_shared_seller_catalog_replaces_global_catalog(self, send):
+        loaded = [(9, "Loaded only", 500, "kg")]
+        with patch.object(main, "get_user", return_value=USER_PILOT), \
+             patch.object(main, "check_pending", return_value=False), \
+             patch.object(main, "get_db", return_value=FakeConn()), \
+             patch.object(main, "_is_vehicle_distribution_pilot_user", return_value=True), \
+             patch.object(main, "get_vehicle_seller_products", return_value=loaded) as catalog, \
+             patch.object(main, "_bosh_dokon_kb", return_value=(object(), 1, 1, 0)):
+            main.tovar_berish(Msg())
+        catalog.assert_called_once_with(700)
+        self.assertEqual(main.get_state(700)["data"]["mahsulotlar"], loaded)
+        self.assertTrue(main.get_state(700)["data"]["vehicle_pilot"])
+
+    @patch.object(main.bot, "send_message")
+    def test_empty_vehicle_never_falls_back_to_global_catalog(self, send):
+        with patch.object(main, "get_user", return_value=USER_PILOT), \
+             patch.object(main, "check_pending", return_value=False), \
+             patch.object(main, "get_db", return_value=FakeConn()), \
+             patch.object(main, "_is_vehicle_distribution_pilot_user", return_value=True), \
+             patch.object(main, "get_vehicle_seller_products", return_value=[]):
+            main.tovar_berish(Msg())
+        self.assertIsNone(main.get_state(700)["state"])
+        self.assertIn("Mahsulotlar yo'q", send.call_args.args[1])
+
     def setUp(self):
         main.user_state.clear()
 

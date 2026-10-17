@@ -5,6 +5,9 @@ Kirimda kategoriya tanlanadi: 📦 Tayyor mahsulot | 🧵 Xom ashyo
 """
 import re
 import secrets
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from functools import wraps
+from ..config import SUPERADMIN_CHAT_ID
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.ext import (
@@ -40,14 +43,14 @@ from ..api_client import (
 
 # ── Keyboards ──────────────────────────────────────────────────────────────────
 
-def _inv_main_kb() -> ReplyKeyboardMarkup:
+def _inv_main_kb(chat_id=None) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [
             ["➕ Kirim", "➖ Chiqim"],
             ["🛒 Tashqi xarid kirimi"],
             ["🔄 Skladlararo o'tkazish"],
-            ["✏️ Konteynerni to'g'rilash"],
-            ["🧵 Xom ashyoni to'g'rilash"],
+            *([["✏️ Konteynerni to'g'rilash"], ["🧵 Xom ashyoni to'g'rilash"]]
+              if chat_id == SUPERADMIN_CHAT_ID else []),
             ["📋 Qoldiqlar", "📜 Harakatlar tarixi"],
             ["🔙 Asosiy menyu"],
         ],
@@ -112,6 +115,20 @@ def _is_external_purchase_allowed(chat_id: int) -> bool:
     return row is not None and row["role"] in ("admin", "omborchi")
 
 
+def _superadmin_only(handler):
+    @wraps(handler)
+    async def guarded(update, ctx):
+        user_id = update.effective_user.id if update.effective_user else None
+        if user_id != SUPERADMIN_CHAT_ID:
+            if update.callback_query:
+                await update.callback_query.answer("Faqat Superadmin uchun.", show_alert=True)
+            else:
+                await update.message.reply_text("❌ Faqat Superadmin uchun.")
+            return INV_MAIN
+        return await handler(update, ctx)
+    return guarded
+
+
 def _fmt_amt(v) -> str:
     """837.7 → '837.7', 61080 → '61 080', 4572.25 → '4 572.3'."""
     s = f"{float(v):,.1f}".replace(",", " ")
@@ -167,7 +184,7 @@ async def ombor_entry(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(
         "🏬 *Ombor Boshqaruvi*\n\nAmalni tanlang:",
         parse_mode="Markdown",
-        reply_markup=_inv_main_kb(),
+        reply_markup=_inv_main_kb(update.effective_chat.id),
     )
     return INV_MAIN
 
@@ -281,9 +298,69 @@ async def external_weight(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int
     if weight is None:
         await update.message.reply_text("⚠️ Musbat kg kiriting (3 kasr xonasigacha):")
         return INV_EXT_WEIGHT
-    _external_state(ctx)["total_weight_kg"] = weight
-    await update.message.reply_text("💰 Jami xarajatni kiriting (0 yoki musbat, so'm):")
+    state = _external_state(ctx)
+    state["total_weight_kg"] = weight
+    state.pop("suggested_cost", None)
+    state.pop("cost_token", None)
+    product = state.get("product", {})
+    currency = product.get("currencyType", "UZS")
+    unit = product.get("unitType")
+    try:
+        price = Decimal(str(product.get("costPrice", "0")))
+        amount = Decimal(weight if unit == "kg" else str(state.get("quantity", 0)))
+        valid = price.is_finite() and price > 0 and amount > 0 and unit in ("kg", "dona") and currency == "UZS"
+        total = (price * amount).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) if valid else None
+        if total is not None and total > Decimal("999999999999.99"):
+            total = None
+    except (InvalidOperation, ValueError):
+        total = None
+    if total is not None:
+        state["suggested_cost"] = str(total)
+        token = secrets.token_hex(4)
+        state["cost_token"] = token
+        await update.message.reply_text(
+            "Dashboarddagi tan narx bo‘yicha:\n"
+            f"{_fmt_exact_decimal(str(amount))} {unit} × {_fmt_exact_decimal(str(price))} so'm"
+            f" = {_fmt_exact_decimal(str(total))} so'm.\n\n"
+            "Bu xaridning jami qiymati, sotuv narxi yoki to‘langan pul emas.\n"
+            "Tasdiqlang yoki haqiqiy jami summani so‘mda yozing:",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("✅ Shu summani olish", callback_data=f"extcost:{token}:yes"),
+                InlineKeyboardButton("✏️ O‘zgartirish", callback_data=f"extcost:{token}:edit"),
+            ]]),
+        )
+    else:
+        reason = ("Tan narx chet el valyutasida. Jami xarid qiymatini so‘mda kiriting."
+                  if currency != "UZS" else
+                  "Dashboardda mos tan narx kiritilmagan yoki hisoblash uchun yaroqsiz.")
+        await update.message.reply_text(reason + "\n💰 Jami xarid qiymatini kiriting (0 yoki musbat, so'm):")
     return INV_EXT_COST
+
+
+async def external_cost_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    q = update.callback_query
+    await q.answer()
+    if not _is_external_purchase_allowed(update.effective_chat.id):
+        await q.edit_message_text("❌ Ruxsat yo'q.")
+        return ConversationHandler.END
+    state = _external_state(ctx)
+    parts = (q.data or "").split(":")
+    if len(parts) != 3 or not state.get("cost_token") or parts[1] != state["cost_token"]:
+        await q.message.reply_text("Bu tugma eskirgan. Joriy summani kiriting yoki joriy tugmadan foydalaning.")
+        return INV_EXT_COST
+    if parts[2] == "edit":
+        state.pop("cost_token", None)
+        await q.edit_message_text("Jami xarid qiymatini so‘mda kiriting (0 yoki musbat):")
+        return INV_EXT_COST
+    if parts[2] != "yes" or "suggested_cost" not in state:
+        return INV_EXT_COST
+    state["total_cost"] = state.pop("suggested_cost")
+    state.pop("cost_token", None)
+    await q.edit_message_text(
+        f"Jami xarid qiymati: {_fmt_exact_decimal(state['total_cost'])} so'm.\n"
+        "🧾 Xarid hujjati raqamini kiriting (takrorlanmas reference):"
+    )
+    return INV_EXT_REFERENCE
 
 
 async def external_cost(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
@@ -292,6 +369,8 @@ async def external_cost(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         await update.message.reply_text("⚠️ 0 yoki musbat jami xarajat kiriting:")
         return INV_EXT_COST
     _external_state(ctx)["total_cost"] = cost
+    _external_state(ctx).pop("cost_token", None)
+    _external_state(ctx).pop("suggested_cost", None)
     await update.message.reply_text(
         "🧾 Xarid hujjati raqamini kiriting (takrorlanmas reference):"
     )
@@ -918,6 +997,7 @@ async def transfer_confirm_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
 # shunda miqdor VA og'irlik (kg) bir amalda halol to'g'rilanadi.
 # ══════════════════════════════════════════════════════════════════════════════
 
+@_superadmin_only
 async def adjust_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     containers = get_containers()
     if not containers:
@@ -931,6 +1011,7 @@ async def adjust_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     return INV_ADJ_CONTAINER
 
 
+@_superadmin_only
 async def adjust_container_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     q = update.callback_query
     await q.answer()
@@ -955,6 +1036,7 @@ async def adjust_container_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
     return INV_ADJ_PRODUCT
 
 
+@_superadmin_only
 async def adjust_product_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     q = update.callback_query
     await q.answer()
@@ -986,6 +1068,7 @@ async def adjust_product_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
     return INV_ADJ_QTY
 
 
+@_superadmin_only
 async def adjust_qty(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     try:
         qty = float(update.message.text.replace(",", "."))
@@ -1002,6 +1085,7 @@ async def adjust_qty(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     return INV_ADJ_WEIGHT
 
 
+@_superadmin_only
 async def adjust_weight(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     parsed = _parse_decimal((update.message.text or "").replace(",", "."), positive=False, scale=3)
     if parsed is None:
@@ -1035,6 +1119,7 @@ async def _adjust_show_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -
     return INV_ADJ_CONFIRM
 
 
+@_superadmin_only
 async def adjust_confirm_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     q = update.callback_query
     await q.answer()
@@ -1087,6 +1172,7 @@ def _raw_material_inline(materials: list[dict], prefix: str) -> InlineKeyboardMa
     return InlineKeyboardMarkup(rows)
 
 
+@_superadmin_only
 async def raw_adjust_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     materials = get_raw_materials_full()
     if not materials:
@@ -1100,6 +1186,7 @@ async def raw_adjust_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> in
     return INV_RADJ_MATERIAL
 
 
+@_superadmin_only
 async def raw_adjust_material_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     q = update.callback_query
     await q.answer()
@@ -1124,6 +1211,7 @@ async def raw_adjust_material_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE)
     return INV_RADJ_STOCK
 
 
+@_superadmin_only
 async def raw_adjust_stock(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     try:
         stock = float(update.message.text.replace(",", "."))
@@ -1146,6 +1234,7 @@ async def raw_adjust_stock(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> in
     return INV_RADJ_CONFIRM
 
 
+@_superadmin_only
 async def raw_adjust_confirm_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     q = update.callback_query
     await q.answer()
@@ -1238,7 +1327,7 @@ async def qoldiqlar(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         await update.message.reply_text(
             text,
             parse_mode=None,
-            reply_markup=_inv_main_kb() if index == len(chunks) - 1 else None,
+            reply_markup=_inv_main_kb(update.effective_chat.id) if index == len(chunks) - 1 else None,
         )
     return INV_MAIN
 
@@ -1339,7 +1428,8 @@ def build_inventory_handler() -> ConversationHandler:
             INV_EXT_SUPPLIER:  [MessageHandler(f.TEXT & ~f.COMMAND, external_supplier)],
             INV_EXT_QTY:       [MessageHandler(f.TEXT & ~f.COMMAND, external_quantity)],
             INV_EXT_WEIGHT:    [MessageHandler(f.TEXT & ~f.COMMAND, external_weight)],
-            INV_EXT_COST:      [MessageHandler(f.TEXT & ~f.COMMAND, external_cost)],
+            INV_EXT_COST:      [CallbackQueryHandler(external_cost_cb, pattern=r"^extcost:"),
+                                MessageHandler(f.TEXT & ~f.COMMAND, external_cost)],
             INV_EXT_REFERENCE: [MessageHandler(f.TEXT & ~f.COMMAND, external_reference)],
             INV_EXT_CONFIRM:   [CallbackQueryHandler(external_confirm_cb, pattern=r"^extconfirm:")],
         },

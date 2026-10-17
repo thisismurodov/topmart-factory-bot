@@ -90,7 +90,8 @@ beforeAll(async () => {
     );
     CREATE TABLE products (
       id SERIAL PRIMARY KEY,name TEXT UNIQUE NOT NULL,sku TEXT NOT NULL,weight NUMERIC NOT NULL,
-      active BOOLEAN NOT NULL DEFAULT TRUE,in_sales BOOLEAN NOT NULL DEFAULT TRUE
+      active BOOLEAN NOT NULL DEFAULT TRUE,in_sales BOOLEAN NOT NULL DEFAULT TRUE,
+      in_production BOOLEAN NOT NULL DEFAULT FALSE
     );
     CREATE TABLE inventory (
       id SERIAL PRIMARY KEY,warehouse_id INTEGER NOT NULL,product TEXT NOT NULL,

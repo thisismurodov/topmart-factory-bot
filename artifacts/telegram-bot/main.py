@@ -9,7 +9,8 @@ from telegram.warnings import PTBUserWarning
 warnings.filterwarnings("ignore", message="If 'per_message=False'", category=PTBUserWarning)
 
 from telegram import Update
-from telegram.ext import ApplicationBuilder, PicklePersistence, ContextTypes
+from telegram.ext import ApplicationBuilder, PicklePersistence, ContextTypes, TypeHandler
+from bot.access import reject_blocked_user
 
 from bot.database import init_db
 from bot.handlers.input_handler import build_conversation_handler
@@ -114,6 +115,7 @@ def main() -> None:
         )
 
         app.add_error_handler(global_error_handler)
+        app.add_handler(TypeHandler(Update, reject_blocked_user), group=-100)
 
         register_cleardata(app)
         register_salary_handlers(app)

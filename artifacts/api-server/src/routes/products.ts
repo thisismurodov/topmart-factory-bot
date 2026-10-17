@@ -26,7 +26,8 @@ async function propagateToDistribution(productName: string): Promise<void> {
     `UPDATE distribution.mahsulotlar m SET
        nomi = p.name,
        narx = CASE WHEN p.currency_type = 'UZS' AND p.default_sale_price > 0
-                   THEN ROUND(p.default_sale_price) ELSE m.narx END
+                   THEN ROUND(p.default_sale_price * CASE WHEN p.in_production THEN 1.12 ELSE 1 END)
+                   ELSE m.narx END
      FROM public.products p
      WHERE p.name = $1 AND p.sku <> '' AND m.sku = p.sku`,
     [productName]
@@ -52,7 +53,7 @@ async function distCatalogExists(): Promise<boolean> {
 export async function syncSalesCatalog(productName: string): Promise<void> {
   if (!(await distCatalogExists())) return;
   const pr = await pool.query(
-    `SELECT name, sku, unit_type, currency_type, default_sale_price, in_sales
+    `SELECT name, sku, unit_type, currency_type, default_sale_price, in_sales, in_production
      FROM products WHERE name = $1`, [productName]
   );
   if (!pr.rows.length) return;
@@ -73,7 +74,9 @@ export async function syncSalesCatalog(productName: string): Promise<void> {
 
   const birlik = String(p.unit_type) === "kg" ? "kg" : "dona";
   const isUzs = String(p.currency_type) === "UZS";
-  const price = Number(p.default_sale_price) || 0;
+  // Diyor supply price + 12% markup; external goods already store retail price.
+  // Convert to whole UZS only after applying the markup (and FX for new USD rows).
+  const price = (Number(p.default_sale_price) || 0) * (p.in_production === true ? 1.12 : 1);
 
   // 1) SKU bo'yicha mavjud qator
   const upd = await pool.query(

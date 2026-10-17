@@ -496,7 +496,7 @@ export async function prepareLabelsInTx(
           barcode,
           it.mahsulotId,
           it.sku,
-          it.unitWeightKg,
+          piecesInLabel === 1 ? packageWeightKg : it.unitWeightKg,
           piecesInLabel,
         ],
       );

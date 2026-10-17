@@ -54,6 +54,7 @@ export type HandoffItemInput = {
   mahsulotId: number;
   quantity: number;
   totalWeightKg?: number;
+  measuredPackages?: boolean;
 };
 export type CreateHandoffInput = {
   sourceWarehouseId: number;
@@ -384,6 +385,7 @@ export async function listHandoffs(
 // ── Create prepared handoff ──────────────────────────────────────────────────
 
 type ResolvedItem = {
+  unitType: string;
   mahsulotId: number;
   sku: string;
   productName: string;
@@ -483,6 +485,7 @@ function createRequestFingerprint(input: CreateHandoffInput): string {
       mahsulotId: item.mahsulotId,
       quantity: item.quantity,
       hasTotalWeightKg: item.totalWeightKg !== undefined,
+      ...(item.measuredPackages ? { measuredPackages: true } : {}),
       totalWeightKg:
         item.totalWeightKg === undefined
           ? null
@@ -547,11 +550,12 @@ async function resolveItem(
   const explicitTotalWeightKg =
     input.totalWeightKg === undefined
       ? undefined
-      : validateExplicitTotalForQuantity(
-          input.totalWeightKg,
-          input.quantity,
-          input.mahsulotId,
-        );
+      : input.measuredPackages
+        ? canonicalExplicitTotalWeightKg(input.totalWeightKg, input.mahsulotId)
+        : validateExplicitTotalForQuantity(input.totalWeightKg, input.quantity, input.mahsulotId);
+  if (input.measuredPackages && explicitTotalWeightKg === undefined) {
+    throw new HandoffValidationError("Measured packages require totalWeightKg");
+  }
   // Exactly one active distribution product with a nonempty SKU.
   const dp = await client.query(
     `SELECT id, sku FROM distribution.mahsulotlar
@@ -566,7 +570,7 @@ async function resolveItem(
   const sku = String(dp.rows[0].sku);
   // Exactly one active public product mapped by that SKU.
   const pp = await client.query(
-    `SELECT name, sku, weight, pieces_per_box FROM products
+    `SELECT name, sku, weight, pieces_per_box, unit_type FROM products
       WHERE sku = $1 AND active = TRUE`,
     [sku],
   );
@@ -585,7 +589,7 @@ async function resolveItem(
       `Public product ${productName} has a non-positive weight`,
     );
   }
-  const piecesPerBox = Number(pp.rows[0].pieces_per_box ?? 1);
+  const piecesPerBox = input.measuredPackages ? 1 : Number(pp.rows[0].pieces_per_box ?? 1);
   if (!Number.isInteger(piecesPerBox) || piecesPerBox <= 0) {
     throw new HandoffValidationError(
       `Public product ${productName} has an invalid pieces_per_box`,
@@ -622,6 +626,7 @@ async function resolveItem(
     );
   }
   return {
+    unitType: String(pp.rows[0].unit_type ?? "dona"),
     mahsulotId: input.mahsulotId,
     sku,
     productName,
@@ -784,21 +789,26 @@ async function assertSourceStockAvailable(
   sourceWarehouseId: number,
   items: ResolvedItem[],
 ): Promise<void> {
-  const required = new Map<string, number>();
+  const required = new Map<string, { quantity: number; weight: number }>();
   for (const item of items) {
-    required.set(
-      item.productName,
-      (required.get(item.productName) ?? 0) + item.quantity,
-    );
+    const prev = required.get(item.productName) ?? { quantity: 0, weight: 0 };
+    required.set(item.productName, {
+      quantity: prev.quantity + (item.unitType === "kg" ? 0 : item.quantity),
+      weight: prev.weight + (item.unitType === "kg" ? item.totalWeightKg : 0),
+    });
   }
   for (const product of [...required.keys()].sort()) {
-    const needQuantity = required.get(product)!;
+    const needQuantity = required.get(product)!.quantity;
     const { rows } = await client.query(
       `SELECT quantity, weight_kg FROM public.inventory
         WHERE warehouse_id=$1 AND product=$2 FOR UPDATE`,
       [sourceWarehouseId, product],
     );
     const haveQuantity = rows.length ? Number(rows[0].quantity) : 0;
+    const haveWeight = rows.length ? Number(rows[0].weight_kg) : 0;
+    if (haveWeight < required.get(product)!.weight) {
+      throw new HandoffConflictError(`Configured central warehouse has insufficient kg for ${product}`);
+    }
     if (haveQuantity < needQuantity) {
       throw new HandoffConflictError(
         `Configured central warehouse has insufficient quantity for ${product}: need ${needQuantity}, have ${haveQuantity}`,
@@ -822,7 +832,7 @@ export async function createHandoffInTx(
   actor: HandoffActor,
 ): Promise<HandoffDetail> {
   for (const item of input.items) {
-    if (item.totalWeightKg !== undefined) {
+    if (item.totalWeightKg !== undefined && !item.measuredPackages) {
       validateExplicitTotalForQuantity(
         item.totalWeightKg,
         item.quantity,
@@ -1117,7 +1127,9 @@ export async function markStockTransferredInTx(
 
   for (const it of items) {
     const product = it.productName!;
-    const qty = it.quantity;
+    const profile = await client.query(`SELECT unit_type FROM products WHERE name=$1 FOR SHARE`, [product]);
+    if (!profile.rows.length) throw new HandoffConflictError(`Product ${product} is missing`);
+    const qty = profile.rows[0].unit_type === "kg" ? 0 : it.quantity;
     const totalWeight = it.totalWeightKg ?? 0;
 
     // Verify EXACT snapshot quantity + total weight are available. No GREATEST.

@@ -85,33 +85,63 @@ def _insert_sale_core(c, dokon_id, agent_id, items, jami, tolov, foto, nasiya_su
     return sid, owner_tg, c.fetchone()[0], details
 
 
-def is_vehicle_pilot_seller(telegram_id):
-    """Yo'naltirish (dispatch) identiteti: True faqat shu telegram_id faol
-    NAVRUZBEK delivery-agentiga tegishli bo'lib, unga faol DM-001/DAMAS
-    biriktirilgan bo'lsa.
+def _shared_dm001_sellers(c):
+    """Two explicitly authorized profiles share the canonical driver's vehicle.
 
-    MUHIM: yo'naltirish hech qachon distribution.users.name imlosiga
-    tayanmaydi — prodda users jadvalida "Navro'zbek" (apostrof bilan),
-    delivery_agents da esa "Navruzbek" yozilgan; ism solishtirish haqiqiy
-    pilot savdosini jimgina oddiy yo'lga o'tkazib yuborar edi. Identitet
-    manbai _create_vehicle_pilot_once ichidagi tranzaksion guard bilan bir
-    xil zanjir. Takrorlangan konfiguratsiyada ham True — ichki guard aniq
-    xato bilan to'xtatadi (jim chetlab o'tish yo'q).
+    The primary assignment remains unique; the second seller is not a second
+    driver assignment. Never grant access based on distribution.users.name.
+    """
+    c.execute(
+        """SELECT seller.id,seller.telegram_id,v.id,v.warehouse_id
+           FROM distribution.delivery_agents owner
+           JOIN distribution.vehicle_assignments va
+             ON va.delivery_agent_id=owner.id AND va.status='active'
+           JOIN distribution.vehicles v ON v.id=va.vehicle_id
+           JOIN distribution.delivery_agents seller
+             ON upper(btrim(seller.name)) IN ('NAVRUZBEK','NAVRUZBEK TEST')
+            AND seller.faol=1
+           WHERE owner.faol=1 AND upper(btrim(owner.name))='NAVRUZBEK'
+             AND v.plate_number='DM-001' AND v.vehicle_type='DAMAS'
+             AND v.status='active'"""
+    )
+    return c.fetchall()
+
+
+def get_vehicle_seller_products(telegram_id):
+    """Only physically loaded, mapped goods with positive vehicle balance."""
+    with transaction() as c:
+        sellers = [r for r in _shared_dm001_sellers(c) if r[1] == telegram_id]
+        if len(sellers) != 1:
+            raise VehiclePilotSaleError("DM-001 sotuvchi biriktiruvi topilmadi yoki takrorlangan.")
+        _, _, vehicle_id, warehouse_id = sellers[0]
+        c.execute(
+            """SELECT m.id,m.nomi,m.narx,m.birlik
+               FROM distribution.mahsulotlar m
+               JOIN public.products p ON p.sku=m.sku AND p.active=TRUE AND p.in_sales=TRUE
+               JOIN public.inventory i ON i.product=p.name AND i.warehouse_id=%s
+               WHERE m.faol=1 AND COALESCE(m.sku,'')<>''
+                 AND ((lower(btrim(m.birlik))='kg' AND i.weight_kg>0)
+                   OR (lower(btrim(m.birlik))='dona' AND i.quantity>0))
+                 AND EXISTS (SELECT 1 FROM distribution.vehicle_label_claims cl
+                   JOIN distribution.vehicle_unit_events ev ON ev.label_claim_id=cl.id
+                     AND ev.event_type='load' AND ev.vehicle_id=cl.vehicle_id
+                   WHERE cl.vehicle_id=%s AND cl.mahsulot_id=m.id AND cl.status='loaded'
+                     AND cl.remaining_quantity>0)
+               ORDER BY m.nomi""", (warehouse_id, vehicle_id))
+        return c.fetchall()
+
+
+def is_vehicle_pilot_seller(telegram_id):
+    """Resolve either authorized DM-001 seller by delivery-agent identity.
+
+    Ambiguous configuration still routes to the strict writer, which rejects
+    it instead of silently allowing an unrestricted sale.
     """
     if telegram_id is None:
         return False
     with transaction() as c:
-        c.execute(
-            """SELECT da.telegram_id
-                 FROM distribution.delivery_agents da
-                 JOIN distribution.vehicle_assignments va
-                   ON va.delivery_agent_id=da.id AND va.status='active'
-                 JOIN distribution.vehicles v ON v.id=va.vehicle_id
-                WHERE da.faol=1 AND upper(btrim(da.name))='NAVRUZBEK'
-                  AND v.plate_number='DM-001' AND v.vehicle_type='DAMAS'
-                  AND v.status='active'""")
-        rows = c.fetchall()
-    return any(r[0] == telegram_id for r in rows)
+        rows = _shared_dm001_sellers(c)
+    return any(r[1] == telegram_id for r in rows)
 
 
 def create_sale(dokon_id, agent_id, items, jami, tolov, foto, nasiya_summa):
@@ -312,16 +342,7 @@ def _create_vehicle_pilot_once(dokon_id, agent_id, items, jami, tolov, foto,
             return replay
 
         # Exact active pilot identity. No caller-supplied vehicle/warehouse authority.
-        c.execute(
-            """SELECT da.id,da.telegram_id,v.id,v.warehouse_id
-               FROM distribution.delivery_agents da
-               JOIN distribution.vehicle_assignments va
-                 ON va.delivery_agent_id=da.id AND va.status='active'
-               JOIN distribution.vehicles v ON v.id=va.vehicle_id
-               WHERE da.faol=1 AND upper(btrim(da.name))='NAVRUZBEK'
-                 AND v.plate_number='DM-001' AND v.vehicle_type='DAMAS'
-                 AND v.status='active'""")
-        pilot = c.fetchall()
+        pilot = [r for r in _shared_dm001_sellers(c) if r[1] == agent_id]
         if len(pilot) != 1 or pilot[0][1] != agent_id:
             raise VehiclePilotSaleError(
                 "NAVRUZBEK uchun faol DM-001/DAMAS biriktirilishi topilmadi yoki takrorlangan.")
@@ -351,36 +372,21 @@ def _create_vehicle_pilot_once(dokon_id, agent_id, items, jami, tolov, foto,
             dist = c.fetchone()
             if not dist:
                 raise VehiclePilotSaleError("Mahsulot SKU bo'sh, faol emas yoki topilmadi.")
-            if dist[2] != "dona":
-                # kg (yoki boshqa o'lchov) mahsulot mashinaga yuklanmaydi:
-                # yuklash (F6) faqat dona-etiketka orqali bo'ladi. Bunday qator
-                # mashina zaxirasi/etiketka intizomiga tegmasdan oddiy savdo
-                # sifatida yoziladi (savdo_tafsilotda qoladi, stock_movements,
-                # allokatsiya va replenishment ochilmaydi).
-                continue
-            if qty != qty.to_integral_value():
+            if dist[2] not in ("dona", "kg"):
+                raise VehiclePilotSaleError("Faqat dona yoki kg mahsulot sotiladi.")
+            if dist[2] == "dona" and qty != qty.to_integral_value():
                 raise VehiclePilotSaleError(
                     "Dona mahsulot miqdori musbat butun son bo'lishi kerak.")
-            qty = int(qty)
-            # DM-001 qat'iy intizomi faqat mashinaga TIZIM orqali yuklangan
-            # mahsulotlarga tegishli. Yuklanish izi = shu mashina uchun
-            # status<>'prepared' bo'lgan vehicle_label_claims yozuvi (loaded/
-            # sold/returned — etiketkali mol mashinaga chiqqanini bildiradi).
-            # 'prepared' hisobga OLINMAYDI: bunday qutilar hali omborda turadi
-            # (F6 topshiruv bo'lmagan), bekor qilingan handofflar ham 'prepared'
-            # claims qoldiradi — bular mashinadagi pilotgacha bo'lgan molni
-            # sotishni to'sib qo'ymasligi kerak. Poyga xavfsiz: 'loaded' faqat
-            # F6 transferStock orqali paydo bo'ladi va u ham, savdo ham bir xil
-            # mashina-ombor parent qulfini oladi. Iz yo'q bo'lsa qator oddiy
-            # savdo sifatida yoziladi; iz BOR mahsulot qat'iy yo'lda qoladi:
-            # qoldiq tugagan bo'lsa ham etiketkasiz dona sotib bo'lmaydi.
+            qty = int(qty) if dist[2] == "dona" else qty
+            # Only physically loaded stock may be sold. No untracked/plain
+            # fallback, including for kg goods and stale pre-release carts.
             c.execute(
                 """SELECT 1 FROM distribution.vehicle_label_claims
                    WHERE vehicle_id=%s AND mahsulot_id=%s
-                     AND status <> 'prepared' LIMIT 1""",
+                     AND status = 'loaded' AND remaining_quantity>0 LIMIT 1""",
                 (vehicle_id, mid))
             if c.fetchone() is None:
-                continue
+                raise VehiclePilotSaleError("Mahsulot DM-001 ga yuklanmagan yoki qoldig'i tugagan.")
             if not dist[1]:
                 raise VehiclePilotSaleError("Mahsulot SKU bo'sh, faol emas yoki topilmadi.")
             sku = dist[1]
@@ -391,11 +397,11 @@ def _create_vehicle_pilot_once(dokon_id, agent_id, items, jami, tolov, foto,
             if len(products) != 1:
                 raise VehiclePilotSaleError(
                     "SKU public mahsulotga aniq bitta faol savdo yozuvi sifatida mos kelmadi.")
-            mapped.append((mid, qty, price, products[0][0], products[0][1], sku))
+            mapped.append((mid, qty, price, products[0][0], products[0][1], sku, dist[2]))
 
         # Lock inventory in stable product-name order after warehouse lock.
         for line in sorted(mapped, key=lambda x: (x[4], x[0])):
-            mid, qty, price, public_id, product_name, sku = line
+            mid, qty, price, public_id, product_name, sku, unit = line
             c.execute(
                 """SELECT id,quantity,weight_kg FROM public.inventory
                    WHERE warehouse_id=%s AND product=%s AND product_type='finished'
@@ -417,6 +423,16 @@ def _create_vehicle_pilot_once(dokon_id, agent_id, items, jami, tolov, foto,
                     ORDER BY ev.event_at,ev.id,cl.id FOR UPDATE OF cl,ev""",
                 (vehicle_id, mid, sku))
             claims = c.fetchall()
+            if not claims:
+                raise VehiclePilotSaleError("Mahsulotning mashinaga yuklash izi topilmadi.")
+            if unit == "kg":
+                c.execute(
+                    """UPDATE public.inventory SET weight_kg=weight_kg-%s,updated_at=NOW()
+                       WHERE id=%s AND weight_kg>=%s""", (qty, inv[0], qty))
+                if c.rowcount != 1:
+                    raise VehiclePilotSaleError("Mashinada kg qoldiq yetarli emas: %s." % product_name)
+                mapped[mapped.index(line)] = line + ([], qty, Decimal(str(inv[2])) - qty)
+                continue
             selected = []
             remaining_to_allocate = Decimal(qty)
             for claim in claims:
@@ -448,7 +464,7 @@ def _create_vehicle_pilot_once(dokon_id, agent_id, items, jami, tolov, foto,
                     "Mashina qoldig'i yoki og'irligi yetarli emas: %s." % product_name)
             post_sale_quantity = Decimal(str(inv[1])) - Decimal(qty)
             line += (selected, total_weight, post_sale_quantity)
-            mapped[mapped.index(line[:6])] = line
+            mapped[mapped.index(line[:7])] = line
 
         if balance_deduction:
             c.execute("SELECT balans FROM distribution.mijoz_balans "
@@ -462,7 +478,7 @@ def _create_vehicle_pilot_once(dokon_id, agent_id, items, jami, tolov, foto,
             c, dokon_id, agent_id, items, jami, tolov, foto, nasiya_summa,
             operation_key, fingerprint, True)
         detail_by_mid = {int(x[1]): x[0] for x in details}
-        for (mid, qty, price, public_id, product_name, sku, selected,
+        for (mid, qty, price, public_id, product_name, sku, unit, selected,
              total_weight, post_sale_quantity) in mapped:
             detail_id = detail_by_mid[int(mid)]
             reference = "vehicle-sale:%s:detail:%s" % (sid, detail_id)
@@ -471,7 +487,7 @@ def _create_vehicle_pilot_once(dokon_id, agent_id, items, jami, tolov, foto,
                    (product,quantity,movement_type,from_warehouse_id,note,created_by,
                     product_type,weight_kg,reference,reason)
                    VALUES (%s,%s,'OUT',%s,%s,%s,'finished',%s,%s,'vehicle_sale')""",
-                (product_name, qty, warehouse_id, "DM-001 pilot savdo", str(agent_id),
+                (product_name, 0 if unit == "kg" else qty, warehouse_id, "DM-001 pilot savdo", str(agent_id),
                  total_weight, reference))
             for claim, allocated_quantity, allocated_weight in selected:
                 (claim_id, handoff_id, handoff_item_id, label_id, barcode, _unit_weight,
@@ -504,6 +520,9 @@ def _create_vehicle_pilot_once(dokon_id, agent_id, items, jami, tolov, foto,
                     (vehicle_id, handoff_id, handoff_item_id, mid, sku, -allocated_quantity,
                      agent_id, label_id, barcode, unit_key + ":event", claim_id,
                      "vehicle sale %s detail %s" % (sid, detail_id)))
+            if unit == "kg":
+                # Piece-based replenishment is not authority for kg stock.
+                continue
             _create_auto_replenishment_request(
                 c,
                 sale_id=sid,

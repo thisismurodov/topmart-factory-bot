@@ -18,6 +18,60 @@ def _button_texts(keyboard):
 
 
 class ExternalPurchaseHandlerTest(unittest.IsolatedAsyncioTestCase):
+    async def test_dashboard_cost_suggestion_uses_correct_unit(self):
+        for unit, cost, expected in (("dona", "1250.25", "1250250.00"), ("kg", "10000", "450000.00")):
+            with self.subTest(unit=unit):
+                state = {"product": {"unitType": unit, "costPrice": cost, "currencyType": "UZS"},
+                         "quantity": 1000}
+                ctx = SimpleNamespace(user_data={"external_purchase": state})
+                update = SimpleNamespace(message=_message("45"))
+                self.assertEqual(await inventory.external_weight(update, ctx), inventory.INV_EXT_COST)
+                self.assertEqual(state["suggested_cost"], expected)
+                self.assertNotIn("total_cost", state)
+                text = update.message.reply_text.await_args.args[0]
+                self.assertIn("Dashboarddagi tan narx", text)
+
+    async def test_missing_invalid_or_foreign_cost_requires_manual_sum(self):
+        for price, currency in (("0", "UZS"), ("NaN", "UZS"), ("bad", "UZS"), ("10", "USD")):
+            state = {"product": {"unitType": "dona", "costPrice": price, "currencyType": currency},
+                     "quantity": 1000, "suggested_cost": "123"}
+            ctx = SimpleNamespace(user_data={"external_purchase": state})
+            update = SimpleNamespace(message=_message("45"))
+            self.assertEqual(await inventory.external_weight(update, ctx), inventory.INV_EXT_COST)
+            self.assertNotIn("suggested_cost", state)
+            self.assertNotIn("total_cost", state)
+
+    async def test_accept_cost_and_manual_override(self):
+        state = {"suggested_cost": "450000.00", "cost_token": "current"}
+        ctx = SimpleNamespace(user_data={"external_purchase": state})
+        query = SimpleNamespace(data="extcost:current:yes", answer=AsyncMock(),
+                                edit_message_text=AsyncMock(), message=_message())
+        update = SimpleNamespace(callback_query=query, effective_chat=SimpleNamespace(id=7))
+        with patch.object(inventory, "_is_external_purchase_allowed", return_value=True):
+            self.assertEqual(await inventory.external_cost_cb(update, ctx), inventory.INV_EXT_REFERENCE)
+        self.assertEqual(state["total_cost"], "450000.00")
+        self.assertNotIn("cost_token", state)
+        state.update(suggested_cost="450000.00", cost_token="another")
+        manual = SimpleNamespace(message=_message("440000"))
+        self.assertEqual(await inventory.external_cost(manual, ctx), inventory.INV_EXT_REFERENCE)
+        self.assertEqual(state["total_cost"], "440000")
+        self.assertNotIn("suggested_cost", state)
+        self.assertNotIn("cost_token", state)
+
+    async def test_edit_and_stale_cost_buttons_do_not_save(self):
+        state = {"suggested_cost": "450000.00", "cost_token": "current"}
+        ctx = SimpleNamespace(user_data={"external_purchase": state})
+        query = SimpleNamespace(data="extcost:old:yes", answer=AsyncMock(),
+                                edit_message_text=AsyncMock(), message=_message())
+        update = SimpleNamespace(callback_query=query, effective_chat=SimpleNamespace(id=7))
+        with patch.object(inventory, "_is_external_purchase_allowed", return_value=True):
+            self.assertEqual(await inventory.external_cost_cb(update, ctx), inventory.INV_EXT_COST)
+            self.assertNotIn("total_cost", state)
+            query.data = "extcost:current:edit"
+            self.assertEqual(await inventory.external_cost_cb(update, ctx), inventory.INV_EXT_COST)
+        self.assertNotIn("total_cost", state)
+        self.assertNotIn("cost_token", state)
+
     def test_warehouse_permissions_preserve_admin_access_and_reject_other_roles(self):
         for role in ("admin", "omborchi"):
             with self.subTest(role=role), patch.object(

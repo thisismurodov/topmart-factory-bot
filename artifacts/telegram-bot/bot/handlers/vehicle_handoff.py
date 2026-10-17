@@ -1,7 +1,7 @@
 """Admin-only Telegram flow for the frozen DM-001 vehicle handoff pilot.
 
 Multi-item cart flow: the operator picks a source warehouse once, then adds
-product+quantity lines with profile-derived weight ("Yana tovar qo‘shish"), and only
+product+measured weight+package count lines ("Yana tovar qo‘shish"), and only
 "Tugatish" creates ONE handoff carrying the whole cart. The review screen and
 the success message show per-line and total sums priced with the savdo bot
 catalog (distribution.mahsulotlar.narx).
@@ -92,7 +92,7 @@ def _cart_totals(cart: list[dict], prices: dict | None) -> tuple[int, float, Dec
         if narx is None or _dec(narx) <= 0:
             missing.append(it["name"])
         else:
-            total_sum += _dec(narx) * int(it["quantity"])
+            total_sum += _dec(narx) * (_dec(it["weight"]) if it.get("unit_type") == "kg" else int(it["quantity"]))
     return total_qty, total_kg, total_sum, missing
 
 
@@ -126,7 +126,8 @@ def _review_view(state: dict) -> tuple[str, InlineKeyboardMarkup]:
         if narx is None or narx <= 0:
             price_part = "narxi yo‘q"
         else:
-            price_part = f"{_money(narx)} × {qty} = *{_money(_dec(narx) * qty)}*"
+            amount = _dec(it["weight"]) if it.get("unit_type") == "kg" else qty
+            price_part = f"{_money(narx)} × {amount} = *{_money(_dec(narx) * amount)}*"
         lines.append(f"{i}. {it['name']} — {qty} dona / {float(it['weight']):g} kg · {price_part}")
     total_qty, total_kg, total_sum, missing = _cart_totals(cart, prices)
     package_count = sum(
@@ -252,7 +253,8 @@ async def _show_products(q, state) -> int:
         return ConversationHandler.END
     state["products"] = {str(i): p for i, p in enumerate(available)}
     rows = [[InlineKeyboardButton(
-        f"{p['name']} — {float(p['available_quantity']):g} dona",
+        (f"{p['name']} — {float(p.get('available_weight_kg', 0)):g} kg"
+         if p.get("unit_type") == "kg" else f"{p['name']} — {float(p['available_quantity']):g} dona"),
         callback_data=f"vh:{state['token']}:prod:{i}",
     )] for i, p in enumerate(available)]
     rows.append([InlineKeyboardButton("❌ Bekor qilish", callback_data=f"vh:{state['token']}:cancel")])
@@ -285,12 +287,14 @@ async def choose_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return PRODUCT
     await q.answer()
     state["pending_product"] = state["products"][data[3]]
+    state.pop("pending_weight", None)
+    state.pop("pending_qty", None)
     p = state["pending_product"]
     await q.edit_message_text(
-        f"📦 *{p['name']}*\nQoldiq: *{float(p['available_quantity']):g} dona*\n\n"
-        "Musbat butun miqdorni kiriting:", parse_mode="Markdown",
+        f"📦 *{p['name']}*\nQoldiq: *{float(p.get('available_weight_kg', 0)):g} kg / {float(p['available_quantity']):g} dona*\n\n"
+        "Jami og‘irlikni kg da kiriting (masalan: 20.55):", parse_mode="Markdown",
     )
-    return QUANTITY
+    return WEIGHT
 
 
 async def enter_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -299,26 +303,50 @@ async def enter_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return ConversationHandler.END
     text = update.message.text.strip()
     state = context.user_data["vh"]
+    if "pending_weight" not in state:
+        await update.message.reply_text("Avval jami og‘irlikni kg da kiriting:")
+        return WEIGHT
     if not text.isdigit() or int(text) <= 0:
-        await update.message.reply_text("⚠️ Musbat butun son kiriting:")
+        await update.message.reply_text("⚠️ Qadoq sonini musbat butun son bilan kiriting (1–100):")
         return QUANTITY
-    if int(text) > int(float(state["pending_product"]["available_quantity"])):
+    if int(text) > 100 or Decimal(str(state["pending_weight"])) < Decimal(text) * Decimal("0.0001"):
+        await update.message.reply_text("1–100 ta qadoq kiriting. Har qadoq kamida 0.0001 kg bo‘lishi kerak:")
+        return QUANTITY
+    if state["pending_product"].get("unit_type") != "kg" and int(text) > int(float(state["pending_product"]["available_quantity"])):
         await update.message.reply_text("⚠️ Miqdor mavjud qoldiqdan oshmasligi kerak:")
         return QUANTITY
     state["pending_qty"] = int(text)
-    return await _append_profile_weight(update, context)
+    return await _append_measured_weight(update, context)
 
 
 async def enter_weight(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Resume an older persisted WEIGHT screen without accepting manual kg."""
+    """Collect the measured total before asking for physical package count."""
     if not _admin(update.effective_user.id) or "vh" not in context.user_data:
         await update.message.reply_text("❌ Sessiya eskirgan.")
         return ConversationHandler.END
-    await update.message.reply_text("Kg endi qo'lda kiritilmaydi — mahsulot profilidan hisoblanadi.")
-    return await _append_profile_weight(update, context)
+    state = context.user_data["vh"]
+    if not state.get("pending_product"):
+        await update.message.reply_text("Sessiya eskirgan. /start orqali qaytadan boshlang.")
+        return ConversationHandler.END
+    try:
+        weight = Decimal(update.message.text.strip().replace(",", "."))
+        if not weight.is_finite() or not 0 < weight <= Decimal("999999999.9999") or weight != weight.quantize(Decimal("0.0001")):
+            raise ValueError
+    except (InvalidOperation, ValueError):
+        await update.message.reply_text("Musbat kg kiriting, ko‘pi bilan 4 kasr xonasi (masalan: 20.55):")
+        return WEIGHT
+    state["pending_weight"] = str(weight)
+    available = state["pending_product"].get("available_weight_kg")
+    if available is not None and weight > Decimal(str(available)):
+        state.pop("pending_weight", None)
+        await update.message.reply_text(f"Kg mavjud qoldiqdan oshmasligi kerak: {available} kg. Qayta kiriting:")
+        return WEIGHT
+    state.pop("pending_qty", None)
+    await update.message.reply_text(f"Jami: {weight:g} kg. Nechta qadoq? (1–100)\nHar qadoqqa bitta etiketka chiqariladi:")
+    return QUANTITY
 
 
-async def _append_profile_weight(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def _append_measured_weight(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     state = context.user_data["vh"]
     p = state.get("pending_product")
     qty = state.get("pending_qty")
@@ -326,36 +354,35 @@ async def _append_profile_weight(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("Sessiya eskirgan. /start orqali yuklashni qaytadan boshlang.")
         return ConversationHandler.END
     try:
-        unit_weight = Decimal(str(p.get("unit_weight_kg")))
-        # The profile and downstream per-piece ledger share 0.1 gram precision.
-        if not unit_weight.is_finite() or unit_weight <= 0 or unit_weight != unit_weight.quantize(Decimal("0.0001")):
+        total = Decimal(state["pending_weight"])
+        if not total.is_finite() or total <= 0:
             raise ValueError
-        total = unit_weight * qty
+        unit_weight = total / qty
         if total > Decimal("999999999.9999"):
             raise ValueError
     except (InvalidOperation, ValueError, TypeError):
         state.pop("pending_qty", None)
         await update.message.reply_text(
-            "Mahsulot profilidagi bir dona kg yaroqsiz yoki hisob chegaradan oshdi. "
-            "Profilga musbat kg (4 kasr xonasigacha) kiriting, "
+            "Kiritilgan jami kg yaroqsiz yoki hisob chegaradan oshdi. "
+            "Musbat kg (4 kasr xonasigacha) kiriting, "
             "so'ng /start orqali yuklashni qaytadan boshlang. Tovar savatga qo'shilmadi."
         )
         return ConversationHandler.END
     weight = float(total)
-    profile_line = f"🏷️ Hisob: *{qty} dona × {unit_weight:g} kg = {total:g} kg*\n"
+    profile_line = f"Hisob: *{total:g} kg ÷ {qty} qadoq ≈ {unit_weight:.4f} kg*\n{qty} ta etiketka. Yaxlitlash farqi etiketkalarga taqsimlanadi, jami kg saqlanadi.\n"
     item = {
         "mahsulot_id": int(p["mahsulot_id"]),
         "name": p["name"],
         "quantity": qty,
         "weight": weight,
+        "pieces_per_box": 1,
+        "measured_packages": True,
+        **({"unit_type": "kg"} if p.get("unit_type") == "kg" else {}),
     }
-    # Old persisted conversations do not have packaging metadata; retain their
-    # exact cart shape while carrying it for new package-count previews.
-    if p.get("pieces_per_box") is not None:
-        item["pieces_per_box"] = p["pieces_per_box"]
     state.setdefault("cart", []).append(item)
     state.pop("pending_product", None)
     state.pop("pending_qty", None)
+    state.pop("pending_weight", None)
     text, markup = _cart_view(state)
     await update.message.reply_text(
         f"➕ Qo‘shildi: *{p['name']}* — {qty} dona / {weight:g} kg\n"
@@ -419,7 +446,7 @@ async def confirm_create(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     ok, result = create_vehicle_handoff(
         state["warehouse"]["id"],
         [{"mahsulot_id": it["mahsulot_id"], "quantity": it["quantity"],
-          "weight": it["weight"]} for it in cart],
+          "weight": it["weight"], **({"measured_packages": True} if it.get("measured_packages") else {})} for it in cart],
         _operation("create", None, state["token"]), notes,
     )
     if not ok:

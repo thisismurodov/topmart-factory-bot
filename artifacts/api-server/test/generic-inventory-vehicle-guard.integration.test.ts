@@ -180,7 +180,7 @@ beforeAll(async () => {
   const warehouses = await db.query(
     `INSERT INTO warehouses(name, location_type, purpose) VALUES
        ('General A','general','finished'),
-       ('C-03','container','finished'),
+       ('General B','container','finished'),
        ('Vehicle','vehicle','finished'),
        ('Raw Warehouse','general','raw'),
        ('General Purpose Warehouse','general','general')
@@ -192,7 +192,7 @@ beforeAll(async () => {
     `INSERT INTO products(name, unit_type, weight) VALUES
        ('Qty Product','dona',2.5),('Kg Product','kg',1);
      INSERT INTO batches(product, quantity, weight_kg) VALUES ('Kg Product',10,20);
-     INSERT INTO customers(name) VALUES ('Top Mart');
+     INSERT INTO customers(name) VALUES ('Test Customer');
      INSERT INTO admin_users(id,role) VALUES (1,'admin')`,
   );
 
@@ -226,6 +226,8 @@ beforeEach(async () => {
       material_flow_events, inventory RESTART IDENTITY CASCADE
   `);
   await db.query(`DELETE FROM distribution.topmart_config`);
+  await db.query("UPDATE warehouses SET name='General B' WHERE id=$1", [generalB]);
+  await db.query("UPDATE customers SET name='Top Mart' WHERE id=1");
 });
 
 afterAll(async () => {
@@ -276,6 +278,31 @@ describe("generic Ombor vehicle warehouse guard", () => {
 });
 
 describe("generic inventory movement vehicle guard", () => {
+  it("rejects C-03 generic IN/OUT/TRANSFER and absolute adjustments without side effects", async () => {
+    await db.query("UPDATE warehouses SET name='C-03' WHERE id=$1", [generalA]);
+    try {
+      await db.query(
+        "INSERT INTO inventory(warehouse_id,product,quantity,weight_kg) VALUES ($1,'Qty Product',10,0)",
+        [generalA],
+      );
+      const before = await state();
+      for (const body of [
+        { product: "Qty Product", quantity: 1, movement_type: "IN", to_warehouse_id: generalA },
+        { product: "Qty Product", quantity: 1, movement_type: "OUT", from_warehouse_id: generalA },
+        { product: "Qty Product", quantity: 1, movement_type: "TRANSFER", from_warehouse_id: generalA, to_warehouse_id: generalB },
+        { product: "Qty Product", quantity: 1, movement_type: "TRANSFER", from_warehouse_id: generalB, to_warehouse_id: generalA },
+      ]) {
+        expect((await post("/inventory/movement", body)).status).toBe(400);
+        expect(await state()).toBe(before);
+      }
+      for (const path of ["/ombor/finished-in", "/ombor/adjust"]) {
+        expect((await post(path, { warehouseId: generalA, product: "Qty Product", qty: 2 })).status).toBe(400);
+        expect(await state()).toBe(before);
+      }
+    } finally {
+      await db.query("UPDATE warehouses SET name='General A' WHERE id=$1", [generalA]);
+    }
+  });
   it("rejects IN/OUT/TRANSFER vehicle IDs with no writes", async () => {
     await db.query(
       `INSERT INTO inventory(warehouse_id,product,quantity,weight_kg) VALUES
@@ -297,6 +324,26 @@ describe("generic inventory movement vehicle guard", () => {
 });
 
 describe("sales never selects or decrements vehicle stock", () => {
+  it("ordinary ERP sales never consume C-03 stock", async () => {
+    await db.query("UPDATE warehouses SET name='C-03' WHERE id=$1", [generalA]);
+    try {
+      await db.query(
+        "INSERT INTO inventory(warehouse_id,product,quantity,weight_kg) VALUES ($1,'Qty Product',10,20)",
+        [generalA],
+      );
+      const before = await stock(generalA, "Qty Product");
+      await post("/sales", {
+        customerId: 1, paymentType: "naqd",
+        items: [{ productName: "Qty Product", quantity: 2 }],
+      });
+      expect(await stock(generalA, "Qty Product")).toEqual(before);
+      expect(Number((await db.query(
+        "SELECT COUNT(*) n FROM stock_movements WHERE from_warehouse_id=$1", [generalA],
+      )).rows[0].n)).toBe(0);
+    } finally {
+      await db.query("UPDATE warehouses SET name='General A' WHERE id=$1", [generalA]);
+    }
+  });
   async function sell(productName: string, quantity: number) {
     return post("/sales", {
       customerId: 1,
@@ -356,6 +403,7 @@ describe("Top Mart sales route integrity", () => {
   const operationKey = () => crypto.randomUUID();
 
   async function configureTopmart() {
+    await db.query("UPDATE warehouses SET name='C-03' WHERE id=$1", [generalB]);
     await db.query(
       `INSERT INTO distribution.topmart_config(id,customer_id,central_warehouse_id)
        VALUES (1,1,$1)`,
@@ -448,7 +496,7 @@ describe("Top Mart sales route integrity", () => {
     );
     const key = operationKey();
     const first = await sellTopmart(key);
-    expect(first.status).toBe(201);
+    expect(first.status, JSON.stringify(first.body)).toBe(201);
     const snapshot = await state();
 
     const replay = await sellTopmart(key);
@@ -525,6 +573,24 @@ describe("Top Mart sales route integrity", () => {
     expect((await del(`/sales/${sale.body.id}`)).status).toBe(409);
     expect(await state()).toBe(snapshot);
     expect(Number((await db.query(`SELECT COUNT(*) AS count FROM sales`)).rows[0].count)).toBe(1);
+  });
+
+  it("reproduces V1 blocker: retrying an identical partial payment charges it twice", async () => {
+    const sale = await post("/sales", {
+      customerId: 1, paymentType: "nasiya",
+      items: [{ productName: "Qty Product", quantity: 2 }],
+    });
+    expect(sale.status).toBe(201);
+    const body = { amount: 5, currency: "UZS", note: "same-client-retry" };
+    expect((await post(`/sales/${sale.body.id}/payments`, body)).status).toBe(200);
+    expect((await post(`/sales/${sale.body.id}/payments`, body)).status).toBe(200);
+    const result = await db.query(
+      "SELECT paid_amount::float8 paid, debt_amount::float8 debt, total_amount::float8 total FROM sales WHERE id=$1",
+      [sale.body.id],
+    );
+    // Reproducer, NOT an acceptance assertion: expected once-only amount is 5.
+    expect(result.rows[0].paid).toBe(10);
+    expect(result.rows[0].paid + result.rows[0].debt).toBe(result.rows[0].total);
   });
 
   it("rejects mismatched payment currency and defaults omitted currency to the sale currency", async () => {

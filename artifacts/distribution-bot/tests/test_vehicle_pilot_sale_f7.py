@@ -42,6 +42,7 @@ from database.sales import (  # noqa: E402
     create_sale,
     create_vehicle_pilot_sale,
     is_vehicle_pilot_seller,
+    get_vehicle_seller_products,
 )
 from database.replenishment_delivery import (  # noqa: E402
     acknowledge,
@@ -92,6 +93,58 @@ def _db():
 
 
 class VehiclePilotSaleF7(unittest.TestCase):
+    def _second_seller(self):
+        self._exec("INSERT INTO distribution.delivery_agents(name,telegram_id,faol) VALUES('Navruzbek Test',701,1)")
+        self._exec("INSERT INTO distribution.users(telegram_id,name,role) VALUES(701,'Second profile','agent')")
+
+    def test_shared_sellers_filter_and_deplete_one_stock(self):
+        self._second_seller()
+        hidden = self._yangi_mahsulot("Not loaded", 100, "NO-LOAD", "dona")
+        self.assertTrue(is_vehicle_pilot_seller(701))
+        for seller in (700, 701):
+            self.assertEqual([r[0] for r in get_vehicle_seller_products(seller)], [self.mid])
+        for seller, qty in ((700, 2), (701, 3)):
+            create_vehicle_pilot_sale(self.shop, seller, [(self.mid, qty, 100)],
+                qty * 100, "naqd", None, 0, str(uuid.uuid4()))
+        self.assertEqual(self.scalar("SELECT quantity FROM public.inventory WHERE warehouse_id=%s", (self.warehouse,)), 0)
+        self.assertEqual(self.scalar("SELECT COUNT(DISTINCT agent_id) FROM distribution.savdolar"), 2)
+        for seller in (700, 701):
+            self.assertEqual(get_vehicle_seller_products(seller), [])
+            with self.assertRaises(VehiclePilotSaleError):
+                create_vehicle_pilot_sale(self.shop, seller, [(hidden, 1, 100)], 100,
+                    "naqd", None, 0, str(uuid.uuid4()))
+
+    def test_shared_kg_stock_replay_and_shortage(self):
+        self._second_seller()
+        self._exec("UPDATE distribution.mahsulotlar SET birlik='kg' WHERE id=%s", (self.mid,))
+        self._exec("UPDATE public.inventory SET quantity=0,weight_kg=6.25")
+        for seller, qty in ((700, 2.5), (701, 3.75)):
+            args = (self.shop, seller, [(self.mid, qty, 100)], qty * 100,
+                    "naqd", None, 0, str(uuid.uuid4()))
+            first = create_vehicle_pilot_sale(*args)
+            self.assertEqual(create_vehicle_pilot_sale(*args), first)
+        self.assertEqual(self.scalar("SELECT weight_kg FROM public.inventory WHERE warehouse_id=%s", (self.warehouse,)), 0)
+        self.assertEqual(self.scalar("SELECT quantity FROM public.inventory WHERE warehouse_id=%s", (self.warehouse,)), 0)
+        self.assertEqual(get_vehicle_seller_products(701), [])
+        with self.assertRaises(VehiclePilotSaleError):
+            create_vehicle_pilot_sale(self.shop, 701, [(self.mid, 0.1, 100)], 10,
+                "naqd", None, 0, str(uuid.uuid4()))
+
+    def test_two_profiles_cannot_oversell_concurrently(self):
+        self._second_seller()
+        results = []
+        def sell(seller):
+            try:
+                create_vehicle_pilot_sale(self.shop, seller, [(self.mid, 4, 100)], 400,
+                    "naqd", None, 0, str(uuid.uuid4()))
+                results.append("ok")
+            except VehiclePilotSaleError:
+                results.append("shortage")
+        threads = [threading.Thread(target=sell, args=(seller,)) for seller in (700, 701)]
+        for t in threads: t.start()
+        for t in threads: t.join(15)
+        self.assertCountEqual(results, ["ok", "shortage"])
+        self.assertEqual(self.scalar("SELECT quantity FROM public.inventory WHERE warehouse_id=%s", (self.warehouse,)), 1)
     @classmethod
     def setUpClass(cls):
         admin = _admin()
@@ -246,18 +299,14 @@ class VehiclePilotSaleF7(unittest.TestCase):
                 "VALUES(%s,%s,1,%s,%s) RETURNING id", (nomi, narx, sku, birlik))
             return c.fetchone()[0]
 
-    # F9: kg (o'lchovli) mahsulotlar pilot savdosida kasr miqdor bilan,
-    # mashina zaxirasi/etiketka intizomiga tegmasdan sotiladi.
-
-    def test_f9_kg_item_sells_fractional_without_vehicle_stock(self):
+    def test_kg_without_vehicle_stock_is_rejected(self):
         kg_mid = self._yangi_mahsulot("Gilam tros kurtka tros", 24000, "", "kg")
         jami = 24000 * 5.7  # bot jami'ni xuddi shunday float bilan yig'adi
-        sid, _, _ = create_vehicle_pilot_sale(
-            self.shop, 700, [(kg_mid, 5.7, 24000)], jami, "naqd", None, 0,
-            str(uuid.uuid4()), 0, {"naqd": jami, "karta": 0, "nasiya": 0})
-        self.assertAlmostEqual(float(self.scalar(
-            "SELECT miqdor FROM distribution.savdo_tafsilot WHERE savdo_id=%s",
-            (sid,))), 5.7)
+        with self.assertRaises(VehiclePilotSaleError):
+            create_vehicle_pilot_sale(
+                self.shop, 700, [(kg_mid, 5.7, 24000)], jami, "naqd", None, 0,
+                str(uuid.uuid4()), 0, {"naqd": jami, "karta": 0, "nasiya": 0})
+        self.assertEqual(self.scalar("SELECT COUNT(*) FROM distribution.savdolar"), 0)
         self.assertEqual(self.scalar(
             "SELECT COUNT(*) FROM public.stock_movements"), 0)
         self.assertEqual(self.scalar(
@@ -271,26 +320,25 @@ class VehiclePilotSaleF7(unittest.TestCase):
         self.assertEqual(self.scalar(
             "SELECT COUNT(*) FROM distribution.vehicle_replenishment_requests"), 0)
 
-    def test_f9_mixed_dona_kg_sale_only_dona_touches_stock(self):
+    def test_mixed_sale_with_unloaded_kg_is_atomic(self):
         # kg mahsulotda SKU bo'lsa ham (public mos yozuvsiz) qator oddiy savdo
         # bo'lib qoladi — birlik hal qiladi, SKU emas.
         kg_mid = self._yangi_mahsulot("Arqon kg", 24000, "KG-SKU", "kg")
         jami = 2 * 100 + 24000 * 2.5
-        sid, _, _ = create_vehicle_pilot_sale(
-            self.shop, 700, [(self.mid, 2, 100), (kg_mid, 2.5, 24000)], jami,
-            "naqd", None, 0, str(uuid.uuid4()), 0,
-            {"naqd": jami, "karta": 0, "nasiya": 0})
-        self.assertEqual(self.scalar(
-            "SELECT COUNT(*) FROM distribution.savdo_tafsilot WHERE savdo_id=%s",
-            (sid,)), 2)
+        with self.assertRaises(VehiclePilotSaleError):
+            create_vehicle_pilot_sale(
+                self.shop, 700, [(self.mid, 2, 100), (kg_mid, 2.5, 24000)], jami,
+                "naqd", None, 0, str(uuid.uuid4()), 0,
+                {"naqd": jami, "karta": 0, "nasiya": 0})
+        self.assertEqual(self.scalar("SELECT COUNT(*) FROM distribution.savdolar"), 0)
         self.assertEqual(float(self.scalar(
             "SELECT quantity FROM public.inventory WHERE warehouse_id=%s",
-            (self.warehouse,))), 3.0)
+            (self.warehouse,))), 5.0)
         self.assertEqual(self.scalar(
-            "SELECT COUNT(*) FROM public.stock_movements WHERE movement_type='OUT'"), 1)
+            "SELECT COUNT(*) FROM public.stock_movements WHERE movement_type='OUT'"), 0)
         self.assertEqual(float(self.scalar(
             "SELECT COALESCE(SUM(allocated_quantity),0) "
-            "FROM distribution.vehicle_sale_allocations")), 2.0)
+            "FROM distribution.vehicle_sale_allocations")), 0.0)
         self.assertEqual(self.scalar(
             "SELECT COUNT(*) FROM distribution.vehicle_sale_allocations "
             "WHERE mahsulot_id=%s", (kg_mid,)), 0)
@@ -298,7 +346,7 @@ class VehiclePilotSaleF7(unittest.TestCase):
             "SELECT COUNT(*) FROM distribution.vehicle_replenishment_requests "
             "WHERE mahsulot_id=%s", (kg_mid,)), 0)
 
-    def test_f9_dona_without_load_trace_sells_as_plain_row(self):
+    def test_dona_without_load_trace_is_rejected(self):
         # Mashina fizik jihatdan pilotdan oldingi mollarni ham tashiydi:
         # tizim orqali HECH QACHON yuklanmagan dona mahsulot (claims izi yo'q)
         # butun savdoni bloklamaydi — oddiy savdo qatori bo'lib yoziladi,
@@ -306,18 +354,17 @@ class VehiclePilotSaleF7(unittest.TestCase):
         plain_mid = self._yangi_mahsulot(
             "Reja ip Sapojniy 50 gramm", 3000, "REJA-50", "dona")
         jami = 2 * 100 + 50 * 3000
-        sid, _, _ = create_vehicle_pilot_sale(
-            self.shop, 700, [(self.mid, 2, 100), (plain_mid, 50, 3000)], jami,
-            "naqd", None, 0, str(uuid.uuid4()), 0,
-            {"naqd": jami, "karta": 0, "nasiya": 0})
-        self.assertEqual(self.scalar(
-            "SELECT COUNT(*) FROM distribution.savdo_tafsilot WHERE savdo_id=%s",
-            (sid,)), 2)
+        with self.assertRaises(VehiclePilotSaleError):
+            create_vehicle_pilot_sale(
+                self.shop, 700, [(self.mid, 2, 100), (plain_mid, 50, 3000)], jami,
+                "naqd", None, 0, str(uuid.uuid4()), 0,
+                {"naqd": jami, "karta": 0, "nasiya": 0})
+        self.assertEqual(self.scalar("SELECT COUNT(*) FROM distribution.savdolar"), 0)
         self.assertEqual(float(self.scalar(
             "SELECT quantity FROM public.inventory WHERE warehouse_id=%s",
-            (self.warehouse,))), 3.0)
+            (self.warehouse,))), 5.0)
         self.assertEqual(self.scalar(
-            "SELECT COUNT(*) FROM public.stock_movements WHERE movement_type='OUT'"), 1)
+            "SELECT COUNT(*) FROM public.stock_movements WHERE movement_type='OUT'"), 0)
         self.assertEqual(self.scalar(
             "SELECT COUNT(*) FROM distribution.vehicle_sale_allocations "
             "WHERE mahsulot_id=%s", (plain_mid,)), 0)
@@ -335,7 +382,7 @@ class VehiclePilotSaleF7(unittest.TestCase):
         self.assertIn("so'raldi 6", msg)
         self.assertEqual(self.scalar("SELECT COUNT(*) FROM distribution.savdolar"), 0)
 
-    def test_f9_prepared_only_trace_still_sells_as_plain_row(self):
+    def test_prepared_only_trace_cannot_be_sold(self):
         # Etiketkalar faqat TAYYORLANGAN (status='prepared') — qutilar hali
         # omborda, mashinaga F6 topshiruv bo'lmagan (bekor qilingan handoff ham
         # aynan shu holatda claims qoldiradi). Bunday iz mashinadagi pilotgacha
@@ -350,12 +397,11 @@ class VehiclePilotSaleF7(unittest.TestCase):
                     remaining_quantity,status)
                    VALUES(%s,%s,%s,99,'BC-99',%s,'SKU-NEW',1,5,5,'prepared')""",
                 (self.vehicle, self.handoff, self.handoff_item, new_mid))
-        sid, _, _ = create_vehicle_pilot_sale(
-            self.shop, 700, [(new_mid, 3, 500)], 1500, "naqd", None, 0,
-            str(uuid.uuid4()), 0, {"naqd": 1500, "karta": 0, "nasiya": 0})
-        self.assertEqual(self.scalar(
-            "SELECT COUNT(*) FROM distribution.savdo_tafsilot WHERE savdo_id=%s",
-            (sid,)), 1)
+        with self.assertRaises(VehiclePilotSaleError):
+            create_vehicle_pilot_sale(
+                self.shop, 700, [(new_mid, 3, 500)], 1500, "naqd", None, 0,
+                str(uuid.uuid4()), 0, {"naqd": 1500, "karta": 0, "nasiya": 0})
+        self.assertEqual(self.scalar("SELECT COUNT(*) FROM distribution.savdolar"), 0)
         self.assertEqual(self.scalar(
             "SELECT remaining_quantity FROM distribution.vehicle_label_claims "
             "WHERE barcode='BC-99'"), 5)
@@ -374,7 +420,7 @@ class VehiclePilotSaleF7(unittest.TestCase):
             "SET status='sold',remaining_quantity=0")
         with self.assertRaises(VehiclePilotSaleError) as ctx:
             self.sale(qty=1, total=100, debt=0, prepayment=0)
-        self.assertIn("yetarli emas", str(ctx.exception))
+        self.assertIn("qoldig'i tugagan", str(ctx.exception))
         self.assertEqual(self.scalar("SELECT COUNT(*) FROM distribution.savdolar"), 0)
 
     def test_f9_dona_fractional_still_rejected_atomically(self):
@@ -399,7 +445,8 @@ class VehiclePilotSaleF7(unittest.TestCase):
         # Kvantlash-tolerans ekspluatatsiyasi yopiq: 1.4996 ham (to'rdan
         # tashqari), 1.499 ham (to'rda, lekin noto'g'ri) o'tmasligi shart —
         # aks holda BIGINT yumaloqlashda sarlavha va qator summalari ajraladi.
-        kg_mid = self._yangi_mahsulot("Arzon tros", 1, "", "kg")
+        kg_mid = self.mid
+        self._exec("UPDATE distribution.mahsulotlar SET birlik='kg' WHERE id=%s", (kg_mid,))
         for yolgon_jami in (1.4996, 1.499):
             with self.assertRaises(VehiclePilotSaleError):
                 create_vehicle_pilot_sale(
@@ -415,7 +462,8 @@ class VehiclePilotSaleF7(unittest.TestCase):
             "SELECT COUNT(*) FROM distribution.savdolar WHERE id=%s", (sid,)), 1)
 
     def test_f9_kg_sale_replays_idempotently(self):
-        kg_mid = self._yangi_mahsulot("Arqon kg", 24000, "", "kg")
+        kg_mid = self.mid
+        self._exec("UPDATE distribution.mahsulotlar SET birlik='kg' WHERE id=%s", (kg_mid,))
         key = str(uuid.uuid4())
         jami = 24000 * 5.7
         args = (self.shop, 700, [(kg_mid, 5.7, 24000)], jami, "naqd", None, 0,

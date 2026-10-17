@@ -35,6 +35,22 @@ def _ctx(state):
 
 
 class VehicleHandoffSafetyTest(unittest.IsolatedAsyncioTestCase):
+    async def test_kg_only_stock_accepts_packages_but_not_excess_weight(self):
+        state = {"token": "tok", "warehouse": {"id": 4, "name": "C-03"},
+                 "pending_product": {"mahsulot_id": 29, "name": "Shroki 3.5",
+                                     "unit_type": "kg", "available_quantity": 0,
+                                     "available_weight_kg": "107.2"}}
+        update = SimpleNamespace(effective_user=SimpleNamespace(id=10), message=_message("108"))
+        with patch.object(vh, "_admin", return_value=True):
+            self.assertEqual(await vh.enter_weight(update, _ctx(state)), vh.WEIGHT)
+            update.message = _message("20.55")
+            self.assertEqual(await vh.enter_weight(update, _ctx(state)), vh.QUANTITY)
+            update.message = _message("9")
+            self.assertEqual(await vh.enter_quantity(update, _ctx(state)), vh.CART)
+        self.assertEqual(state["cart"][0]["quantity"], 9)
+        self.assertEqual(state["cart"][0]["weight"], 20.55)
+        self.assertEqual(vh._cart_totals(state["cart"], {29: Decimal("10000")})[2], Decimal("205500"))
+
     def test_omborchi_is_allowed_but_other_roles_are_denied(self):
         with patch.object(vh, "get_user_role", return_value={"role": "omborchi"}):
             self.assertTrue(vh._admin(10))
@@ -62,7 +78,7 @@ class VehicleHandoffSafetyTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_quantity_must_be_positive_integer(self):
         update = SimpleNamespace(effective_user=SimpleNamespace(id=10), message=_message("0"))
-        context = _ctx({"pending_product": {"available_quantity": 4}})
+        context = _ctx({"pending_product": {"available_quantity": 4}, "pending_weight": "20.55"})
         with patch.object(vh, "_admin", return_value=True):
             state = await vh.enter_quantity(update, context)
         self.assertEqual(state, vh.QUANTITY)
@@ -75,30 +91,32 @@ class VehicleHandoffSafetyTest(unittest.IsolatedAsyncioTestCase):
             state = await vh.enter_weight(update, context)
         self.assertEqual(state, ConversationHandler.END)
 
-    async def test_quantity_automatically_uses_profile_without_weight_prompt(self):
-        update = SimpleNamespace(effective_user=SimpleNamespace(id=10), message=_message("300"))
+    async def test_measured_total_and_nine_packages_override_profile(self):
+        update = SimpleNamespace(effective_user=SimpleNamespace(id=10), message=_message("9"))
         state = {"token": "tok", "warehouse": {"id": 4, "name": "C-03"},
+                 "pending_weight": "20.55",
                  "pending_product": {"mahsulot_id": 29, "name": "P",
                                      "available_quantity": 1200, "unit_weight_kg": "0.0255",
                                      "pieces_per_box": 12}}
         with patch.object(vh, "_admin", return_value=True):
             result = await vh.enter_quantity(update, _ctx(state))
         self.assertEqual(result, vh.CART)
-        self.assertEqual(state["cart"][0]["weight"], 7.65)
-        self.assertEqual(state["cart"][0]["quantity"], 300)
-        self.assertEqual(state["cart"][0]["pieces_per_box"], 12)
+        self.assertEqual(state["cart"][0]["weight"], 20.55)
+        self.assertEqual(state["cart"][0]["quantity"], 9)
+        self.assertEqual(state["cart"][0]["pieces_per_box"], 1)
+        self.assertTrue(state["cart"][0]["measured_packages"])
         self.assertNotIn("pending_qty", state)
-        self.assertIn("300 dona × 0.0255 kg = 7.6500 kg", update.message.reply_text.call_args.args[0])
+        self.assertIn("9 ta etiketka", update.message.reply_text.call_args.args[0])
         update.message.reply_text.assert_awaited_once()
 
-    async def test_invalid_profile_never_adds_cart_item_or_falls_back_to_manual_kg(self):
+    async def test_invalid_measured_weight_never_adds_cart_item(self):
         for weight in (None, 0, -1, "NaN", "Infinity", "bad", "0.02555"):
             with self.subTest(weight=weight):
-                update = SimpleNamespace(effective_user=SimpleNamespace(id=10), message=_message("300"))
+                update = SimpleNamespace(effective_user=SimpleNamespace(id=10), message=_message(str(weight)))
                 state = {"pending_product": {"available_quantity": 1200, "unit_weight_kg": weight}}
                 with patch.object(vh, "_admin", return_value=True):
-                    result = await vh.enter_quantity(update, _ctx(state))
-                self.assertEqual(result, ConversationHandler.END)
+                    result = await vh.enter_weight(update, _ctx(state))
+                self.assertEqual(result, vh.WEIGHT)
                 self.assertFalse(state.get("cart"))
 
     async def test_warehouse_selector_only_shows_c03(self):
@@ -139,8 +157,8 @@ class VehicleHandoffSafetyTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("C-05", text)
         self.assertIn("C-03", text)
 
-    async def test_legacy_weight_entry_ignores_manual_value_and_uses_profile(self):
-        update = SimpleNamespace(effective_user=SimpleNamespace(id=10), message=_message("999"))
+    async def test_weight_accepts_comma_and_requires_fresh_package_count(self):
+        update = SimpleNamespace(effective_user=SimpleNamespace(id=10), message=_message("20,55"))
         state = {
             "token": "tok", "done": set(),
             "warehouse": {"id": 4, "name": "A"},
@@ -151,11 +169,9 @@ class VehicleHandoffSafetyTest(unittest.IsolatedAsyncioTestCase):
         }
         with patch.object(vh, "_admin", return_value=True):
             result = await vh.enter_weight(update, _ctx(state))
-        self.assertEqual(result, vh.CART)
-        self.assertEqual(state["cart"], [
-            {"mahsulot_id": 29, "name": "P", "quantity": 3, "weight": 7.5},
-        ])
-        self.assertNotIn("pending_product", state)
+        self.assertEqual(result, vh.QUANTITY)
+        self.assertEqual(state["cart"], [])
+        self.assertEqual(state["pending_weight"], "20.55")
         self.assertNotIn("pending_qty", state)
 
     async def test_finish_prices_cart_with_savdo_prices(self):

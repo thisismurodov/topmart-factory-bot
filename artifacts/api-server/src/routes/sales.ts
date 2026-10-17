@@ -423,6 +423,7 @@ router.post("/sales", async (req, res): Promise<void> => {
               WHERE i.product = $1
                 AND COALESCE(i.weight_kg, 0) > 0
                 AND COALESCE(w.location_type,'general') != 'vehicle'
+                AND UPPER(TRIM(w.name)) <> 'C-03'
                  AND ($2::int IS NULL OR i.warehouse_id <> $2)
               ORDER BY i.warehouse_id`,
             [it.productName, topmartWarehouseId],
@@ -440,6 +441,7 @@ router.post("/sales", async (req, res): Promise<void> => {
               WHERE i.product = $1
                 AND COALESCE(i.weight_kg, 0) > 0
                 AND COALESCE(w.location_type,'general') != 'vehicle'
+                AND UPPER(TRIM(w.name)) <> 'C-03'
                 AND i.warehouse_id = ANY($2::int[])
                  AND ($3::int IS NULL OR i.warehouse_id <> $3)
               ORDER BY weight_kg DESC
@@ -457,6 +459,7 @@ router.post("/sales", async (req, res): Promise<void> => {
                     SELECT 1 FROM warehouses w
                      WHERE w.id = i.warehouse_id
                        AND COALESCE(w.location_type,'general') != 'vehicle'
+                       AND UPPER(TRIM(w.name)) <> 'C-03'
                   )`,
               [takeKg, it.productName, row.warehouse_id],
             );
@@ -477,6 +480,7 @@ router.post("/sales", async (req, res): Promise<void> => {
               `SELECT id FROM warehouses
                 WHERE active=TRUE
                   AND COALESCE(location_type,'general') != 'vehicle'
+                  AND UPPER(TRIM(name)) <> 'C-03'
                  AND ($1::int IS NULL OR id <> $1)
                 ORDER BY id LIMIT 1 FOR UPDATE`,
               [topmartWarehouseId],
@@ -514,6 +518,7 @@ router.post("/sales", async (req, res): Promise<void> => {
              JOIN warehouses w ON w.id = i.warehouse_id
             WHERE i.product = $1 AND i.quantity > 0
               AND COALESCE(w.location_type,'general') != 'vehicle'
+              AND UPPER(TRIM(w.name)) <> 'C-03'
                AND ($2::int IS NULL OR i.warehouse_id <> $2)
             ORDER BY i.warehouse_id`,
           [it.productName, topmartWarehouseId],
@@ -530,6 +535,7 @@ router.post("/sales", async (req, res): Promise<void> => {
              JOIN warehouses w ON w.id = i.warehouse_id
             WHERE i.product = $1 AND i.quantity > 0
               AND COALESCE(w.location_type,'general') != 'vehicle'
+              AND UPPER(TRIM(w.name)) <> 'C-03'
               AND i.warehouse_id = ANY($2::int[])
                AND ($3::int IS NULL OR i.warehouse_id <> $3)
             ORDER BY quantity DESC
@@ -552,6 +558,7 @@ router.post("/sales", async (req, res): Promise<void> => {
                   SELECT 1 FROM warehouses w
                    WHERE w.id = i.warehouse_id
                      AND COALESCE(w.location_type,'general') != 'vehicle'
+                     AND UPPER(TRIM(w.name)) <> 'C-03'
                 )`,
             [take, takeW, it.productName, row.warehouse_id],
           );
@@ -573,6 +580,7 @@ router.post("/sales", async (req, res): Promise<void> => {
             `SELECT id FROM warehouses
               WHERE active=TRUE
                 AND COALESCE(location_type,'general') != 'vehicle'
+                AND UPPER(TRIM(name)) <> 'C-03'
                AND ($1::int IS NULL OR id <> $1)
               ORDER BY id LIMIT 1 FOR UPDATE`,
             [topmartWarehouseId],

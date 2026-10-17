@@ -2367,6 +2367,9 @@ components:
         the active product profile weight is used. Pilot fills are limited to
         100000 pieces and 100 physical package labels per line.
       properties:
+        measuredPackages:
+          type: boolean
+          description: Each quantity unit is one measured package and receives one label. Requires totalWeightKg; rounded label weights preserve the exact total.
         mahsulotId:
           type: integer
         quantity:

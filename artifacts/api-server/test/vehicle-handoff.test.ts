@@ -111,6 +111,7 @@ async function createPublicTables(c: pg.Client): Promise<void> {
       name              TEXT PRIMARY KEY,
       sku               TEXT NOT NULL DEFAULT '',
       weight            NUMERIC(13,4) NOT NULL DEFAULT 1,
+      unit_type         TEXT NOT NULL DEFAULT 'dona',
       pieces_per_box    INTEGER NOT NULL DEFAULT 1,
       active            BOOLEAN NOT NULL DEFAULT TRUE
     )`);
@@ -896,6 +897,72 @@ describe("F4 prepare labels", () => {
     expect(prepared.body.remainingPieces).toBe(150);
     expect(prepared.body.labels.map((label: any) => label.piecesInLabel)).toEqual([100, 50]);
     expect(prepared.body.labels.map((label: any) => label.labelType)).toEqual(["box", "box"]);
+  });
+
+  it("preserves 20.55 kg across nine measured package labels and claim weights", async () => {
+    await client.query(`UPDATE products SET pieces_per_box=100 WHERE name=$1`, [prodA.name]);
+    await setStock(erpWarehouseId, prodA.name, 100, 250);
+    const body = {
+      sourceWarehouseId: erpWarehouseId,
+      items: [{ mahsulotId: prodA.mahsulotId, quantity: 9, totalWeightKg: 20.55, measuredPackages: true }],
+      operationKey: opKey(),
+    };
+    const created = await call("POST", "/vehicle-distribution/handoffs", { token: adminToken, body });
+    expect(created.status).toBe(200);
+    expect(created.body.items[0].piecesPerBox).toBe(1);
+    const prepared = await prepareLabels(created.body.id);
+    expect(prepared.status).toBe(200);
+    expect(prepared.body.totalLabels).toBe(9);
+    const units = prepared.body.labels.map((l: any) => Math.round(l.weightKg * 10000));
+    expect(units.reduce((a: number, b: number) => a + b, 0)).toBe(205500);
+    expect(units.filter((n: number) => n === 22833)).toHaveLength(6);
+    expect(units.filter((n: number) => n === 22834)).toHaveLength(3);
+    const claims = await client.query(
+      `SELECT SUM(unit_weight_kg * remaining_quantity)::text AS kg, COUNT(*)::int AS n
+       FROM distribution.vehicle_label_claims WHERE handoff_id=$1`, [created.body.id]);
+    expect(Number(claims.rows[0].kg)).toBe(20.55);
+    expect(claims.rows[0].n).toBe(9);
+    const replay = await call("POST", "/vehicle-distribution/handoffs", { token: adminToken, body });
+    expect(replay.body.id).toBe(created.body.id);
+  });
+
+  it("loads kg-only stock without inventing piece stock and rejects excess weight", async () => {
+    await client.query(`UPDATE products SET unit_type='kg' WHERE name=$1`, [prodA.name]);
+    try {
+      await setStock(erpWarehouseId, prodA.name, 0, 107.2);
+      const input = {
+        sourceWarehouseId: erpWarehouseId,
+        items: [{ mahsulotId: prodA.mahsulotId, quantity: 9, totalWeightKg: 20.55, measuredPackages: true }],
+        operationKey: opKey(),
+      };
+      const excessive = await call("POST", "/vehicle-distribution/handoffs", {
+        token: adminToken, body: { ...input, operationKey: opKey(),
+          items: [{ ...input.items[0], totalWeightKg: 108 }] },
+      });
+      expect(excessive.status).toBe(409);
+      const created = await call("POST", "/vehicle-distribution/handoffs", { token: adminToken, body: input });
+      expect(created.status).toBe(200);
+      const id = created.body.id;
+      expect((await prepareLabels(id)).body.totalLabels).toBe(9);
+      expect((await confirmPrinted(id)).status).toBe(200);
+      expect((await call("POST", `/vehicle-distribution/handoffs/${id}/handed-over`, { token: adminToken })).status).toBe(200);
+      expect((await call("POST", `/vehicle-distribution/handoffs/${id}/stock-transferred`, { token: adminToken })).status).toBe(200);
+      // Retrying cannot subtract kg twice.
+      expect((await call("POST", `/vehicle-distribution/handoffs/${id}/stock-transferred`, { token: adminToken })).status).toBe(200);
+      const stock = await client.query(`SELECT quantity,weight_kg FROM inventory WHERE warehouse_id=$1 AND product=$2`, [erpWarehouseId, prodA.name]);
+      expect(Number(stock.rows[0].quantity)).toBe(0);
+      expect(Number(stock.rows[0].weight_kg)).toBe(86.65);
+      const moved = await client.query(`SELECT quantity,weight_kg FROM stock_movements WHERE reference=$1`,
+        [`vehicle-handoff:${id}:item:${created.body.items[0].id}`]);
+      expect(Number(moved.rows[0].quantity)).toBe(0);
+      expect(Number(moved.rows[0].weight_kg)).toBe(20.55);
+      const vehicle = await client.query(`SELECT quantity,weight_kg FROM inventory WHERE warehouse_id=$1 AND product=$2`,
+        [created.body.vehicleWarehouseId, prodA.name]);
+      expect(Number(vehicle.rows[0].quantity)).toBe(0);
+      expect(Number(vehicle.rows[0].weight_kg)).toBe(20.55);
+    } finally {
+      await client.query(`UPDATE products SET unit_type='dona' WHERE name=$1`, [prodA.name]);
+    }
   });
 
   it("allocates explicit line total weight across full and partial packages", async () => {

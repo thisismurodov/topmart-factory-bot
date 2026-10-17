@@ -27,7 +27,7 @@ export async function guardGenericInventoryWarehouses(
   if (ids.length === 0) return ids;
 
   const { rows } = await client.query(
-     `SELECT id, location_type
+     `SELECT id, name, location_type
         FROM warehouses
       WHERE id = ANY($1::int[])
       ORDER BY id
@@ -42,9 +42,10 @@ export async function guardGenericInventoryWarehouses(
       404,
     );
   }
-  if (rows.some((row) => String(row.location_type) === "vehicle")) {
+  if (rows.some((row) => String(row.location_type) === "vehicle" ||
+    String(row.name).trim().toUpperCase() === "C-03")) {
     throw new GenericInventoryWarehouseError(
-      "Vehicle warehouses cannot be mutated through generic inventory APIs",
+      "Vehicle warehouses and C-03 require dedicated Top Mart accounting flows",
       400,
     );
   }

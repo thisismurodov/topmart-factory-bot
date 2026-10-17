@@ -36,17 +36,17 @@ class AdjustWeightTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(unit=unit):
                 ctx = self.context(unit)
                 update = self.update("1200")
-                state = await getattr(inventory.adjust_qty, "__wrapped__", inventory.adjust_qty)(update, ctx)
+                state = await inventory.adjust_qty.__wrapped__(update, ctx)
                 self.assertEqual(state, inventory.INV_ADJ_WEIGHT)
                 update.message.text = "30.6"
-                state = await getattr(inventory.adjust_weight, "__wrapped__", inventory.adjust_weight)(update, ctx)
+                state = await inventory.adjust_weight.__wrapped__(update, ctx)
                 self.assertEqual(state, inventory.INV_ADJ_CONFIRM)
                 text = update.message.reply_text.await_args.args[0]
                 self.assertIn("25.5", text)
                 self.assertIn("30.6", text)
                 with patch.object(inventory, "get_user_role", return_value=None), \
                      patch.object(inventory, "adjust_inventory", return_value=(True, None)) as api:
-                    await getattr(inventory.adjust_confirm_cb, "__wrapped__", inventory.adjust_confirm_cb)(update, ctx)
+                    await inventory.adjust_confirm_cb.__wrapped__(update, ctx)
                     self.assertEqual(api.call_args.kwargs["weight_kg"], 30.6)
                     self.assertEqual(api.call_args.kwargs["qty"], 1200)
                     self.assertEqual(api.call_args.kwargs["chat_id"], 7)
@@ -57,7 +57,7 @@ class AdjustWeightTests(unittest.IsolatedAsyncioTestCase):
         for text in ("-1", "nan", "inf", "0.0255", "wrong"):
             ctx = self.context()
             self.assertEqual(
-                await getattr(inventory.adjust_weight, "__wrapped__", inventory.adjust_weight)(self.update(text), ctx),
+                await inventory.adjust_weight.__wrapped__(self.update(text), ctx),
                 inventory.INV_ADJ_WEIGHT,
             )
             self.assertNotIn("adj_weight", ctx.user_data)
@@ -65,11 +65,11 @@ class AdjustWeightTests(unittest.IsolatedAsyncioTestCase):
     async def test_zero_weight_is_explicit_and_cancel_never_writes(self):
         ctx = self.context()
         update = self.update("0")
-        await getattr(inventory.adjust_weight, "__wrapped__", inventory.adjust_weight)(update, ctx)
+        await inventory.adjust_weight.__wrapped__(update, ctx)
         self.assertEqual(ctx.user_data["adj_weight"], 0)
         update.callback_query.data = "aconfirm:no"
         with patch.object(inventory, "adjust_inventory") as api:
-            await getattr(inventory.adjust_confirm_cb, "__wrapped__", inventory.adjust_confirm_cb)(update, ctx)
+            await inventory.adjust_confirm_cb.__wrapped__(update, ctx)
             api.assert_not_called()
 
 

@@ -109,7 +109,7 @@ topmartExternalPurchaseRouter.get(
     try {
       if (!(await requireExternalPurchaseActor(req, res))) return;
       const result = await pool.query(
-        `SELECT p.id, p.name, p.sku, p.unit_type
+        `SELECT p.id, p.name, p.sku, p.unit_type, p.cost_price, p.currency_type
            FROM products p
           WHERE p.active=TRUE AND p.in_sales=TRUE AND p.in_production=FALSE
             AND btrim(COALESCE(p.sku,'')) <> ''
@@ -124,6 +124,8 @@ topmartExternalPurchaseRouter.get(
         name: row.name,
         sku: row.sku,
         unitType: row.unit_type,
+        costPrice: String(row.cost_price ?? "0"),
+        currencyType: row.currency_type,
       })));
     } catch (error) {
       req.log?.error?.({ err: error }, "external purchase product list failed");

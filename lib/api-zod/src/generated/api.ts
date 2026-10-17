@@ -1009,6 +1009,7 @@ export const createVehicleHandoffBodyItemsItemTotalWeightKgMultipleOf = 0.0001;
 export const CreateVehicleHandoffBody = zod.object({
   "sourceWarehouseId": zod.number(),
   "items": zod.array(zod.object({
+  "measuredPackages": zod.boolean().optional().describe('Each quantity unit is one measured package and receives one label. Requires totalWeightKg; rounded label weights preserve the exact total.'),
   "mahsulotId": zod.number(),
   "quantity": zod.number().min(1).max(createVehicleHandoffBodyItemsItemQuantityMax),
   "totalWeightKg": zod.number().gt(createVehicleHandoffBodyItemsItemTotalWeightKgExclusiveMin).max(createVehicleHandoffBodyItemsItemTotalWeightKgMax).multipleOf(createVehicleHandoffBodyItemsItemTotalWeightKgMultipleOf).optional()

@@ -107,7 +107,54 @@ def run_replenishment_delivery():
             deliver_retryable(bot, _replenishment_ack_markup)
         except Exception as exc:
             log.exception("Vehicle replenishment delivery loop failed: %s", exc)
+        try:
+            dayprep.deliver_pending(bot)
+        except Exception:
+            log.exception("Daily preparation delivery failed; will retry")
         time.sleep(10)
+
+from database import day_preparation as dayprep
+
+
+@bot.message_handler(func=lambda m: m.text == dayprep.BUTTON)
+def prepare_vehicle_day(msg):
+    uid = msg.from_user.id
+    if not _is_vehicle_distribution_pilot_user(get_user(uid)):
+        return
+    if get_state(uid)["state"] is not None:
+        bot.send_message(uid, "Avval joriy amalni yakunlang yoki bekor qiling.")
+        return
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton(
+        "Ha, ikkala profilning jami ro‘yxatini yuborish",
+        callback_data="prepare_day:" + dayprep.today()))
+    bot.send_message(
+        uid, "DM-001 bo‘yicha ikkala profil bugungi savdoni tugatdimi?\n"
+        "Tasdiqlasangiz, bugungi jami sotilgan tovarlar omborchiga tayyorlash uchun yuboriladi.\n"
+        "Keyin yana savdo bo‘lsa, shu tugma orqali yangilangan ro‘yxatni yuboring.",
+        reply_markup=kb)
+
+
+@bot.callback_query_handler(func=lambda call: (call.data or "").startswith("prepare_day:"))
+def confirm_vehicle_day(call):
+    uid = call.from_user.id
+    if not _is_vehicle_distribution_pilot_user(get_user(uid)):
+        bot.answer_callback_query(call.id, "Ruxsat yo‘q.", show_alert=True)
+        return
+    if call.data.split(":", 1)[1] != dayprep.today():
+        bot.answer_callback_query(call.id, "Bu tugma eski kunga tegishli. Menyudan qayta oching.", show_alert=True)
+        return
+    if get_state(uid)["state"] is not None:
+        bot.answer_callback_query(call.id, "Avval joriy amalni yakunlang.", show_alert=True)
+        return
+    try:
+        queued = dayprep.queue_day(uid)
+    except ValueError as exc:
+        bot.answer_callback_query(call.id, str(exc), show_alert=True)
+        return
+    bot.answer_callback_query(call.id)
+    bot.send_message(uid, "Ro‘yxat omborchiga yuborish navbatiga qo‘yildi."
+                     if queued else "Bu ro‘yxat oldin navbatga qo‘yilgan. Takror nusxa yaratilmadi.")
 
 @bot.callback_query_handler(
     func=lambda call: (call.data or "").startswith("replenishment_ack:")
@@ -1310,6 +1357,7 @@ def main_kb(role,uid=None):
         kb.add("🗺 Mening marshrutim")
         if uid is not None and _pilot_kb_flag(uid):
             kb.add("🚚 Mashinani to'ldirish")
+            kb.add(dayprep.BUTTON)
         return kb
     if role in("agent","supervisor") and FIELD_APP_URL:
         # Mini App agent/supervisorlar uchun ham (delivery'dan tashqari).
@@ -1322,6 +1370,8 @@ def main_kb(role,uid=None):
         kb.add("🔍 Qidiruv")
     if role in("agent","supervisor"):
         kb.add("🎯 Mening rejam","🤖 AI tavsiyalar")
+        if uid is not None and _pilot_kb_flag(uid):
+            kb.add(dayprep.BUTTON)
     if role in("supervisor","admin"): kb.add("👥 Agentlar statistikasi")
     if role=="admin":
         kb.add("📈 Umumiy stat","🛍 Mahsulotlar")

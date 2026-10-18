@@ -748,7 +748,9 @@ router.get("/ombor/movements", async (req, res): Promise<void> => {
     let running = 0;
     if (rows.length >= limit) {
       const oldest = rows[rows.length - 1];
-      const baseParams = [...params.slice(1), oldest.created_at, oldest.id];
+      // Keep the cutoff timestamp inside PostgreSQL: JS Date drops its
+      // microseconds, which can exclude earlier rows in the same millisecond.
+      const baseParams = [...params.slice(1), oldest.id];
       const baseWhere = conds.length ? `${conds.join(" AND ")} AND` : "";
       // params[0] is LIMIT (unused here); renumber placeholders $2..$n → $1..$(n-1).
       const renumbered = baseWhere.replace(/\$(\d+)/g, (_m, n) => `$${Number(n) - 1}`);
@@ -761,7 +763,9 @@ router.get("/ombor/movements", async (req, res): Promise<void> => {
             END
           ), 0)::numeric AS opening
          FROM stock_movements sm
-         WHERE ${renumbered} (sm.created_at, sm.id) < ($${baseParams.length - 1}, $${baseParams.length})`,
+         WHERE ${renumbered} (sm.created_at, sm.id) <
+           (SELECT cutoff.created_at, cutoff.id FROM stock_movements cutoff
+             WHERE cutoff.id = $${baseParams.length})`,
         baseParams,
       );
       running = Number(baseRes.rows[0].opening) || 0;

@@ -192,6 +192,22 @@ describe("GET /ombor/movements?balance=ledger — forward ledger walk", () => {
     expect(json[0].balanceAfter).toBeCloseTo(75, 3);
   });
 
+  it("preserves the SQL cutoff's microseconds for movements in one millisecond", async () => {
+    await pool.query(
+      `INSERT INTO stock_movements (product, quantity, movement_type, product_type, created_at)
+       VALUES ($1,100,'IN','raw','2026-01-01 00:00:00.000100+00'),
+              ($1,10,'OUT','raw','2026-01-01 00:00:00.000200+00'),
+              ($1,40,'IN','raw','2026-01-01 00:00:00.000300+00'),
+              ($1,20,'OUT','raw','2026-01-01 00:00:00.000400+00'),
+              ($1,5,'IN','raw','2026-01-01 00:00:00.000500+00')`,
+      [MAT],
+    );
+    await setStock(115);
+    const { status, json } = await get(movesPath("&limit=2"));
+    expect(status).toBe(200);
+    expect(json.map((row: any) => row.balanceAfter)).toEqual([115,110]);
+  });
+
   it("without balance=ledger, keeps the existing backward anchor-to-current-stock behavior", async () => {
     await insertMovement("IN", 100);
     await setStock(60);

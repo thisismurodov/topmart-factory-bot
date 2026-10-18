@@ -316,7 +316,7 @@ async def choose_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             f"📦 {p['name']}\nQoldiq: {float(p['available_quantity']):g} dona\n\n"
             f"Jami nechta DONA yuklaysiz?\n"
             f"1 quti: {int(p.get('pieces_per_box') or 1)} dona. "
-            "Kg va etiketkalar mahsulot profilidan hisoblanadi.")
+            "Kg kirimga moslangan dona vaznidan, etiketkalar qutidagi dona sonidan hisoblanadi.")
         return QUANTITY
     await q.edit_message_text(
         f"📦 *{p['name']}*\nQoldiq: *{float(p.get('available_weight_kg', 0)):g} kg / {float(p['available_quantity']):g} dona*\n\n"
@@ -347,13 +347,22 @@ async def enter_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             if not unit_weight.is_finite() or unit_weight <= 0 or pieces <= 0:
                 raise ValueError
         except (ValueError, InvalidOperation, TypeError):
-            await update.message.reply_text("Mahsulot profilida 1 dona kg yoki qutidagi dona soni noto‘g‘ri. Profilni tuzating.")
+            await update.message.reply_text("Avtomatik dona vazni aniqlanmagan yoki kirimlar vazni farq qiladi. Yuklashni davom ettirmang; shu mahsulotning haqiqiy dona vaznini tekshirtiring.")
             return QUANTITY
         count = (qty + pieces - 1) // pieces
         if count > 100:
             await update.message.reply_text("Bir yuklashda ko‘pi bilan 100 ta etiketka. Dona sonini kamaytiring.")
             return QUANTITY
         total = (unit_weight * qty).quantize(Decimal("0.0001"))
+        if p.get("available_weight_kg") is not None:
+            stock_weight = Decimal(str(p["available_weight_kg"]))
+            stock_qty = Decimal(str(p["available_quantity"]))
+            if abs(stock_weight - unit_weight * stock_qty) > Decimal("0.001"):
+                await update.message.reply_text(
+                    "Kirimdagi kg va profil vazni mos emas (yoki turli vaznli kirimlar aralashgan). "
+                    "Taxminiy kg bilan etiketka chiqarilmaydi. Haqiqiy yuk vaznini tekshirtiring."
+                )
+                return QUANTITY
         state.setdefault("cart", []).append({
             "mahsulot_id": int(p["mahsulot_id"]), "name": p["name"],
             "quantity": qty, "weight": float(total), "pieces_per_box": pieces,
@@ -505,6 +514,27 @@ async def confirm_create(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not cart:
         await _reject(q, "Savat bo‘sh.")
         return REVIEW
+    # Re-read the source before committing: a receipt/profile correction may
+    # have happened while this conversation's product list was cached.
+    fresh = {int(p["mahsulot_id"]): p
+             for p in get_vehicle_handoff_products(int(state["warehouse"]["id"]))}
+    for item in cart:
+        if item.get("unit_type") == "kg" or item.get("measured_packages"):
+            continue
+        product = fresh.get(int(item["mahsulot_id"]))
+        unit = Decimal(str(product.get("unit_weight_kg") or 0)) if product else Decimal(0)
+        expected = (unit * item["quantity"]).quantize(Decimal("0.0001"))
+        stock_mismatch = bool(product and product.get("available_weight_kg") is not None
+                              and abs(Decimal(str(product["available_weight_kg"]))
+                                      - unit * Decimal(str(product["available_quantity"]))) > Decimal("0.001"))
+        if (unit <= 0 or expected != Decimal(str(item["weight"])).quantize(Decimal("0.0001"))
+                or stock_mismatch
+                or item["quantity"] > float(product.get("available_quantity", 0))):
+            await q.answer(
+                "Kirim/vazn yoki qoldiq o‘zgargan. Orqaga qaytib, shu tovarni savatdan o‘chiring va qayta qo‘shing.",
+                show_alert=True,
+            )
+            return REVIEW
     await q.answer()
     state["done"].add("create")
     total_qty, total_kg, total_sum, missing = _cart_totals(cart, state.get("prices"))

@@ -76,6 +76,7 @@ beforeAll(async () => {
       id SERIAL PRIMARY KEY, name TEXT UNIQUE NOT NULL, sku TEXT NOT NULL DEFAULT '',
       unit_type TEXT NOT NULL DEFAULT 'dona', active BOOLEAN NOT NULL,
       cost_price NUMERIC(12,2) NOT NULL DEFAULT 0,
+      weight NUMERIC(17,8) NOT NULL DEFAULT 1,
       currency_type TEXT NOT NULL DEFAULT 'UZS',
       in_sales BOOLEAN NOT NULL, in_production BOOLEAN NOT NULL
     );
@@ -187,6 +188,8 @@ describe("Top Mart external purchase receipts", () => {
     expect(stock.rows).toHaveLength(1);
     expect(Number(stock.rows[0].quantity)).toBe(7);
     expect(Number(stock.rows[0].weight_kg)).toBe(12.25);
+    const profile = await pool.query(`SELECT weight FROM products WHERE id=$1`, [eligibleId]);
+    expect(Number(profile.rows[0].weight)).toBe(1.75);
     const movements = await pool.query(`SELECT * FROM stock_movements WHERE reference=$1`, ["topmart-external:inv-1"]);
     expect(movements.rows).toHaveLength(1);
     expect(movements.rows[0].movement_type).toBe("IN");
@@ -225,7 +228,7 @@ describe("Top Mart external purchase receipts", () => {
       productName: "History Product",
       supplier: "Import LLC",
       quantity: 7,
-      totalWeightKg: "12.250",
+      totalWeightKg: "12.2500",
       totalCost: "400000.00",
       receivedBy: "Canonical Omborchi",
       stockMovement: {
@@ -330,5 +333,28 @@ describe("Top Mart external purchase receipts", () => {
       }, warehouseHeaders);
       expect(response.status).toBe(400);
     }
+  });
+
+  it("uses measured sack weight and cannot replay an old weight over a newer receipt", async () => {
+    const { rows: [p] } = await pool.query(
+      `INSERT INTO products(name,sku,active,in_sales,in_production)
+       VALUES ('Sack','SACK',TRUE,TRUE,FALSE) RETURNING id`,
+    );
+    await pool.query(`INSERT INTO distribution.mahsulotlar(nomi,narx,birlik,faol,sku)
+      VALUES ('Sack',100,'dona',1,'SACK')`);
+    const first = { ...payload("SACK-1"), productId: p.id, quantity: 1000, totalWeightKg: 47.625 };
+    expect((await request("/topmart/external-purchases", "POST", first, warehouseHeaders)).status).toBe(201);
+    const weight = async () => Number((await pool.query("SELECT weight FROM products WHERE id=$1", [p.id])).rows[0].weight);
+    expect(await weight()).toBe(0.047625);
+    expect((await weight()) * 400).toBeCloseTo(19.05, 4);
+    expect((await request("/topmart/external-purchases", "POST", {
+      ...first, receiptReference: "SACK-2", totalWeightKg: 50,
+    }, warehouseHeaders)).status).toBe(201);
+    expect(await weight()).toBe(0.05);
+    expect((await request("/topmart/external-purchases", "POST", first, warehouseHeaders)).json.replayed).toBe(true);
+    expect(await weight()).toBe(0.05);
+    const stock = (await pool.query("SELECT quantity,weight_kg FROM inventory WHERE product='Sack'")).rows[0];
+    expect(Number(stock.quantity)).toBe(2000);
+    expect(Number(stock.weight_kg)).toBe(97.625);
   });
 });

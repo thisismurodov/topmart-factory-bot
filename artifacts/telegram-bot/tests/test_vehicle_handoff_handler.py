@@ -35,6 +35,34 @@ def _ctx(state):
 
 
 class VehicleHandoffSafetyTest(unittest.IsolatedAsyncioTestCase):
+    async def test_receipt_weight_for_400_sacks_and_mixed_stock_guard(self):
+        product = {"mahsulot_id": 9, "name": "Vayenni Qop", "unit_type": "dona",
+                   "available_quantity": 1000, "available_weight_kg": "47.625",
+                   "unit_weight_kg": "0.047625", "pieces_per_box": 100}
+        state = {"token": "tok", "warehouse": {"id": 4, "name": "C-03"},
+                 "pending_product": product, "cart": []}
+        update = SimpleNamespace(effective_user=SimpleNamespace(id=10), message=_message("400"))
+        with patch.object(vh, "_admin", return_value=True):
+            self.assertEqual(await vh.enter_quantity(update, _ctx(state)), vh.CART)
+            self.assertEqual(state["cart"][0]["weight"], 19.05)
+            self.assertEqual(state["cart"][0]["pieces_per_box"], 100)
+            state["pending_product"] = dict(product, available_weight_kg="50")
+            self.assertEqual(await vh.enter_quantity(update, _ctx(state)), vh.QUANTITY)
+            self.assertEqual(len(state["cart"]), 1)
+
+    async def test_stale_sack_cart_cannot_create_handoff(self):
+        state = {"token": "tok", "done": set(), "warehouse": {"id": 4},
+                 "cart": [{"mahsulot_id": 9, "quantity": 400, "weight": 400, "unit_type": "dona"}]}
+        q = _query("vh:tok:create")
+        with patch.object(vh, "_admin", return_value=True), \
+             patch.object(vh, "get_vehicle_handoff_products", return_value=[
+                 {"mahsulot_id": 9, "unit_weight_kg": "0.047625", "available_quantity": 1000,
+                  "available_weight_kg": "47.625"}]), \
+             patch.object(vh, "create_vehicle_handoff") as create:
+            self.assertEqual(await vh.confirm_create(
+                SimpleNamespace(callback_query=q), _ctx(state)), vh.REVIEW)
+            create.assert_not_called()
+
     async def test_kg_only_stock_accepts_packages_but_not_excess_weight(self):
         state = {"token": "tok", "warehouse": {"id": 4, "name": "C-03"},
                  "pending_product": {"mahsulot_id": 29, "name": "Shroki 3.5",
@@ -417,6 +445,8 @@ class VehicleHandoffSafetyTest(unittest.IsolatedAsyncioTestCase):
         }
         labels = {"totalLabels": 1, "labels": []}
         with patch.object(vh, "_admin", return_value=True), \
+             patch.object(vh, "get_vehicle_handoff_products", return_value=[
+                 {"mahsulot_id": 29, "unit_weight_kg": "2.5", "available_quantity": 10}]), \
              patch.object(vh, "create_vehicle_handoff", return_value=(True, {"id": 8})) as create, \
              patch.object(vh, "prepare_handoff_labels", return_value=(True, labels)), \
              patch.object(vh, "get_handoff_labels", return_value=(True, labels)), \

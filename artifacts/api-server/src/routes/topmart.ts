@@ -267,7 +267,7 @@ topmartExternalPurchaseRouter.post(
                   WHERE m.faol=1 AND m.sku=p.sku)=1
             AND (SELECT COUNT(*) FROM products px
                   WHERE px.active=TRUE AND px.sku=p.sku)=1
-          FOR SHARE`,
+          FOR UPDATE`,
         [parsed.productId],
       );
       if (!product.rows.length) {
@@ -293,6 +293,14 @@ topmartExternalPurchaseRouter.post(
       }
       const warehouseId = Number(warehouse.rows[0].id);
       const productName = String(product.rows[0].name);
+      // A receipt is the measured source of the piece weight, not the catalog's
+      // placeholder (often 1 kg). This is the latest measured unit weight,
+      // not an average of old stock; the loading flow checks stock consistency.
+      await client.query(
+        `UPDATE products p SET weight = ROUND($2::numeric / $3::numeric, 8)
+         WHERE p.id=$1 AND p.unit_type='dona'`,
+        [parsed.productId, parsed.totalWeightKg, parsed.quantity],
+      );
       await client.query(
         `INSERT INTO inventory (warehouse_id, product, quantity, weight_kg, product_type)
          VALUES ($1,$2,$3,$4,'finished')

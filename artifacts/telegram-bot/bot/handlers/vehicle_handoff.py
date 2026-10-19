@@ -27,6 +27,7 @@ from ..database import (
 )
 from ..keyboards import admin_reply_keyboard, omborchi_reply_keyboard
 from ..vehicle_label_pdf import build_batch_session_pdf
+from ..receipt_load_weight import get_receipt_load_weight
 
 (MENU, SOURCE, PRODUCT, QUANTITY, WEIGHT, CART, REVIEW, EXISTING, WARNING) = range(9)
 ENTRY_TEXT = "🚚 Mashinani to‘ldirish"
@@ -358,11 +359,11 @@ async def enter_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             stock_weight = Decimal(str(p["available_weight_kg"]))
             stock_qty = Decimal(str(p["available_quantity"]))
             if abs(stock_weight - unit_weight * stock_qty) > Decimal("0.001"):
-                await update.message.reply_text(
-                    "Kirimdagi kg va profil vazni mos emas (yoki turli vaznli kirimlar aralashgan). "
-                    "Taxminiy kg bilan etiketka chiqarilmaydi. Haqiqiy yuk vaznini tekshirtiring."
-                )
-                return QUANTITY
+                try:
+                    total = get_receipt_load_weight(int(state["warehouse"]["id"]), p["name"], qty)
+                except ValueError as exc:
+                    await update.message.reply_text(str(exc))
+                    return QUANTITY
         state.setdefault("cart", []).append({
             "mahsulot_id": int(p["mahsulot_id"]), "name": p["name"],
             "quantity": qty, "weight": float(total), "pieces_per_box": pieces,
@@ -527,6 +528,13 @@ async def confirm_create(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         stock_mismatch = bool(product and product.get("available_weight_kg") is not None
                               and abs(Decimal(str(product["available_weight_kg"]))
                                       - unit * Decimal(str(product["available_quantity"]))) > Decimal("0.001"))
+        if stock_mismatch:
+            try:
+                expected = get_receipt_load_weight(int(state["warehouse"]["id"]),
+                                                   product["name"], item["quantity"])
+                stock_mismatch = False
+            except ValueError:
+                pass
         if (unit <= 0 or expected != Decimal(str(item["weight"])).quantize(Decimal("0.0001"))
                 or stock_mismatch
                 or item["quantity"] > float(product.get("available_quantity", 0))):

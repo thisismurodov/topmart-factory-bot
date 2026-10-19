@@ -47,8 +47,39 @@ class VehicleHandoffSafetyTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(state["cart"][0]["weight"], 19.05)
             self.assertEqual(state["cart"][0]["pieces_per_box"], 100)
             state["pending_product"] = dict(product, available_weight_kg="50")
-            self.assertEqual(await vh.enter_quantity(update, _ctx(state)), vh.QUANTITY)
+            with patch.object(vh, "get_receipt_load_weight", side_effect=ValueError("Kirim mos emas")):
+                self.assertEqual(await vh.enter_quantity(update, _ctx(state)), vh.QUANTITY)
             self.assertEqual(len(state["cart"]), 1)
+
+    async def test_mixed_stock_uses_proven_receipt_weight(self):
+        from decimal import Decimal
+        product = {"mahsulot_id": 9, "name": "Perchatka Qora Nuxta", "unit_type": "dona",
+                   "available_quantity": 1752, "available_weight_kg": "40.14",
+                   "unit_weight_kg": "0.0255", "pieces_per_box": 12}
+        state = {"token": "tok", "warehouse": {"id": 9, "name": "C-03"},
+                 "pending_product": product, "cart": []}
+        update = SimpleNamespace(effective_user=SimpleNamespace(id=10), message=_message("96"))
+        with patch.object(vh, "_admin", return_value=True), \
+             patch.object(vh, "get_receipt_load_weight", return_value=Decimal("2.4480")) as receipt:
+            self.assertEqual(await vh.enter_quantity(update, _ctx(state)), vh.CART)
+        receipt.assert_called_once_with(9, product["name"], 96)
+        self.assertEqual(state["cart"][0]["weight"], 2.448)
+        self.assertEqual(state["cart"][0]["pieces_per_box"], 12)
+
+    async def test_changed_receipt_weight_blocks_old_cart(self):
+        from decimal import Decimal
+        state = {"token": "tok", "done": set(), "warehouse": {"id": 9},
+                 "cart": [{"mahsulot_id": 9, "quantity": 96, "weight": 2.448, "unit_type": "dona"}]}
+        q = _query("vh:tok:create")
+        with patch.object(vh, "_admin", return_value=True), \
+             patch.object(vh, "get_vehicle_handoff_products", return_value=[
+                 {"mahsulot_id": 9, "name": "Perchatka Qora Nuxta", "unit_weight_kg": "0.0255",
+                  "available_quantity": 972, "available_weight_kg": "20.25"}]), \
+             patch.object(vh, "get_receipt_load_weight", return_value=Decimal("2.0000")), \
+             patch.object(vh, "create_vehicle_handoff") as create:
+            self.assertEqual(await vh.confirm_create(
+                SimpleNamespace(callback_query=q), _ctx(state)), vh.REVIEW)
+            create.assert_not_called()
 
     async def test_stale_sack_cart_cannot_create_handoff(self):
         state = {"token": "tok", "done": set(), "warehouse": {"id": 4},

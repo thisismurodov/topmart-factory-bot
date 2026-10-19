@@ -26,6 +26,7 @@ from bot.handlers.ai import register as register_ai_handlers
 from bot.handlers.inventory import build_inventory_handler
 from bot.handlers.debts import register as register_debt_handlers
 from bot.handlers.vehicle_handoff import build_vehicle_handoff_handler
+from bot.handlers.day_preparation import register as register_day_preparation
 from bot.scheduler import start_scheduler
 from bot.config import AI_HOUR
 
@@ -116,6 +117,7 @@ def main() -> None:
 
         app.add_error_handler(global_error_handler)
         app.add_handler(TypeHandler(Update, reject_blocked_user), group=-100)
+        register_day_preparation(app)
 
         register_cleardata(app)
         register_salary_handlers(app)

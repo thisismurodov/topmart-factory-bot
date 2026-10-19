@@ -2,6 +2,7 @@ from telegram import (
     InlineKeyboardButton, InlineKeyboardMarkup,
     ReplyKeyboardMarkup, KeyboardButton,
 )
+from .day_preparation import BUTTON as PREPARATION_BUTTON
 
 
 def main_menu_keyboard() -> ReplyKeyboardMarkup:
@@ -26,6 +27,7 @@ def admin_reply_keyboard() -> ReplyKeyboardMarkup:
             ["➕ Sotuv Tovar", "📦 Tovarlar"],
             ["💳 Nasiyalar", "🏬 Ombor"],
             ["🚚 Mashinani to‘ldirish"],
+            [PREPARATION_BUTTON],
             ["🤖 AI tahlil", "⚙️ Admin panel"],
         ],
         resize_keyboard=True,
@@ -38,6 +40,7 @@ def omborchi_reply_keyboard() -> ReplyKeyboardMarkup:
         [
             ["🏬 Ombor"],
             ["🚚 Mashinani to‘ldirish"],
+            [PREPARATION_BUTTON],
         ],
         resize_keyboard=True,
     )

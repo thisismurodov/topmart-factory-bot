@@ -11,6 +11,7 @@ from decimal import Decimal, InvalidOperation
 import psycopg2
 
 from .connection import transaction
+from .claim_weight import allocated_claim_weight
 from .customers import update_dokon_repeat, update_balans_delta
 from .replenishment_delivery import configured_recipient_ids
 
@@ -413,7 +414,7 @@ def _create_vehicle_pilot_once(dokon_id, agent_id, items, jami, tolov, foto,
             c.execute(
                 """SELECT cl.id,cl.handoff_id,cl.handoff_item_id,cl.production_label_id,
                            cl.barcode,cl.unit_weight_kg,cl.pieces_in_label,
-                           cl.remaining_quantity,ev.id
+                           cl.remaining_quantity,ev.id,cl.corrected_total_weight_kg
                    FROM distribution.vehicle_label_claims cl
                    JOIN distribution.vehicle_unit_events ev
                      ON ev.label_claim_id=cl.id AND ev.event_type='load'
@@ -444,7 +445,12 @@ def _create_vehicle_pilot_once(dokon_id, agent_id, items, jami, tolov, foto,
                         or claim_remaining != claim_remaining.to_integral_value()):
                     raise VehiclePilotSaleError("Yuklangan etiketka dona yoki og'irligi noto'g'ri.")
                 allocated = min(remaining_to_allocate, claim_remaining)
-                selected.append((claim, allocated, unit_weight * allocated))
+                try:
+                    weight = allocated_claim_weight(
+                        unit_weight, claim_pieces, claim_remaining, allocated, claim[9])
+                except ValueError as exc:
+                    raise VehiclePilotSaleError(str(exc)) from exc
+                selected.append((claim, allocated, weight))
                 remaining_to_allocate -= allocated
                 if remaining_to_allocate == 0:
                     break
@@ -491,7 +497,7 @@ def _create_vehicle_pilot_once(dokon_id, agent_id, items, jami, tolov, foto,
                  total_weight, reference))
             for claim, allocated_quantity, allocated_weight in selected:
                 (claim_id, handoff_id, handoff_item_id, label_id, barcode, _unit_weight,
-                 _pieces_in_label, _remaining_quantity, load_event_id) = claim
+                 _pieces_in_label, _remaining_quantity, load_event_id, _corrected_total) = claim
                 unit_key = "%s:detail:%s:claim:%s" % (operation_key, detail_id, claim_id)
                 c.execute(
                     """INSERT INTO distribution.vehicle_sale_allocations

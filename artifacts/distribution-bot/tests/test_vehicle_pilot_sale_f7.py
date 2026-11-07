@@ -280,6 +280,29 @@ class VehiclePilotSaleF7(unittest.TestCase):
         self.claims.append(claim)
         return claim
 
+    def test_audited_package_weight_shared_sellers_partial_then_full(self):
+        self._second_seller()
+        with _db() as conn, conn.cursor() as c:
+            c.execute("UPDATE distribution.vehicle_label_claims SET status='sold',remaining_quantity=0")
+            c.execute("UPDATE public.inventory SET quantity=240,weight_kg=16 WHERE warehouse_id=%s",
+                      (self.warehouse,))
+        first = self.add_claim(120, 1, 901)
+        second = self.add_claim(120, Decimal("0.0667"), 902)
+        with _db() as conn, conn.cursor() as c:
+            c.execute("UPDATE distribution.vehicle_label_claims SET corrected_total_weight_kg=8 "
+                      "WHERE id IN (%s,%s)", (first, second))
+        for seller, qty in [(700, 41), (701, 80), (700, 119)]:
+            create_vehicle_pilot_sale(self.shop, seller, [(self.mid, qty, 100)], qty*100,
+                                     "naqd", None, 0, str(uuid.uuid4()))
+        self.assertEqual(self.scalar("SELECT weight_kg FROM public.inventory WHERE warehouse_id=%s",
+                                     (self.warehouse,)), 0)
+        self.assertEqual(self.scalar("SELECT quantity FROM public.inventory WHERE warehouse_id=%s",
+                                     (self.warehouse,)), 0)
+        self.assertEqual(self.scalar("SELECT SUM(allocated_weight_kg) "
+                                    "FROM distribution.vehicle_sale_allocations"), 16)
+        self.assertEqual(self.scalar("SELECT unit_weight_kg FROM distribution.vehicle_label_claims "
+                                    "WHERE id=%s", (first,)), 1)
+
     def sale(self, key=None, qty=2, total=None, debt=120, prepayment=80):
         return create_vehicle_pilot_sale(
             self.shop, 700, [(self.mid, qty, 100)],

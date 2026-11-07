@@ -1166,6 +1166,7 @@ CREATE INDEX IF NOT EXISTS idx_vehicle_returns_vehicle_created
 
 ALTER TABLE distribution.vehicle_label_claims
   ADD COLUMN IF NOT EXISTS return_id INTEGER,
+    ADD COLUMN IF NOT EXISTS corrected_total_weight_kg NUMERIC(13,4),
   ADD COLUMN IF NOT EXISTS returned_at TIMESTAMP WITH TIME ZONE,
   ADD COLUMN IF NOT EXISTS returned_by BIGINT,
   ADD COLUMN IF NOT EXISTS pieces_in_label INTEGER NOT NULL DEFAULT 1,

@@ -698,6 +698,8 @@ export const vehicleLabelClaimsTable = distribution.table(
     piecesInLabel: integer("pieces_in_label").notNull().default(1),
     /** Unsold/unreturned quantity currently represented by this claim. */
     remainingQuantity: integer("remaining_quantity").notNull().default(1),
+    /** Owner-audited package total for sale allocation; original passport stays immutable. */
+    correctedTotalWeightKg: numeric("corrected_total_weight_kg", { precision: 13, scale: 4 }),
     unitWeightKg: numeric("unit_weight_kg", { precision: 13, scale: 4 }).notNull(),
     status: text("status").notNull().default("prepared"),
     /** Client idempotency token (nullable; partial-unique in runtime DDL). */

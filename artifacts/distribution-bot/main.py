@@ -6,6 +6,7 @@ import csv
 import io
 import threading
 import uuid
+from sale_catalog import refreshed_catalog
 import schedule
 import time
 from datetime import datetime, date, timedelta
@@ -2245,14 +2246,36 @@ def _save_dokon(uid,data):
                 f"Endi har bir savdodan chek olasiz.")
         except: pass
 
-def _mah_list_kb(mahsulotlar, tanlangan):
+def _mah_list_kb(mahsulotlar, tanlangan, available_ids=None):
     kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=1)
     for i,(mid,nomi,narx,birlik) in enumerate(mahsulotlar,1):
+        if available_ids is not None and mid not in available_ids:
+            continue
         miqdor=tanlangan.get(mid,0)
         mark=f" ✅ ×{fmt_miq(miqdor)}" if miqdor>0 else ""
         kb.add(f"{i}. {nomi} — {fmt(narx)}/{birlik}{mark}")
+    if available_ids is not None:
+        kb.add("🔄 Mahsulotlarni yangilash")
     kb.add("❌ Bekor qilish")
     return kb
+
+def _show_sale_catalog(uid, data, text="📦 Mahsulot tanlang:"):
+    if _flow_pilot(uid, data):
+        try:
+            available = get_vehicle_seller_products(uid)
+        except VehiclePilotSaleError as exc:
+            bot.send_message(uid, "❗ " + str(exc))
+            return
+        rows, available_ids = refreshed_catalog(
+            data["mahsulotlar"], available, data["tanlangan"])
+        data["mahsulotlar"] = rows
+        data["available_product_ids"] = available_ids
+        if not available_ids:
+            text += "\nMashina omborida sotish uchun mahsulot qolmagan."
+    set_state(uid, "savdo_pick_mah", data)
+    bot.send_message(uid, text, reply_markup=_mah_list_kb(
+        data["mahsulotlar"], data["tanlangan"],
+        data.get("available_product_ids")))
 
 def _next_kb():
     kb=types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=1)
@@ -2594,10 +2617,8 @@ def s_savdo_vil(msg):
         except: return
         if not _savdo_dokon_ruxsat(uid,data["dokon_id"]):
             bot.send_message(uid,"❗ Bu dokon topilmadi yoki sizga biriktirilmagan."); return
-        set_state(uid,"savdo_pick_mah",data)
-        bot.send_message(uid,
-            f"🏪 {data['dokon_nomi']}\n\n📦 Mahsulot tanlang:",
-            reply_markup=_mah_list_kb(data["mahsulotlar"],data["tanlangan"]))
+        _show_sale_catalog(uid, data,
+            f"🏪 {data['dokon_nomi']}\n\n📦 Mahsulot tanlang:")
         return
     if not txt.startswith("📍 "): return
     vil=txt.replace("📍 ","").rsplit(" (",1)[0].strip()
@@ -2647,17 +2668,23 @@ def s_savdo_dokon(msg):
     except: return
     if not _savdo_dokon_ruxsat(uid,data["dokon_id"]):
         bot.send_message(uid,"❗ Bu dokon topilmadi yoki sizga biriktirilmagan."); return
-    set_state(uid,"savdo_pick_mah",data)
-    bot.send_message(uid,
-        f"🏪 {data['dokon_nomi']}\n\n📦 Mahsulot tanlang:",
-        reply_markup=_mah_list_kb(data["mahsulotlar"],data["tanlangan"]))
+    _show_sale_catalog(uid, data,
+        f"🏪 {data['dokon_nomi']}\n\n📦 Mahsulot tanlang:")
 
 @bot.message_handler(func=lambda m:get_state(m.from_user.id)["state"]=="savdo_pick_mah")
 def s_savdo_pick_mah(msg):
     uid=msg.from_user.id; data=get_state(uid)["data"]
+    if msg.text == "🔄 Mahsulotlarni yangilash":
+        _show_sale_catalog(uid, data)
+        return
     mahsulotlar=data["mahsulotlar"]
     for i,(mid,nomi,narx,birlik) in enumerate(mahsulotlar,1):
-        if msg.text.startswith(f"{i}. "):
+        if (msg.text or "").startswith(f"{i}. {nomi} — "):
+            if ("available_product_ids" in data
+                    and mid not in data["available_product_ids"]):
+                bot.send_message(uid, "❗ Bu mahsulot mashina qoldig‘ida qolmagan.")
+                _show_sale_catalog(uid, data)
+                return
             data["cur_mid"]=mid; data["cur_nomi"]=nomi
             data["cur_narx"]=narx; data["cur_birlik"]=birlik
             set_state(uid,"savdo_miqdor",data)
@@ -2729,9 +2756,7 @@ def s_savdo_miqdor(msg):
 def s_savdo_next(msg):
     uid=msg.from_user.id; data=get_state(uid)["data"]
     if msg.text=="➕ Yana mahsulot qo'shish":
-        set_state(uid,"savdo_pick_mah",data)
-        bot.send_message(uid,"📦 Mahsulot tanlang:",
-            reply_markup=_mah_list_kb(data["mahsulotlar"],data["tanlangan"]))
+        _show_sale_catalog(uid, data)
     elif msg.text=="✅ Savdoni yakunlash":
         tanlangan=data["tanlangan"]; mahsulotlar=data["mahsulotlar"]
         lines=[]; jami=0

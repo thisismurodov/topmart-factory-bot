@@ -1578,6 +1578,7 @@ def next_batch_code(worker_prefix: str) -> str:
 def create_batch_session(
     worker: str, prefix: str, items: list[dict], warehouse_id: int | None = None,
     allow_negative_stock: bool = False,
+    credit_quote: dict | None = None, credit_operation_key: str | None = None,
 ) -> dict:
     """Bitta sessiya = bitta batch_code ostida bir nechta mahsulot (batch items).
 
@@ -1616,7 +1617,7 @@ def create_batch_session(
 
         # Tayyor mahsulot uchun ombor: berilgan konteyner yoki birinchi faol ombor
         if warehouse_id:
-            cur.execute("SELECT id, name FROM warehouses WHERE id=%s AND active=TRUE", (warehouse_id,))
+            cur.execute("SELECT id, name FROM warehouses WHERE id=%s AND active=TRUE FOR UPDATE", (warehouse_id,))
             wh = cur.fetchone()
             wh_id = wh["id"] if wh else None
         else:
@@ -1626,6 +1627,16 @@ def create_batch_session(
         if wh_id is None:
             raise ValueError("Faol tayyor mahsulot ombori topilmadi")
         wh_name = str(wh["name"]) if wh and wh.get("name") else ""
+        from .production_credit import quote_credit, save_credit, credit_movements
+        current_credit = quote_credit(cur, wh_id, items)
+        if current_credit is not None:
+            if not credit_quote or not credit_operation_key:
+                raise ValueError("C-03 kirimi uchun Top Mart nasiya savdosini tasdiqlang.")
+            if current_credit != credit_quote:
+                raise ValueError("Narx yoki kirim o‘zgardi. C-03 ni qayta tanlab tasdiqlang.")
+        elif credit_quote is not None:
+            raise ValueError("Tasdiqlangan nasiya ombori o‘zgardi.")
+        credit_sale_id = None
 
         # Ishlab chiqaruvchining liniyasi — mahsulotda line_id bo'lmasa fallback.
         cur.execute(
@@ -1724,6 +1735,8 @@ def create_batch_session(
             if shortages and not allow_negative_stock:
                 raise RawStockError(shortages)
 
+        if current_credit is not None:
+            credit_sale_id = save_credit(cur, current_credit, credit_operation_key, batch_code)
         line_entries: list[dict] = []  # Xabarnoma uchun: [{worker, role, amount}]
 
         for item_index, it in enumerate(items):
@@ -1806,7 +1819,10 @@ def create_batch_session(
 
             # Tayyor mahsulotni faol omborga "Kirim" qilib yozamiz
             if wh_id:
-                cur.execute(
+                if credit_sale_id is not None:
+                    credit_movements(cur, credit_sale_id, item_index, it, wh_id, worker)
+                else:
+                    cur.execute(
                     """INSERT INTO stock_movements
                          (product, quantity, movement_type, from_warehouse_id, to_warehouse_id,
                           note, created_by, product_type)
@@ -1871,6 +1887,7 @@ def create_batch_session(
         "line_entries":  line_entries,
         "created_at":    session_created_at,
         "label_items":   label_items,
+        "credit_sale_id": credit_sale_id,
     }
 
 

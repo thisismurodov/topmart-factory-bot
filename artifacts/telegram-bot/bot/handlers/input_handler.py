@@ -1,5 +1,7 @@
 from datetime import date, datetime
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+import uuid
+import math
 from telegram.ext import (
     ContextTypes, ConversationHandler,
     CallbackQueryHandler, MessageHandler, filters,
@@ -11,6 +13,7 @@ from ..keyboards import (
 )
 from ..database import (
     create_batch_session, get_worker_chat_id, get_workers,
+    get_conn,
     get_products, get_product_weight, get_user_role, get_worker_monthly,
     get_product_method, get_containers, get_product_pieces_per_box,
     get_product_label_info,
@@ -21,7 +24,7 @@ from ..config import calc_earnings, SUPERADMIN_CHAT_ID
 from ..label_generator import TASHKENT_TZ, generate_batch_session_pdf
 
 (CHOOSE_WORKER, CHOOSE_PRODUCT, ENTER_QUANTITY, ENTER_WEIGHT,
- AFTER_ITEM, CHOOSE_CONTAINER, CONFIRM_STOCK) = range(7)
+ AFTER_ITEM, CHOOSE_CONTAINER, CONFIRM_STOCK, CONFIRM_CREDIT, CREDIT_WEIGHT) = range(9)
 
 # Profil og'irligidan ruxsat etilgan chetlanish (±kg)
 WEIGHT_TOLERANCE_KG = 0.2
@@ -44,6 +47,9 @@ async def start_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         kb = workers_inline_keyboard()
     # Yangi sessiya — savatni tozalaymiz
     context.user_data["items"] = []
+    for key in ("credit_quote", "pending_credit_quote", "credit_operation_key",
+                "allow_negative_stock", "warehouse_id", "warehouse_name"):
+        context.user_data.pop(key, None)
     await update.message.reply_text(
         "👷 *Kim ishlab chiqardi?*",
         parse_mode="Markdown",
@@ -301,7 +307,84 @@ async def choose_container(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     context.user_data["warehouse_id"]   = wh_id
     context.user_data["warehouse_name"] = wh_name
+    context.user_data.pop("credit_quote", None)
+    context.user_data.pop("credit_operation_key", None)
+    return await _prepare_credit(update, context)
 
+
+async def _prepare_credit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    message = update.effective_message
+    wh_id = context.user_data["warehouse_id"]
+    # Read the identity from the DB, not the callback's editable display name.
+    with get_conn() as (_, cur):
+        cur.execute("SELECT name FROM warehouses WHERE id=%s AND active=TRUE", (wh_id,))
+        warehouse = cur.fetchone()
+    if warehouse and str(warehouse["name"]).strip().upper() == "C-03":
+        for index, item in enumerate(context.user_data["items"]):
+            if not math.isfinite(float(item.get("weight_kg") or 0)) or float(item.get("weight_kg") or 0) <= 0:
+                context.user_data["credit_weight_index"] = index
+                await message.reply_text(
+                    f"C-03 kirimi uchun haqiqiy vazn kerak.\n{item['product']} — "
+                    f"{item['quantity']} dona.\nShu mahsulotning JAMI vaznini kg da kiriting:",
+                    reply_markup=cancel_keyboard())
+                return CREDIT_WEIGHT
+    from ..production_credit import quote_credit
+    try:
+        with get_conn() as (_, cur):
+            quote = quote_credit(cur, wh_id, context.user_data.get("items", []))
+    except ValueError as exc:
+        await message.reply_text(str(exc), reply_markup=containers_inline_keyboard(get_containers()))
+        return CHOOSE_CONTAINER
+    if quote is not None:
+        context.user_data["pending_credit_quote"] = quote
+        context.user_data["credit_operation_key"] = str(uuid.uuid4())
+        lines = "\n".join(
+            f"{line['product']}: {line['quantity']} {line['unit']} × "
+            f"{line['price']} = {line['total']} {line['currency']}"
+            for line in quote["lines"])
+        await message.reply_text(
+            "C-03 — Top Mart ombori.\n"
+            "Tasdiqlasangiz, ishlab chiqarish bilan birga Top Mart’ga nasiya savdo yoziladi.\n"
+            "Qarz xodimga emas, Top Mart’ga yoziladi.\n\n" + lines +
+            f"\n\nJami nasiya: {quote['total']} {quote['currency']}",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("Tasdiqlash — nasiya savdo", callback_data="credit_ok")],
+                [InlineKeyboardButton("Boshqa ombor", callback_data="credit_back")],
+                [InlineKeyboardButton("Bekor qilish", callback_data="cancel")],
+            ]))
+        return CONFIRM_CREDIT
+    return await _finalize(update, context)
+
+
+async def enter_credit_weight(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    try:
+        weight = float(update.message.text.strip().replace(",", "."))
+        if not math.isfinite(weight) or weight <= 0 or round(weight, 4) != weight:
+            raise ValueError
+    except (ValueError, AttributeError):
+        await update.message.reply_text("Musbat jami kg kiriting (ko‘pi bilan 4 kasr xona).")
+        return CREDIT_WEIGHT
+    index = context.user_data.pop("credit_weight_index")
+    context.user_data["items"][index]["weight_kg"] = weight
+    return await _prepare_credit(update, context)
+
+
+async def confirm_credit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_reply_markup(reply_markup=None)
+    if query.data == "credit_back":
+        context.user_data.pop("pending_credit_quote", None)
+        context.user_data.pop("credit_operation_key", None)
+        await query.message.reply_text("Omborni tanlang:",
+            reply_markup=containers_inline_keyboard(get_containers()))
+        return CHOOSE_CONTAINER
+    quote = context.user_data.pop("pending_credit_quote", None)
+    if quote is None:
+        await query.message.reply_text("Tasdiqlash eskirgan. Omborni qayta tanlang.",
+            reply_markup=containers_inline_keyboard(get_containers()))
+        return CHOOSE_CONTAINER
+    context.user_data["credit_quote"] = quote
     return await _finalize(update, context)
 
 
@@ -333,6 +416,8 @@ async def _finalize(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         result = create_batch_session(
             worker, prefix, items, warehouse_id=warehouse_id,
             allow_negative_stock=context.user_data.get("allow_negative_stock", False),
+            credit_quote=context.user_data.get("credit_quote"),
+            credit_operation_key=context.user_data.get("credit_operation_key"),
         )
     except ClosedPayrollDayError as e:
         line_names = ", ".join(e.line_names)
@@ -362,7 +447,18 @@ async def _finalize(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             reply_markup=stock_confirm_keyboard(),
         )
         return CONFIRM_STOCK
+    except ValueError as exc:
+        context.user_data.pop("credit_quote", None)
+        await message.reply_text(
+            "Saqlanmadi: " + str(exc),
+            reply_markup=containers_inline_keyboard(get_containers()))
+        return CHOOSE_CONTAINER
     batch_code    = result["batch_code"]
+    if result.get("credit_sale_id"):
+        quote = context.user_data["credit_quote"]
+        await message.reply_text(
+            f"Top Mart nasiya savdosi №{result['credit_sale_id']} saqlandi.\n"
+            f"Qarz: {quote['total']} {quote['currency']}. C-03 kirimi yozildi.")
     total         = result["total_earnings"]
     low_materials = result["low_materials"]
     label_items   = result["label_items"]
@@ -613,6 +709,14 @@ def build_conversation_handler() -> ConversationHandler:
             ],
             CHOOSE_CONTAINER: [
                 CallbackQueryHandler(choose_container, pattern=r"^container:"),
+                CallbackQueryHandler(cancel_callback, pattern=r"^cancel$"),
+            ],
+            CONFIRM_CREDIT: [
+                CallbackQueryHandler(confirm_credit, pattern=r"^credit_(ok|back)$"),
+                CallbackQueryHandler(cancel_callback, pattern=r"^cancel$"),
+            ],
+            CREDIT_WEIGHT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, enter_credit_weight),
                 CallbackQueryHandler(cancel_callback, pattern=r"^cancel$"),
             ],
             CONFIRM_STOCK: [
